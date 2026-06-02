@@ -1,0 +1,17 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Local reference/scaffold material
+skill creation reference code/
+skill_reference_code/
+
+# Generated app artifacts
+generated_reports/

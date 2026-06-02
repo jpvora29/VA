@@ -1,0 +1,907 @@
+import logging
+import uuid
+from pathlib import Path
+from datetime import datetime
+from io import BytesIO
+
+import pandas as pd
+from langchain_core.messages import HumanMessage, AIMessage
+from typing_extensions import Any, Optional
+
+
+from dash import (
+    Input,
+    Output,
+    State,
+    callback,
+    callback_context,
+    dcc,
+    html,
+    no_update,
+    ctx,
+    clientside_callback,
+    ALL,
+    NoUpdate,
+)
+
+
+from dash import dash_table
+import dash_bootstrap_components as dbc
+from dash.development.base_component import Component
+
+from ui.components.chatbot import chatbot_page
+from core.backend import (
+    LangGraph,
+    AgentState,
+    PitchAgentState,
+    GeneralFunctions,
+    Initialization,
+    PitchBuilderWorkflow,
+)
+from ui.chart_functions import generate_chart
+from sqlalchemy import inspect, text
+from document_builder.report_generator import (
+    get_theme,
+    frame_theme_questions,
+    build_pitch_report_docx,
+)
+
+from logger import get_logger
+
+from config.callbacks_config import (
+    PITCH_COLUMN_MAP,
+    PREFFERED_PITCH_CARRIER,
+    PREFFERED_PITCH_COUNTRY,
+)
+from config.db_config import engine
+from ui.helper import (
+    distinct_pitch_countries,
+    distinct_pitch_carriers,
+    distinct_pitch_years,
+    default_option_value,
+    pitch_cache,
+    pitch_cache_key,
+    latest_option_value,
+    has_pitch_filters,
+)
+
+from document_builder.models import ReportConfig
+
+#  ── Logger ────────────────────────────────────────────────────────────────────────────────────────
+
+logger = get_logger(__name__)
+
+# ── STATE OBJECT INITIALIZATION ──────────────────────────────────────────────────────────────────────
+
+langgraph = LangGraph()
+pitch_workflow = PitchBuilderWorkflow()
+
+
+# ── JS TO AUTO SCROLL CHAT  ───────────────────────────────────────────────────────────────────────────
+
+clientside_callback(
+    """
+    function(children) {
+        const el = document.getElementById('chat-box');
+        if (el) {
+            setTimeout(() => {el.scrollBottom = el.ScrollHeight;}, 30);
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("chat-box", "data-scroll-anchor"),
+    Input("chat-box", "children"),
+    prevent_initial_call=True,
+)
+
+# ── PITCH BUILDER CALLBACKS  ───────────────────────────────────────────────────────────────────────────
+
+# 1. -------------------------- TOOGLE PITCH BUILDER BTN ---------------------------------------
+
+
+@callback(
+    Output("pitch-builder-open", "data"),
+    Input("pitch-builder-btn", "n_clicks", allow_optional=True),
+    Input("pitch-close-btn", "n_clicks"),
+    State("pitch-builder-open", "data"),
+    prevent_initital_call=True,
+)
+def toggle_pitch_builder(
+    open_clicks: int, close_clicks: int, is_open: bool
+) -> bool | NoUpdate:
+    """Checking whether the Pitch Builder btn is clicked"""
+
+    triggered_id = ctx.triggered_id
+    if triggered_id == "pitch-builder-btn" and open_clicks:
+        return True
+    if triggered_id == "pitch-close-btn" and close_clicks:
+        return False
+    return no_update
+
+
+# 2. -------------------------- OPENS PITCH BUILDER SIDEBAR ---------------------------------------
+
+
+@callback(
+    Output("pitch-builder-drawer", "className"),
+    Output("pitch-builder-drawer", "style"),
+    Output("pitch-builder-backdrop", "style"),
+    Output("pitch-builder-panel", "style"),
+    Input("pitch-builder-open", "data"),
+)
+def set_pitch_builder_drawer_class(
+    is_open: bool,
+) -> tuple[str, dict[str, str], dict[str, str], dict[str, str]]:
+    """Function that opens the Pitch Builder Sidebar on btn click"""
+
+    class_name = "pitch-builder-drawer"
+    drawer_style = {
+        "position": "fixed",
+        "inset": 0,
+        "zIndex": 2000,
+        "pointerEvents": "auto" if is_open else "none",
+        "visibility": "visible" if is_open else "hidden",
+    }
+    backdrop_style = {
+        "position": "absolute",
+        "inset": 0,
+        "background": "rgba(11, 19, 32, 0.32)",
+        "opacity": 1 if is_open else 0,
+        "transition": "opacitiy 260ms cubic-bezier(.4, .0, .2, 1)",
+    }
+    panel_style = {
+        "position": "absolute",
+        "top": 0,
+        "right": 0,
+        "width": "min(470px, 96vw)",
+        "height": "100vh",
+        "overflowY": "auto",
+        "background": "#f5f7fb",
+        "borderLeft": "1px solid rgba(12, 25, 58, 0.14)",
+        "boxShadow": "0 20px 48px rgba(10, 22, 54, 0.12)",
+        "transform": "translate(0)" if is_open else "translateX(100%)",
+        "transition": "transform 260ms cubic-bezier(.4, .0, .2, 1)",
+    }
+
+    if is_open:
+        return (
+            f"{class_name} pitch-builder-drawer-open",
+            drawer_style,
+            backdrop_style,
+            panel_style,
+        )
+
+    return class_name, drawer_style, backdrop_style, panel_style
+
+
+# 3. -------------------------- LOAD COUNTRY OPTIONS AND VALUE ---------------------------------------
+
+
+@callback(
+    Output("pitch-country", "options"),
+    Output("pitch-country", "value"),
+    Output("pitch-options-cache", "data"),
+    Input("pitch-builder-open", "data"),
+    State("pitch-country", "value"),
+    State("pitch-options-cache", "data"),
+)
+def load_pitch_country_options(
+    is_open: bool, country: str | None, cache: dict[str, Any]
+) -> tuple[list[str] | NoUpdate, str | NoUpdate, dict[str, Any] | NoUpdate]:
+    """Updates the country options and selects PREFERRED_COUNTRY"""
+    if not is_open:
+        return no_update, no_update, no_update
+
+    cache = pitch_cache(cache)
+    country_options = cache.get("countries") or distinct_pitch_countries()
+    cache["countries"] = country_options
+
+    selection = cache["selection"]
+    selected_country = default_option_value(
+        country_options,
+        country or selection.get("country"),
+        PREFFERED_PITCH_COUNTRY,
+    )
+    selection["country"] = selected_country
+
+    return country_options, selected_country, cache
+
+
+# 4. -------------------------- LOAD CARRIER OPTIONS AND VALUE ---------------------------------------
+
+
+@callback(
+    Output("pitch-carrier", "options"),
+    Output("pitch-carrier", "value"),
+    Output("pitch-options-cache", "data", allow_duplicate=True),
+    Input("pitch-builder-open", "data"),
+    Input("pitch-country", "value"),
+    State("pitch-carrier", "value"),
+    State("pitch-options-cache", "data"),
+    prevent_initial_call=True,
+)
+def load_pitch_carrier_options(
+    is_open: bool, country: str | None, carrier: str | None, cache: dict[str, Any]
+) -> tuple[list[str] | NoUpdate, str | NoUpdate, dict[str, Any] | NoUpdate]:
+    """Updates the carrier options and selects PREFERRED_CARRIER"""
+    if not is_open:
+        return no_update, no_update, no_update
+
+    cache = pitch_cache(cache)
+    selection = cache["selection"]
+    country = country or selection.get("country")
+    if not country:
+        return no_update, no_update, no_update
+
+    carrier_key = pitch_cache_key(country)
+    carrier_options = cache["carriers"].get(carrier_key) or distinct_pitch_carriers(
+        country
+    )
+    cache["carriers"][carrier_key] = carrier_options
+
+    selected_carrier = default_option_value(
+        carrier_options,
+        carrier or selection.get("carrier"),
+        PREFFERED_PITCH_CARRIER,
+    )
+
+    selection.update({"country": country, "carrier": selected_carrier})
+
+    return carrier_options, selected_carrier, cache
+
+
+# 5. -------------------------- LOAD YEAR OPTIONS AND VALUE ---------------------------------------
+
+
+@callback(
+    Output("pitch-year", "options"),
+    Output("pitch-year", "value"),
+    Output("pitch-options-cache", "data", allow_duplicate=True),
+    Input("pitch-builder-open", "data"),
+    Input("pitch-country", "value"),
+    Input("pitch-carrier", "value"),
+    State("pitch-year", "value"),
+    State("pitch-options-cache", "data"),
+    prevent_initial_call=True,
+)
+def load_pitch_year_options(
+    is_open: bool,
+    country: str | None,
+    carrier: str | None,
+    year: int | None,
+    cache: dict[str, Any],
+) -> tuple[list[str] | NoUpdate, int | NoUpdate, dict[str, Any] | NoUpdate]:
+    """Updates year options and selects the latest year"""
+    if not is_open:
+        return no_update, no_update, no_update
+
+    cache = pitch_cache(cache)
+    selection = cache["selection"]
+    country = country or selection.get("country")
+    carrier = carrier or selection.get("carrier")
+    if not country:
+        return no_update, no_update, no_update
+
+    year_key = pitch_cache_key(country, carrier)
+    year_options = cache["years"].get(year_key)
+    if year_options is None:
+        year_options = distinct_pitch_years(country=country, carrier=carrier)
+        cache["years"][year_key] = year_options
+
+    if not year_options and country:
+        fallback_key = pitch_cache_key(country, "")
+        year_options = cache["years"].get(fallback_key)
+        if year_options is None:
+            year_options = distinct_pitch_years(country=country)
+            cache["years"][fallback_key] = year_options
+
+    if not year_options:
+        fallback_key = pitch_cache_key("", "")
+        year_options = cache["years"].get(fallback_key)
+        if year_options is None:
+            year_options = distinct_pitch_years()
+            cache["years"][fallback_key] = year_options
+
+    selected_year = default_option_value(
+        year_options, year or selection.get("year"), latest_option_value(year_options)
+    )
+
+    selection.update({"country": country, "carrier": carrier, "year": year})
+
+    return year_options, selected_year, cache
+
+
+# 6 . -------------------------- DISPLAYS THEME, THEME BASED QUESTIONS  ---------------------------------------
+
+
+@callback(
+    Output("pitch-theme-description", "children"),
+    # Output("pitch-questions-heading", "children"),
+    Output({"type": "pitch-question", "index": ALL}, "value"),
+    Output("pitch-question-section", "style"),
+    Input("pitch-theme", "value"),
+    Input("pitch-country", "value"),
+    Input("pitch-carrier", "value"),
+    Input("pitch-year", "value"),
+)
+def update_pitch_theme(
+    theme_key: str, country: str | None, carrier: str | None, year: int
+) -> tuple[str, list[str], dict[str, str]]:
+    """Displays theme name, and theme specific questions"""
+    theme = get_theme(theme_key)
+    is_ready = has_pitch_filters(country, carrier, year)
+    questions = frame_theme_questions(
+        theme_key,
+        {"country": country, "carrier": carrier, "year": year},
+    )
+    section_style = {"display": "block"} if is_ready else {"display": "none"}
+    return theme["description"], questions, section_style
+
+
+# 7 . -------------------------- DISABLES REPORT GENERATION BTN ---------------------------------------
+
+
+@callback(
+    Output("pitch-generate-report-btn", "disabled"),
+    Input("pitch-country", "value"),
+    Input("pitch-carrier", "value"),
+    Input("pitch-year", "value"),
+)
+def toggle_pitch_generated_button(
+    country: str | None, carrier: str | None, year: int | None
+) -> bool:
+    """Disables the Report Generation btn until country, carrier and year are selected"""
+    return not has_pitch_filters(country, carrier, year)
+
+
+# 8 . -------------------------- UPDATES CACHE ---------------------------------------
+
+
+@callback(
+    Output("pitch-options-cache", "data", allow_duplicate=True),
+    Input("pitch-country", "value"),
+    Input("pitch-carrier", "value"),
+    Input("pitch-year", "value"),
+    State("pitch-options-cache", "data"),
+    prevent_initial_call=True,
+)
+def cache_pitch_filter_selection(
+    country: str | None, carrier: str | None, year: int | None, cache: dict[str, Any]
+) -> dict[str, Any]:
+    """Updates the cache data to preserve the selection even after page refresh"""
+    cache = pitch_cache(cache)
+    cache["selection"].update({"country": country, "carrier": carrier, "year": year})
+    return cache
+
+
+# 9 . -------------------------- REPORT DOWNLOAD AND BACKEND CALLING ---------------------------------------
+
+
+@callback(
+    Output("download-pitch-report", "data"),
+    Output("pitch-report-status", "children", allow_duplicate=True),
+    Output("pitch-builder-store", "data", allow_duplicate=True),
+    Output("pitch-progress-interval", "disabled", allow_duplicate=True),
+    Output("pitch-progress-fill", "style", allow_duplicate=True),
+    Output("pitch-progress-label", "children", allow_duplicate=True),
+    Input("pitch-generate-report-btn", "n_clicks"),
+    State("pitch-theme", "value"),
+    State("pitch-country", "value"),
+    State("pitch-carrier", "value"),
+    State("pitch-year", "value"),
+    State({"type": "pitch-question", "index": ALL}, "value"),
+    State("pitch-builder-store", "data"),
+    prevent_initial_call=True,
+)
+def generate_pitch_report(
+    n_clicks: int,
+    theme_key: str,
+    country: str | None,
+    carrier: str | None,
+    year: int | None,
+    questions: list[str],
+    builder_store: dict[str, Any],
+) -> tuple[
+    dict[str, Any] | NoUpdate,
+    Component | NoUpdate,
+    dict[str, Any] | NoUpdate,
+    bool,
+    dict[str, str],
+    str,
+]:
+    questions = [
+        (question or f"Question {index + 1}").strip()
+        for index, question in enumerate(questions or [])
+    ]
+    questions = [question for question in questions if question]
+
+    if not questions:
+        return (
+            no_update,
+            no_update,
+            no_update,
+            True,
+            {"width": "0%"},
+            "0% Ready",
+        )
+
+    # summary = summarize_filtered_rows(rows)
+    filters = {"country": country, "carrier": carrier, "year": year}
+    pitch_state = pitch_workflow.trigger_workflow(
+        {
+            "pitch_theme": theme_key,
+            "pitch_theme_label": get_theme(theme_key)["label"],
+            "pitch_filters": filters,
+            "pitch_questions": questions,
+            "pitch_answers": {},
+            "pitch_question_results": [],
+            "pitch_extracted_insights": [],
+        }
+    )
+
+    pitch_state: PitchAgentState = {
+        "pitch_thread_id": pitch_state.get("pitch_thread_id", ""),
+        "pitch_theme": theme_key,
+        "pitch_theme_label": get_theme(theme_key)["label"],
+        "pitch_filters": filters,
+        "messages": [],
+        "pitch_answers": pitch_state.get("pitch_answers", {}),
+        "pitch_question_results": pitch_state.get("pitch_question_results", []),
+        "pitch_extracted_insights": pitch_state.get("pitch_extracted_insights", []),
+    }
+
+    pitch_state = pitch_workflow.trigger_report_workflow(pitch_state)
+
+    logger.debug(f" Pitch KPIs : \n {pitch_state.get('pitch_top_kpis')}")
+
+    report_ctx = ReportConfig(
+        country=filters.get("country"),
+        carrier=filters.get("carrier"),
+        year=filters.get("year"),
+        question_results=pitch_state.get("pitch_question_results", []),
+        filters=pitch_state.get("pitch_filters", {}),
+        report_summary=pitch_state.get("pitch_report_summary", ""),
+        top_kpis=pitch_state.get("pitch_top_kpis"),
+        filename=ReportConfig._safe_filename(f"{carrier}_{country}_{year}.docx"),
+        output_path=Path(__file__).parent.parent / "generated_reports",
+    )
+
+    output_path = build_pitch_report_docx(ctx=report_ctx)
+    logger.debug(f"Output Path is : {output_path}")
+
+    builder_store = builder_store or {}
+    builder_store.update(
+        {
+            "theme": theme_key,
+            "filters": filters,
+            "pitch_answers": pitch_state["pitch_answers"],
+            # "pitch_report_prompt": pitch_state.get("pitch_report_prompt", ""),
+            "pitch_report_summary": pitch_state.get("pitch_report_summary", ""),
+            "report_path": str(output_path),
+        }
+    )
+
+    import os
+
+    return (
+        dcc.send_file(output_path) if os.path.exists(output_path) else no_update,
+        html.Div("Report generated and downloaded.", className="pitch-status-success"),
+        builder_store,
+        True,
+        {"width": "100%"},
+        "100% Complete",
+    )
+
+
+# 10. -------------------------- DISPLAY REPORT STATUS ---------------------------------------
+
+
+@callback(
+    Output("pitch-progress-interval", "disabled", allow_duplicate=True),
+    Output("pitch-progress-fill", "style", allow_duplicate=True),
+    Output("pitch-progress-label", "children", allow_duplicate=True),
+    Input("pitch-generated-report-btn", "n_clicks"),
+    Input("pitch-progress-interval", "n_intervals"),
+    prevent_initial_call=True,
+)
+def update_pitch_progress(
+    generate_clicks: int, ticks: int
+) -> tuple[bool | NoUpdate, dict[str, str] | NoUpdate, str | NoUpdate]:
+    """Function to update the report generation status bar"""
+
+    triggered_id = ctx.triggered_id
+    if triggered_id == "pitch-generate-report-btn" and generate_clicks:
+        return False, {"width": "12%"}, "12% Starting"
+    if triggered_id != "pitch-progress-interval":
+        return no_update, no_update, no_update
+
+    pct = min(92, 18 + ((ticks or 0) * 9))
+    label = "Reading data"
+    if pct >= 42:
+        label = "Generating insights"
+    if pct >= 72:
+        label = "Building report"
+    if pct >= 90:
+        label = "Finalizing"
+
+    return False, {"width": f"{pct}%"}, f"{pct}% {label}"
+
+
+# ── CHAT AREA SPECIFIC  ───────────────────────────────────────────────────────────────────────────
+
+
+# 1. -------------------------- RENDER PAGE ---------------------------------------
+
+
+@callback(
+    Output("main-content", "children"),
+    Output("nav-chatbot", "active"),
+    Input("nav-chatbot", "n_clicks"),
+)
+def render_page(chatbot_clicks: int) -> tuple[Component, bool]:
+
+    return chatbot_page(), True
+
+
+# 2. -------------------------- TRIGGER WOKFLOW + CHAT-STORE UPDATION ---------------------------------------
+
+
+# --------- helper function ----------------------
+def _update_messages(chat_history: dict[str, Any], messages: list[Any]) -> list[Any]:
+    """Update the messages list with Rephrased/Original Query"""
+
+    for msg in chat_history.get("messages", {}):
+        if msg["type"] == "HumanMessage":
+            (
+                messages.append(HumanMessage(content=msg["rephrased_content"]))
+                if msg.get("rephrased_content")
+                else messages.append(HumanMessage(content=msg["content"]))
+            )
+
+    return messages
+
+
+def _update_last_chat_message(
+    chat_history: dict[str, Any], user_input: list[str], rephrased_query: str
+) -> dict[str, Any]:
+    """Update the last chat history message with rephrased query for next turn use"""
+    for i in range(len(chat_history["messages"]) - 1, -1, -1):
+        if chat_history["messages"][i]["type"] == "HumanMessage":
+            chat_history["messages"][i] = {
+                "type": "HumanMessage",
+                "content": user_input,
+                "rephrased_content": rephrased_query,
+            }
+            break
+
+    return chat_history
+
+
+def _update_chat_history(
+    chat_history: dict[str, Any], updated_state: dict[str, Any], table: str
+) -> dict[str, Any]:
+    """Update the Chat History as per the query route"""
+
+    if table == "survey":
+
+        if updated_state.get("survey_overflow", False):
+            dataOverflowMsg = updated_state.get("survey_data_overflow_msg", None)
+            chat_history["messages"].append(
+                {
+                    "type": "DataOverflow",
+                    "content": dataOverflowMsg,
+                    "has_data_overflow": True,
+                    "query_result": updated_state["survey_query_result"],
+                }
+            )
+
+        else:
+            survey_response = updated_state.get("survey_response", "")
+            sql_output = updated_state.get("survey_query_result")
+            sql_output_updated_for_charts = sql_output
+            survey_chart_data = updated_state.get("survey_chart")
+
+            chat_history["messages"].append(
+                {
+                    "type": "AIMessage",
+                    "content": survey_response.strip(),
+                    "has_data_overflow": False,
+                }
+            )
+            chat_history["messages"].append(
+                {
+                    "type": "SQLOutputForCharts",
+                    "updated_query": sql_output_updated_for_charts,
+                    "chart_data": survey_chart_data,
+                }
+            )
+
+    elif table == "premium":
+        gpr_response = updated_state.get("gpr_response", "")
+        sql_output = updated_state.get("gpr_query_result", [])
+        sql_output_updated_for_charts = sql_output
+        gpr_chart_data = updated_state.get("gpr_chart")
+
+        chat_history["messages"].append(
+            {
+                "type": "AIMessage",
+                "content": gpr_response.strip(),
+                "has_data_overflow": False,
+            }
+        )
+
+        chat_history["messages"].append(
+            {
+                "type": "SQLOutputForCharts",
+                "updated_query": sql_output_updated_for_charts,
+                "chart_data": gpr_chart_data,
+            }
+        )
+
+        gimmi_response = updated_state.get("gimmi_response", "")
+        if gimmi_response:
+            chat_history["messages"].append(
+                {
+                    "type": "AIMessage",
+                    "content": gimmi_response.strip(),
+                    "has_data_overflow": False,
+                }
+            )
+
+    elif table == "both":
+        combined = (
+            updated_state.get("combined_response")
+            or updated_state.get("combined_result")
+            or ""
+        )
+        survey_chart_data = updated_state.get("survey_chart")
+        gpr_chart_data = updated_state.get("gpr_chart")
+        survey_rows = updated_state.get("survey_query_result") or []
+        gpr_rows = updated_state.get("gpr_query_result") or []
+
+        chat_history["messages"].append(
+            {
+                "type": "AIMessage",
+                "content": (combined or "").strip(),
+                "has_data_overflow": False,
+            }
+        )
+
+        # Attach charts for each lens when data is present.
+        if survey_rows and survey_chart_data:
+            chat_history["messages"].append(
+                {
+                    "type": "SQLOutputForCharts",
+                    "updated_query": survey_rows,
+                    "chart_data": survey_chart_data,
+                }
+            )
+        if gpr_rows and gpr_chart_data:
+            chat_history["messages"].append(
+                {
+                    "type": "SQLOutputForCharts",
+                    "updated_query": gpr_rows,
+                    "chart_data": gpr_chart_data,
+                }
+            )
+
+    elif table == "fallback":
+        fallback = updated_state.get("out_of_scope_answer", None)
+        chat_history["messages"].append(
+            {
+                "type": "AIMessage",
+                "content": fallback.strip(),
+                "has_data_overflow": False,
+            }
+        )
+
+    return chat_history
+
+
+@callback(
+    Output("chat-store", "data", allow_duplicate=True),
+    Output("trigger-gpt", "data", allow_duplicate=True),
+    Output("is-thinking", "data", allow_duplicate=True),
+    Input("trigger-gpt", "data"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def process_workflow(
+    is_trigger: bool, chat_history: dict[str, Any]
+) -> tuple[dict[str, Any] | NoUpdate, bool, bool]:
+
+    if not is_trigger:
+        return no_update, False, False
+
+    chat_history = chat_history or {}
+    thread_id = chat_history.setdefault("thread_id", uuid.uuid4().hex[:12])
+
+    user_input: list[str] = [
+        msg for msg in chat_history["messages"] if msg["type"] == "HumanMessage"
+    ][-1]["content"]
+
+    messages: list[Any] = [HumanMessage(content=user_input)]
+
+    # Trigger the Agent State Workflow
+    state_obj = AgentState(messages=messages, survey_attempts=0, gpr_attempts=0)
+    updated_state: dict[str, Any] = langgraph.trigger_workflow(
+        state_obj, thread_id=thread_id
+    )
+
+    rephrased_query = updated_state.get("rephrased_user_query")
+    table = updated_state.get("current_route")
+
+    chat_history = _update_last_chat_message(chat_history, user_input, rephrased_query)
+    chat_history = _update_chat_history(chat_history, updated_state, table)
+
+    return chat_history, False, False
+
+
+# 3. -------------------------- RENDER CHAT ---------------------------------------
+
+
+@callback(
+    Output("chat-box", "children"),
+    Input("chat-store", "data"),
+    Input("is-thinking", "data"),
+    prevent_initial_call=True,
+)
+def render_chat(
+    chat_history: dict[str, Any], is_thinking: bool
+) -> list[Any] | NoUpdate:
+
+    chat_items: list[Any] = []
+
+    if chat_history:
+        for msg in chat_history["messages"]:
+            if msg["type"] == "SQLOutputForCharts":
+                try:
+                    fig, chart_message = generate_chart(
+                        df=pd.DataFrame(msg["updated_query"]),
+                        chart_outputs=msg["chart_data"],
+                    )
+
+                    if fig is not None:
+                        chat_items.append(
+                            dcc.Graph(figure=fig, className="message gpt-chart-display")
+                        )
+                    else:
+                        chat_items.append(
+                            html.Div(chart_message, className="message gpt-chart-flag")
+                        )
+                except Exception:
+                    logger.exception("Exception in Output")
+
+            elif msg["type"] == "HumanMessage":
+                chat_items.append(
+                    html.Div(msg["content"], className="message user-message")
+                )
+
+            elif msg["type"] == "AIMessage":
+                content = msg.get("content") or ""
+
+                # Detect the consulting-grade format produced by the response signatures and wrap it as an insight card.
+                is_insight = (
+                    "### 📌 Executive Summary" in content
+                    or "Executive Summary" in content
+                )
+
+                if is_insight:
+                    card = html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.Span(
+                                        "✨", className="insight-card-badge-icon"
+                                    ),
+                                    html.Span(
+                                        "Consulting Insight",
+                                        className="insight-card-badge-text",
+                                    ),
+                                ],
+                                className="insight-card-badge",
+                            ),
+                            dcc.Markdown(
+                                content,
+                                className="insight-card-body",
+                                link_target="_blank",
+                            ),
+                        ],
+                        className="message insight-card",
+                    )
+                    chat_items.append(card)
+                else:
+                    parts = [dcc.Markdown(content)]
+                    chat_items.append(html.Div(parts, className="message gpt-message"))
+
+            elif msg["type"] == "DataOverflow":
+                try:
+                    parts = [dcc.Markdown(msg["content"])]
+                    chat_items.append(
+                        html.Div(parts, className="message overflow-message")
+                    )
+
+                    chat_items.append(
+                        html.Div([html.Button("Excel Data", id="download-btn")])
+                    )
+
+                except Exception as e:
+                    print("There was some error when rendering the AI Message: {e}")
+                    pass
+
+        if is_thinking:
+            chat_items.append(html.Div("Thinking", className="message typing-dots"))
+
+        return chat_items
+
+    return no_update
+
+
+# 4. -------------------------- UPDATE CHAT-STORE ---------------------------------------
+
+
+@callback(
+    Output("chat-store", "data"),
+    Output("trigger-gpt", "data"),
+    Output("is-thinking", "data"),
+    Output("user-input", "value"),
+    Input("send-btn", "n_clicks"),
+    State("user-input", "value"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def update_chat(
+    n_clicks: int, user_input: str, chat_history: dict[str, Any]
+) -> tuple[dict[str, Any], Optional[bool], Optional[bool], Optional[str]]:
+
+    chat_history = chat_history or {}
+    chat_history.setdefault("thread_id", uuid.uuid4().hex[:12])
+
+    if not (user_input or "").strip():
+        return chat_history, no_update, no_update, no_update
+
+    chat_history.setdefault("messages", []).append(
+        {
+            "type": "HumanMessage",
+            "content": user_input.strip(),
+            "rephrased_content": None,
+        }
+    )
+
+    return chat_history, True, True, ""
+
+
+# 5. -------------------------- DOWNLOAD BTN FOR ADDITIONAL DATA ---------------------------------------
+
+
+@callback(
+    Output("download-excel", "data"),
+    Input("download-btn", "n_clicks", allow_optional=True),
+    Input("chat-store", "data"),
+    State("chat-box", "children"),
+    prevent_initial_call=True,
+)
+def download_data(n_clicks, chat_history, chat_messages):
+    if chat_history:
+        try:
+            for msg in chat_history["messages"]:
+                if msg["type"] == "DataOverflow":
+
+                    triggered = ctx.triggered_id
+
+                    if (triggered == "download-btn") and (n_clicks):
+                        data = msg["query_result"]
+
+                        df = pd.DataFrame(data)
+                        return dcc.send_data_frame(
+                            df.to_excel, "query_data.xlsx", index=False
+                        )
+
+                else:
+                    continue
+
+        except Exception as e:
+            print(f"Error while downloading data: {e}")
+            return None
+
+    return no_update
