@@ -5,7 +5,7 @@ from datetime import datetime
 from io import BytesIO
 
 import pandas as pd
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from typing_extensions import Any, Optional
 
 
@@ -29,7 +29,7 @@ from dash import dash_table
 import dash_bootstrap_components as dbc
 from dash.development.base_component import Component
 
-from ui.components.chatbot import chatbot_page
+from ui.components.chatbot import chatbot_page, followup_suggestions
 from core.backend import (
     LangGraph,
     AgentState,
@@ -546,6 +546,73 @@ def render_page(chatbot_clicks: int) -> tuple[Component, bool]:
 # 2. -------------------------- TRIGGER WOKFLOW + CHAT-STORE UPDATION ---------------------------------------
 
 
+# --------- follow-up suggestions ----------------------
+
+_FALLBACK_FOLLOWUPS = {
+    "premium": [
+        "Break this down by product line.",
+        "How does this compare to the peer average?",
+        "Show the year-over-year trend.",
+    ],
+    "survey": [
+        "How does this compare to peers?",
+        "Which attributes scored the lowest?",
+        "Show the trend over the last few years.",
+    ],
+    "both": [
+        "Where is broker perception misaligned with premium?",
+        "Break this down by product line.",
+        "How does this compare against peers?",
+    ],
+    "fallback": [
+        "Show Share of Wallet by country.",
+        "Compare premium against the peer average.",
+        "What is the latest market composite rate change?",
+    ],
+}
+
+
+def _generate_followups(user_query: str, answer: str, route: str) -> list[str]:
+    """Suggest up to three short follow-up questions for the latest answer.
+
+    Uses the configured LLM when available and degrades gracefully to a small
+    route-specific set so the chat never breaks on an LLM/parse failure.
+    """
+    answer = (answer or "").strip()
+    if not answer:
+        return []
+
+    try:
+        prompt = (
+            "Based on the analyst question and answer below, propose exactly THREE "
+            "short, natural follow-up questions a business user would likely ask next. "
+            "Each must be self-contained, end with a question mark, and stay within the "
+            "insurance premium / Share of Wallet / Share of Portfolio / broker survey / "
+            "market-rate domain. Return only the three questions, one per line, with no "
+            "numbering or bullets.\n\n"
+            f"QUESTION:\n{user_query}\n\nANSWER:\n{answer[:1500]}"
+        )
+        response = Initialization.llm.invoke(
+            [
+                SystemMessage(
+                    content="You suggest concise, relevant follow-up questions."
+                ),
+                HumanMessage(content=prompt),
+            ]
+        )
+        text = getattr(response, "content", "") or ""
+        lines = [line.strip(" \t-•*0123456789.").strip() for line in text.splitlines()]
+        cleaned = [
+            line for line in lines if line.endswith("?") and 8 <= len(line) <= 140
+        ]
+        if cleaned:
+            return cleaned[:3]
+    except Exception:
+        logger.exception("Follow-up generation failed; using fallback suggestions")
+
+    return _FALLBACK_FOLLOWUPS.get(route, _FALLBACK_FOLLOWUPS["fallback"])
+
+
 # --------- helper function ----------------------
 def _update_messages(chat_history: dict[str, Any], messages: list[Any]) -> list[Any]:
     """Update the messages list with Rephrased/Original Query"""
@@ -734,6 +801,13 @@ def process_workflow(
     chat_history = _update_last_chat_message(chat_history, user_input, rephrased_query)
     chat_history = _update_chat_history(chat_history, updated_state, table)
 
+    # Suggest follow-up questions based on the latest answer.
+    ai_messages = [
+        msg for msg in chat_history["messages"] if msg["type"] == "AIMessage"
+    ]
+    latest_answer = ai_messages[-1]["content"] if ai_messages else ""
+    chat_history["followups"] = _generate_followups(user_input, latest_answer, table)
+
     return chat_history, False, False
 
 
@@ -831,6 +905,11 @@ def render_chat(
 
         if is_thinking:
             chat_items.append(html.Div("Thinking", className="message typing-dots"))
+        else:
+            followups = (chat_history or {}).get("followups") or []
+            block = followup_suggestions(followups)
+            if block is not None:
+                chat_items.append(block)
 
         return chat_items
 
@@ -867,8 +946,50 @@ def update_chat(
             "rephrased_content": None,
         }
     )
+    chat_history["followups"] = []  # drop previous-turn suggestions
 
     return chat_history, True, True, ""
+
+
+# 4b. -------------------------- SUGGESTION / FOLLOW-UP CHIP CLICK ---------------------------------------
+
+
+@callback(
+    Output("chat-store", "data", allow_duplicate=True),
+    Output("trigger-gpt", "data", allow_duplicate=True),
+    Output("is-thinking", "data", allow_duplicate=True),
+    Input({"type": "suggestion-chip", "idx": ALL, "q": ALL}, "n_clicks"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def ask_suggested_question(
+    n_clicks_list: list[int | None], chat_history: dict[str, Any]
+) -> tuple[dict[str, Any] | NoUpdate, Optional[bool], Optional[bool]]:
+    """Send a starter or follow-up chip's question as if the user typed it."""
+
+    triggered = ctx.triggered_id
+    triggered_value = ctx.triggered[0]["value"] if ctx.triggered else None
+
+    # Guard against the spurious fire when new chips mount with n_clicks=0/None.
+    if not isinstance(triggered, dict) or not triggered_value:
+        return no_update, no_update, no_update
+
+    question = (triggered.get("q") or "").strip()
+    if not question:
+        return no_update, no_update, no_update
+
+    chat_history = chat_history or {}
+    chat_history.setdefault("thread_id", uuid.uuid4().hex[:12])
+    chat_history.setdefault("messages", []).append(
+        {
+            "type": "HumanMessage",
+            "content": question,
+            "rephrased_content": None,
+        }
+    )
+    chat_history["followups"] = []  # drop previous-turn suggestions
+
+    return chat_history, True, True
 
 
 # 5. -------------------------- DOWNLOAD BTN FOR ADDITIONAL DATA ---------------------------------------

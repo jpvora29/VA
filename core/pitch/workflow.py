@@ -298,7 +298,7 @@ class PitchBuilderWorkflow:
                     result, "Structured response was empty."
                 )
 
-            result["extracted_insight"] = question_results
+            result["extracted_insight"] = insight
             extracted_insights.append(insight)
 
         state["pitch_extracted_insights"] = extracted_insights

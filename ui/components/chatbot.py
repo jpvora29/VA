@@ -1,6 +1,110 @@
+from datetime import datetime
+
 from dash import html, dcc, dash_table
 import dash_bootstrap_components as dbc
 from document_builder.report_generator import PITCH_THEMES
+
+
+# Example questions surfaced on the welcome screen and (mirrored) in the
+# animated input placeholder. Keep these aligned with assets/typewriter.js.
+STARTER_SUGGESTIONS = [
+    ("bi bi-pie-chart", "What is Zurich's Share of Wallet in Canada for Property?"),
+    ("bi bi-graph-up-arrow", "Show premium growth for Chubb across all product lines"),
+    ("bi bi-people", "How does AXA's broker score compare to peers this year?"),
+    ("bi bi-bar-chart-line", "What is the market composite rate change for Asia this quarter?"),
+]
+
+
+def _greeting() -> str:
+    """Time-of-day greeting, Claude-style."""
+    hour = datetime.now().hour
+    if hour < 12:
+        return "Good morning"
+    if hour < 17:
+        return "Good afternoon"
+    return "Good evening"
+
+
+def suggestion_chip(question: str, icon: str | None = None, idx: int = 0):
+    """A clickable question chip. The question text rides in the id so a single
+    pattern-matching callback can handle both starter and follow-up chips."""
+    children = []
+    if icon:
+        children.append(html.I(className=f"{icon} suggestion-chip-icon"))
+    children.append(html.Span(question, className="suggestion-chip-text"))
+    return html.Button(
+        children,
+        id={"type": "suggestion-chip", "idx": idx, "q": question},
+        n_clicks=0,
+        className="suggestion-chip",
+    )
+
+
+def welcome_hero():
+    """Empty-state hero shown before the first message is sent."""
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.Div(
+                        html.I(className="bi bi-stars"),
+                        className="welcome-badge",
+                    ),
+                    html.H1(
+                        [
+                            f"{_greeting()}, ",
+                            html.Span(
+                                "let's dig into the data",
+                                className="welcome-accent",
+                            ),
+                        ],
+                        className="welcome-title",
+                    ),
+                    html.P(
+                        "Your virtual insurance analyst. Ask about premium, Share of "
+                        "Wallet, broker sentiment, peer benchmarks, or market rates — "
+                        "all in plain English.",
+                        className="welcome-subtitle",
+                    ),
+                ],
+                className="welcome-head",
+            ),
+            html.Div("Try one of these", className="welcome-suggest-label"),
+            html.Div(
+                [
+                    suggestion_chip(question, icon, index)
+                    for index, (icon, question) in enumerate(STARTER_SUGGESTIONS)
+                ],
+                className="suggestion-grid",
+            ),
+        ],
+        className="welcome-hero",
+    )
+
+
+def followup_suggestions(followups: list[str]):
+    """Row of suggested follow-up question chips shown under the latest answer."""
+    if not followups:
+        return None
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.I(className="bi bi-lightbulb followup-icon"),
+                    html.Span("Suggested follow-ups"),
+                ],
+                className="followup-label",
+            ),
+            html.Div(
+                [
+                    suggestion_chip(question, idx=index)
+                    for index, question in enumerate(followups)
+                ],
+                className="followup-row",
+            ),
+        ],
+        className="followup-block",
+    )
 
 
 def chatbot_page():
@@ -21,7 +125,7 @@ def chatbot_page():
                                     html.Div(
                                         id="chat-box",
                                         className="chat-bot-text-area",
-                                        children=[],
+                                        children=[welcome_hero()],
                                     ),
                                     dcc.Download(id="download-excel"),
                                 ],
