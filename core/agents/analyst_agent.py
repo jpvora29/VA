@@ -326,8 +326,10 @@ class ClarifyMiddleware(AgentMiddleware):
     interrupt propagates out of this nested agent to the checkpointed main graph,
     which surfaces it to the UI and resumes the thread with the user's answer.
 
-    Skipped entirely when the turn was already clarified upstream (the workflow
-    gate ran first), so a turn is never double-asked.
+    This is the SOLE clarifier for analytical turns: the workflow-path clarify
+    hook deliberately skips agent-bound turns (see `core.graph.hitl.clarify_decide`)
+    so a turn is never double-checked. The `already_clarified` guard is a belt-and-
+    braces skip if a clarification was somehow already resolved this turn.
     """
 
     def __init__(self, question: str, routing_context, already_clarified: bool) -> None:

@@ -86,10 +86,23 @@ valid_values_snapshot = _valid_values_snapshot
 
 
 def clarify_decide(state: "AgentState") -> "AgentState":
-    """Decide whether to ask a clarifying question. Default: do not ask."""
+    """Decide whether to ask a clarifying question. Default: do not ask.
+
+    Scope split (avoids a duplicate clarify LLM call per turn): this workflow hook
+    only clarifies turns headed for the deterministic rails (lookup depth).
+    Analytical turns route to the analyst agent, which clarifies via its own
+    `ClarifyMiddleware` — so this node skips them.
+    """
     routing_context = state.get("routing_context")
     # Out-of-scope turns never clarify — they go straight to fallback.
     if routing_context is None or getattr(routing_context, "table_family", None) == "fallback":
+        return {"clarify_question": None}
+
+    # Analytical turns are handled by the agent-path middleware (see relevance_router).
+    if (
+        getattr(routing_context, "analysis_depth", "lookup") == "analytical"
+        and routing_context.table_family in {"survey", "premium", "both"}
+    ):
         return {"clarify_question": None}
 
     question = state["messages"][-1].content
