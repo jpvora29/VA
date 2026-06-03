@@ -5,7 +5,7 @@ from datetime import datetime
 from io import BytesIO
 
 import pandas as pd
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from typing_extensions import Any, Optional
 
 
@@ -546,73 +546,6 @@ def render_page(chatbot_clicks: int) -> tuple[Component, bool]:
 # 2. -------------------------- TRIGGER WOKFLOW + CHAT-STORE UPDATION ---------------------------------------
 
 
-# --------- follow-up suggestions ----------------------
-
-_FALLBACK_FOLLOWUPS = {
-    "premium": [
-        "Break this down by product line.",
-        "How does this compare to the peer average?",
-        "Show the year-over-year trend.",
-    ],
-    "survey": [
-        "How does this compare to peers?",
-        "Which attributes scored the lowest?",
-        "Show the trend over the last few years.",
-    ],
-    "both": [
-        "Where is broker perception misaligned with premium?",
-        "Break this down by product line.",
-        "How does this compare against peers?",
-    ],
-    "fallback": [
-        "Show Share of Wallet by country.",
-        "Compare premium against the peer average.",
-        "What is the latest market composite rate change?",
-    ],
-}
-
-
-def _generate_followups(user_query: str, answer: str, route: str) -> list[str]:
-    """Suggest up to three short follow-up questions for the latest answer.
-
-    Uses the configured LLM when available and degrades gracefully to a small
-    route-specific set so the chat never breaks on an LLM/parse failure.
-    """
-    answer = (answer or "").strip()
-    if not answer:
-        return []
-
-    try:
-        prompt = (
-            "Based on the analyst question and answer below, propose exactly THREE "
-            "short, natural follow-up questions a business user would likely ask next. "
-            "Each must be self-contained, end with a question mark, and stay within the "
-            "insurance premium / Share of Wallet / Share of Portfolio / broker survey / "
-            "market-rate domain. Return only the three questions, one per line, with no "
-            "numbering or bullets.\n\n"
-            f"QUESTION:\n{user_query}\n\nANSWER:\n{answer[:1500]}"
-        )
-        response = Initialization.llm.invoke(
-            [
-                SystemMessage(
-                    content="You suggest concise, relevant follow-up questions."
-                ),
-                HumanMessage(content=prompt),
-            ]
-        )
-        text = getattr(response, "content", "") or ""
-        lines = [line.strip(" \t-•*0123456789.").strip() for line in text.splitlines()]
-        cleaned = [
-            line for line in lines if line.endswith("?") and 8 <= len(line) <= 140
-        ]
-        if cleaned:
-            return cleaned[:3]
-    except Exception:
-        logger.exception("Follow-up generation failed; using fallback suggestions")
-
-    return _FALLBACK_FOLLOWUPS.get(route, _FALLBACK_FOLLOWUPS["fallback"])
-
-
 # --------- helper function ----------------------
 def _update_messages(chat_history: dict[str, Any], messages: list[Any]) -> list[Any]:
     """Update the messages list with Rephrased/Original Query"""
@@ -801,12 +734,9 @@ def process_workflow(
     chat_history = _update_last_chat_message(chat_history, user_input, rephrased_query)
     chat_history = _update_chat_history(chat_history, updated_state, table)
 
-    # Suggest follow-up questions based on the latest answer.
-    ai_messages = [
-        msg for msg in chat_history["messages"] if msg["type"] == "AIMessage"
-    ]
-    latest_answer = ai_messages[-1]["content"] if ai_messages else ""
-    chat_history["followups"] = _generate_followups(user_input, latest_answer, table)
+    # Follow-up suggestions are produced by the terminal follow-up node, so they
+    # carry full turn context (question, route, answer, SQL evidence).
+    chat_history["followups"] = updated_state.get("followup_questions") or []
 
     return chat_history, False, False
 
@@ -899,9 +829,8 @@ def render_chat(
                         html.Div([html.Button("Excel Data", id="download-btn")])
                     )
 
-                except Exception as e:
-                    print("There was some error when rendering the AI Message: {e}")
-                    pass
+                except Exception:
+                    logger.exception("Error rendering the data-overflow message")
 
         if is_thinking:
             chat_items.append(html.Div("Thinking", className="message typing-dots"))
@@ -1021,8 +950,8 @@ def download_data(n_clicks, chat_history, chat_messages):
                 else:
                     continue
 
-        except Exception as e:
-            print(f"Error while downloading data: {e}")
+        except Exception:
+            logger.exception("Error while downloading data")
             return None
 
     return no_update

@@ -7,6 +7,9 @@ import dspy
 from pydantic import BaseModel
 
 from core.schemas.gpr import GPRChartSignature
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class GPRChartNode(dspy.Module):
@@ -26,7 +29,7 @@ class GPRChartNode(dspy.Module):
             user_query=user_query,
             sql_output=sql_output,
         )
-        print("GPR Chart Reasoning", result)
+        logger.debug("GPR chart reasoning: %s", result)
 
         if isinstance(result.chart_data, BaseModel):
             return dict(result.chart_data)

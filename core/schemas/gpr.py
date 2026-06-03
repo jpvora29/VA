@@ -21,98 +21,9 @@ class GPRColumnSelectorAgent(BaseModel):
     )
 
 
-class GPRQueryPlanner(BaseModel):
-    intent: str = Field(description="User's query intent")
-    metric: str = Field(description="Primary metric to calculate")
-    metric_definition: str = Field(description="How the metric is calculated")
-    steps: List[str] = Field(description="Step-by-step analytical plan")
-    table: List[str] = Field(description="List of correct table name from schema.")
-    filters: Dict[str, Any] = Field(
-        description="Filter conditions as key-value pairs where key is column name and value is the column value"
-    )
-    group_by: List[str] = Field(description="Columns to group by")
-    rules: List[str] = Field(
-        description="Business, query construction, multi-stage ranking rules to apply"
-    )
-    notes: Optional[str] = Field(
-        default="", description="Additional notes or considerations"
-    )
-
-
-class GPRPlannerNodeSignature(dspy.Signature):
-    """
-    [ROLE]
-    You are an Analytical Reasoning & Planning Agent for the Insurance Domain.
-    Your task is to plan the exact analytical steps required to answer the user’s query using table schema and definitions — not write SQL.
-
-    You deeply understand insurance premium metrics and their dependencies such as:
-    - Gross Premium
-    - Share of Wallet (SoW)
-    - Share of Portfolio (Appetite)
-    - Peer Average
-    - Marsh (Broker) Premium
-    - Renewals
-    - Growth %, Rank, and YoY change, Rolling 12 Months
-
-    [OBJECTIVE]
-    Convert a user query into a detailed reasoning plan describing:
-    - The metric or intent
-    - The step-by-step logic (like a recipe)
-    - All filters, group-bys, and derived steps.
-    - Any sub-queries or sequential calculations required.
-    - Special domain rules (see below)
-
-    """
-
-    context: str = dspy.InputField(
-        desc="All background info: rules, schema, definitions."
-    )
-    valid_year_quarter: List[str] = dspy.InputField(
-        desc="Valid list of unique values for year-quarter combination. The values in the list are in ascending order i.e most recent date is the last element in the list. Useful for adding timeframe related context"
-    )
-    user_query: str = dspy.InputField(desc="User's natural language question or query")
-    # valid_values: Dict[str, Any] = dspy.InputField(desc="Valid list of column values to get precise filters and context")
-    plan: GPRQueryPlanner = dspy.OutputField(
-        desc="Structured plan based on rulebook and domain logic"
-    )
-
-
-class GPRSQLAgentNodeSignature(dspy.Signature):
-    """
-    [ROLE]
-    You are an SQL generation agent specialized in creating valid and efficient SQLite queries for insurance premium data.
-
-    [OBJECTIVE]
-    Your task:
-    Translate the reasoning plan into a single valid SQLite query (or set of queries using sub-queries) that produces the desired result.
-
-    Only follow the logic exactly as described in the reasoning plan.
-    """
-
-    context: str = dspy.InputField(
-        desc="All background info: rules, schema, few shot examples."
-    )
-    valid_year_quarter: List[str] = dspy.InputField(
-        desc="Valid list of unique values for year-quarter combination. The values in the list are in ascending order i.e most recent date is the last element in the list."
-    )
-    user_query: str = dspy.InputField(desc="User's natural language question or query")
-    query_plan: str = dspy.InputField(
-        desc="Structured JSON query plan to create the sql query, follow it exactly."
-    )
-    sql_query: str = dspy.OutputField(
-        desc="SQL output for the user query with no codeblocks like ```sql```"
-    )
-
-
 class GPRSQLJoinChecker(BaseModel):
     updated_query: str = Field(
         description="The updated query post removing the join operation"
-    )
-
-
-class GPRCheckSQLOutput(BaseModel):
-    updated_query: str = Field(
-        description="The updated error resolved SQL query corresponding to the user's natural language question."
     )
 
 

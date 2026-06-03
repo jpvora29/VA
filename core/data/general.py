@@ -11,6 +11,15 @@ from sqlalchemy.engine import Engine
 
 from config.valid_values_config import *  # noqa: F401,F403 - preserves legacy globals (valid_countries, valid_country_carrier, valid_countries_gpr, valid_country_carrier_gpr)
 from core.data.valid_values import GetValidData
+from logger import get_logger
+
+logger = get_logger(__name__)
+
+
+# Per-engine schema cache. The DB schema is static for a given engine, but the
+# chat/pitch flows previously re-introspected it ~10x per turn. Cache keyed by
+# engine identity (the engine is a process-wide singleton).
+_SCHEMA_CACHE: Dict[int, Dict[str, list]] = {}
 
 
 class GeneralFunctions:
@@ -22,6 +31,9 @@ class GeneralFunctions:
     def get_database_schema(engine: Engine) -> Dict[str, list]:
         """Return per-table column metadata for the connected database.
 
+        Cached per engine — the schema does not change within a process. Call
+        `clear_schema_cache()` if the database structure changes at runtime.
+
         Args:
             engine: SQLAlchemy engine for the analyst's SQLite database.
 
@@ -29,6 +41,10 @@ class GeneralFunctions:
             Dict keyed by table name (Carriers, GPR, Peers, GIMMI). Each value
             is a list of {Column Name, type, nullable, default, primary_key}.
         """
+
+        cached = _SCHEMA_CACHE.get(id(engine))
+        if cached is not None:
+            return cached
 
         inspector = inspect(engine)
 
@@ -46,9 +62,15 @@ class GeneralFunctions:
                     }
                 )
 
-        print("Retrieved database schema.")
+        logger.debug("Retrieved and cached database schema.")
 
+        _SCHEMA_CACHE[id(engine)] = schema_dict
         return schema_dict
+
+    @staticmethod
+    def clear_schema_cache() -> None:
+        """Invalidate the cached schema (e.g. after a DDL change)."""
+        _SCHEMA_CACHE.clear()
 
     def build_human_message(
         user_query: str,
@@ -121,16 +143,18 @@ class GeneralFunctions:
             for msg in messages:
                 if isinstance(msg, HumanMessage):
                     conversation_history.append(msg)
-                    print(f"Current Conversation History: {conversation_history} ")
 
             if len(conversation_history) > 1:
                 parts.append(f"Latest Query: {conversation_history[-2]}")
-                print(f"Latest Query is : {conversation_history[-2]}")
                 parts.append("\n")
 
                 parts.append(f"Conversation History: {conversation_history[-5:-2]}")
-                print(f"Conversation History is: {conversation_history[-5:-2]}")
                 parts.append("\n")
+
+                logger.debug(
+                    "Built human message with %d-turn conversation history",
+                    len(conversation_history),
+                )
 
         ### Adding Valid Values for Survey
         if valid_values_gpr:

@@ -1,43 +1,28 @@
-"""Survey SQL agent — turns the planner output into a SQLite query."""
+"""Survey SQL agent — thin flow wrapper over the shared `BaseSQLAgentNode`.
+
+Wires the Survey-specific schema slices and valid values; all generation logic lives in
+`core.agents.common.sql_agent` and `core.schemas.analytical.SQLAgentSignature`.
+"""
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-import dspy
+from core.agents.common.sql_agent import BaseSQLAgentNode
+from core.data.valid_values import GetValidData
 
-from core.schemas.survey import SQLAgentNodeSignature
 
-
-class SQLAgentNode(dspy.Module):
-    # def __init__(self, carrier_schema: str, peer_schema: str, definitions: str, rules: str):
-
+class SQLAgentNode(BaseSQLAgentNode):
     def __init__(
         self,
         carrier_schema: List[Dict[str, Any]],
         peer_schema: List[Dict[str, Any]],
         rules: str,
-        few_shot: List[dspy.Example] = None,
+        few_shot: Optional[List[Any]] = None,
     ) -> None:
-        super().__init__()
-        self.carrier_schema = carrier_schema
-        self.peer_schema = peer_schema
-        self.rules = rules
-        self.few_shot = few_shot
-        self.sql_query: str = dspy.ChainOfThought(SQLAgentNodeSignature)
-
-    def forward(self, user_query: str, query_plan: str):
-        # Combine context into a single training/inference context
-        context = (
-            f"Carriers Schema:\n{self.carrier_schema}\n\n"
-            f"Peers Schema:\n{self.peer_schema}\n\n"
-            f"Rules:\n{self.rules}\n\n"
-            f"Few Shot Examples:\n{self.few_shot}\n"
+        super().__init__(
+            flow="survey",
+            schema_tables={"Carriers": carrier_schema, "Peers": peer_schema},
+            rules=rules,
+            valid_values=GetValidData.valid_values,
+            few_shot=few_shot,
         )
-
-        result = self.sql_query(
-            context=context,
-            user_query=user_query,
-            query_plan=query_plan,
-        )
-
-        return result.sql_query

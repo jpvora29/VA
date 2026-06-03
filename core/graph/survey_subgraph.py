@@ -10,6 +10,12 @@ from langgraph.graph import END, START, StateGraph
 from sqlalchemy.sql import text
 
 from config.valid_values_config import *  # noqa: F401,F403 - preserves legacy globals
+from core.agents.common import (
+    BaseSQLFixerNode,
+    annotate_plan_notes,
+    assert_read_only,
+    dry_run_explain,
+)
 from core.agents.survey.chart import SurveyChartNode
 from core.agents.survey.planner import PlannerNode
 from core.agents.survey.sql_agent import SQLAgentNode
@@ -20,7 +26,6 @@ from core.observability import latency_timer, log_event, sql_metadata
 from core.rules.survey import SurveyRules
 from core.rules.survey_chart import SurveyChartRules
 from core.schemas.survey import (
-    SurveyCheckSQLOutput,
     SurveyColumnSelectorAgent,
     SurveyQueryNormalizer,
     SurveySQLJoinChecker,
@@ -107,7 +112,7 @@ class SurveySubGraph:
         last_msg = state["messages"][-1]
         # state["messages"][-1] = HumanMessage(content=response.normalized_query)
 
-        print(f"Normalized User Question: {response.normalized_query}")
+        logger.debug("Survey normalized question: %s", response.normalized_query)
 
         return {
             "messages": [
@@ -159,7 +164,7 @@ class SurveySubGraph:
 
         # state["survey_cols"] = response.columns
 
-        print(f"Selected columns are: {response.columns}")
+        logger.debug("Survey selected columns: %s", response.columns)
 
         return {"survey_cols": response.columns}
 
@@ -187,14 +192,25 @@ class SurveySubGraph:
         planner_node = PlannerNode(
             carriers_schema=carriers_schema,
             peers_schema=peers_schema,
-            definitions=GetValidData.definitions,
             rules=planner_rules,
         )
-        plan = planner_node(user_query=question)
+        plan = planner_node(
+            user_query=question,
+            routing_context=state.get("routing_context"),
+            valid_year_quarter=valid_years,
+        )
+
+        # Deterministic, advisory grounding check (never blocks the flow).
+        plan = annotate_plan_notes(
+            plan,
+            schema_tables={"Carriers": carriers_schema, "Peers": peers_schema},
+            valid_values=GetValidData.valid_values,
+            flow="survey",
+        )
 
         # state["survey_reasoning"] = plan
 
-        print(f"Reasoning Plan for Survey Data: {plan}")
+        logger.debug("Survey reasoning plan: %s", plan)
 
         return {"survey_reasoning": plan}
 
@@ -225,11 +241,15 @@ class SurveySubGraph:
             few_shot=SurveyRules.survey_query_few_shots,
         )
 
-        sql_query_output = sql_agent(user_query=question, query_plan=query_plan)
+        sql_query_output = sql_agent(
+            user_query=question,
+            query_plan=query_plan,
+            valid_year_quarter=valid_years,
+        )
 
         # state["survey_sql_query"] = sql_query_output
 
-        print(f"SQL Query for Survey Data: {sql_query_output}")
+        logger.debug("Survey SQL query: %s", sql_query_output)
 
         return {"survey_sql_query": sql_query_output}
 
@@ -247,6 +267,31 @@ class SurveySubGraph:
             sql=sql_metadata(sql_query),
         )
         timing = {}
+
+        # Deterministic pre-execution validation: read-only guard + schema-aware EXPLAIN
+        # dry run. Failures route to the fixer with a richer error instead of 500-ing.
+        validation_error = assert_read_only(sql_query) or dry_run_explain(
+            session, sql_query
+        )
+        if validation_error:
+            log_event(
+                logger,
+                "sql_validation_error",
+                logging.WARNING,
+                route="survey",
+                node="survey_execute_sql",
+                sql=sql_metadata(sql_query),
+                error=validation_error,
+            )
+            session.close()
+            return {
+                "survey_query_result": [
+                    f"Error executing SQL query:- {validation_error}"
+                ],
+                "survey_sql_error": True,
+                "survey_overflow": False,
+            }
+
         try:
             with latency_timer() as timing:
                 result = session.execute(text(sql_query))
@@ -256,7 +301,7 @@ class SurveySubGraph:
             if rows:
                 # header = ", ".join(columns)
                 query_result = [dict(zip(columns, row)) for row in rows]
-                print(f"Raw SQL Query Result For Survey Data: {query_result}")
+                logger.debug("Survey query fetched %d row(s)", len(query_result))
 
             else:
                 query_result = []
@@ -384,113 +429,56 @@ class SurveySubGraph:
         structured_llm = Initialization.llm.with_structured_output(SurveySQLJoinChecker)
         response = structured_llm.invoke(messages)
 
-        print(f"SQL Join Rewriting for: {state['messages'][-1]}")
-
         # state["survey_sql_query"] = response.updated_query
 
-        print(f"Updated Without Join Query: {response.updated_query}")
+        logger.debug("Survey join-rewritten query: %s", response.updated_query)
 
         return {"survey_sql_query": response.updated_query}
 
     def survey_sql_fixer_agent(state: AgentState) -> AgentState:
 
         sql_query = state["survey_sql_query"].strip()
-        # question = state['question']
-        question = state["messages"][-1]
+        question = state["messages"][-1].content
         error_message = state["survey_query_result"]
-
-        print(f"Error message: {error_message}")
 
         schema = GeneralFunctions.get_database_schema(engine=Initialization.engine)
         survey_schema = schema.get("Carriers", [])
         peer_schema = schema.get("Peers", [])
 
-        system_prompt = """
-        You are a SQL Error Fixer Agent.
+        log_event(
+            logger,
+            "sql_fix_attempt",
+            route="survey",
+            node="survey_sql_fixer_agent",
+            sql=sql_metadata(sql_query),
+            error=str(error_message),
+        )
 
-        [R – Role]
-        You act as a SQL expert who diagnoses errors in SQL lite queries and fixes them.
-        You understand schemas, valid values, and typical SQL lite syntax errors.
-
-        [E – Explicitness]
-        - Input includes: user query, schema, definition (Carriers table columns), SQL lite query, error message, valid list of column values.
-        - Your task: identify the cause of the error and return a corrected SQL lite query.
-        - Never invent new filters or columns outside the schema.
-        - Always ensure case-insensitivity for values (normalize them to valid ones).
-
-        [A – Approach]
-        1. Read the provided SQL query and error message.
-        2. Compare the query with the schema and valid values.
-        3. Identify the likely cause of the error (missing column, wrong alias, syntax issue, invalid filter, etc.).
-        4. Fix the query step by step, ensuring it adheres to schema and business rules.
-        5. Test mentally if the fixed query would avoid the error.
-
-        [S – Scaffolding]
-        Examples:
-        - Error: “no such column: CarrierNme”
-        Fix: Correct typo → `CarrierName`.
-
-        - Error: “near ‘union’: syntax error”
-        Fix: Ensure `ORDER BY` appears after `UNION ALL`.
-
-        - Error: “no such table: Peers”
-        Fix: Replace with correct table `PeerScores`.
-
-        [O – Output Format]
-        - Always return fixed SQL Query
-        - Example:
-        `{"SELECT Carrier, AVG(Score) FROM Carriers WHERE Country='Canada' GROUP BY CarrierName" }`
-
-        [N – Nuances]
-        - Apply fuzzy matching for column/value names (e.g., “Chub” → “Chubb”).
-        - If peer average is mentioned, apply rules:
-        - Use `Peers` table, get Peers list for Carrier, Country, Product combination, then apply filters in Carriers table.
-        - Avoid unnecessary joins unless explicitly needed.
-        - If unsure, choose the safest correction aligned with schema.
-        - Do not output reasoning or explanation text, only the corrected SQL query.
-
-        """
-
-        human_message = f"""
-        Usery Query: {question}
-        Survey Schema: {survey_schema}
-        Peer Schema: {peer_schema}
-        Carrier Table Columns Definitions: {GetValidData.definitions}
-        SQL Query: {sql_query}
-        Error Message: {error_message}
-        Valid Values:
-            - SurveyCountry: {valid_countries}
-            - Carrier: {valid_carriers}
-            - Survey_Year: {valid_years}
-            - SurveyPractice: {valid_practices}
-            - Section: {valid_sections}
-            - Attributes: {valid_attributes}
-            - Region: {valid_regions}
-
-        """
-
-        print(f"Fixing the original query: {question}")
-
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=human_message),
-        ]
-
-        structured_llm = Initialization.llm.with_structured_output(SurveyCheckSQLOutput)
-        corrected_response = structured_llm.invoke(messages)
-
-        # state["survey_sql_query"] = corrected_response.updated_query
-        # print(f"Total Attempts for far: {state['attempts']}")
-        # state["survey_attempts"] += 1
+        fixer = BaseSQLFixerNode(flow="survey")
+        corrected_query = fixer.fix(
+            user_query=question,
+            schema_tables={"Carriers": survey_schema},
+            peer_schema=peer_schema,
+            sql_query=sql_query,
+            error_message=error_message,
+            valid_values=GetValidData.valid_values,
+            definitions=GetValidData.definitions,
+        )
 
         return {
-            "survey_sql_query": corrected_response.updated_query,
+            "survey_sql_query": corrected_query,
             "survey_attempts": 1,
         }
 
     def survey_end_max_iterations(state: AgentState) -> AgentState:
         # state["survey_query_result"] = "Please try again !"
-        print("Maximum attempts reached. Ending the workflow.")
+        log_event(
+            logger,
+            "sql_fix_max_attempts",
+            logging.WARNING,
+            route="survey",
+            node="survey_end_max_iterations",
+        )
         return {"survey_query_result": "Plase try again later !"}
 
     def survey_check_attempts_router(state: AgentState):
@@ -510,23 +498,19 @@ class SurveySubGraph:
             return "survey_sql_fixer_agent"
 
     def survey_check_if_join_required_router(state: AgentState) -> AgentState:
-        print("Check Join Router")
         if re.search(r"(?i)join", state["survey_sql_query"]):
-            print("survey_sql_join_rewriter\n")
+            logger.debug("Survey join router -> survey_sql_join_rewriter")
             return "survey_sql_join_rewriter"
-        else:
-            print("execute_sql\n")
-            return "survey_execute_sql"
+        logger.debug("Survey join router -> survey_execute_sql")
+        return "survey_execute_sql"
 
     def survey_chart_data_creation(state: AgentState) -> AgentState:
-        print("In survey_chart_data_creation")
-        # print("Statetet\n", state)
         survey_query_output = state["survey_query_result"]
         question = state["messages"][-1].content
 
         # survey_query_output_updated = GeneralFunctions.reshape_for_chart(survey_query_output)
         survey_query_output_updated = survey_query_output
-        print("Survey Sql Output", survey_query_output_updated)
+        logger.debug("Survey chart input rows: %s", survey_query_output_updated)
         skill_rules = get_skill_loader().chart("survey", question)
         chart_rules = skill_rules if skill_rules else SurveyChartRules.chart_creation_rules
         log_event(
@@ -543,7 +527,7 @@ class SurveySubGraph:
         survey_chart_data = survey_chart_creation_agent(
             user_query=question, sql_output=survey_query_output_updated
         )
-        print("Survey Chart Data", survey_chart_data)
+        logger.debug("Survey chart data: %s", survey_chart_data)
         # state['survey_chart'] = survey_chart_data
 
         # return state

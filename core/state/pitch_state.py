@@ -80,6 +80,7 @@ class PitchAgentState(TypedDict, total=False):
     pitch_question_results: list[PitchQuestionResult]
     pitch_extracted_insights: list[dict[str, Any]]
     pitch_top_kpis: dict[str, Any]
+    pitch_narrative_arc: dict[str, Any]
     pitch_query_markdown: dict[str, str]
     # pitch_synthesized_insights: dict[str, Any]
     # pitch_data_summary: dict[str, Any]

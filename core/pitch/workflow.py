@@ -19,8 +19,8 @@ from core.graph.checkpointer import build_pitch_checkpointer, checkpoint_config
 from core.graph.pitch_question_graph import PitchQuestionGraph
 from core.initialization import Initialization
 from core.observability import log_event
-from core.schemas.pitch import PitchExtractedInsight, PitchTopKPIs
-from core.skills import get_skill_loader
+from core.schemas.pitch import PitchExtractedInsight, PitchNarrativeArc, PitchTopKPIs
+from core.skills.loader import get_skill_loader
 from core.state.pitch_state import PitchAgentState, PitchQuestionResult
 from logger import get_logger
 
@@ -279,7 +279,7 @@ class PitchBuilderWorkflow:
                         HumanMessage(content=prompt),
                     ],
                 )
-                print(f" Extracted Insight Response: \n {response}")
+                logger.debug("Extracted insight response: %s", response)
                 insight = self._dump_model(response)
                 if not insight:
                     insight = self._fallback_extracted_insight(
@@ -293,7 +293,6 @@ class PitchBuilderWorkflow:
                     logging.ERROR,
                     error=str(e),
                 )
-                print("Error Occured in ExtractInsight Node!!!")
                 insight = self._fallback_extracted_insight(
                     result, "Structured response was empty."
                 )
@@ -343,13 +342,13 @@ class PitchBuilderWorkflow:
         {PitchBuilderWorkflow._json_for_prompt(state.get("pitch_extracted_insights") or [])}
 
         ==================================================
-        TERMINOLOGY NORMALIZATION RULES
+        APPROVED NARRATIVE SPINE
         ==================================================
-
-        - Whenever the metric "Appetite" appears in the evidence, outputs, or reasoning, ALWAYS refer to it as "Share of Portfolio" in the final report.
-        - Never use the word "Appetite" in the final report output.
-        - Replace all appetite-related wording with "Share of Portfolio"
-        - Maintain consistency throughout all sections of the report.
+        A senior consultant has already decided the story. Expand THIS spine into the
+        report below. Follow its through-line, lead with its ranked developments, and
+        surface its tensions and whitespace. Do not contradict it or introduce claims
+        beyond the evidence it cites.
+        {PitchBuilderWorkflow._json_for_prompt(state.get("pitch_narrative_arc") or {})}
 
         ==================================================
         STRICT DATA GROUNDING RULES
@@ -620,6 +619,60 @@ class PitchBuilderWorkflow:
         - Identify whether the carrier is above, near, or below the Top 5 benchmark based on actual premium values, not percentages alone.
         """.strip()
 
+    def build_narrative_arc(self, state: PitchAgentState) -> PitchAgentState:
+        """Reason about the story BEFORE writing it.
+
+        Turns the flat extracted insights + KPIs into a ranked 'story spine'
+        (through-line, key developments, tensions, whitespace). The writer node
+        then expands this spine into prose, which reads far more like a
+        consultant's narrative than a single-pass metric dump.
+        """
+        extracted = state.get("pitch_extracted_insights") or []
+        kpis = state.get("pitch_top_kpis") or {}
+        filters = state.get("pitch_filters") or {}
+
+        prompt = f"""
+        You are a senior insurance strategy consultant planning a one-page carrier report.
+        From the evidence below, decide the STORY before any prose is written.
+
+        Filters — Carrier: {filters.get('carrier') or 'N/A'}, Country: {filters.get('country') or 'N/A'}, Year: {filters.get('year') or 'N/A'}
+
+        Rules:
+        - Ground every development in the extracted evidence. Never invent numbers, ranks, products, or causes.
+        - Rank developments by business importance (significant YoY moves, rank shifts, large premium moves, perception swings, Share of Portfolio signals, competitive position, product momentum).
+        - Surface genuine tensions/disconnects (e.g. premium up but broker perception down; premium up but Share of Wallet down).
+        - Flag whitespace only where the carrier is absent/insignificant AND peers participate, per the evidence.
+        - Refer to peers only in aggregate; never name an individual peer.
+
+        TOP KPIS:
+        {self._json_for_prompt(kpis)}
+
+        EXTRACTED INSIGHTS:
+        {self._json_for_prompt(extracted)}
+        """.strip()
+
+        arc: dict[str, Any] = {}
+        try:
+            structured_llm = Initialization.llm_creative.with_structured_output(
+                PitchNarrativeArc
+            )
+            response = structured_llm.invoke(
+                [
+                    SystemMessage(
+                        content="You build a tight, evidence-grounded narrative spine for an executive insurance report."
+                    ),
+                    HumanMessage(content=prompt),
+                ]
+            )
+            arc = self._dump_model(response) or {}
+            Initialization.log_prompt_cache_usage(arc, "pitch_narrative_arc")
+        except Exception as e:
+            log_event(logger, "pitch_narrative_arc_error", logging.ERROR, error=str(e))
+            arc = {}
+
+        state["pitch_narrative_arc"] = arc
+        return state
+
     @staticmethod
     def _pitch_skill_query(state: PitchAgentState) -> str:
         """Trigger text for pitch-scope skill matching.
@@ -665,7 +718,7 @@ class PitchBuilderWorkflow:
         state["pitch_report_prompt"] = prompt
 
         try:
-            response = Initialization.llm.invoke(
+            response = Initialization.llm_creative.invoke(
                 [
                     SystemMessage(
                         content=(
@@ -679,7 +732,9 @@ class PitchBuilderWorkflow:
             Initialization.log_prompt_cache_usage(response, "pitch_report_summary")
             state["pitch_report_summary"] = (response.content or "").strip()
 
-            print(f" Performance Builder Summary: \n {state['pitch_report_summary']}")
+            logger.debug(
+                "Pitch report summary: %s", state["pitch_report_summary"]
+            )
 
         except Exception as e:
             log_event(logger, "pitch_report_summary_error", logging.ERROR, error=str(e))
@@ -835,18 +890,14 @@ class PitchBuilderWorkflow:
         workflow = StateGraph(PitchAgentState)
         workflow.add_node("extract_question_insights", self.extract_question_insights)
         workflow.add_node("compute_top_kpis", self.compute_top_kpis)
-        # workflow.add_node("build_query_markdown", self.build_query_markdown)
-        # workflow.add_node("synthesize_insights", self.synthesize_insights)
+        workflow.add_node("build_narrative_arc", self.build_narrative_arc)
         workflow.add_node("generate_pitch_report_summary", self.generate_report_summary)
 
-        # workflow.add_edge(START, "generate_pitch_report_summary")
-        # workflow.add_edge("generate_pitch_report_summary", END)
-
+        # extract evidence → headline KPIs → reason the story spine → write the report
         workflow.add_edge(START, "extract_question_insights")
         workflow.add_edge("extract_question_insights", "compute_top_kpis")
-        # workflow.add_edge("compute_top_kpis", "build_query_markdown")
-        workflow.add_edge("compute_top_kpis", "generate_pitch_report_summary")
-        # workflow.add_edge("synthesize_insights", "generate_pitch_report_summary")
+        workflow.add_edge("compute_top_kpis", "build_narrative_arc")
+        workflow.add_edge("build_narrative_arc", "generate_pitch_report_summary")
         workflow.add_edge("generate_pitch_report_summary", END)
         return workflow.compile(checkpointer=self.checkpointer)
 

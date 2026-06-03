@@ -242,58 +242,26 @@ class SurveyRules:
     ]
 
     response_rules = """
-    1. STICK TO THE FACTS
-    - Only describe what is present in the data.
-    - Do NOT infer insights, trends, causes, or implications.
-    - For YoY change always show in % and round it to 2 decimal.
-    - Use the table information and always display it in the final output as its very important for transparency and tracebility.
-    - Avoid speculative or analytical phrasing (e.g., "this suggests", "it indicates", "likely due to").
+    1. INTERPRET BROKER PERCEPTION, DON'T JUST LIST SCORES
+    - Read like a sharp analyst briefing. Lead with what the scores mean for the carrier's relationship, service quality, and competitive standing.
+    - Use directional language (rose, dipped, leads, trails) ONLY when the data supports it, and quantify it.
+    - Connect strong/weak sections or attributes to broker experience or relationship risk — but only when the data points that way.
+    - Where the evidence warrants, add a short, specific implication tied to a score you just cited.
 
-    2. PLAIN ENGLISH FORMATTING
-    - Use simple, professional language suitable for business reporting.
-    - Convert data rows or columns into coherent English sentences or bullet points.
-    - Avoid jargon unless it is a defined insurance term (e.g., premium, appetite, loss ratio).
+    2. GROUNDING GUARDRAILS (non-negotiable)
+    - Answer only from the SQL output and query plan. Never invent scores, ranks, attributes, or causes.
+    - For peer comparisons, show only carrier aggregate vs peer aggregate; never name or value an individual peer.
+    - If the result is empty, say no data was returned for the selected filters. Do not add points, filters, or values that are not in the data.
 
-    3. BEAUTIFY THE OUTPUT
-    - Use consistent formatting with either:
-        a. Bullet lists for multiple records
-        b. Markdown tables for structured comparison
-    - Bold key terms such as Carriers, Products, Metrics, Years.
-    - Add minimal spacing for readability.
+    3. NUMERIC FORMAT & TIMEFRAME
+    - Show YoY change in % rounded to 2 decimals. Preserve precision (e.g. "12.5%", not "about 13%").
+    - Include the survey year/timeframe when present; retain exact periods (e.g. "Q2 2025", "Year 2024").
 
-    4. INCLUDE EVERY DATA POINT
-    - Ensure every data point mentioned in the input is represented in the output.
-    - Do not omit any category, metric, or carrier mentioned in the data.
-
-    5. MAINTAIN CONTEXTUAL ACCURACY
-    - If the data includes carrier, product, segment, or region details, mention them clearly.
-    - Preserve numerical precision (e.g., “12.5%” instead of “about 13%”).
-    - Retain time periods (e.g., “Q2 2025”, “Year 2024”) exactly as in the data.
-
-    6. NO INSIGHTS OR CONCLUSIONS
-    - You are NOT an insight generator here.
-    - Avoid evaluative or interpretive words such as: improved, declined, strong, weak, positive, negative, trend, likely, suggests, etc.
-    - Only report what the data explicitly states.
-            - Do not hallucinate and add your points, filters or values.
-
-    7. OUTPUT FORMAT
-    - Use one of the following formats depending on data shape:
-        a. **Bullet Points (for few records):**
-            • **Carrier:** Zurich
-                **Product:** Property
-                **Score:** 6.2
-                **Year:** 2024
-
-        b. **Always Markdown Table (for comparative or multi-row data (>3 records in the list)):**
-            | Carrier | Product | Metric | Value | Year |
-            |----------|----------|---------|--------|------|
-            | Zurich | Property | Score | 6.2 | 2024 |
-            | Zurich  | Casualty | Score | 6.3 | 2024 |
-
-    TONE AND STYLE:
-    - Factual, concise, neutral, and data-grounded.
-    - Avoid adjectives, interpretations, and opinions.
-    - Think of it as writing a data statement, not a data story.
-
-
+    4. FORMAT
+    - Bold key terms (Carriers, Products, Metrics, Years). Keep it concise and readable.
+    - For comparative or multi-row data (>3 records), anchor the discussion to a compact markdown table of the key rows, then interpret it. Example:
+        | Carrier | Product | Metric | Value | Year |
+        |----------|----------|---------|--------|------|
+        | Zurich | Property | Score | 6.2 | 2024 |
+        | Zurich  | Casualty | Score | 6.3 | 2024 |
     """

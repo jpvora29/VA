@@ -5,9 +5,10 @@ import logging
 
 import dspy
 
+from core.initialization import Initialization
 from core.observability import log_event
 from core.schemas.combined import CombinedInsightSignature
-from core.skills import get_skill_loader
+from core.skills.loader import get_skill_loader
 from core.state.agent_state import AgentState
 from logger import get_logger
 
@@ -23,14 +24,15 @@ class CombinedInsightNode(dspy.Module):
     def forward(
         self, user_query, survey_output, gpr_output, survey_reasoning, gpr_reasoning
     ):
-        result = self.predictor(
-            user_query=user_query,
-            rules=self.rules,
-            survey_output=survey_output or [],
-            gpr_output=gpr_output or [],
-            survey_reasoning=survey_reasoning or "",
-            gpr_reasoning=gpr_reasoning or "",
-        )
+        with dspy.context(lm=Initialization.dspy_creative):
+            result = self.predictor(
+                user_query=user_query,
+                rules=self.rules,
+                survey_output=survey_output or [],
+                gpr_output=gpr_output or [],
+                survey_reasoning=survey_reasoning or "",
+                gpr_reasoning=gpr_reasoning or "",
+            )
         return result.combined_response
 
 

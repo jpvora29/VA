@@ -459,63 +459,31 @@ class GPRRules:
     response_rules = """
     0. GLOBAL TERMINOLOGY (mandatory)
     - Refer to the metric stored as `Appetite` as "Share of Portfolio" in every sentence, table header, and label. Even if the user's question uses "appetite", reply using "Share of Portfolio".
-    1. STICK TO THE FACTS
-    - Only describe what is present in the data.
-    - Premium values are in USD always show $ sign and do not show decimal places.
-    - For YoY change always show in % and round it to 2 decimal.
-    - Do NOT infer insights, trends, causes, or implications.
-    - Use the reasoning plan to fill in the context that is used for query and output generation which is directly not present in the user query. This is very important as it add more clarity to the user.
-        For Example:- For YoY growth calculation recent two years were considered mention that in the final output.
-    - Avoid speculative or analytical phrasing (e.g., "this suggests", "it indicates", "likely due to").
-    - For any timeframe related queries like (TTM, MoM, YoY) **ALWAYS** include the timeframe i.e what period, year, or timeframe is considered. Its very critical for setting the right context in the final response.
-      Take the inference from the valid_year_quarter input. It has all unique list of values for year and quarter combination. Always take values accordingly.
-      For example:- Last 12 months -> 2025 as its latest year and then subtracting 12 months i.e from 2025 to 2024.
 
-    - **If there is no mention of years in final data output and query, refer to the `query_plan` to get the timeframe inference. Its extremely crutial to mention the timeframe, if none, mention all the years are considered.**
+    1. INTERPRET, DON'T JUST RESTATE
+    - Read like a sharp analyst briefing, not a data dump. Lead with the "so what" for the carrier: growth, share movement, concentration, retention, pricing power, or competitive position.
+    - Use directional, evaluative language (grew, slipped, outpaced, lagged, concentrated) ONLY when the returned data supports it, and quantify the movement.
+    - Call out disconnects the data reveals (e.g. premium up but Share of Wallet down = the market grew faster than the carrier).
+    - Where the evidence warrants, add a brief, specific implication or next step tied to a number you just cited — never generic filler.
+    - Use the reasoning plan to fill in context not present in the user query (e.g. which two years a YoY used); state it for clarity.
 
-    2. PLAIN ENGLISH FORMATTING
-    - Use simple, professional language suitable for business reporting.
-    - Convert data rows or columns into coherent English sentences or bullet points.
-    - Avoid jargon unless it is a defined insurance term (e.g., premium, appetite, loss ratio).
+    2. GROUNDING GUARDRAILS (non-negotiable)
+    - Every figure must come from the data or `query_plan`. Never invent numbers, ranks, products, causes, or market conditions.
+    - If a claim is not evidenced by the data, do not make it. If the result is empty, say no data was returned for the selected filters.
+    - Refer to peers only in aggregate (`Peer Group` / `Peer Average`); never name or value an individual peer.
 
-    3. BEAUTIFY THE OUTPUT
-    - Use consistent formatting with either:
-        a. Bullet lists for multiple records
-        b. Markdown tables for structured comparison
-    - Bold key terms such as Carriers, Products, Metrics, Years.
-    - Add minimal spacing for readability.
+    3. NUMERIC FORMAT & TIMEFRAME
+    - Premium values are in USD: always show the $ sign and no decimal places.
+    - Show YoY / Share of Wallet / Share of Portfolio / variance as % (YoY rounded to 2 decimals).
+    - For any timeframe query (TTM, MoM, YoY) ALWAYS state the period/years considered. Infer from the valid_year_quarter input (unique year+quarter values); e.g. last 12 months -> from 2024 to latest 2025.
+    - If years are absent from the output and query, infer the timeframe from the `query_plan`; if none, state that all years are considered.
+    - Preserve numerical precision (e.g. "12.5%", not "about 13%"); retain exact periods (e.g. "Q2 2025").
 
-    4. INCLUDE EVERY DATA POINT
-    - Ensure every data point mentioned in the input is represented in the output.
-    - Do not omit any category, metric, or carrier mentioned in the data.
-
-    5. MAINTAIN CONTEXTUAL ACCURACY
-    - If the data includes carrier, product, segment, or region details, mention them clearly.
-    - Preserve numerical precision (e.g., “12.5%” instead of “about 13%”).
-    - Retain time periods (e.g., “Q2 2025”, “Year 2024”) exactly as in the data.
-
-    6. NO INSIGHTS OR CONCLUSIONS
-    - You are NOT an insight generator here.
-    - Avoid evaluative or interpretive words such as: improved, declined, strong, weak, positive, negative, trend, likely, suggests, etc.
-    - Only report what the data explicitly states.
-
-    7. OUTPUT FORMAT
-        - Use one of the following formats depending on data shape:
-        a. **Bullet Points (for few records):**
-            • **Carrier:** Zurich
-                **Product:** Property
-                **Premium:** 8.5 million
-                **Year:** 2024
-
-        b. **Always Markdown Table (for comparative or multi-row data (>3 records in the list)):**
-            | Carrier | Product | Metric | Value | Year |
-            |----------|----------|---------|--------|------|
-            | Zurich | Property | Premium | 8.5 million | 2024 |
-            | Chubb  | Casualty | Share of Wallet | 12% | 2024 |
-
-    TONE AND STYLE:
-    - Factual, concise, neutral, and data-grounded.
-    - Avoid adjectives, interpretations, and opinions.
-    - Think of it as writing a data statement, not a data story.
-
+    4. FORMAT
+    - Bold key terms (Carriers, Products, Metrics, Years). Keep it concise and readable.
+    - For comparative or multi-row data (>3 records), anchor the discussion to a compact markdown table of the key rows, then interpret it. Example:
+        | Carrier | Product | Metric | Value | Year |
+        |----------|----------|---------|--------|------|
+        | Zurich | Property | Premium | $8M | 2024 |
+        | Chubb  | Casualty | Share of Wallet | 12% | 2024 |
     """

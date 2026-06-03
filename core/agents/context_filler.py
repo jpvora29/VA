@@ -22,8 +22,12 @@ from pydantic import BaseModel
 
 from core.data.general import GeneralFunctions
 from core.initialization import Initialization
+from core.observability import log_event
 from core.schemas.routing import ContextFillerSignature, RoutingContext
 from core.state.agent_state import AgentState
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class ContextFillerNode(dspy.Module):
@@ -59,6 +63,11 @@ class ContextFillerNode(dspy.Module):
             intent_type="new_question",
             rationale=f"context_filler returned unexpected type: {type(routing)!r}",
         )
+
+
+# Stateless module/predictor — instantiate once and reuse across turns. Routing
+# context stays deterministic (default LM).
+_CONTEXT_FILLER_NODE = ContextFillerNode()
 
 
 class ContextFillingAgent:
@@ -122,8 +131,7 @@ class ContextFillingAgent:
             f"Routing + Inheritance Rules:\n{ContextFillingAgent.history_policy_rules}\n"
         )
 
-        node = ContextFillerNode()
-        routing_context = node(
+        routing_context = _CONTEXT_FILLER_NODE(
             static_context=static_context,
             current_user_query=question,
             last_user_query=last_user_query,
@@ -131,13 +139,15 @@ class ContextFillingAgent:
         )
         Initialization.log_prompt_cache_usage(routing_context, "context_filler_agent")
 
-        print(
-            "Context Filler Output: "
-            f"table_family={routing_context.table_family}, "
-            f"intent={routing_context.intent_type}, "
-            f"inherited_carrier={routing_context.inherited_carrier}, "
-            f"inherited_country={routing_context.inherited_country}, "
-            f"inherited_year={routing_context.inherited_year}"
+        log_event(
+            logger,
+            "context_filled",
+            node="context_filler",
+            table_family=routing_context.table_family,
+            intent=routing_context.intent_type,
+            inherited_carrier=routing_context.inherited_carrier,
+            inherited_country=routing_context.inherited_country,
+            inherited_year=routing_context.inherited_year,
         )
 
         return {"routing_context": routing_context}

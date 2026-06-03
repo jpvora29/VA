@@ -11,6 +11,7 @@ from langgraph.graph import END, START, StateGraph
 
 from core.agents.context_filler import ContextFillingAgent
 from core.agents.fallback import Fallback
+from core.agents.followup import followup_node
 from core.agents.gimmi.response import check_if_gimmi_required, gimmi_insight
 from core.agents.gimmi.sql_agent import gimmi_execute_sql, gimmi_sqlagent_node
 from core.agents.gpr.response import gpr_insight
@@ -56,6 +57,7 @@ class LangGraph:
         self.gimmi_sqlagent_node = gimmi_sqlagent_node
         self.gimmi_execute_sql = gimmi_execute_sql
         self.gimmi_insight = gimmi_insight
+        self.followup_node = followup_node
 
     def create_workflow(self):
         workflow = StateGraph(self.state_schema)
@@ -73,6 +75,7 @@ class LangGraph:
         workflow.add_node("gimmi_sqlagent_node", self.gimmi_sqlagent_node)
         workflow.add_node("gimmi_execute_sql", self.gimmi_execute_sql)
         workflow.add_node("gimmi_insight", self.gimmi_insight)
+        workflow.add_node("followup_node", self.followup_node)
 
         workflow.add_edge(START, "context_filler")
         workflow.add_edge("context_filler", "rephraser_agent")
@@ -90,7 +93,7 @@ class LangGraph:
             },
         )
 
-        workflow.add_edge("combiner_agent", END)
+        workflow.add_edge("combiner_agent", "followup_node")
 
         workflow.add_conditional_edges(
             "survey_agent",
@@ -99,10 +102,10 @@ class LangGraph:
                 if state.get("survey_overflow")
                 else "survey_insight"
             ),
-            # {
-            #     "survey_data_overflow": "survey_data_overflow",
-            #     "survey_insight": "survey_insight",
-            # },
+            {
+                "survey_data_overflow": "survey_data_overflow",
+                "survey_insight": "survey_insight",
+            },
         )
 
         workflow.add_edge("gpr_agent", "gpr_insight")
@@ -110,18 +113,21 @@ class LangGraph:
         workflow.add_conditional_edges(
             "gpr_insight",
             check_if_gimmi_required,
-            {"gimmi_sqlagent_node": "gimmi_sqlagent_node", "end": END},
+            {"gimmi_sqlagent_node": "gimmi_sqlagent_node", "end": "followup_node"},
         )
 
         workflow.add_edge("gimmi_sqlagent_node", "gimmi_execute_sql")
         workflow.add_edge("gimmi_execute_sql", "gimmi_insight")
 
-        workflow.add_edge("survey_data_overflow", END)
-        workflow.add_edge("survey_insight", END)
+        workflow.add_edge("survey_data_overflow", "followup_node")
+        workflow.add_edge("survey_insight", "followup_node")
 
-        workflow.add_edge("fallback", END)
+        workflow.add_edge("fallback", "followup_node")
 
-        workflow.add_edge("gimmi_insight", END)
+        workflow.add_edge("gimmi_insight", "followup_node")
+
+        # Single terminal node: every route produces follow-up suggestions, then ends.
+        workflow.add_edge("followup_node", END)
 
         compile_kwargs = {}
         if self.checkpointer is not None:

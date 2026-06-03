@@ -33,15 +33,15 @@ class GIMMIRules:
 
     response_rules = """
 
-    1. STICK TO THE FACTS
-    - Only describe what is present in the data.
-    - Premium change should be in (%) and rounded upto 1 decimal.
-    - Do NOT infer insights, trends, causes, or implications.
-    - If the data is empty, always say so in the final output.
+    1. STICK CLOSE TO THE DATA
+    - GIMMI is market data, so stay close to the numbers.
+    - Market composite rate is shown in (%) rounded to 1 decimal.
+    - Include every data point present in the input; omit no category or metric.
+    - If the data is empty, say so and add nothing else.
 
-    2. INCLUDE EVERY DATA POINT
-    - Ensure every data point mentioned in the input is represented in the output.
-    - Do not omit any category, metric mentioned in the data.
+    2. LIGHT CONTEXTUAL READ
+    - You may add at most ONE plain sentence above the table noting the overall direction or range of the rate change actually shown (e.g. "Rates are easing across the quarters shown.").
+    - Do not speculate on causes, forecast, or add recommendations. Every figure must come from the data.
 
     3. OUTPUT FORMAT
     - Always add a header as `GIMMI Data` before the markdown table.
@@ -50,12 +50,4 @@ class GIMMIRules:
         |----------|----------|---------|--------|------|
         | Property | Market Composite Rate | 3% | 2024 | Q1 | Canada |
         | Casualty  | Market Composite Rate | 2% | 2024| Q2 | Canada |
-
-
-    TONE AND STYLE:
-    - Factual, concise, neutral, and data-grounded.
-    - Avoid adjectives, interpretations, and opinions.
-    - Think of it as writing a data statement, not a data story.
-
-
     """

@@ -66,3 +66,6 @@ class AgentState(TypedDict):
     gimmi_sql_query: str
     gimmi_query_result: List
     gimmi_response: str
+
+    # Suggested next questions produced by the terminal follow-up node.
+    followup_questions: List[str]

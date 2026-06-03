@@ -61,6 +61,50 @@ class PitchExtractedInsight(BaseModel):
     )
 
 
+class PitchNarrativeDevelopment(BaseModel):
+    """One strategically important development in the report's story spine."""
+
+    headline: str = Field(
+        description="One sharp sentence naming the development (e.g. 'Premium grew but Share of Portfolio concentrated in two products')."
+    )
+    theme: str = Field(
+        default="",
+        description="Short tag: premium, rank, share of portfolio, share of wallet, perception, whitespace, or peer.",
+    )
+    evidence: str = Field(
+        description="The specific grounded figures from the extracted insights that support this development. No invented numbers."
+    )
+    implication: str = Field(
+        default="",
+        description="Why it matters for the carrier (risk, opportunity, positioning). Grounded in the evidence only.",
+    )
+
+
+class PitchNarrativeArc(BaseModel):
+    """Reasoned 'story spine' built before the report prose is written.
+
+    Forces the model to decide what matters and why, grounded in the extracted
+    insights, so the final report reads as a coherent consultant narrative
+    rather than a metric dump.
+    """
+
+    through_line: str = Field(
+        description="The single overarching story of this carrier's position, in one sentence."
+    )
+    developments: list[PitchNarrativeDevelopment] = Field(
+        default_factory=list,
+        description="The 3-4 most strategically important developments, ranked by business importance.",
+    )
+    tensions: list[str] = Field(
+        default_factory=list,
+        description="Disconnects/contradictions the evidence reveals (e.g. premium up but broker perception down). Empty if none evidenced.",
+    )
+    whitespace: list[str] = Field(
+        default_factory=list,
+        description="Whitespace areas (carrier absent/insignificant where peers participate), only where evidenced. Empty otherwise.",
+    )
+
+
 class PitchTopKPIs(BaseModel):
     total_curr_premium: str = Field(
         default="",

@@ -1,14 +1,20 @@
 """Survey response node + insight/overflow callables wired into the graph."""
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
 
 import dspy
 
+from core.initialization import Initialization
+from core.observability import log_event
 from core.rules.survey import SurveyRules
 from core.schemas.survey import SurveyResponseSignature
-from core.skills import get_skill_loader
+from core.skills.loader import get_skill_loader
 from core.state.agent_state import AgentState
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class SurveyResponseNode(dspy.Module):
@@ -24,14 +30,19 @@ class SurveyResponseNode(dspy.Module):
 
         # Combine context into a single training/inference context
 
-        result = self.predictor(
-            rules=rules,
-            user_query=user_query,
-            query_plan=query_plan,
-            sql_output=sql_output,
-        )
+        with dspy.context(lm=Initialization.dspy_creative):
+            result = self.predictor(
+                rules=rules,
+                user_query=user_query,
+                query_plan=query_plan,
+                sql_output=sql_output,
+            )
 
         return result.response
+
+
+# Stateless module/predictor — instantiate once and reuse across turns.
+_SURVEY_RESPONSE_NODE = SurveyResponseNode()
 
 
 def survey_data_overflow(state: AgentState) -> AgentState:
@@ -41,12 +52,10 @@ def survey_data_overflow(state: AgentState) -> AgentState:
 
 
 def survey_data_overflow_route(state: AgentState):
-    print(f"Survey Overflow Value: {state['survey_overflow']}")
+    logger.debug("Survey overflow value: %s", state.get("survey_overflow"))
     if not state.get("survey_overflow", False):
-        print("Inside the survey_overflow Node!")
         "survey_insight"
     else:
-        print("Inside the Survey Response Node")
         "survey_data_overflow"
 
 
@@ -57,15 +66,20 @@ def survey_insight(state: AgentState) -> AgentState:
     skill_rules = get_skill_loader().response("survey", question)
     response_rules = skill_rules if skill_rules else SurveyRules.response_rules
 
-    responseNode = SurveyResponseNode()
-
-    survey_response = responseNode(
-        user_query=question,
-        query_plan=reasoning_plan,
-        rules=response_rules,
-        sql_output=query_output,
-    )
-
-    # state["survey_response"] = survey_response
+    try:
+        survey_response = _SURVEY_RESPONSE_NODE(
+            user_query=question,
+            query_plan=reasoning_plan,
+            rules=response_rules,
+            sql_output=query_output,
+        )
+    except Exception as exc:
+        log_event(
+            logger, "survey_insight_error", logging.ERROR, route="survey", error=str(exc)
+        )
+        survey_response = (
+            "I couldn't compose the survey analysis for this query. "
+            "Please try rephrasing or narrowing the filters."
+        )
 
     return {"survey_response": survey_response}

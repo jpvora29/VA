@@ -1,8 +1,11 @@
 /*
  * Animated placeholder for the chat input (#user-input).
- * Types and erases example questions until the user focuses or types.
- * The input is rendered asynchronously by a Dash callback, so we watch the
- * DOM with a MutationObserver and attach once the element appears.
+ * Types and erases example questions until the user engages — i.e. types into
+ * the field or sends a query (typed or via a suggestion chip). Once engaged it
+ * stops permanently and does not resume, even after Dash clears the input.
+ *
+ * The input is rendered asynchronously by a Dash callback, so we watch the DOM
+ * with a MutationObserver and attach once the element appears.
  *
  * Keep SAMPLES aligned with STARTER_SUGGESTIONS in ui/components/chatbot.py.
  */
@@ -17,10 +20,15 @@
     ];
 
     var PREFIX = "Try: ";
-    var TYPE_MS = 55;     // per-character typing speed
-    var ERASE_MS = 28;    // per-character erase speed
-    var HOLD_MS = 1700;   // pause once a full question is typed
+    var TYPE_MS = 55;      // per-character typing speed
+    var ERASE_MS = 28;     // per-character erase speed
+    var HOLD_MS = 1700;    // pause once a full question is typed
     var IDLE_PLACEHOLDER = "Ask anything";
+    var FOLLOWUP_PLACEHOLDER = "Ask a follow-up question…";
+
+    function conversationStarted() {
+        return !!document.querySelector(".user-message");
+    }
 
     function animate(input) {
         if (input.dataset.twInit === "1") {
@@ -31,12 +39,30 @@
         var sample = 0;
         var chars = 0;
         var deleting = false;
+        var running = true;
+
+        function stop() {
+            running = false;
+            input.setAttribute(
+                "placeholder",
+                conversationStarted() ? FOLLOWUP_PLACEHOLDER : IDLE_PLACEHOLDER
+            );
+        }
+
+        // Expose stop() so the DOM observer can halt the animation the instant a
+        // query is sent from a suggestion chip (no input/keydown event fires).
+        input._twStop = stop;
+
+        // Typing into the field engages and stops the animation for good.
+        input.addEventListener("input", stop);
 
         function tick() {
-            // Yield entirely to the user while the field is focused or has text.
-            if (document.activeElement === input || input.value) {
-                input.setAttribute("placeholder", IDLE_PLACEHOLDER);
-                setTimeout(tick, 500);
+            if (!running) {
+                return;
+            }
+            // A sent query (typed or chip) renders a .user-message — stop for good.
+            if (conversationStarted() || input.value) {
+                stop();
                 return;
             }
 
@@ -60,7 +86,7 @@
             }
 
             var text = full.slice(0, chars);
-            var cursor = deleting ? "" : "▋"; // ▋ blinking-style caret while typing
+            var cursor = deleting ? "" : "▋"; // caret while typing
             input.setAttribute("placeholder", PREFIX + text + cursor);
             setTimeout(tick, deleting ? ERASE_MS : TYPE_MS);
         }
@@ -70,8 +96,13 @@
 
     function findAndStart() {
         var input = document.getElementById("user-input");
-        if (input) {
-            animate(input);
+        if (!input) {
+            return;
+        }
+        animate(input);
+        // If the conversation has already started (e.g. chip click), halt now.
+        if (conversationStarted() && typeof input._twStop === "function") {
+            input._twStop();
         }
     }
 

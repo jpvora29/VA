@@ -12,7 +12,13 @@ router becomes a pure function.
 """
 from __future__ import annotations
 
+import logging
+
+from core.observability import log_event
 from core.state.agent_state import AgentState
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class RouterNode:
@@ -29,11 +35,20 @@ class RouterNode:
             # Defensive: should never happen because the graph wires
             # context_filler -> rephraser -> router. If it does, route to
             # fallback rather than crash the workflow.
-            print("Router: routing_context missing; defaulting to fallback")
+            log_event(
+                logger,
+                "route_selected",
+                logging.WARNING,
+                node="router",
+                table_family="fallback",
+                reason="routing_context missing",
+            )
             return {"current_route": "fallback"}
 
         table_family = routing_context.table_family
-        print(f"Router (deterministic): table_family={table_family}")
+        log_event(
+            logger, "route_selected", node="router", table_family=table_family
+        )
         return {"current_route": table_family}
 
     @staticmethod

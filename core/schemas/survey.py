@@ -23,80 +23,9 @@ class SurveyColumnSelectorAgent(BaseModel):
     )
 
 
-class SurveyQueryPlanner(BaseModel):
-    intent: str = Field(description="User's query intent")
-    metric: str = Field(description="Primary metric to calculate")
-    metric_definition: str = Field(description="How the metric is calculated")
-    steps: List[str] = Field(description="Step-by-step analytical plan")
-    table: List[str] = Field(description="List of correct table name from schema.")
-    filters: Dict[str, Any] = Field(description="Filter conditions as key-value pairs")
-    group_by: List[str] = Field(description="Columns to group by")
-    rules: List[str] = Field(
-        description="Business, query construction, multi-stage ranking rules to apply"
-    )
-    notes: Optional[str] = Field(
-        default="", description="Additional notes or considerations"
-    )
-
-
-class PlannerNodeSignature(dspy.Signature):
-    """
-    [ROLE]
-    You are an Analytical Reasoning & Planning Agent for the Insurance Domain.
-    Your task is to plan the exact analytical steps required to answer the user’s query using table schema and definitions — not write SQL.
-
-    [OBJECTIVE]
-    Convert a user query into a detailed reasoning plan describing:
-    - The metric or intent
-    - The step-by-step logic (like a recipe)
-    - All filters, group-bys, and derived steps.
-    - Any sub-queries or sequential calculations required.
-    - Special domain rules (see below)
-    """
-
-    context: str = dspy.InputField(
-        desc="All background info: rules, schema, definitions."
-    )
-    user_query: str = dspy.InputField(desc="User's natural language question or query")
-    # valid_values: Dict[str, Any] = dspy.InputField(desc="Valid list of column values to get precise filters, column names and context.")
-    plan: SurveyQueryPlanner = dspy.OutputField(
-        desc="Structured plan based on rulebook and domain logic"
-    )
-
-
-class SQLAgentNodeSignature(dspy.Signature):
-    """
-    [ROLE]
-    You are an SQL generation agent specialized in creating valid and efficient SQLite queries for insurance survey data.
-
-    [OBJECTIVE]
-    Your task:
-    Translate the reasoning_plan into a single valid SQLite query (or set of queries using sub-queries) that produces the desired result.
-
-    Only follow the logic exactly as described in the reasoning plan.
-    """
-
-    context: str = dspy.InputField(
-        desc="All background info: rules, schema, few shot examples."
-    )
-    user_query: str = dspy.InputField(desc="User's natural language question or query")
-    query_plan: str = dspy.InputField(
-        desc="Structured query plan to create the sql query"
-    )
-    sql_query: str = dspy.OutputField(
-        desc="SQL output for the user query with no codeblocks like ```sql```"
-    )
-
-
 class SurveySQLJoinChecker(BaseModel):
     updated_query: str = Field(
         description="The updated query post removing the join operation"
-    )
-
-
-class SurveyCheckSQLOutput(BaseModel):
-    updated_query: str = Field(
-        description="The updated error resolved SQL query corresponding to the user's natural language question."
     )
 
 

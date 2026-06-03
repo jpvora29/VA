@@ -3,14 +3,20 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+import logging
+
 import dspy
 
 from config.valid_values_config import *  # noqa: F401,F403 - preserves legacy globals (valid_year_quarter_gpr)
 from core.initialization import Initialization
+from core.observability import log_event
 from core.rules.gpr import GPRRules
 from core.schemas.gpr import GPRResponseSignature
-from core.skills import get_skill_loader
+from core.skills.loader import get_skill_loader
 from core.state.agent_state import AgentState
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class GPRResponseNode(dspy.Module):
@@ -31,15 +37,20 @@ class GPRResponseNode(dspy.Module):
 
         # Combine context into a single training/inference context
 
-        result = self.predictor(
-            rules=rules,
-            user_query=user_query,
-            query_plan=query_plan,
-            valid_year_quarter=valid_year_quarter,
-            sql_output=sql_output,
-        )
+        with dspy.context(lm=Initialization.dspy_creative):
+            result = self.predictor(
+                rules=rules,
+                user_query=user_query,
+                query_plan=query_plan,
+                valid_year_quarter=valid_year_quarter,
+                sql_output=sql_output,
+            )
 
         return result.response
+
+
+# Stateless module/predictor — instantiate once and reuse across turns.
+_GPR_RESPONSE_NODE = GPRResponseNode()
 
 
 def gpr_insight(state: AgentState) -> AgentState:
@@ -49,17 +60,22 @@ def gpr_insight(state: AgentState) -> AgentState:
     skill_rules = get_skill_loader().response("gpr", question)
     response_rules = skill_rules if skill_rules else GPRRules.response_rules
 
-    responseNode = GPRResponseNode()
-    gpr_response = responseNode(
-        user_query=question,
-        query_plan=reasoning_plan,
-        rules=response_rules,
-        valid_year_quarter=valid_year_quarter_gpr,
-        sql_output=query_output,
-    )
-
-    Initialization.log_prompt_cache_usage(response=gpr_response, label="gpr_insight")
-
-    # state['gpr_response'] = gpr_response
+    try:
+        gpr_response = _GPR_RESPONSE_NODE(
+            user_query=question,
+            query_plan=reasoning_plan,
+            rules=response_rules,
+            valid_year_quarter=valid_year_quarter_gpr,
+            sql_output=query_output,
+        )
+        Initialization.log_prompt_cache_usage(response=gpr_response, label="gpr_insight")
+    except Exception as exc:
+        log_event(
+            logger, "gpr_insight_error", logging.ERROR, route="premium", error=str(exc)
+        )
+        gpr_response = (
+            "I couldn't compose the premium analysis for this query. "
+            "Please try rephrasing or narrowing the filters."
+        )
 
     return {"gpr_response": gpr_response}

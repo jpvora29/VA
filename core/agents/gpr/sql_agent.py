@@ -1,47 +1,28 @@
-"""GPR SQL agent — turns the planner output into a SQLite query."""
+"""GPR SQL agent — thin flow wrapper over the shared `BaseSQLAgentNode`.
+
+Wires the GPR-specific schema slices and valid values; all generation logic lives in
+`core.agents.common.sql_agent` and `core.schemas.analytical.SQLAgentSignature`.
+"""
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-import dspy
+from core.agents.common.sql_agent import BaseSQLAgentNode
+from core.data.valid_values import GetValidData
 
-from core.schemas.gpr import GPRSQLAgentNodeSignature
 
-
-class GPRSQLAgentNode(dspy.Module):
-    # def __init__(self, carrier_schema: str, peer_schema: str, definitions: str, rules: str):
-
+class GPRSQLAgentNode(BaseSQLAgentNode):
     def __init__(
         self,
         gpr_schema: List[Dict[str, Any]],
         peer_schema: List[Dict[str, Any]],
         rules: str,
-        few_shot: List[dspy.Example] = None,
+        few_shot: Optional[List[Any]] = None,
     ) -> None:
-        super().__init__()
-        self.gpr_schema = gpr_schema
-        self.peer_schema = peer_schema
-        self.rules = rules
-        self.few_shot = few_shot
-        self.predictor = dspy.ChainOfThought(GPRSQLAgentNodeSignature)
-
-    def forward(self, user_query: str, query_plan: str, valid_year_quarter: List[str]):
-        # Combine context into a single training/inference context
-        context = (
-            f"GPR Schema:\n{self.gpr_schema}\n\n"
-            f"Peers Schema:\n{self.peer_schema}\n\n"
-            f"Rules:\n{self.rules}\n\n"
-            f"Few Shot Examples:\n{self.few_shot}\n"
+        super().__init__(
+            flow="gpr",
+            schema_tables={"GPR": gpr_schema, "Peers": peer_schema},
+            rules=rules,
+            valid_values=GetValidData.valid_values_gpr,
+            few_shot=few_shot,
         )
-
-        result = self.predictor(
-            context=context,
-            valid_year_quarter=valid_year_quarter,
-            user_query=user_query,
-            query_plan=query_plan,
-        )
-
-        # if isinstance(result.query, BaseModel):
-        #     return dict(result.plan)
-
-        return result.sql_query

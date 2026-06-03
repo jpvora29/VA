@@ -19,6 +19,9 @@ from langchain_core.messages import HumanMessage, RemoveMessage
 from core.initialization import Initialization
 from core.schemas.routing import RephaserNodeSignature, RoutingContext
 from core.state.agent_state import AgentState
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class RephraserAgentNode(dspy.Module):
@@ -39,8 +42,12 @@ class RephraserAgentNode(dspy.Module):
             construction_rules=construction_rules,
             current_user_query=current_user_query,
         )
-        print(f"Rephrased User Query: {result.rephrased_query}")
+        logger.debug("Rephrased user query: %s", result.rephrased_query)
         return result.rephrased_query
+
+
+# Stateless module/predictor — instantiate once and reuse across turns.
+_REPHRASER_NODE = RephraserAgentNode()
 
 
 class QueryRephraseAgent:
@@ -78,8 +85,7 @@ class QueryRephraseAgent:
         question = state["messages"][-1].content
         routing_context = state["routing_context"]
 
-        node = RephraserAgentNode()
-        rephrased_output = node(
+        rephrased_output = _REPHRASER_NODE(
             routing_context=routing_context,
             construction_rules=QueryRephraseAgent.construction_rules,
             current_user_query=question,
@@ -87,7 +93,7 @@ class QueryRephraseAgent:
         Initialization.log_prompt_cache_usage(rephrased_output, "rephraser_agent")
 
         last_msg = state["messages"][-1]
-        print(f"Original User Question: {question}")
+        logger.debug("Original user question: %s", question)
 
         return {
             "messages": [

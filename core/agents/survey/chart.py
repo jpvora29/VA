@@ -7,6 +7,9 @@ import dspy
 from pydantic import BaseModel
 
 from core.schemas.survey import SurveyChartSignature
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class SurveyChartNode(dspy.Module):
@@ -19,15 +22,12 @@ class SurveyChartNode(dspy.Module):
 
     def forward(self, user_query: str, sql_output: List[Dict[str, Any]]):
 
-        # Combine context into a single training/inference context
-        # print("Conetxttxtxtx", context)
-
         result = self.predictor(
             chart_creation_rules=self.chart_creation_rules,
             user_query=user_query,
             sql_output=sql_output,
         )
-        print("Survey Chart Reasoning", result)
+        logger.debug("Survey chart reasoning: %s", result)
 
         if isinstance(result.chart_data, BaseModel):
             return dict(result.chart_data)

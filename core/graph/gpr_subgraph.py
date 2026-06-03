@@ -1,6 +1,7 @@
 """GPR LangGraph subgraph: normalizer → planner → SQL → execute (+ fixer loop)."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 
@@ -9,6 +10,12 @@ from langgraph.graph import END, START, StateGraph
 from sqlalchemy.sql import text
 
 from config.valid_values_config import *  # noqa: F401,F403 - preserves legacy globals (valid_year_quarter_gpr)
+from core.agents.common import (
+    BaseSQLFixerNode,
+    annotate_plan_notes,
+    assert_read_only,
+    dry_run_explain,
+)
 from core.agents.gpr.chart import GPRChartNode
 from core.agents.gpr.planner import GPRPlannerNode
 from core.agents.gpr.sql_agent import GPRSQLAgentNode
@@ -19,12 +26,11 @@ from core.observability import latency_timer, log_event, sql_metadata
 from core.rules.gpr import GPRRules
 from core.rules.gpr_chart import GPRChartRules
 from core.schemas.gpr import (
-    GPRCheckSQLOutput,
     GPRColumnSelectorAgent,
     GPRQueryNormalizer,
     GPRSQLJoinChecker,
 )
-from core.skills import get_skill_loader
+from core.skills.loader import get_skill_loader
 from core.state.agent_state import AgentState
 from logger import get_logger
 
@@ -119,7 +125,7 @@ class GPRSubGraph:
         last_msg = state["messages"][-1]
         # state["messages"][-1] = HumanMessage(response.normalized_query)
 
-        print(f"Normalized User Question: {response.normalized_query}")
+        logger.debug("GPR normalized question: %s", response.normalized_query)
 
         return {
             "messages": [
@@ -172,7 +178,7 @@ class GPRSubGraph:
 
         # state["gpr_cols"] = response.columns
 
-        print(f"Selected columns are: {response.columns}")
+        logger.debug("GPR selected columns: %s", response.columns)
 
         return {"gpr_cols": response.columns}
 
@@ -196,21 +202,31 @@ class GPRSubGraph:
         planner_node = GPRPlannerNode(
             gpr_schema=gpr_schema,
             peers_schema=peers_schema,
-            definitions=GetValidData.definitions_gpr,
             rules=planner_rules,
         )
 
         query_plan = planner_node(
-            user_query=question, valid_year_quarter=valid_year_quarter_gpr
+            user_query=question,
+            routing_context=state.get("routing_context"),
+            valid_year_quarter=valid_year_quarter_gpr,
         )
 
         Initialization.log_prompt_cache_usage(
             response=query_plan, label="gpr_planner_node"
         )
 
+        # Deterministic, advisory grounding check: annotate (never block) the plan with
+        # any tables/columns/filter values not present in the schema / valid values.
+        query_plan = annotate_plan_notes(
+            query_plan,
+            schema_tables={"GPR": gpr_schema, "Peers": peers_schema},
+            valid_values=GetValidData.valid_values_gpr,
+            flow="gpr",
+        )
+
         # state["gpr_reasoning"] = query_plan
 
-        print(f"Reasoning Plan for GPR Data: {query_plan}")
+        logger.debug("GPR reasoning plan: %s", query_plan)
 
         return {"gpr_reasoning": query_plan}
 
@@ -252,7 +268,7 @@ class GPRSubGraph:
 
         # state["gpr_sql_query"] = sql_query_output
 
-        print(f"SQL Query For GPR Data: {sql_query_output}")
+        logger.debug("GPR SQL query: %s", sql_query_output)
 
         return {"gpr_sql_query": sql_query_output}
 
@@ -270,13 +286,36 @@ class GPRSubGraph:
             sql=sql_metadata(sql_query),
         )
         timing = {}
+
+        # Deterministic pre-execution validation: a read-only guard plus a schema-aware
+        # EXPLAIN dry run. Failures route to the fixer with a richer error instead of
+        # 500-ing on the real query.
+        validation_error = assert_read_only(sql_query) or dry_run_explain(
+            session, sql_query
+        )
+        if validation_error:
+            log_event(
+                logger,
+                "sql_validation_error",
+                logging.WARNING,
+                route="premium",
+                node="gpr_execute_sql",
+                sql=sql_metadata(sql_query),
+                error=validation_error,
+            )
+            session.close()
+            return {
+                "gpr_query_result": f"Error executing SQL query: {validation_error}",
+                "gpr_sql_error": True,
+            }
+
         try:
             with latency_timer() as timing:
                 result = session.execute(text(sql_query))
                 rows = result.fetchall()
                 columns = result.keys()
 
-            print(f" Fetched Rows are :\n {rows}")
+            logger.debug("GPR query fetched %d row(s)", len(rows))
 
             if rows:
                 header = ", ".join(columns)
@@ -363,113 +402,62 @@ class GPRSubGraph:
             response=response, label="gpr_sql_join_rewriter"
         )
 
-        # print(f"SQL Join Rewriting for: {state['messages'][-1]}")
-
         # state["gpr_sql_query"] = response.updated_query
 
-        print(f"Updated Without Join Query: {response.updated_query}")
+        logger.debug("GPR join-rewritten query: %s", response.updated_query)
 
         return {"gpr_sql_query": response.updated_query}
 
     def gpr_sql_fixer_agent(state: AgentState) -> AgentState:
         sql_query = state["gpr_sql_query"].strip()
-        # question = state['question']
         question = state["messages"][-1].content
         error_message = state["gpr_query_result"]
-
-        print(f"Error message: {error_message}")
 
         schema = GeneralFunctions.get_database_schema(engine=Initialization.engine)
         gpr_schema = schema.get("GPR", [])
         peer_schema = schema.get("Peers", [])
 
-        system_prompt = """
-        You are a SQL Error Fixer Agent.
-
-        [R – Role]
-        You act as a SQL expert who diagnoses errors in SQL queries and fixes them.
-        You understand schemas, valid values, and typical SQL syntax errors.
-
-        [E – Explicitness]
-        - Input includes: user query, schema, definition (GPR table columns), SQL query, error message, valid list of column values.
-        - Your task: identify the cause of the error and return a corrected SQL query.
-        - Never invent new filters or columns outside the schema.
-        - Always ensure case-insensitivity for values (normalize them to valid ones).
-
-        [A – Approach]
-        1. Read the provided SQL query and error message.
-        2. Compare the query with the schema and valid values.
-        3. Identify the likely cause of the error (missing column, wrong alias, syntax issue, invalid filter, etc.).
-        4. Fix the query step by step, ensuring it adheres to schema and business rules.
-        5. Test mentally if the fixed query would avoid the error.
-
-        [S – Scaffolding]
-        Examples:
-        - Error: “no such column: CarrierNme”
-        Fix: Correct typo → `CarrierName`.
-
-        - Error: “near ‘union’: syntax error”
-        Fix: Ensure `ORDER BY` appears after `UNION ALL`.
-
-        - Error: “no such table: PeerScores”
-        Fix: Replace with correct table `Peers`.
-
-        [O – Output Format]
-        - Always return JSON
-        - Example:
-        `{"SELECT Carrier, AVG(Score) FROM Carriers WHERE Country='Canada' GROUP BY CarrierName" }`
-
-        [N – Nuances]
-        - Apply fuzzy matching for column/value names (e.g., “Chub” → “Chubb”).
-        - If peer average is mentioned, apply rules:
-        - Use `Peers` table, get Peers list for Carrier, Country, Product combination, then apply filters in Carriers table.
-        - Avoid unnecessary joins unless explicitly needed.
-        - If unsure, choose the safest correction aligned with schema.
-        - Do not output reasoning or explanation text—only the corrected SQL query inside JSON.
-        - Always use `Carrier_Group` column instead of `Carrier_Name`.
-        """
-
-        human_message = f"""
-        Usery Query: {question}
-        GPR Schema: {gpr_schema}
-        Peer Schema: {peer_schema}
-        SQL Query: {sql_query}
-        Error Message: {error_message}
-        Valid Values:{GetValidData.valid_values_gpr}
-        """
-
-        print(f"Fixing the original query: {question}")
-
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=human_message),
-        ]
-
-        structured_llm = Initialization.llm.with_structured_output(GPRCheckSQLOutput)
-        corrected_response = structured_llm.invoke(messages)
-
-        Initialization.log_prompt_cache_usage(
-            response=corrected_response, label="gpr_sql_fixer_agent"
+        log_event(
+            logger,
+            "sql_fix_attempt",
+            route="premium",
+            node="gpr_sql_fixer_agent",
+            sql=sql_metadata(sql_query),
+            error=str(error_message),
         )
 
-        # state["gpr_sql_query"] = corrected_response.updated_query
-        # # print(f"Total Attempts for far: {state['attempts']}")
-        # state["gpr_attempts"] += 1
+        fixer = BaseSQLFixerNode(
+            flow="gpr",
+            extra_rules="- Always use the `Carrier_Group` column instead of `Carrier_Name`.",
+        )
+        corrected_query = fixer.fix(
+            user_query=question,
+            schema_tables={"GPR": gpr_schema},
+            peer_schema=peer_schema,
+            sql_query=sql_query,
+            error_message=error_message,
+            valid_values=GetValidData.valid_values_gpr,
+            definitions=GetValidData.definitions_gpr,
+        )
 
-        return {"gpr_sql_query": corrected_response.updated_query, "gpr_attempts": 1}
+        return {"gpr_sql_query": corrected_query, "gpr_attempts": 1}
 
     def gpr_check_if_join_required_router(state: AgentState) -> AgentState:
-        print("Check Join Router")
         if re.search(r"(?i)join", state["gpr_sql_query"]):
-            print("gpr_sql_join_rewriter\n")
+            logger.debug("GPR join router -> gpr_sql_join_rewriter")
             return "gpr_sql_join_rewriter"
-        else:
-            print("gpr_execute_sql\n")
-            return "gpr_execute_sql"
+        logger.debug("GPR join router -> gpr_execute_sql")
+        return "gpr_execute_sql"
 
     def gpr_end_max_iterations(state: AgentState) -> AgentState:
         # state["gpr_query_result"] = "Please try again !"
-        print("Maximum attempts reached. Ending the workflow.")
+        log_event(
+            logger,
+            "sql_fix_max_attempts",
+            logging.WARNING,
+            route="premium",
+            node="gpr_end_max_iterations",
+        )
         return {"gpr_query_result": "Please try again later !"}
 
     def gpr_check_attempts_router(state: AgentState):
@@ -496,7 +484,7 @@ class GPRSubGraph:
 
         # survey_query_output_updated = GeneralFunctions.reshape_for_chart(survey_query_output)
         gpr_query_output_updated = gpr_query_output
-        print("GPR Sql Output", gpr_query_output_updated)
+        logger.debug("GPR chart input rows: %s", gpr_query_output_updated)
         skill_rules = get_skill_loader().chart("gpr", question)
         chart_rules = skill_rules if skill_rules else GPRChartRules.chart_creation_rules
         log_event(
@@ -513,7 +501,7 @@ class GPRSubGraph:
         gpr_chart_data = gpr_chart_creation_agent(
             user_query=question, sql_output=gpr_query_output_updated
         )
-        print("GPR Chart Data", gpr_chart_data)
+        logger.debug("GPR chart data: %s", gpr_chart_data)
         # state['gpr_chart'] = gpr_chart_data
 
         # return state

@@ -123,7 +123,6 @@ def distinct_pitch_carriers(country):
             for table_name in _available_pitch_tables():
                 columns = PITCH_COLUMN_MAP[table_name]
                 column = columns["carrier"]
-                print(country)
                 rows = conn.execute(
                     text(
                         f'SELECT DISTINCT "{column}" AS value FROM "{table_name}" WHERE "{column}" IS NOT NULL AND LOWER("{columns["country"]}") = LOWER(:country) '

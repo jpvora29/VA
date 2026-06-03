@@ -13,7 +13,7 @@ from core.initialization import Initialization
 from core.observability import latency_timer, log_event, sql_metadata
 from core.rules.gimmi import GIMMIRules
 from core.schemas.gimmi import GIMMISQLAgentSignature
-from core.skills import get_skill_loader
+from core.skills.loader import get_skill_loader
 from core.state.agent_state import AgentState
 from logger import get_logger
 
@@ -97,7 +97,7 @@ def gimmi_execute_sql(state: AgentState) -> AgentState:
         if rows:
             header = ", ".join(columns)
             query_result = [dict(zip(columns, row)) for row in rows]
-            print(f"Raw SQL Query Result: {query_result}")
+            logger.debug("GIMMI query fetched %d row(s)", len(query_result))
 
         else:
             query_result = []
