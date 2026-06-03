@@ -15,11 +15,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel
 
+from core.analysis import plan_analysis
 from core.graph.checkpointer import build_pitch_checkpointer, checkpoint_config
 from core.graph.pitch_question_graph import PitchQuestionGraph
 from core.initialization import Initialization
 from core.observability import log_event
 from core.schemas.pitch import PitchExtractedInsight, PitchNarrativeArc, PitchTopKPIs
+from core.schemas.routing import RoutingContext
 from core.skills.loader import get_skill_loader
 from core.state.pitch_state import PitchAgentState, PitchQuestionResult
 from logger import get_logger
@@ -870,10 +872,72 @@ class PitchBuilderWorkflow:
         state["pitch_top_kpis"] = top_kpis
         return state
 
+    def generate_pitch_questions(self, state: PitchAgentState) -> PitchAgentState:
+        """Build the derived analytical battery for the report via the lens planner.
+
+        In "comprehensive" mode the planner expands the carrier/country/year
+        filters into the full set of relevant derived analyses (market, peer,
+        trend, product/industry mix, whitespace, opportunity, contradictions).
+        Each becomes a pitch question answered multi-step by the analyst agent.
+        Manually supplied questions are appended after the derived battery.
+        """
+        filters = state.get("pitch_filters") or {}
+        carrier = filters.get("carrier")
+        country = filters.get("country")
+        year = filters.get("year")
+        manual = [q.strip() for q in (state.get("pitch_questions") or []) if (q or "").strip()]
+
+        slice_text = " ".join(
+            part
+            for part in [
+                f"for {carrier}" if carrier else "",
+                f"in {country}" if country else "",
+                f"for year {year}" if year else "",
+            ]
+            if part
+        ).strip()
+        seed_query = (
+            f"Comprehensive performance pitch {slice_text}. Assess premium and "
+            "growth, market position versus the Marsh book, peer benchmark, "
+            "product and industry mix, whitespace and growth opportunities, and "
+            "any perception-versus-financial tensions."
+        )
+
+        routing_context = RoutingContext(
+            table_family="both",
+            inherited_carrier=carrier,
+            inherited_country=country,
+            inherited_year=str(year) if year else None,
+            intent_type="new_question",
+            analysis_depth="analytical",
+        )
+
+        plan = plan_analysis(seed_query, routing_context, mode="comprehensive")
+        derived = [
+            d.sub_question.strip() for d in plan.derived if (d.sub_question or "").strip()
+        ]
+
+        questions = derived + [q for q in manual if q not in derived]
+        if not questions:
+            questions = manual or [seed_query]
+
+        log_event(
+            logger,
+            "pitch_questions_generated",
+            node="generate_pitch_questions",
+            derived=len(derived),
+            manual=len(manual),
+            total=len(questions),
+        )
+        state["pitch_questions"] = questions
+        return state
+
     def create_workflow(self):
         workflow = StateGraph(PitchAgentState)
+        workflow.add_node("generate_pitch_questions", self.generate_pitch_questions)
         workflow.add_node("generate_pitch_answers", self.generate_answers)
-        workflow.add_edge(START, "generate_pitch_answers")
+        workflow.add_edge(START, "generate_pitch_questions")
+        workflow.add_edge("generate_pitch_questions", "generate_pitch_answers")
         workflow.add_edge("generate_pitch_answers", END)
         return workflow.compile(checkpointer=self.checkpointer)
 

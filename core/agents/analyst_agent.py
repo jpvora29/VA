@@ -1,0 +1,297 @@
+"""Bounded proactive analyst agent (hybrid rails + agent).
+
+For interpretive / multi-step / "both" queries, this node:
+
+  1. Asks the lens planner (`core.analysis.plan_analysis`) which complementary
+     analytical lenses add value and in what order.
+  2. Runs a bounded ReAct loop (`langgraph.prebuilt.create_react_agent`) with a
+     READ-ONLY tool allowlist (all backed by `core.mcp.tools`) and a hard
+     iteration cap, following the lens bodies + always-on analyst principles.
+  3. Writes the synthesized answer + evidence rows into the same AgentState
+     fields the UI and follow-up node already read for `current_route`, so no
+     downstream node or UI code changes.
+
+Lookups never reach here — the router keeps those on the cheap deterministic
+subgraphs. The agent only ever reads data; writes/DDL are rejected server-side
+by `execute_sql`.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any, Dict, List
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+
+from core.analysis import get_lens_library, plan_analysis
+from core.initialization import Initialization
+from core.mcp.tools import (
+    execute_sql,
+    get_distinct_values,
+    get_schema,
+    get_valid_values,
+    match_column_values,
+)
+from core.observability import latency_timer, log_event
+from core.rules.gpr import GPRRules
+from core.rules.survey import SurveyRules
+from core.skills.loader import get_skill_loader
+from core.state.agent_state import AgentState
+from logger import get_logger
+
+logger = get_logger(__name__)
+
+# Legacy rule fallbacks per flow: (planner_rules, query_rules) — the exact
+# bundles the deterministic subgraph nodes fall back to when no skill matches.
+_LEGACY_RULES = {
+    "gpr": (GPRRules.planner_rules, GPRRules.query_rules),
+    "survey": (SurveyRules.planner_rules, SurveyRules.query_rules),
+}
+
+# Super-step budget for the ReAct loop. Each tool round is ~2 steps, so this
+# allows roughly 9-10 tool calls before the loop is force-stopped.
+_RECURSION_LIMIT = 20
+
+# Rows returned to the model per tool call (keeps the context bounded); the full
+# rows are still captured as evidence for the UI table.
+_TOOL_ROW_PREVIEW = 50
+
+# current_route -> the flow the agent should reason over by default.
+_FLOW_BY_ROUTE = {"survey": "survey", "premium": "gpr", "both": "gpr"}
+
+
+def _build_tools(evidence: List[Dict[str, Any]]):
+    """Read-only LangChain tools for the agent; `evidence` collects executed rows."""
+
+    @tool
+    def run_sql(flow: str, sql: str) -> str:
+        """Execute a single read-only SELECT and return JSON rows.
+
+        `flow` is one of "survey", "gpr", "gimmi" (which table family to query).
+        Returns a JSON object {row_count, rows}. Write/DDL statements are
+        rejected. On failure returns a string starting with "ERROR:" — read it,
+        fix the SQL, and retry.
+        """
+        result = execute_sql(flow, sql)
+        if result.error:
+            return f"ERROR: {result.error}"
+        evidence.append({"flow": flow, "sql": sql, "rows": result.rows})
+        return json.dumps(
+            {"row_count": result.row_count, "rows": result.rows[:_TOOL_ROW_PREVIEW]},
+            default=str,
+        )
+
+    @tool
+    def resolve_value(flow: str, column: str, term: str) -> str:
+        """Fuzzy-match a loose term to the exact valid values of a column.
+
+        Use BEFORE filtering on dimensions like SIC_Major_Class (industry),
+        SIC_Minor_Class, Product_Line, Business_Line, Cover_Line, Client_Segment,
+        Region, or survey Sections / Attributes. Returns a JSON list of matches.
+        """
+        return json.dumps(match_column_values(flow, column, term), default=str)
+
+    @tool
+    def list_values(flow: str, column: str) -> str:
+        """List the distinct valid values of a column (e.g. all industries)."""
+        return json.dumps(get_distinct_values(flow, column), default=str)
+
+    @tool
+    def show_valid_values(flow: str) -> str:
+        """Return the precomputed valid column values for a flow."""
+        return json.dumps(get_valid_values(flow), default=str)
+
+    return [run_sql, resolve_value, list_values, show_valid_values]
+
+
+def _domain_rules(route: str, primary_flow: str, trigger_text: str) -> str:
+    """Domain planning + SQL-construction rules, from the SAME source the rails use.
+
+    Uses the skill loader (scopes "planner" + "sql"), falling back to the legacy
+    `core.rules.*` bundles when no skill matches — identical to the subgraph
+    nodes. For a "both" route we load both flows so the agent has each family's
+    rules. `trigger_text` is the question plus every derived sub-question, so a
+    skill triggered by any step in the battery is included (not just the
+    top-level phrasing).
+    """
+    loader = get_skill_loader()
+    flows = ["gpr", "survey"] if route == "both" else [primary_flow]
+    blocks: List[str] = []
+    for flow in flows:
+        if flow not in _LEGACY_RULES:  # gimmi handles its own rules elsewhere
+            continue
+        legacy_planner, legacy_sql = _LEGACY_RULES[flow]
+        planner_rules = loader.planner(flow, trigger_text) or legacy_planner
+        sql_rules = loader.sql(flow, trigger_text) or legacy_sql
+        blocks.append(
+            f"### {flow.upper()} — planning rules\n{planner_rules}\n\n"
+            f"### {flow.upper()} — SQL construction rules\n{sql_rules}"
+        )
+    return "\n\n".join(blocks)
+
+
+def _system_prompt(question: str, route: str, flow: str, plan) -> str:
+    library = get_lens_library()
+    lens_names: List[str] = []
+    for derived in plan.derived:
+        if derived.lens not in lens_names:
+            lens_names.append(derived.lens)
+    lens_bodies = library.bodies(lens_names) or "(no specific lenses selected)"
+
+    if plan.derived:
+        steps = "\n".join(
+            f"{i}. [{d.lens}] {d.sub_question}"
+            + (f"  (depends on step(s) {d.depends_on})" if d.depends_on else "")
+            for i, d in enumerate(plan.derived)
+        )
+        focus = plan.synthesis_focus or "Lead with the user's literal question."
+    else:
+        steps = (
+            "0. Answer the user's literal question.\n"
+            "1. Add the most relevant context (market, trend, peer) the data supports."
+        )
+        focus = "Answer the question, then add the context a good analyst would."
+
+    schema = json.dumps(get_schema(flow), default=str)
+
+    # Enrich the skill-trigger text with every derived sub-question so skills
+    # needed by any step of the analysis are matched, not just the top question.
+    trigger_text = " ".join(
+        [question] + [d.sub_question for d in plan.derived if d.sub_question]
+    )
+    domain_rules = _domain_rules(route, flow, trigger_text)
+
+    return f"""You are a proactive insurance strategy analyst. Answer the user's
+question and proactively add the context a good analyst would bring — going
+beyond the literal ask where the data supports it.
+
+[ANALYST PRINCIPLES]
+{library.principles()}
+
+[YOUR PLAN — execute these derived analyses in order, respecting dependencies]
+{steps}
+
+Synthesis focus: {focus}
+
+[LENSES TO APPLY — follow these SQL shapes and interpretations]
+{lens_bodies}
+
+[PRIMARY FLOW] {flow}  (route="{route}"). Use run_sql with this flow for the
+main analysis; for a "both" route you may also query flow="survey" for the
+perception lens. The GPR table IS Marsh's book of business (the market proxy).
+
+[SCHEMA for flow="{flow}"]
+{schema}
+
+[DOMAIN RULES — the same business + SQL-construction rules the deterministic
+path uses. Follow these when building queries: Carrier_Group handling, peer
+averages via the Peers table, Share-of-Wallet / appetite math, Marsh premium,
+rolling-12M, ranking, confidentiality, etc.]
+{domain_rules}
+
+[RULES]
+- Use run_sql for ALL data. Never state a number you did not retrieve.
+- Before filtering on a dimension value (industry, product, cover line, etc.),
+  call resolve_value to map the user's wording to an exact valid value.
+- Keep each query focused; build dependent queries from earlier results.
+- Stay within ~9 tool calls. If a query errors, read the ERROR and fix it.
+- When done, write ONE synthesized narrative answer (no JSON, no tool dumps)
+  that leads with the literal answer, then layers in the contextual findings.
+  Only assert what the evidence supports; never fabricate.
+
+[USER QUESTION]
+{question}"""
+
+
+# Module-level so the underlying model/client is reused across turns.
+_MODEL = None
+
+
+def _model():
+    global _MODEL
+    if _MODEL is None:
+        _MODEL = Initialization.llm
+    return _MODEL
+
+
+def analyst_agent_node(state: AgentState) -> AgentState:
+    """Plan lenses, run the bounded tool-calling loop, map results onto state."""
+    route = (state.get("current_route") or "both").lower()
+    flow = _FLOW_BY_ROUTE.get(route, "gpr")
+    question = state["messages"][-1].content
+    routing_context = state.get("routing_context")
+
+    plan = plan_analysis(question, routing_context, mode="chat")
+    log_event(
+        logger,
+        "analysis_planned",
+        node="analyst_agent",
+        route=route,
+        flow=flow,
+        lenses=[d.lens for d in plan.derived],
+        derived_count=len(plan.derived),
+    )
+
+    evidence: List[Dict[str, Any]] = []
+    tools = _build_tools(evidence)
+    agent = create_react_agent(_model(), tools)
+    system_prompt = _system_prompt(question, route, flow, plan)
+
+    answer = ""
+    with latency_timer() as timing:
+        try:
+            result = agent.invoke(
+                {
+                    "messages": [
+                        SystemMessage(content=system_prompt),
+                        HumanMessage(content=question),
+                    ]
+                },
+                config={"recursion_limit": _RECURSION_LIMIT},
+            )
+            answer = (result["messages"][-1].content or "").strip()
+        except Exception as exc:  # noqa: BLE001 - never crash the turn
+            log_event(
+                logger,
+                "analyst_agent_error",
+                logging.ERROR,
+                node="analyst_agent",
+                route=route,
+                error=str(exc),
+            )
+
+    log_event(
+        logger,
+        "analyst_agent_done",
+        node="analyst_agent",
+        route=route,
+        tool_calls=len(evidence),
+        answered=bool(answer),
+        duration_ms=timing.get("duration_ms"),
+    )
+
+    if not answer:
+        # Graceful fallback so the UI still renders something for the route.
+        answer = (
+            "I couldn't complete the analysis for this question. "
+            "Please try rephrasing or narrowing it."
+        )
+
+    def _rows_for(target_flow: str) -> List[Any]:
+        for item in evidence:
+            if item["flow"] == target_flow and item["rows"]:
+                return item["rows"]
+        return []
+
+    if route == "survey":
+        return {"survey_response": answer, "survey_query_result": _rows_for("survey")}
+    if route == "both":
+        return {
+            "combined_response": answer,
+            "survey_query_result": _rows_for("survey"),
+            "gpr_query_result": _rows_for("gpr"),
+        }
+    # premium (and any default)
+    return {"gpr_response": answer, "gpr_query_result": _rows_for("gpr")}

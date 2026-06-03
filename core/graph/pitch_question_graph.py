@@ -11,6 +11,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from core.agents.analyst_agent import analyst_agent_node
 from core.agents.context_filler import ContextFillingAgent
 from core.agents.fallback import Fallback
 from core.agents.gimmi.response import check_if_gimmi_required, gimmi_insight
@@ -51,6 +52,7 @@ class PitchQuestionGraph:
         self.survey_agent = SurveySubGraph().SurveyAgent
         self.gpr_agent = GPRSubGraph().GPRAgent
         self.combiner_agent = CombinerGraph().CombinerAgent
+        self.analyst_agent = analyst_agent_node
         self.fallback = Fallback().fallback
         self.survey_data_overflow = survey_data_overflow
         self.survey_insight = survey_insight
@@ -68,6 +70,7 @@ class PitchQuestionGraph:
         workflow.add_node("survey_agent", self.survey_agent)
         workflow.add_node("gpr_agent", self.gpr_agent)
         workflow.add_node("combiner_agent", self.combiner_agent)
+        workflow.add_node("analyst_agent", self.analyst_agent)
         workflow.add_node("fallback", self.fallback)
         workflow.add_node("survey_data_overflow", self.survey_data_overflow)
         workflow.add_node("survey_insight", self.survey_insight)
@@ -87,11 +90,15 @@ class PitchQuestionGraph:
                 "survey_agent": "survey_agent",
                 "gpr_agent": "gpr_agent",
                 "combiner_agent": "combiner_agent",
+                "analyst_agent": "analyst_agent",
                 "fallback": "fallback",
             },
         )
 
         workflow.add_edge("combiner_agent", END)
+        # Analytical pitch questions take the proactive analyst agent, which
+        # writes its answer + evidence into the route's state fields, then ends.
+        workflow.add_edge("analyst_agent", END)
 
         workflow.add_conditional_edges(
             "survey_agent",

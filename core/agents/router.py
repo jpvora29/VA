@@ -54,6 +54,17 @@ class RouterNode:
     @staticmethod
     def relevance_router(state: AgentState) -> str:
         current_route = (state.get("current_route") or "").lower()
+        if current_route == "fallback":
+            return "fallback"
+
+        # Hybrid dispatch: interpretive / multi-step queries take the bounded
+        # analyst agent (plan lenses -> tool-calling loop -> synthesize). Simple
+        # factual lookups stay on the cheap deterministic rails.
+        routing_context = state.get("routing_context")
+        depth = getattr(routing_context, "analysis_depth", "lookup")
+        if depth == "analytical" and current_route in {"survey", "premium", "both"}:
+            return "analyst_agent"
+
         if current_route == "survey":
             return "survey_agent"
         elif current_route == "premium":

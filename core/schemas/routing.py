@@ -76,6 +76,18 @@ class RoutingContext(BaseModel):
             "MAX(Billing_Date)'. Empty when no relative time term is present."
         ),
     )
+    analysis_depth: Literal["lookup", "analytical"] = Field(
+        default="lookup",
+        description=(
+            "How much analytical depth the query needs. 'lookup': a direct "
+            "factual value retrieval answerable by a single query (e.g. 'what is "
+            "Zurich's premium in Canada in 2024?', 'Zurich's NPS?'). 'analytical': "
+            "any interpretive / multi-step / comparative question that benefits "
+            "from context — compare, trend, why, performance, positioning, "
+            "'how is X doing', breakdowns across a dimension, or any 'both' "
+            "(HYBRID) query. Default to 'lookup' only for clear single-value asks."
+        ),
+    )
     intent_type: Literal[
         "new_question", "followup", "drilldown", "topic_switch"
     ] = Field(
@@ -135,6 +147,18 @@ class ContextFillerSignature(dspy.Signature):
        i.   If the same query contains an exclusive term -> use that family.
        ii.  Else if prior user turn clearly targeted one family -> inherit it.
        iii. Else -> both (HYBRID).
+
+    [ANALYSIS DEPTH — analysis_depth]
+    Classify how much depth the query needs:
+      - "lookup": a single concrete value the user named explicitly — a metric
+        for a specific carrier/slice/period with no comparison or reasoning
+        ("Zurich's premium in Canada 2024?", "AXA's NPS?"). Stays on the fast
+        deterministic path.
+      - "analytical": anything interpretive or multi-step — compare, rank,
+        trend, growth, "why", "how is X performing/positioned", "analyse",
+        breakdowns ("by product/industry/segment"), whitespace/opportunity, or
+        ANY table_family == "both" (HYBRID) query. These get the proactive
+        analyst agent. When unsure between the two, prefer "analytical".
 
     [INHERITANCE POLICY]
     - P0: Always begin with the current user query.
