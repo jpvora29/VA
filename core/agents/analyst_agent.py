@@ -29,6 +29,7 @@ from core.analysis import get_lens_library, plan_analysis
 from core.initialization import Initialization
 from core.mcp.tools import (
     execute_sql,
+    fix_sql,
     get_distinct_values,
     get_schema,
     get_valid_values,
@@ -58,11 +59,50 @@ _RECURSION_LIMIT = 20
 # rows are still captured as evidence for the UI table.
 _TOOL_ROW_PREVIEW = 50
 
+# How many times run_sql will auto-repair + re-run a failing query before giving
+# up. Mirrors the deterministic subgraphs' 3-attempt SQL-fixer loop so the agent
+# path is just as resilient to a malformed first query.
+_SQL_MAX_ATTEMPTS = 3
+
+# Per-flow nudges handed to the SQL fixer, matching the deterministic nodes.
+_FIXER_EXTRA_RULES = {
+    "gpr": "- Always use the `Carrier_Group` column instead of `Carrier_Name`.",
+}
+
 # current_route -> the flow the agent should reason over by default.
 _FLOW_BY_ROUTE = {"survey": "survey", "premium": "gpr", "both": "gpr"}
 
 
-def _build_tools(evidence: List[Dict[str, Any]]):
+def _autofix_sql(flow: str, question: str, sql: str, error: str) -> str | None:
+    """Best-effort repair of a failing query via the shared LLM SQL fixer.
+
+    Returns the corrected SQL, or None if the fixer itself errors (in which case
+    the caller simply re-runs the previous SQL — covering transient DB errors).
+    """
+    try:
+        schema_tables = get_schema(flow)  # e.g. {"GPR": [...], "Peers": [...]}
+        return fix_sql(
+            flow,
+            user_query=question,
+            schema_tables=schema_tables,
+            peer_schema=schema_tables.get("Peers", []),
+            sql_query=sql,
+            error_message=error,
+            extra_rules=_FIXER_EXTRA_RULES.get(flow, ""),
+        )
+    except Exception as exc:  # noqa: BLE001 - never let a fix attempt crash the turn
+        log_event(
+            logger,
+            "run_sql_autofix_error",
+            logging.ERROR,
+            node="analyst_agent",
+            flow=flow,
+            error=str(exc),
+        )
+        return None
+
+
+def _build_tools(evidence: List[Dict[str, Any]], question: str):
     """Read-only LangChain tools for the agent; `evidence` collects executed rows."""
 
     @tool
@@ -71,16 +111,41 @@ def _build_tools(evidence: List[Dict[str, Any]]):
 
         `flow` is one of "survey", "gpr", "gimmi" (which table family to query).
         Returns a JSON object {row_count, rows}. Write/DDL statements are
-        rejected. On failure returns a string starting with "ERROR:" — read it,
-        fix the SQL, and retry.
+        rejected. If the query fails, it is automatically repaired and re-run up
+        to 3 times before any error is returned, so an "ERROR:" reply means the
+        query could not be made to run — NOT that the data is missing. A
+        successful reply with row_count 0 is the only signal of genuinely no data.
         """
-        result = execute_sql(flow, sql)
-        if result.error:
-            return f"ERROR: {result.error}"
-        evidence.append({"flow": flow, "sql": sql, "rows": result.rows})
-        return json.dumps(
-            {"row_count": result.row_count, "rows": result.rows[:_TOOL_ROW_PREVIEW]},
-            default=str,
+        attempt_sql = (sql or "").strip()
+        last_error = ""
+        for attempt in range(1, _SQL_MAX_ATTEMPTS + 1):
+            result = execute_sql(flow, attempt_sql)
+            if not result.error:
+                evidence.append({"flow": flow, "sql": attempt_sql, "rows": result.rows})
+                return json.dumps(
+                    {
+                        "row_count": result.row_count,
+                        "rows": result.rows[:_TOOL_ROW_PREVIEW],
+                    },
+                    default=str,
+                )
+            last_error = result.error
+            log_event(
+                logger,
+                "run_sql_retry",
+                logging.WARNING,
+                node="analyst_agent",
+                flow=flow,
+                attempt=attempt,
+                error=last_error,
+            )
+            if attempt < _SQL_MAX_ATTEMPTS:
+                attempt_sql = _autofix_sql(flow, question, attempt_sql, last_error) or attempt_sql
+        return (
+            f"ERROR (failed after {_SQL_MAX_ATTEMPTS} auto-repaired attempts): "
+            f"{last_error}. This is a SQL-construction problem, not missing data — "
+            f"rewrite the query with a different shape and call run_sql again. Do "
+            f"NOT conclude that no data exists from this error."
         )
 
     @tool
@@ -196,7 +261,12 @@ rolling-12M, ranking, confidentiality, etc.]
 - Before filtering on a dimension value (industry, product, cover line, etc.),
   call resolve_value to map the user's wording to an exact valid value.
 - Keep each query focused; build dependent queries from earlier results.
-- Stay within ~9 tool calls. If a query errors, read the ERROR and fix it.
+- Stay within ~9 tool calls. run_sql auto-repairs and re-runs a failing query up
+  to 3 times on its own; if it still returns an ERROR, the SQL was wrong — try a
+  DIFFERENT query shape, never give up after one failure.
+- "No data" is ONLY valid when run_sql SUCCEEDS with row_count 0. Never report
+  missing/absent data on the basis of an ERROR — that means the query failed,
+  not that the data is absent.
 - Only assert what the evidence supports; never fabricate.
 
 [CONFIDENTIALITY — non-negotiable]
@@ -272,7 +342,7 @@ def analyst_agent_node(state: AgentState) -> AgentState:
     )
 
     evidence: List[Dict[str, Any]] = []
-    tools = _build_tools(evidence)
+    tools = _build_tools(evidence, question)
     system_prompt = _system_prompt(question, route, flow, plan)
     agent = create_agent(_model(), tools, system_prompt=system_prompt)
 

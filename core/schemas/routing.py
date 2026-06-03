@@ -85,7 +85,10 @@ class RoutingContext(BaseModel):
             "any interpretive / multi-step / comparative question that benefits "
             "from context — compare, trend, why, performance, positioning, "
             "'how is X doing', breakdowns across a dimension, or any 'both' "
-            "(HYBRID) query. Default to 'lookup' only for clear single-value asks."
+            "(HYBRID) query. NOTE: this value is re-decided downstream by a "
+            "dedicated depth classifier (`DepthClassifierSignature`) and will be "
+            "overwritten — the default here is only a placeholder, so do not rely "
+            "on it for routing."
         ),
     )
     intent_type: Literal[
@@ -194,6 +197,77 @@ class ContextFillerSignature(dspy.Signature):
     )
     routing_context: RoutingContext = dspy.OutputField(
         desc="Structured routing decision + inherited filters + timeframe + intent + rationale."
+    )
+
+
+class DepthDecision(BaseModel):
+    """Output of the dedicated analysis-depth classifier."""
+
+    analysis_depth: Literal["lookup", "analytical"] = Field(
+        description=(
+            "'lookup' = a single concrete value the user named explicitly (one "
+            "metric for one carrier/slice/period, no comparison/reasoning). "
+            "'analytical' = anything interpretive or multi-step: compare, rank, "
+            "trend, growth, 'why', 'how is X performing/positioned', 'analyse', "
+            "breakdowns ('by product/industry/segment'), whitespace/opportunity."
+        )
+    )
+    reason: str = Field(
+        default="",
+        description="One short sentence justifying the lookup-vs-analytical call.",
+    )
+
+
+class DepthClassifierSignature(dspy.Signature):
+    """
+    [ROLE]
+    You are a focused query-depth classifier for an insurance analytics chatbot.
+    Your ONLY job is to decide whether the user's question is a simple factual
+    LOOKUP or an interpretive ANALYTICAL question. You do not route, rephrase, or
+    answer — you output one label.
+
+    [WHY THIS MATTERS]
+    A 'lookup' goes to a cheap single-query path. An 'analytical' question goes to
+    a proactive multi-step analyst agent. Misclassifying a comparison/trend/"why"
+    question as 'lookup' produces a shallow, unhelpful answer.
+
+    [DECIDE 'lookup' WHEN]
+    - The user names ONE metric for ONE carrier/slice/period and wants the value.
+    - There is no comparison, ranking, trend, driver, or interpretation requested.
+    - Examples:
+        * "What is Zurich's premium in Canada in 2024?"  -> lookup
+        * "AXA's NPS?"                                    -> lookup
+        * "Chubb's rank in Singapore last year?"         -> lookup
+
+    [DECIDE 'analytical' WHEN]
+    - The question is interpretive or multi-step: compare, rank, trend, growth,
+      YoY/QoQ, "why", "how is X doing/performing/positioned", "analyse",
+      "benchmark", "vs peers", competitive position, portfolio health.
+    - It asks for a breakdown across a dimension ("by product", "by industry",
+      "by segment", "across products", "per region").
+    - It touches whitespace, opportunity, appetite gaps, or contradictions.
+    - Examples:
+        * "How is Zurich performing vs peers by product?"   -> analytical
+        * "Why did AXA's premium drop in 2024?"             -> analytical
+        * "Compare Chubb's growth across industries."        -> analytical
+        * "Where is Zurich's whitespace in Canada?"          -> analytical
+
+    [HARD RULE]
+    - If table_family is "both" (HYBRID), the answer is ALWAYS "analytical".
+    - When genuinely unsure between the two, prefer "analytical".
+    """
+
+    current_user_query: str = dspy.InputField(
+        desc="The latest user question to classify for depth."
+    )
+    table_family: str = dspy.InputField(
+        desc="Routing family already decided upstream: survey | premium | both | fallback."
+    )
+    intent_type: str = dspy.InputField(
+        desc="Turn classification: new_question | followup | drilldown | topic_switch."
+    )
+    depth_decision: DepthDecision = dspy.OutputField(
+        desc="The lookup-vs-analytical decision plus a one-line reason."
     )
 
 

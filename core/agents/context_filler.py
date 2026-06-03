@@ -23,7 +23,11 @@ from pydantic import BaseModel
 from core.data.general import GeneralFunctions
 from core.initialization import Initialization
 from core.observability import log_event
-from core.schemas.routing import ContextFillerSignature, RoutingContext
+from core.schemas.routing import (
+    ContextFillerSignature,
+    DepthClassifierSignature,
+    RoutingContext,
+)
 from core.state.agent_state import AgentState
 from logger import get_logger
 
@@ -65,9 +69,44 @@ class ContextFillerNode(dspy.Module):
         )
 
 
-# Stateless module/predictor — instantiate once and reuse across turns. Routing
+class DepthClassifierNode(dspy.Module):
+    """Dedicated lookup-vs-analytical classifier.
+
+    Split out of the monolithic context-filler call so depth gets its own
+    chain-of-thought step. The combined signature reliably anchored on the
+    `analysis_depth` default ("lookup"); a focused predictor with crisp
+    contrasts classifies far more accurately. Its output overwrites whatever the
+    context filler guessed.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.predictor = dspy.ChainOfThought(DepthClassifierSignature)
+
+    def forward(
+        self, current_user_query: str, table_family: str, intent_type: str
+    ) -> str:
+        # HYBRID is always analytical — a narrow deterministic floor (not a broad
+        # keyword regex) so we never waste an LLM call to (re)confirm it.
+        if table_family == "both":
+            return "analytical"
+        result = self.predictor(
+            current_user_query=current_user_query,
+            table_family=table_family,
+            intent_type=intent_type,
+        )
+        decision = result.depth_decision
+        depth = getattr(decision, "analysis_depth", None)
+        if depth not in ("lookup", "analytical"):
+            # Defensive: on any odd shape prefer the safer (richer) path.
+            return "analytical"
+        return depth
+
+
+# Stateless modules/predictors — instantiate once and reuse across turns. Routing
 # context stays deterministic (default LM).
 _CONTEXT_FILLER_NODE = ContextFillerNode()
+_DEPTH_CLASSIFIER_NODE = DepthClassifierNode()
 
 
 class ContextFillingAgent:
@@ -139,12 +178,25 @@ class ContextFillingAgent:
         )
         Initialization.log_prompt_cache_usage(routing_context, "context_filler_agent")
 
+        # Re-decide analysis_depth with a dedicated classifier. The combined
+        # context-filler call reliably anchored on the "lookup" default, so the
+        # analytical agent path almost never fired. This focused step overwrites
+        # the guess. (`fallback` queries keep whatever value — they never route
+        # to the analyst agent anyway.)
+        if routing_context.table_family != "fallback":
+            routing_context.analysis_depth = _DEPTH_CLASSIFIER_NODE(
+                current_user_query=question,
+                table_family=routing_context.table_family,
+                intent_type=routing_context.intent_type,
+            )
+
         log_event(
             logger,
             "context_filled",
             node="context_filler",
             table_family=routing_context.table_family,
             intent=routing_context.intent_type,
+            analysis_depth=routing_context.analysis_depth,
             inherited_carrier=routing_context.inherited_carrier,
             inherited_country=routing_context.inherited_country,
             inherited_year=routing_context.inherited_year,
