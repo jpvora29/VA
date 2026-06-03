@@ -13,9 +13,8 @@ from config.valid_values_config import *  # noqa: F401,F403 - preserves legacy g
 from core.agents.common import (
     BaseSQLFixerNode,
     annotate_plan_notes,
-    assert_read_only,
-    dry_run_explain,
 )
+from core.mcp.tools import execute_sql
 from core.agents.survey.chart import SurveyChartNode
 from core.agents.survey.planner import PlannerNode
 from core.agents.survey.sql_agent import SQLAgentNode
@@ -254,103 +253,33 @@ class SurveySubGraph:
         return {"survey_sql_query": sql_query_output}
 
     def survey_execute_sql(state: AgentState) -> AgentState:
-        """Executes the SQL Query for the survey data"""
+        """Executes the SQL Query for the survey data via the shared execute_sql tool.
+
+        The tool owns validation, execution, and logging. Survey-specific
+        post-processing (`clean_sql_output`, which needs the reasoning plan, and
+        the list-wrapped `:-` error convention the downstream nodes expect) stays
+        here. Overflow is recomputed on the *cleaned* rows, matching prior behavior.
+        """
 
         sql_query = state["survey_sql_query"].strip()
-        session = Initialization.Session()
+        result = execute_sql("survey", sql_query, node="survey_execute_sql")
 
-        log_event(
-            logger,
-            "sql_execute_start",
-            route="survey",
-            node="survey_execute_sql",
-            sql=sql_metadata(sql_query),
-        )
-        timing = {}
-
-        # Deterministic pre-execution validation: read-only guard + schema-aware EXPLAIN
-        # dry run. Failures route to the fixer with a richer error instead of 500-ing.
-        validation_error = assert_read_only(sql_query) or dry_run_explain(
-            session, sql_query
-        )
-        if validation_error:
-            log_event(
-                logger,
-                "sql_validation_error",
-                logging.WARNING,
-                route="survey",
-                node="survey_execute_sql",
-                sql=sql_metadata(sql_query),
-                error=validation_error,
-            )
-            session.close()
+        if result.error:
             return {
-                "survey_query_result": [
-                    f"Error executing SQL query:- {validation_error}"
-                ],
+                "survey_query_result": [f"Error executing SQL query:- {result.error}"],
                 "survey_sql_error": True,
                 "survey_overflow": False,
             }
 
-        try:
-            with latency_timer() as timing:
-                result = session.execute(text(sql_query))
-                rows = result.fetchall()
-                columns = result.keys()
-
-            if rows:
-                # header = ", ".join(columns)
-                query_result = [dict(zip(columns, row)) for row in rows]
-                logger.debug("Survey query fetched %d row(s)", len(query_result))
-
-            else:
-                query_result = []
-
-            is_error = False
-
-            query_result = GeneralFunctions.clean_sql_output(
-                sql_output=query_result, reasoning=json.loads(state["survey_reasoning"])
-            )
-
-            if len(query_result) > 40:
-                is_dataOverflow = True
-
-            else:
-                is_dataOverflow = False
-            log_event(
-                logger,
-                "sql_execute_end",
-                route="survey",
-                node="survey_execute_sql",
-                sql=sql_metadata(
-                    sql_query,
-                    row_count=len(query_result),
-                    duration_ms=timing.get("duration_ms"),
-                ),
-                overflow=is_dataOverflow,
-            )
-
-        except Exception as e:
-            query_result = [f"Error executing SQL query:- {e}"]
-            is_error = True
-            is_dataOverflow = False
-            log_event(
-                logger,
-                "sql_execute_error",
-                logging.ERROR,
-                route="survey",
-                node="survey_execute_sql",
-                sql=sql_metadata(sql_query, duration_ms=timing.get("duration_ms")),
-                error=str(e),
-            )
-
-        finally:
-            session.close()
+        logger.debug("Survey query fetched %d row(s)", result.row_count)
+        query_result = GeneralFunctions.clean_sql_output(
+            sql_output=result.rows, reasoning=json.loads(state["survey_reasoning"])
+        )
 
         return {
             "survey_query_result": query_result,
-            "survey_sql_error": is_error,
-            "survey_overflow": is_dataOverflow,
+            "survey_sql_error": False,
+            "survey_overflow": len(query_result) > 40,
         }
 
     def survey_sql_join_rewriter(state: AgentState) -> AgentState:

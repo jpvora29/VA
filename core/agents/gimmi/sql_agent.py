@@ -1,16 +1,14 @@
 """GIMMI SQL agent + LangGraph node callables for SQL generation and execution."""
 from __future__ import annotations
 
-import logging
 from typing import Any, Dict, List
 
 import dspy
-from sqlalchemy.sql import text
 
 from core.data.general import GeneralFunctions
 from core.data.valid_values import GetValidData
 from core.initialization import Initialization
-from core.observability import latency_timer, log_event, sql_metadata
+from core.mcp.tools import execute_sql
 from core.rules.gimmi import GIMMIRules
 from core.schemas.gimmi import GIMMISQLAgentSignature
 from core.skills.loader import get_skill_loader
@@ -75,58 +73,13 @@ def gimmi_sqlagent_node(state: AgentState) -> AgentState:
 
 
 def gimmi_execute_sql(state: AgentState) -> AgentState:
-    """Executes the SQL Query"""
+    """Executes the SQL Query via the shared, validated execute_sql tool."""
 
     sql_query = state["gimmi_sql_query"].strip()
-    session = Initialization.Session()
+    result = execute_sql("gimmi", sql_query, node="gimmi_execute_sql")
 
-    log_event(
-        logger,
-        "sql_execute_start",
-        route="gimmi",
-        node="gimmi_execute_sql",
-        sql=sql_metadata(sql_query),
-    )
-    timing = {}
-    try:
-        with latency_timer() as timing:
-            result = session.execute(text(sql_query))
-            rows = result.fetchall()
-            columns = result.keys()
+    if result.error:
+        return {"gimmi_query_result": "Please try again later!!!"}
 
-        if rows:
-            header = ", ".join(columns)
-            query_result = [dict(zip(columns, row)) for row in rows]
-            logger.debug("GIMMI query fetched %d row(s)", len(query_result))
-
-        else:
-            query_result = []
-
-        log_event(
-            logger,
-            "sql_execute_end",
-            route="gimmi",
-            node="gimmi_execute_sql",
-            sql=sql_metadata(
-                sql_query,
-                row_count=len(query_result),
-                duration_ms=timing.get("duration_ms"),
-            ),
-        )
-
-    except Exception as e:
-        query_result = f"Please try again later!!!"
-        log_event(
-            logger,
-            "sql_execute_error",
-            logging.ERROR,
-            route="gimmi",
-            node="gimmi_execute_sql",
-            sql=sql_metadata(sql_query, duration_ms=timing.get("duration_ms")),
-            error=str(e),
-        )
-
-    finally:
-        session.close()
-
-    return {"gimmi_query_result": query_result}
+    logger.debug("GIMMI query fetched %d row(s)", result.row_count)
+    return {"gimmi_query_result": result.rows}

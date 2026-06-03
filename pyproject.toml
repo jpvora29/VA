@@ -4,4 +4,9 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+# NOTE: runtime deps (sqlalchemy, dspy, langchain, langgraph, ...) are installed
+# in the project's environment. `mcp` is newly introduced by the MCP tool layer
+# and must be installed:  pip install "mcp>=1.2.0"
+dependencies = [
+    "mcp>=1.2.0",
+]

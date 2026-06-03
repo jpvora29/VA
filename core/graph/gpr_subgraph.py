@@ -13,9 +13,8 @@ from config.valid_values_config import *  # noqa: F401,F403 - preserves legacy g
 from core.agents.common import (
     BaseSQLFixerNode,
     annotate_plan_notes,
-    assert_read_only,
-    dry_run_explain,
 )
+from core.mcp.tools import execute_sql
 from core.agents.gpr.chart import GPRChartNode
 from core.agents.gpr.planner import GPRPlannerNode
 from core.agents.gpr.sql_agent import GPRSQLAgentNode
@@ -273,93 +272,19 @@ class GPRSubGraph:
         return {"gpr_sql_query": sql_query_output}
 
     def gpr_execute_sql(state: AgentState) -> AgentState:
-        """Executes the SQL Query"""
+        """Executes the SQL Query via the shared, validated execute_sql tool."""
 
         sql_query = state["gpr_sql_query"].strip()
-        session = Initialization.Session()
+        result = execute_sql("gpr", sql_query, node="gpr_execute_sql")
 
-        log_event(
-            logger,
-            "sql_execute_start",
-            route="premium",
-            node="gpr_execute_sql",
-            sql=sql_metadata(sql_query),
-        )
-        timing = {}
-
-        # Deterministic pre-execution validation: a read-only guard plus a schema-aware
-        # EXPLAIN dry run. Failures route to the fixer with a richer error instead of
-        # 500-ing on the real query.
-        validation_error = assert_read_only(sql_query) or dry_run_explain(
-            session, sql_query
-        )
-        if validation_error:
-            log_event(
-                logger,
-                "sql_validation_error",
-                logging.WARNING,
-                route="premium",
-                node="gpr_execute_sql",
-                sql=sql_metadata(sql_query),
-                error=validation_error,
-            )
-            session.close()
+        if result.error:
             return {
-                "gpr_query_result": f"Error executing SQL query: {validation_error}",
+                "gpr_query_result": f"Error executing SQL query: {result.error}",
                 "gpr_sql_error": True,
             }
 
-        try:
-            with latency_timer() as timing:
-                result = session.execute(text(sql_query))
-                rows = result.fetchall()
-                columns = result.keys()
-
-            logger.debug("GPR query fetched %d row(s)", len(rows))
-
-            if rows:
-                header = ", ".join(columns)
-                query_result = [dict(zip(columns, row)) for row in rows]
-
-            else:
-                query_result = []
-
-            is_error = False
-            # query_result = GeneralFunctions.clean_sql_output(
-            #     sql_output=query_result, reasoning=json.loads(state["gpr_reasoning"])
-            # )
-            is_dataOverflow = len(query_result) > 40
-            log_event(
-                logger,
-                "sql_execute_end",
-                route="premium",
-                node="gpr_execute_sql",
-                sql=sql_metadata(
-                    sql_query,
-                    row_count=len(query_result),
-                    duration_ms=timing.get("duration_ms"),
-                ),
-                overflow=is_dataOverflow,
-            )
-
-        except Exception as e:
-            query_result = f"Error executing SQL query: {e}"
-            is_error = True
-            is_dataOverflow = False
-            log_event(
-                logger,
-                "sql_execute_error",
-                logging.ERROR,
-                route="premium",
-                node="gpr_execute_sql",
-                sql=sql_metadata(sql_query, duration_ms=timing.get("duration_ms")),
-                error=str(e),
-            )
-
-        finally:
-            session.close()
-
-        return {"gpr_query_result": query_result, "gpr_sql_error": is_error}
+        logger.debug("GPR query fetched %d row(s)", result.row_count)
+        return {"gpr_query_result": result.rows, "gpr_sql_error": False}
 
     def gpr_sql_join_rewriter(state: AgentState) -> AgentState:
         sql_query = state["gpr_sql_query"].strip()
