@@ -24,6 +24,12 @@ class AgentState(TypedDict):
     # dispatch). Optional so first-turn / fallback paths still type-check.
     routing_context: Optional[RoutingContext]
 
+    # HITL clarification (workflow path). `clarify_decide` sets a pending MCQ
+    # payload (dict) when the turn is genuinely ambiguous; `clarify_gate`
+    # interrupts on it and stores the user's answer in `clarification`.
+    clarify_question: Optional[Dict]
+    clarification: str
+
     survey_reasoning: str
     gpr_reasoning: str
 

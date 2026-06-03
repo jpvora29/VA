@@ -29,7 +29,7 @@ from dash import dash_table
 import dash_bootstrap_components as dbc
 from dash.development.base_component import Component
 
-from ui.components.chatbot import chatbot_page, followup_suggestions
+from ui.components.chatbot import chatbot_page, clarify_card, followup_suggestions
 from core.backend import (
     LangGraph,
     AgentState,
@@ -730,6 +730,19 @@ def process_workflow(
         state_obj, thread_id=thread_id
     )
 
+    # HITL: the graph paused at the clarify gate (or the analyst middleware) with
+    # an MCQ. Render the clarification card and wait for the user's answer; the
+    # same thread resumes in `submit_clarification`.
+    interrupts = updated_state.get("__interrupt__")
+    if interrupts:
+        payload = getattr(interrupts[0], "value", {}) or {}
+        chat_history.setdefault("messages", []).append(
+            {"type": "ClarifyCard", "payload": payload}
+        )
+        chat_history["awaiting_clarification"] = True
+        chat_history["followups"] = []
+        return chat_history, False, False
+
     rephrased_query = updated_state.get("rephrased_user_query")
     table = updated_state.get("current_route")
 
@@ -823,6 +836,9 @@ def render_chat(
                 else:
                     parts = [dcc.Markdown(content)]
                     chat_items.append(html.Div(parts, className="message gpt-message"))
+
+            elif msg["type"] == "ClarifyCard":
+                chat_items.append(clarify_card(msg.get("payload") or {}))
 
             elif msg["type"] == "DataOverflow":
                 try:
@@ -925,6 +941,77 @@ def ask_suggested_question(
     chat_history["followups"] = []  # drop previous-turn suggestions
 
     return chat_history, True, True
+
+
+# 4c. -------------------------- HITL CLARIFICATION SUBMIT + RESUME ---------------------------------------
+
+
+@callback(
+    Output("chat-store", "data", allow_duplicate=True),
+    Output("trigger-gpt", "data", allow_duplicate=True),
+    Output("is-thinking", "data", allow_duplicate=True),
+    Input({"type": "clarify-option", "value": ALL}, "n_clicks"),
+    Input("clarify-free-submit", "n_clicks"),
+    State("clarify-free-text", "value"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def submit_clarification(
+    option_clicks: list[int | None],
+    free_clicks: int | None,
+    free_text: str | None,
+    chat_history: dict[str, Any],
+) -> tuple[dict[str, Any] | NoUpdate, Optional[bool], Optional[bool]]:
+    """Resume the paused thread with the user's MCQ answer (option or free-text)."""
+
+    triggered = ctx.triggered_id
+    triggered_value = ctx.triggered[0]["value"] if ctx.triggered else None
+
+    # Guard the spurious fire when the card first mounts (n_clicks 0/None).
+    if not triggered_value:
+        return no_update, no_update, no_update
+
+    if isinstance(triggered, dict) and triggered.get("type") == "clarify-option":
+        answer = (triggered.get("value") or "").strip()
+    elif triggered == "clarify-free-submit":
+        answer = (free_text or "").strip()
+    else:
+        return no_update, no_update, no_update
+
+    if not answer:
+        return no_update, no_update, no_update
+
+    chat_history = chat_history or {}
+    if not chat_history.get("awaiting_clarification"):
+        return no_update, no_update, no_update
+
+    thread_id = chat_history.get("thread_id")
+
+    # Drop the clarify card; record the answer in the transcript as a user turn.
+    chat_history["messages"] = [
+        m for m in chat_history.get("messages", []) if m.get("type") != "ClarifyCard"
+    ]
+    chat_history["messages"].append(
+        {"type": "HumanMessage", "content": answer, "rephrased_content": None}
+    )
+    chat_history["awaiting_clarification"] = False
+
+    resumed: dict[str, Any] = langgraph.resume_workflow(answer, thread_id=thread_id)
+
+    # A follow-up clarification can (rarely) be raised after resuming.
+    interrupts = resumed.get("__interrupt__")
+    if interrupts:
+        payload = getattr(interrupts[0], "value", {}) or {}
+        chat_history["messages"].append({"type": "ClarifyCard", "payload": payload})
+        chat_history["awaiting_clarification"] = True
+        chat_history["followups"] = []
+        return chat_history, False, False
+
+    table = resumed.get("current_route")
+    chat_history = _update_chat_history(chat_history, resumed, table)
+    chat_history["followups"] = resumed.get("followup_questions") or []
+
+    return chat_history, False, False
 
 
 # 5. -------------------------- DOWNLOAD BTN FOR ADDITIONAL DATA ---------------------------------------

@@ -1454,3 +1454,95 @@ th {
         gap: 1.2rem;
     }
 }
+
+/* ── HITL clarification card ──────────────────────────────────────────────── */
+
+.clarify-card {
+    align-self: stretch;
+    max-width: 100%;
+    background:
+        linear-gradient(180deg, rgba(11, 75, 255, 0.04), transparent 55%),
+        var(--surface-0);
+    border: 1px solid var(--border-soft);
+    border-left: 4px solid var(--marsh-blue-2);
+    border-radius: var(--radius-lg);
+    padding: 18px 22px 16px 22px;
+    margin: 8px 0;
+    box-shadow: var(--shadow-md);
+    animation: cardIn 360ms cubic-bezier(.2, .7, .2, 1) both;
+}
+
+.clarify-card-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    margin-bottom: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--marsh-blue-2);
+    background: rgba(11, 75, 255, 0.08);
+    border: 1px solid rgba(11, 75, 255, 0.14);
+    border-radius: var(--radius-pill);
+}
+
+.clarify-card-icon {
+    font-size: 13px;
+}
+
+.clarify-card-question {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--marsh-blue);
+    margin: 4px 0 12px 0;
+}
+
+.clarify-option-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.clarify-option {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    text-align: left;
+    padding: 10px 14px;
+    background: var(--surface-0);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md, 10px);
+    cursor: pointer;
+    transition: border-color var(--transition-med), background var(--transition-med), transform var(--transition-med);
+}
+
+.clarify-option:hover {
+    border-color: var(--marsh-blue-2);
+    background: rgba(11, 75, 255, 0.05);
+    transform: translateY(-1px);
+}
+
+.clarify-option-label {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--marsh-blue);
+}
+
+.clarify-option-desc {
+    font-size: 12px;
+    color: var(--text-muted, #5a6478);
+}
+
+.clarify-free-group {
+    margin-top: 4px;
+}
+
+.clarify-free-submit {
+    background: var(--marsh-blue) !important;
+    border-color: var(--marsh-blue) !important;
+    color: #fff !important;
+}

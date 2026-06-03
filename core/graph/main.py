@@ -8,9 +8,11 @@ from __future__ import annotations
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command
 
 from core.agents.analyst_agent import analyst_agent_node
 from core.agents.context_filler import ContextFillingAgent
+from core.graph.hitl import clarify_decide, clarify_gate
 from core.agents.fallback import Fallback
 from core.agents.followup import followup_node
 from core.agents.gimmi.response import check_if_gimmi_required, gimmi_insight
@@ -53,6 +55,8 @@ class LangGraph:
         self._compiled_app = None
 
         self.context_filler = ContextFillingAgent().context_filler_agent
+        self.clarify_decide = clarify_decide
+        self.clarify_gate = clarify_gate
         self.rephraser_agent = QueryRephraseAgent().rephraser_agent
         self.router = RouterNode().router_node
         self.survey_agent = SurveySubGraph().SurveyAgent
@@ -74,6 +78,8 @@ class LangGraph:
         workflow = StateGraph(self.state_schema)
 
         workflow.add_node("context_filler", self.context_filler)
+        workflow.add_node("clarify_decide", self.clarify_decide)
+        workflow.add_node("clarify_gate", self.clarify_gate)
         workflow.add_node("rephraser_agent", self.rephraser_agent)
         workflow.add_node("router", self.router)
         workflow.add_node("survey_agent", self.survey_agent)
@@ -92,7 +98,11 @@ class LangGraph:
         workflow.add_node("followup_node", self.followup_node)
 
         workflow.add_edge(START, "context_filler")
-        workflow.add_edge("context_filler", "rephraser_agent")
+        # HITL clarify hook: decide (LLM, conservative) -> gate (interrupts only
+        # when a genuine MCQ is pending) -> rephraser. Pass-through otherwise.
+        workflow.add_edge("context_filler", "clarify_decide")
+        workflow.add_edge("clarify_decide", "clarify_gate")
+        workflow.add_edge("clarify_gate", "rephraser_agent")
         workflow.add_edge("rephraser_agent", "router")
 
         # Conditional routing
@@ -183,6 +193,29 @@ class LangGraph:
                 self._compiled_app = self.create_workflow()
             config = checkpoint_config(thread_id or self.default_thread_id)
             state = self._compiled_app.invoke(state, config=config)
+        log_event(
+            logger,
+            "workflow_end",
+            node="main_workflow",
+            duration_ms=timing.get("duration_ms"),
+        )
+        return state
+
+    def resume_workflow(
+        self, value: Any, *, thread_id: str | None = None
+    ) -> dict[str, Any]:
+        """Resume a thread paused at the HITL clarify gate with the user's answer.
+
+        `value` is the MCQ answer (selected option label or free-text). The thread
+        must be the SAME one that produced the `__interrupt__`, so its checkpoint
+        carries the pending interrupt to resume.
+        """
+        log_event(logger, "workflow_resume", node="main_workflow")
+        with latency_timer() as timing:
+            if self._compiled_app is None:
+                self._compiled_app = self.create_workflow()
+            config = checkpoint_config(thread_id or self.default_thread_id)
+            state = self._compiled_app.invoke(Command(resume=value), config=config)
         log_event(
             logger,
             "workflow_end",

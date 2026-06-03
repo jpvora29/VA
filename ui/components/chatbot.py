@@ -40,6 +40,72 @@ def suggestion_chip(question: str, icon: str | None = None, idx: int = 0):
     )
 
 
+def clarify_card(payload: dict):
+    """Inline Claude-style MCQ clarification card.
+
+    `payload` is a ClarifyQuestion dict (question, header, options, allow_free_text).
+    Option buttons carry their answer value in the id so one pattern-matching
+    callback handles any option; a free-text box + send button is the fallback.
+    """
+    payload = payload or {}
+    question = payload.get("question") or "Could you clarify what you mean?"
+    header = payload.get("header") or "Quick check"
+    options = payload.get("options") or []
+
+    option_buttons = [
+        html.Button(
+            [
+                html.Span(opt.get("label", ""), className="clarify-option-label"),
+                (
+                    html.Span(opt.get("description", ""), className="clarify-option-desc")
+                    if opt.get("description")
+                    else None
+                ),
+            ],
+            id={"type": "clarify-option", "value": opt.get("label", "")},
+            n_clicks=0,
+            className="clarify-option",
+        )
+        for opt in options
+        if opt.get("label")
+    ]
+
+    children = [
+        html.Div(
+            [
+                html.I(className="bi bi-question-circle clarify-card-icon"),
+                html.Span(header, className="clarify-card-header"),
+            ],
+            className="clarify-card-badge",
+        ),
+        html.Div(question, className="clarify-card-question"),
+    ]
+    if option_buttons:
+        children.append(html.Div(option_buttons, className="clarify-option-grid"))
+    if payload.get("allow_free_text", True):
+        children.append(
+            dbc.InputGroup(
+                [
+                    dbc.Input(
+                        id="clarify-free-text",
+                        placeholder="Or type your answer…",
+                        debounce=True,
+                        className="clarify-free-input",
+                    ),
+                    dbc.Button(
+                        html.I(className="bi bi-arrow-return-left"),
+                        id="clarify-free-submit",
+                        n_clicks=0,
+                        className="clarify-free-submit",
+                    ),
+                ],
+                className="clarify-free-group",
+            )
+        )
+
+    return html.Div(children, className="message clarify-card")
+
+
 def welcome_hero():
     """Empty-state hero shown before the first message is sent."""
     return html.Div(

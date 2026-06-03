@@ -22,10 +22,14 @@ import logging
 from typing import Any, Dict, List
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
+from langgraph.errors import GraphInterrupt
+from langgraph.types import interrupt
 
 from core.analysis import get_lens_library, plan_analysis
+from core.graph.hitl import clarify_decider, valid_values_snapshot
 from core.initialization import Initialization
 from core.mcp.tools import (
     execute_sql,
@@ -312,6 +316,50 @@ repeat the same fact across sections.
 {question}"""
 
 
+class ClarifyMiddleware(AgentMiddleware):
+    """Agent-path HITL: a `before_agent` hook that asks ONE MCQ when the analytical
+    query is genuinely ambiguous, mirroring the workflow-path clarify gate.
+
+    It reuses the SAME conservative decider as `core.graph.hitl`, so behavior is
+    consistent across both paths. `before_agent` runs once, at a deterministic
+    position, before the ReAct loop — the safe place to `interrupt()`. The
+    interrupt propagates out of this nested agent to the checkpointed main graph,
+    which surfaces it to the UI and resumes the thread with the user's answer.
+
+    Skipped entirely when the turn was already clarified upstream (the workflow
+    gate ran first), so a turn is never double-asked.
+    """
+
+    def __init__(self, question: str, routing_context, already_clarified: bool) -> None:
+        super().__init__()
+        self._question = question
+        self._routing_context = routing_context
+        self._already_clarified = already_clarified
+
+    def before_agent(self, state, runtime):  # noqa: ANN001 - langchain middleware signature
+        if self._already_clarified:
+            return None
+        try:
+            decision = clarify_decider(
+                current_user_query=self._question,
+                routing_context=self._routing_context,
+                valid_values=valid_values_snapshot(),
+            )
+        except GraphInterrupt:
+            raise
+        except Exception:  # noqa: BLE001 - clarification is best-effort
+            return None
+
+        if not decision.needs_clarification or decision.question is None:
+            return None
+
+        # Pauses the nested agent; propagates to the checkpointed main graph.
+        answer = interrupt(decision.question.model_dump())
+        return {
+            "messages": [HumanMessage(content=f"User clarification: {answer}")]
+        }
+
+
 # Module-level so the underlying model/client is reused across turns.
 _MODEL = None
 
@@ -344,7 +392,16 @@ def analyst_agent_node(state: AgentState) -> AgentState:
     evidence: List[Dict[str, Any]] = []
     tools = _build_tools(evidence, question)
     system_prompt = _system_prompt(question, route, flow, plan)
-    agent = create_agent(_model(), tools, system_prompt=system_prompt)
+    # Agent-path HITL middleware. Skips when the workflow clarify gate already
+    # disambiguated this turn (state["clarification"] set on resume).
+    clarify_mw = ClarifyMiddleware(
+        question=question,
+        routing_context=routing_context,
+        already_clarified=bool(state.get("clarification")),
+    )
+    agent = create_agent(
+        _model(), tools, system_prompt=system_prompt, middleware=[clarify_mw]
+    )
 
     answer = ""
     with latency_timer() as timing:
@@ -354,6 +411,10 @@ def analyst_agent_node(state: AgentState) -> AgentState:
                 config={"recursion_limit": _RECURSION_LIMIT},
             )
             answer = (result["messages"][-1].content or "").strip()
+        except GraphInterrupt:
+            # A clarify MCQ is pending — let it bubble to the checkpointed main
+            # graph so the UI can ask and resume. Never swallow this as an error.
+            raise
         except Exception as exc:  # noqa: BLE001 - never crash the turn
             log_event(
                 logger,
