@@ -620,6 +620,25 @@ class PitchBuilderWorkflow:
         4. Carrier Comparison with Top 5 Carriers
         - 3-5 sentences or bullet points
         - Identify whether the carrier is above, near, or below the Top 5 benchmark based on actual premium values, not percentages alone.
+
+        5. Whitespace Analysis
+        - 3-5 bullet points.
+        - Use the EXACT term "whitespace" (never untapped/underpenetrated/uncaptured).
+        - Identify product, industry (SIC class), or segment slices where the carrier has zero, null, or materially insignificant premium WHILE the Marsh book (market) participates meaningfully.
+        - For each whitespace slice, state the carrier premium (or its absence) alongside the market premium, and explain the portfolio gap / growth headroom.
+        - Only claim whitespace where the evidence shows meaningful market participation. If no whitespace is evidenced, write one sentence saying so.
+
+        6. Industry-Level Analysis
+        - 3-5 bullet points or short paragraphs.
+        - Summarize performance by industry (SIC Major Class) where evidence exists: premium, YoY movement, and share.
+        - Call out the strongest and weakest industries and any concentration risk.
+        - Mention YoY movement with both current and prior year where available.
+
+        7. Segment Analysis
+        - 3-5 bullet points or short paragraphs.
+        - Summarize performance by client segment where evidence exists: premium, YoY movement, and share.
+        - Highlight where the segment mix is shifting and where the carrier over- or under-indexes versus the market/peers.
+        - Mention YoY movement with both current and prior year where available.
         """.strip()
 
     def build_narrative_arc(self, state: PitchAgentState) -> PitchAgentState:
@@ -900,8 +919,9 @@ class PitchBuilderWorkflow:
         seed_query = (
             f"Comprehensive performance pitch {slice_text}. Assess premium and "
             "growth, market position versus the Marsh book, peer benchmark, "
-            "product and industry mix, whitespace and growth opportunities, and "
-            "any perception-versus-financial tensions."
+            "product, industry (SIC class) and client-segment mix, whitespace and "
+            "growth opportunities by product/industry/segment, and any "
+            "perception-versus-financial tensions."
         )
 
         routing_context = RoutingContext(

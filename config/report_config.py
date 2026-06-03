@@ -2,6 +2,14 @@ from pathlib import Path
 from pandas._typing import DtypeArg
 from docx.shared import Inches, Mm, Pt, RGBColor
 
+# The pitch report's palette + fonts are sourced from the authoritative design
+# skill (document_builder/skills/pitch_report_design.md) so the .docx follows the
+# skill. The loader has hardcoded fallbacks equal to the historical values, so
+# this never changes existing output unless the skill is edited.
+from document_builder.helpers.design_spec import load_design_spec
+
+_SPEC = load_design_spec()
+
 # ─── Page Layout ─────────────────────────────────────────────────────────────
 
 PAGE_HEIGHT: Mm = Mm(297)
@@ -17,8 +25,8 @@ CONTENT_WIDTH: Inches = Inches(6.67)
 
 # ─── Typography ───────────────────────────────────────────────────────────────
 
-HEADING_FONT: str = "Georgia Pro Light"
-BODY_FONT: str = "Arial"
+HEADING_FONT: str = _SPEC.font("heading")
+BODY_FONT: str = _SPEC.font("body")
 
 HEADING_SIZE: Pt = Pt(28)
 SUBHEADING_SIZE: Pt = Pt(18)
@@ -32,22 +40,22 @@ BODY_TEXT_SPACE_AFTER = Pt(10)
 
 # ─── Color ─────────────────────────────────────────────────────────────────
 
-NAVY: RGBColor = RGBColor(0, 15, 71)
-LIGHT_BLUE: RGBColor = RGBColor(130, 186, 255)
-GREY: RGBColor = RGBColor(143, 143, 143)
-ELECTRIC_BLUE: RGBColor = RGBColor(11, 75, 255)
-WHITE: RGBColor = RGBColor(255, 255, 255)
-DARK = RGBColor(30, 40, 58)
+NAVY: RGBColor = _SPEC.rgb("navy")
+LIGHT_BLUE: RGBColor = _SPEC.rgb("light_blue")
+GREY: RGBColor = RGBColor(143, 143, 143)  # legacy neutral; not part of the brand palette
+ELECTRIC_BLUE: RGBColor = _SPEC.rgb("electric_blue")
+WHITE: RGBColor = _SPEC.rgb("white")
+DARK = _SPEC.rgb("dark")
 
-GREEN_TEXT = RGBColor(46, 125, 50)
-RED_TEXT = RGBColor(197, 53, 50)
+GREEN_TEXT = _SPEC.rgb("green_text")
+RED_TEXT = _SPEC.rgb("red_text")
 
 
-LIGHT_GRAY = RGBColor(185, 182, 177)
-GRAY = RGBColor(80, 95, 115)
+LIGHT_GRAY = _SPEC.rgb("light_gray")
+GRAY = _SPEC.rgb("gray")
 
-GREEN_FILL = "#E8F5E9"
-RED_FILL = "#FDECEA"
+GREEN_FILL = _SPEC.hex_hash("green_fill")
+RED_FILL = _SPEC.hex_hash("red_fill")
 
 # Hex strings used in background shapes (no leading #)
 COVER_BG_HEX: str = "CEECFF"
@@ -73,4 +81,9 @@ SECTION_HEADINGS = {
     "product level analysis",
     "carrier comparison with peers",
     "carrier comparison with top 5 carriers",
+    "whitespace analysis",
+    "industry-level analysis",
+    "industry level analysis",
+    "segment analysis",
+    "segment-level analysis",
 }

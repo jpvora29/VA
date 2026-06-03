@@ -6,6 +6,7 @@ from docx import Document
 from document_builder.helpers.xml_helper import *
 from document_builder.helpers.docx_helper import *
 from document_builder.helpers.number_formatter import *
+from document_builder.helpers.design_spec import load_design_spec
 
 from document_builder.documents.header_banner import add_header
 from document_builder.documents.section_heading import add_section_heading
@@ -106,7 +107,23 @@ def build_pitch_report_docx(ctx: ReportConfig) -> Path:
     add_body_content(doc, ctx.report_summary)
 
     # --- 4. PRODUCT BREAKDOWN ---------------------------------------
-    add_product_breakdown_section(doc, ctx.question_results or [], ctx.filters)
+    question_results = ctx.question_results or []
+    add_product_breakdown_section(doc, question_results, ctx.filters)
+
+    # --- 5. WHITESPACE / INDUSTRY / SEGMENT ANALYSIS ----------------
+    # Section order + per-section accent colours come from the design skill
+    # (document_builder/skills/pitch_report_design.md). Each section renders only
+    # when the pitch evidence actually contains that breakdown.
+    spec = load_design_spec()
+    add_whitespace_section(
+        doc, question_results, accent=spec.accent_rgb("whitespace_analysis")
+    )
+    add_industry_section(
+        doc, question_results, accent=spec.accent_rgb("industry_analysis")
+    )
+    add_segment_section(
+        doc, question_results, accent=spec.accent_rgb("segment_analysis")
+    )
 
     doc.save(ctx.output_path / ctx.filename)
     return ctx.output_path / ctx.filename

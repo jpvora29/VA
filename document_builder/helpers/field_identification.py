@@ -21,6 +21,28 @@ _FIELD_SPECS: dict[str, dict[str, list[str]]] = {
         "exclude": [],
     },
     "section": {"include": ["section", "category", "dimension"], "exclude": []},
+    "industry": {
+        "include": [
+            "industry",
+            "sicmajorclass",
+            "sicminorclass",
+            "sicmajor",
+            "sicminor",
+            "sic",
+            "sector",
+        ],
+        "exclude": [],
+    },
+    "segment": {
+        "include": [
+            "segment",
+            "clientsegment",
+            "customersegment",
+            "surveysegment",
+            "businesssegment",
+        ],
+        "exclude": [],
+    },
     "attribute": {
         "include": ["attribute", "factor", "driver", "metric"],
         "exclude": [],

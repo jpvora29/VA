@@ -81,12 +81,21 @@ def add_labeled_paragraph(document: DocumentType, label: str, value: str) -> Non
     paragraph.add_run(value or "Not provided")
 
 
-def add_section_title(doc: DocumentType, title: str) -> None:
+def add_section_title(
+    doc: DocumentType, title: str, accent: Optional[RGBColor] = None
+) -> None:
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(12)
     p.paragraph_format.space_after = Pt(4)
     add_paragraph_bottom_rule(p, color="D0D8E8", size=4)
-    run(p, title, bold=True, size_pt=13, color=NAVY)
+    run(p, title, bold=True, size_pt=13, color=accent or NAVY)
+
+
+def add_section_caption(doc: DocumentType, text: str) -> None:
+    """One-line gray caption under a section title."""
+    cap = doc.add_paragraph()
+    cap.paragraph_format.space_after = Pt(4)
+    run(cap, text, size_pt=9, color=GRAY)
 
 
 def style_simple_table(table: Table, header_fill: str = "#000F47") -> None:
@@ -285,3 +294,143 @@ def add_product_breakdown_section(
                 continue
             add_question_subtitle(doc, result.get("question") or "")
             add_pivot_table(doc, headers, pivot_rows, delta_cols)
+
+
+# --- Whitespace / Industry / Segment analysis sections -----------------------
+
+
+def _question_matches(question: str, keywords: tuple[str, ...]) -> bool:
+    q = (question or "").lower()
+    return any(k in q for k in keywords)
+
+
+def _render_question_tables(
+    doc: DocumentType,
+    question_results: list[dict[str, Any]],
+    *,
+    row_field: Optional[str],
+    keywords: tuple[str, ...],
+) -> int:
+    """Render a styled pivot table for each question result that belongs to this
+    section — matched either by a dimension present in its rows (`row_field`) or by
+    its question text (`keywords`). Returns how many tables were rendered.
+    """
+    rendered = 0
+    for result in question_results:
+        rows = _rows_from_query_result(result.get("pitch_query_result"))
+        if not rows:
+            continue
+        question = result.get("question") or ""
+        has_field = bool(row_field) and any(find_field(row, row_field) for row in rows)
+        if not (has_field or _question_matches(question, keywords)):
+            continue
+
+        headers, pivot_rows, delta_cols = rows_to_styled_table(
+            result.get("pitch_query_result") or ""
+        )
+        if not pivot_rows:
+            continue
+        add_question_subtitle(doc, question)
+        add_pivot_table(doc, headers, pivot_rows, delta_cols)
+        rendered += 1
+    return rendered
+
+
+def _section_has_content(
+    question_results: list[dict[str, Any]],
+    *,
+    row_field: Optional[str],
+    keywords: tuple[str, ...],
+) -> bool:
+    """True if any question result has rows belonging to this section."""
+    for r in question_results:
+        rows = _rows_from_query_result(r.get("pitch_query_result"))
+        if not rows:
+            continue
+        if row_field and any(find_field(row, row_field) for row in rows):
+            return True
+        if _question_matches(r.get("question") or "", keywords):
+            return True
+    return False
+
+
+def _add_analysis_section(
+    doc: DocumentType,
+    question_results: list[dict[str, Any]],
+    *,
+    title: str,
+    caption: str,
+    row_field: Optional[str],
+    keywords: tuple[str, ...],
+    accent: Optional[RGBColor] = None,
+) -> None:
+    """Emit a titled analysis section only when there is grounded content."""
+    if not question_results or not _section_has_content(
+        question_results, row_field=row_field, keywords=keywords
+    ):
+        return
+    add_section_title(doc, title, accent=accent)
+    add_section_caption(doc, caption)
+    _render_question_tables(
+        doc, question_results, row_field=row_field, keywords=keywords
+    )
+
+
+def add_whitespace_section(
+    doc: DocumentType,
+    question_results: list[dict[str, Any]],
+    accent: Optional[RGBColor] = None,
+) -> None:
+    """Slices where the carrier is absent/thin while the Marsh book participates."""
+    _add_analysis_section(
+        doc,
+        question_results,
+        title="Whitespace Analysis",
+        caption=(
+            "Slices where the carrier has zero or materially thin premium while the "
+            "Marsh book participates — portfolio gaps and growth headroom."
+        ),
+        row_field=None,
+        keywords=("whitespace", "white space"),
+        accent=accent,
+    )
+
+
+def add_industry_section(
+    doc: DocumentType,
+    question_results: list[dict[str, Any]],
+    accent: Optional[RGBColor] = None,
+) -> None:
+    """Performance by SIC major/minor industry class."""
+    _add_analysis_section(
+        doc,
+        question_results,
+        title="Industry-Level Analysis",
+        caption=(
+            "Premium, growth, and share by industry (SIC class). Green / red shading "
+            "marks directionally favourable or unfavourable movement."
+        ),
+        row_field="industry",
+        keywords=("industry", "sic", "sector"),
+        accent=accent,
+    )
+
+
+def add_segment_section(
+    doc: DocumentType,
+    question_results: list[dict[str, Any]],
+    accent: Optional[RGBColor] = None,
+) -> None:
+    """Performance by client/business segment."""
+    _add_analysis_section(
+        doc,
+        question_results,
+        title="Segment Analysis",
+        caption=(
+            "Premium, growth, and share by client segment. Green / red shading marks "
+            "directionally favourable or unfavourable movement."
+        ),
+        row_field="segment",
+        keywords=("segment",),
+        accent=accent,
+    )
