@@ -4,7 +4,7 @@ For interpretive / multi-step / "both" queries, this node:
 
   1. Asks the lens planner (`core.analysis.plan_analysis`) which complementary
      analytical lenses add value and in what order.
-  2. Runs a bounded ReAct loop (`langgraph.prebuilt.create_react_agent`) with a
+  2. Runs a bounded ReAct loop (`langchain.agents.create_agent`) with a
      READ-ONLY tool allowlist (all backed by `core.mcp.tools`) and a hard
      iteration cap, following the lens bodies + always-on analyst principles.
   3. Writes the synthesized answer + evidence rows into the same AgentState
@@ -21,9 +21,9 @@ import json
 import logging
 from typing import Any, Dict, List
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
-from langgraph.prebuilt import create_react_agent
 
 from core.analysis import get_lens_library, plan_analysis
 from core.initialization import Initialization
@@ -197,9 +197,46 @@ rolling-12M, ranking, confidentiality, etc.]
   call resolve_value to map the user's wording to an exact valid value.
 - Keep each query focused; build dependent queries from earlier results.
 - Stay within ~9 tool calls. If a query errors, read the ERROR and fix it.
-- When done, write ONE synthesized narrative answer (no JSON, no tool dumps)
-  that leads with the literal answer, then layers in the contextual findings.
-  Only assert what the evidence supports; never fabricate.
+- Only assert what the evidence supports; never fabricate.
+
+[CONFIDENTIALITY — non-negotiable]
+- Peers are ALWAYS aggregated. NEVER expose an individual peer/carrier name in
+  the answer. Refer to peers only in aggregate ("peer average", "the peer set",
+  "vs. peers") even if a tool returned individual names. Marsh's GPR book is the
+  market proxy (no carrier filter); it is fine to name Marsh.
+
+[OUTPUT CONTRACT — your FINAL message is a single Markdown string. You are the
+deeper, agentic path: deliver MORE than a templated workflow would — more
+quantified findings, more cross-lens synthesis, more genuine "so what". Be
+richer, not longer for its own sake.]
+
+Structure (use `### ` H3 headings; emoji prefix optional):
+
+1. LEAD — open with ONE H3 heading that states the headline answer in a glance.
+   2-3 lines: the direct answer + headline number + business impact. You may
+   title it "📌 Executive Summary", "📌 Bottom Line", "📌 TL;DR", or whatever
+   fits the question — but it MUST be the first line (no preamble before it).
+
+2. BODY — then 2-4 H3 sections whose HEADINGS YOU CHOOSE to fit THIS question.
+   Do not force a fixed template. Name each section after what the data actually
+   shows, e.g. "📉 Rate Adequacy Gap", "🏆 Peer Benchmarking", "🎯 Appetite
+   Concentration", "🔄 Retention Risk", "📈 Trend & Momentum", "🧩 Segment Mix",
+   "🔍 Why This Is Happening". Pick the lenses your plan surfaced. Each section
+   is real analysis: rank shifts, SoW/appetite moves, YoY/QoQ deltas,
+   peer-aggregate gaps, drivers, disconnects (e.g. premium up but SoW down =
+   market grew faster). **Bold the critical numbers.** Use 📈 📉 ⚠️ ✅ where natural.
+
+3. RECOMMENDATIONS — one H3 section, 2-4 bullets, each starting with a verb
+   (Defend, Grow, Re-price, Exit, Re-underwrite, Target) tied to a finding above.
+
+4. SUPPORTING DATA — final H3 section ("📊 Supporting Data"). ALWAYS include a
+   compact Markdown table (top 5-10 rows), one row per entity/period. Format
+   premium as currency (e.g. $12.4M); SoW / Appetite / YoY / QoQ as %. Aggregate
+   peers into a single "Peer avg" row — never one row per named peer. If the
+   answer is a single scalar, still give a small 1-2 row table for context.
+
+STYLE: executive tone, no hedging, no filler, no data-dictionary phrasing; never
+repeat the same fact across sections.
 
 [USER QUESTION]
 {question}"""
@@ -236,19 +273,14 @@ def analyst_agent_node(state: AgentState) -> AgentState:
 
     evidence: List[Dict[str, Any]] = []
     tools = _build_tools(evidence)
-    agent = create_react_agent(_model(), tools)
     system_prompt = _system_prompt(question, route, flow, plan)
+    agent = create_agent(_model(), tools, system_prompt=system_prompt)
 
     answer = ""
     with latency_timer() as timing:
         try:
             result = agent.invoke(
-                {
-                    "messages": [
-                        SystemMessage(content=system_prompt),
-                        HumanMessage(content=question),
-                    ]
-                },
+                {"messages": [HumanMessage(content=question)]},
                 config={"recursion_limit": _RECURSION_LIMIT},
             )
             answer = (result["messages"][-1].content or "").strip()

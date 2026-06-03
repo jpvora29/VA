@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# Local secrets
+.env
+
 # Local reference/scaffold material
 skill creation reference code/
 skill_reference_code/

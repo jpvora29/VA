@@ -784,10 +784,14 @@ def render_chat(
             elif msg["type"] == "AIMessage":
                 content = msg.get("content") or ""
 
-                # Detect the consulting-grade format produced by the response signatures and wrap it as an insight card.
+                # Detect the consulting-grade format and wrap it as an insight card.
+                # The deterministic rails always lead with "Executive Summary";
+                # the analyst agent uses dynamic, query-shaped H3 headings, so we
+                # also treat any answer with multiple "### " sections as an insight.
                 is_insight = (
-                    "### 📌 Executive Summary" in content
-                    or "Executive Summary" in content
+                    "Executive Summary" in content
+                    or content.lstrip().startswith("### ")
+                    or content.count("### ") >= 2
                 )
 
                 if is_insight:

@@ -1,3 +1,8 @@
+# Load environment (LOG_LEVEL, etc.) before any module configures logging at import time.
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import dash
 from dash import html, dcc, Input, Output, State, ctx, callback_context, ALL, callback
 import dash_bootstrap_components as dbc

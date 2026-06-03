@@ -61,7 +61,9 @@ class RouterNode:
         # analyst agent (plan lenses -> tool-calling loop -> synthesize). Simple
         # factual lookups stay on the cheap deterministic rails.
         routing_context = state.get("routing_context")
+        logger.debug(f"Routing context in relevance_router: {routing_context}")
         depth = getattr(routing_context, "analysis_depth", "lookup")
+        logger.debug(f"Analysis depth in relevance_router: {depth}")
         if depth == "analytical" and current_route in {"survey", "premium", "both"}:
             return "analyst_agent"
 
