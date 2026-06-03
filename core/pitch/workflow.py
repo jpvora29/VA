@@ -126,6 +126,7 @@ class PitchBuilderWorkflow:
             "messages": [HumanMessage(content=prompt)],
             "survey_attempts": 0,
             "gpr_attempts": 0,
+            "gimmi_attempts": 0,
             "pitch_theme": theme_key,
             "pitch_filters": filters,
         }

@@ -15,7 +15,14 @@ from core.agents.analyst_agent import analyst_agent_node
 from core.agents.context_filler import ContextFillingAgent
 from core.agents.fallback import Fallback
 from core.agents.gimmi.response import check_if_gimmi_required, gimmi_insight
-from core.agents.gimmi.sql_agent import gimmi_execute_sql, gimmi_sqlagent_node
+from core.agents.gimmi.sql_agent import (
+    gimmi_check_attempts_router,
+    gimmi_end_max_iterations,
+    gimmi_execute_sql,
+    gimmi_execute_sql_router,
+    gimmi_sql_fixer_agent,
+    gimmi_sqlagent_node,
+)
 from core.agents.gpr.response import gpr_insight
 from core.agents.rephraser import QueryRephraseAgent
 from core.agents.router import RouterNode
@@ -59,6 +66,8 @@ class PitchQuestionGraph:
         self.gpr_insight = gpr_insight
         self.gimmi_sqlagent_node = gimmi_sqlagent_node
         self.gimmi_execute_sql = gimmi_execute_sql
+        self.gimmi_sql_fixer_agent = gimmi_sql_fixer_agent
+        self.gimmi_end_max_iterations = gimmi_end_max_iterations
         self.gimmi_insight = gimmi_insight
 
     def create_workflow(self):
@@ -77,6 +86,8 @@ class PitchQuestionGraph:
         workflow.add_node("gpr_insight", self.gpr_insight)
         workflow.add_node("gimmi_sqlagent_node", self.gimmi_sqlagent_node)
         workflow.add_node("gimmi_execute_sql", self.gimmi_execute_sql)
+        workflow.add_node("gimmi_sql_fixer_agent", self.gimmi_sql_fixer_agent)
+        workflow.add_node("gimmi_end_max_iterations", self.gimmi_end_max_iterations)
         workflow.add_node("gimmi_insight", self.gimmi_insight)
 
         workflow.add_edge(START, "context_filler")
@@ -118,7 +129,23 @@ class PitchQuestionGraph:
         )
 
         workflow.add_edge("gimmi_sqlagent_node", "gimmi_execute_sql")
-        workflow.add_edge("gimmi_execute_sql", "gimmi_insight")
+        workflow.add_conditional_edges(
+            "gimmi_execute_sql",
+            gimmi_execute_sql_router,
+            {
+                "gimmi_insight": "gimmi_insight",
+                "gimmi_sql_fixer_agent": "gimmi_sql_fixer_agent",
+            },
+        )
+        workflow.add_conditional_edges(
+            "gimmi_sql_fixer_agent",
+            gimmi_check_attempts_router,
+            {
+                "gimmi_execute_sql": "gimmi_execute_sql",
+                "gimmi_end_max_iterations": "gimmi_end_max_iterations",
+            },
+        )
+        workflow.add_edge("gimmi_end_max_iterations", "gimmi_insight")
 
         workflow.add_edge("survey_data_overflow", END)
         workflow.add_edge("survey_insight", END)

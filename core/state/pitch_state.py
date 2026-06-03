@@ -69,6 +69,8 @@ class PitchAgentState(TypedDict, total=False):
     gimmi_sql_query: str
     gimmi_query_result: List
     gimmi_response: str
+    gimmi_sql_error: bool
+    gimmi_attempts: Annotated[int, add]
 
     # Pitch/report workflow fields.
     pitch_thread_id: str

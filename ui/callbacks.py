@@ -723,7 +723,9 @@ def process_workflow(
     messages: list[Any] = [HumanMessage(content=user_input)]
 
     # Trigger the Agent State Workflow
-    state_obj = AgentState(messages=messages, survey_attempts=0, gpr_attempts=0)
+    state_obj = AgentState(
+        messages=messages, survey_attempts=0, gpr_attempts=0, gimmi_attempts=0
+    )
     updated_state: dict[str, Any] = langgraph.trigger_workflow(
         state_obj, thread_id=thread_id
     )
