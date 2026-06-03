@@ -29,6 +29,7 @@ from config.report_config import (
     GRAY,
 )
 from document_builder.models import TopKPIs
+from document_builder.helpers.design_spec import load_design_spec
 from document_builder.helpers.number_formatter import format_money, format_pct
 from document_builder.helpers.table_pivot_helper import *
 from document_builder.helpers.field_identification import find_field, classify_question
@@ -84,11 +85,20 @@ def add_labeled_paragraph(document: DocumentType, label: str, value: str) -> Non
 def add_section_title(
     doc: DocumentType, title: str, accent: Optional[RGBColor] = None
 ) -> None:
+    spec = load_design_spec()
     p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(12)
+    p.paragraph_format.space_before = Pt(14)
     p.paragraph_format.space_after = Pt(4)
-    add_paragraph_bottom_rule(p, color="D0D8E8", size=4)
-    run(p, title, bold=True, size_pt=13, color=accent or NAVY)
+    add_paragraph_bottom_rule(p, color=spec.hex("rule_soft"), size=6)
+    # Leading accent bar gives each section a crisp, branded anchor.
+    run(p, "▌ ", bold=True, size_pt=float(spec.sizes.get("section_title", 13)), color=accent or NAVY)
+    run(
+        p,
+        title,
+        bold=True,
+        size_pt=float(spec.sizes.get("section_title", 13)),
+        color=accent or NAVY,
+    )
 
 
 def add_section_caption(doc: DocumentType, text: str) -> None:
@@ -98,28 +108,50 @@ def add_section_caption(doc: DocumentType, text: str) -> None:
     run(cap, text, size_pt=9, color=GRAY)
 
 
-def style_simple_table(table: Table, header_fill: str = "#000F47") -> None:
+def style_simple_table(table: Table, header_fill: str = None) -> None:
+    spec = load_design_spec()
+    header_fill = header_fill or spec.hex_hash("header_fill")
+    zebra_fill = spec.hex_hash("zebra_fill")
+    border = spec.hex("table_border")
+    size_header = float(spec.sizes.get("table_header", 8.5))
+    size_body = float(spec.sizes.get("table_body", 8.8))
+
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     set_table_full_width(table)
+
+    # Decide per-column alignment from the header text: identity columns
+    # (carrier/product/segment/…) read left; numeric columns read right.
+    headers = [c.text for c in table.rows[0].cells] if table.rows else []
+    aligns = [
+        WD_ALIGN_PARAGRAPH.LEFT if is_identity_header(h) else WD_ALIGN_PARAGRAPH.RIGHT
+        for h in headers
+    ]
+
     for row_index, row in enumerate(table.rows):
-        for cell in row.cells:
-            set_cell_margins(cell, top=90, bottom=90, left=120, right=120)
-            set_cell_borders(cell, {"bottom": "D8DFF0"})
+        for col_index, cell in enumerate(row.cells):
+            set_cell_margins(cell, top=95, bottom=95, left=130, right=130)
+            set_cell_borders(cell, {"bottom": border})
+            align = aligns[col_index] if col_index < len(aligns) else WD_ALIGN_PARAGRAPH.LEFT
             if row_index == 0:
                 goa(cell._tc, "w:tcPr").append(shading(header_fill))
                 for p in cell.paragraphs:
+                    p.alignment = align
                     for run in p.runs:
                         run.font.color.rgb = WHITE
                         run.bold = True
-                        run.font.size = Pt(8.5)
+                        run.font.size = Pt(size_header)
             else:
                 goa(cell._tc, "w:tcPr").append(
-                    shading("#F7F9FD" if row_index % 2 == 0 else "#FFFFFF")
+                    shading(zebra_fill if row_index % 2 == 0 else "#FFFFFF")
                 )
                 for p in cell.paragraphs:
+                    p.alignment = align
                     for run in p.runs:
                         run.font.color.rgb = DARK
-                        run.font.size = Pt(8.8)
+                        run.font.size = Pt(size_body)
+                        # Emphasise the identity (first) column for scannability.
+                        if col_index == 0:
+                            run.bold = True
 
 
 def add_kpi_title(
@@ -129,20 +161,29 @@ def add_kpi_title(
     delta_text: str = "",
     delta_good: Optional[bool] = None,
 ) -> None:
-    goa(cell._tc, "w:tcPr").append(shading("EEF2F8"))
-    set_cell_margins(cell, top=140, bottom=140, left=160, right=160)
-    set_cell_borders(cell, {"bottom": "0A4AB0"})
+    _spec = load_design_spec()
+    goa(cell._tc, "w:tcPr").append(shading(_spec.hex("kpi_fill")))
+    set_cell_margins(cell, top=150, bottom=150, left=150, right=150)
+    # A bold navy top rule turns each cell into a distinct KPI "card".
+    set_cell_top_border(cell, _spec.hex("navy"), size=22)
     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
 
     p_label = cell.paragraphs[0]
     p_label.paragraph_format.space_before = Pt(0)
-    p_label.paragraph_format.space_after = Pt(2)
-    run(p_label, label.upper(), bold=True, size_pt=7, color=GRAY)
+    p_label.paragraph_format.space_after = Pt(3)
+    r_label = run(p_label, label.upper(), bold=True, size_pt=7.5, color=GRAY)
+    r_label.font.all_caps = True
 
     p_value = cell.add_paragraph()
     p_value.paragraph_format.space_before = Pt(0)
     p_value.paragraph_format.space_after = Pt(2)
-    run(p_value, value or "-", bold=True, size_pt=16, color=NAVY)
+    run(
+        p_value,
+        value or "-",
+        bold=True,
+        size_pt=float(_spec.sizes.get("kpi_value", 16)) + 2,
+        color=NAVY,
+    )
 
     if delta_text:
         p_delta = cell.add_paragraph()
@@ -161,13 +202,15 @@ def add_kpi_title(
 def add_kpi_strip(doc: DocumentType, kpis: TopKPIs) -> None:
 
     spacer = doc.add_paragraph()
-    spacer.paragraph_format.space_before = Pt(6)
+    spacer.paragraph_format.space_before = Pt(8)
     spacer.paragraph_format.space_after = Pt(0)
 
     table = doc.add_table(rows=1, cols=4)
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     remove_table_borders(table)
     set_table_full_width(table)
+    # Gutters between the four KPI cards.
+    set_table_cell_spacing(table, 70)
 
     # Total Premium
     add_kpi_title(

@@ -8,6 +8,8 @@ from document_builder.helpers.docx_helper import *
 from document_builder.helpers.number_formatter import *
 from document_builder.helpers.design_spec import load_design_spec
 
+from document_builder.documents.cover_page import add_cover_page
+from document_builder.documents.page_furniture import add_page_furniture
 from document_builder.documents.header_banner import add_header
 from document_builder.documents.section_heading import add_section_heading
 from document_builder.documents.body_content import add_body_content
@@ -93,7 +95,13 @@ def build_pitch_report_docx(ctx: ReportConfig) -> Path:
     styles["Normal"].font.name = BODY_FONT
     styles["Normal"].font.size = BODY_SIZE
 
-    # --- 1. HEADER BANNER ------------------------
+    # Running header + footer (page 2 onward; excluded from the cover).
+    add_page_furniture(doc, ctx.carrier, ctx.country, ctx.year)
+
+    # --- 0. COVER PAGE (page 1) ------------------
+    add_cover_page(doc, ctx.carrier, ctx.country, ctx.year)
+
+    # --- 1. HEADER BANNER (page 2 masthead) ------
     add_header(doc, ctx.carrier, ctx.country, ctx.year)
 
     # --- 2a. KPI STRIP - Executive Narrative -----------------------------------

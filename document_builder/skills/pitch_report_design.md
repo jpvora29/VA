@@ -19,6 +19,11 @@ palette:
   header_fill: "000F47"   # table header band
   zebra_fill: "F7F9FD"    # alternating table row
   kpi_fill: "EEF2F8"      # KPI card background
+  kicker_blue: "7396CD"   # muted blue kicker on the navy banner
+  subtitle_blue: "9BB9E6" # soft blue banner subtitle
+  cover_bg: "F4F7FC"      # light tint for cover accent panels
+  rule_soft: "D0D8E8"     # hairline rule under section titles
+  table_border: "D8DFF0"  # table cell hairline
 fonts:
   heading: "Georgia Pro Light"
   body: "Arial"
@@ -32,8 +37,22 @@ sizes:
   kpi_label: 7
   table_header: 8.5
   table_body: 8.8
+  cover_title: 40
+  cover_subtitle: 20
+  cover_kicker: 11
+  cover_meta: 10
+  page_header: 8
+  page_footer: 8
+# Reusable copy strings.
+labels:
+  kicker: "MARSH ICG  —  CARRIER PERFORMANCE REPORT"
+  title: "Performance Analysis"
+  banner_title: "Performance Analysis Builder"
+  source: "Source — GPR, Carrier Survey"
+  confidentiality: "Marsh ICG  —  Strictly Private & Confidential"
 # Section order top-to-bottom in the rendered document.
 section_order:
+  - cover_page
   - header_banner
   - kpi_strip
   - executive_narrative
@@ -55,6 +74,19 @@ This skill is the single source of truth for how the carrier pitch report
 and implements them deterministically — change a colour or font here and the
 report follows. The prose below is the human-facing rationale and the rules the
 builder encodes.
+
+## Page furniture: cover, running header, footer
+
+- **Cover page** (page 1, its own page): a centered title block on a clean white
+  page with thin navy + red Marsh accent bands top and bottom. Shows the kicker,
+  the large `title` in the heading font (navy), the carrier in electric blue, the
+  `country • year` meta, a hairline divider, the prepared date, and the
+  `confidentiality` line. Ends with a page break. No running header/footer here
+  (`different_first_page_header_footer`).
+- **Running header** (page 2+): a slim line — `banner_title` left in navy, and
+  `carrier • country • year` right in gray — over a soft hairline rule.
+- **Footer** (page 2+): `confidentiality` left in gray, centered `Page X of Y`
+  via Word field codes, and the carrier right. Keep it 8pt and unobtrusive.
 
 ## Brand palette (Marsh)
 

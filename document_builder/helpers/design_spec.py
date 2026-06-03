@@ -42,6 +42,11 @@ _DEFAULT_PALETTE: Dict[str, str] = {
     "header_fill": "000F47",
     "zebra_fill": "F7F9FD",
     "kpi_fill": "EEF2F8",
+    "kicker_blue": "7396CD",   # muted blue for kickers on the navy banner
+    "subtitle_blue": "9BB9E6", # soft blue for banner subtitles
+    "cover_bg": "F4F7FC",      # very light tint for cover accent panels
+    "rule_soft": "D0D8E8",     # soft hairline rule under section titles
+    "table_border": "D8DFF0",  # table cell hairline
 }
 _DEFAULT_FONTS: Dict[str, str] = {"heading": "Georgia Pro Light", "body": "Arial"}
 _DEFAULT_SIZES: Dict[str, float] = {
@@ -54,6 +59,19 @@ _DEFAULT_SIZES: Dict[str, float] = {
     "kpi_label": 7,
     "table_header": 8.5,
     "table_body": 8.8,
+    "cover_title": 40,
+    "cover_subtitle": 20,
+    "cover_kicker": 11,
+    "cover_meta": 10,
+    "page_header": 8,
+    "page_footer": 8,
+}
+_DEFAULT_LABELS: Dict[str, str] = {
+    "kicker": "MARSH ICG  —  CARRIER PERFORMANCE REPORT",
+    "title": "Performance Analysis",
+    "banner_title": "Performance Analysis Builder",
+    "source": "Source — GPR, Carrier Survey",
+    "confidentiality": "Marsh ICG  —  Strictly Private & Confidential",
 }
 _DEFAULT_SECTION_ORDER: List[str] = [
     "header_banner",
@@ -80,6 +98,10 @@ class DesignSpec:
     section_accents: Dict[str, str] = field(
         default_factory=lambda: dict(_DEFAULT_SECTION_ACCENTS)
     )
+    labels: Dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_LABELS))
+
+    def label(self, key: str) -> str:
+        return self.labels.get(key) or _DEFAULT_LABELS.get(key, "")
 
     def hex(self, key: str) -> str:
         """Return the bare 6-digit hex (no '#') for a palette key."""
@@ -150,6 +172,7 @@ def _load() -> DesignSpec:
         section_accents=_coerce_str_map(
             meta.get("section_accents"), _DEFAULT_SECTION_ACCENTS
         ),
+        labels=_coerce_str_map(meta.get("labels"), _DEFAULT_LABELS),
     )
 
 

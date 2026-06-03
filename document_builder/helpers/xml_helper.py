@@ -49,6 +49,31 @@ def set_table_full_width(table: Table) -> None:
     tblPr.append(tblW)
 
 
+def set_table_cell_spacing(table: Table, twips: int) -> None:
+    """Add uniform spacing between cells (creates a card-gutter look)."""
+    tblPr = goa(table._tbl, "w:tblPr")
+    for existing in tblPr.findall(qn("w:tblCellSpacing")):
+        tblPr.remove(existing)
+    spacing = OxmlElement("w:tblCellSpacing")
+    spacing.set(qn("w:w"), str(twips))
+    spacing.set(qn("w:type"), "dxa")
+    tblPr.append(spacing)
+
+
+def set_cell_top_border(cell, color: str, size: int = 18) -> None:
+    """Thicker accent border on the top edge only (used for KPI cards)."""
+    tcPr = goa(cell._tc, "w:tcPr")
+    for existing in tcPr.findall(qn("w:tcBorders")):
+        tcPr.remove(existing)
+    tcBorders = OxmlElement("w:tcBorders")
+    top = OxmlElement("w:top")
+    top.set(qn("w:val"), "single")
+    top.set(qn("w:sz"), str(size))
+    top.set(qn("w:color"), color)
+    tcBorders.append(top)
+    tcPr.append(tcBorders)
+
+
 def set_cell_margins(
     cell, top: int = 80, bottom: int = 80, left: int = 120, right: int = 120
 ) -> None:
