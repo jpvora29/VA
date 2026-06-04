@@ -62,10 +62,6 @@ class ClarifyDecider(dspy.Module):
 
 _CLARIFY_DECIDER = ClarifyDecider()
 
-# Public handles so the agent-path middleware (core.agents.analyst_agent) reuses
-# the exact same conservative decider + valid-values grounding as this node.
-clarify_decider = _CLARIFY_DECIDER
-
 
 def _valid_values_snapshot() -> dict:
     """Compact valid-values bundle for grounding the ambiguity check + options."""
@@ -81,28 +77,16 @@ def _valid_values_snapshot() -> dict:
     }
 
 
-# Public alias for the agent-path middleware.
-valid_values_snapshot = _valid_values_snapshot
-
-
 def clarify_decide(state: "AgentState") -> "AgentState":
     """Decide whether to ask a clarifying question. Default: do not ask.
 
-    Scope split (avoids a duplicate clarify LLM call per turn): this workflow hook
-    only clarifies turns headed for the deterministic rails (lookup depth).
-    Analytical turns route to the analyst agent, which clarifies via its own
-    `ClarifyMiddleware` — so this node skips them.
+    Clarifies every in-scope turn (lookup AND analytical). The interrupt must live
+    in the checkpointed main graph to be resumable, so this single gate — not a
+    nested-agent middleware — is the sole clarifier across both routes.
     """
     routing_context = state.get("routing_context")
     # Out-of-scope turns never clarify — they go straight to fallback.
     if routing_context is None or getattr(routing_context, "table_family", None) == "fallback":
-        return {"clarify_question": None}
-
-    # Analytical turns are handled by the agent-path middleware (see relevance_router).
-    if (
-        getattr(routing_context, "analysis_depth", "lookup") == "analytical"
-        and routing_context.table_family in {"survey", "premium", "both"}
-    ):
         return {"clarify_question": None}
 
     question = state["messages"][-1].content
@@ -117,6 +101,17 @@ def clarify_decide(state: "AgentState") -> "AgentState":
         return {"clarify_question": None}
 
     if not decision.needs_clarification or decision.question is None:
+        return {"clarify_question": None}
+
+    # A clarify card with fewer than 2 grounded options is a vague, unhelpful ask
+    # (the model ignored the [WHEN YOU DO ASK] rule). Fail safe to not asking.
+    if len(decision.question.options) < 2:
+        log_event(
+            logger,
+            "clarify_skipped_no_options",
+            node="clarify_decide",
+            header=decision.question.header,
+        )
         return {"clarify_question": None}
 
     log_event(

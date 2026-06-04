@@ -82,6 +82,10 @@ def clarify_card(payload: dict):
     ]
     if option_buttons:
         children.append(html.Div(option_buttons, className="clarify-option-grid"))
+        if payload.get("allow_free_text", True):
+            children.append(
+                html.Div("Pick one, or type your own answer below.", className="clarify-hint")
+            )
     if payload.get("allow_free_text", True):
         children.append(
             dbc.InputGroup(
@@ -179,6 +183,7 @@ def chatbot_page():
         [
             dcc.Store(id="chat-store", data={}),
             dcc.Store(id="trigger-gpt", data=False),  # flag to run GPT call
+            dcc.Store(id="trigger-resume", data=False),  # flag to resume a paused HITL thread
             dcc.Store(id="is-thinking", data=False),  # flag to show loader
             dcc.Store(id="has-chart", data=False),
             dcc.Store(id="overflow_data", data={}),

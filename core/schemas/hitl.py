@@ -9,9 +9,9 @@ The decision is intentionally conservative — see `ClarifyDecisionSignature`. T
 default is to NOT ask, so a confident turn never gets interrupted (the previous
 regex-based depth heuristic over-fired; this must not).
 
-Used by:
-- the workflow path (`core.graph.hitl` interrupt node), and
-- the agent path (`ClarifyMiddleware` in `core.agents.analyst_agent`).
+Used by the single clarify gate in the checkpointed main graph
+(`core.graph.hitl` clarify_decide -> clarify_gate), which handles both lookup and
+analytical turns — the only place an `interrupt()` can be resumed.
 """
 from __future__ import annotations
 
@@ -96,10 +96,19 @@ class ClarifyDecisionSignature(dspy.Signature):
       over interrupting.
 
     [WHEN YOU DO ASK]
-    - Produce ONE question, a 2-12 char header, and 2-4 concrete options drawn from
-      the VALID VALUES provided (never invented). Keep allow_free_text = true.
-    - Make options mutually exclusive and grounded (e.g. the actual valid carriers
-      the typo could mean, or the candidate countries/products).
+    - The question MUST name the specific unresolved entity — never a generic
+      "Could you clarify?". Quote the user's ambiguous term and state the choice.
+      Good: "Did you mean carrier 'Allianz' or 'Allianz Trade'?"
+      Good: "Which market — Germany, France, or Italy?"
+      Bad:  "Could you clarify what you mean?" / "Can you provide more detail?"
+    - You MUST supply 2-4 concrete options drawn from the VALID VALUES provided
+      (never invented), mutually exclusive and grounded (e.g. the actual valid
+      carriers the typo could match, or the candidate countries/products).
+    - If you cannot produce at least 2 grounded options from the valid values,
+      DO NOT ASK — set needs_clarification = false and let the turn proceed on a
+      sensible default. A question without real options is worse than none.
+    - Header is a 2-12 char chip naming the dimension ("Carrier", "Market",
+      "Product"), not a sentence. Keep allow_free_text = true.
     """
 
     current_user_query: str = dspy.InputField(

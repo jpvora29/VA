@@ -948,7 +948,7 @@ def ask_suggested_question(
 
 @callback(
     Output("chat-store", "data", allow_duplicate=True),
-    Output("trigger-gpt", "data", allow_duplicate=True),
+    Output("trigger-resume", "data", allow_duplicate=True),
     Output("is-thinking", "data", allow_duplicate=True),
     Input({"type": "clarify-option", "value": ALL}, "n_clicks"),
     Input("clarify-free-submit", "n_clicks"),
@@ -962,7 +962,11 @@ def submit_clarification(
     free_text: str | None,
     chat_history: dict[str, Any],
 ) -> tuple[dict[str, Any] | NoUpdate, Optional[bool], Optional[bool]]:
-    """Resume the paused thread with the user's MCQ answer (option or free-text)."""
+    """Record the user's MCQ answer, drop the card, and trigger the resume worker.
+
+    Kept deliberately fast (no LLM call) so the thinking indicator paints
+    immediately; `process_resume` does the actual graph resume.
+    """
 
     triggered = ctx.triggered_id
     triggered_value = ctx.triggered[0]["value"] if ctx.triggered else None
@@ -985,8 +989,6 @@ def submit_clarification(
     if not chat_history.get("awaiting_clarification"):
         return no_update, no_update, no_update
 
-    thread_id = chat_history.get("thread_id")
-
     # Drop the clarify card; record the answer in the transcript as a user turn.
     chat_history["messages"] = [
         m for m in chat_history.get("messages", []) if m.get("type") != "ClarifyCard"
@@ -994,9 +996,54 @@ def submit_clarification(
     chat_history["messages"].append(
         {"type": "HumanMessage", "content": answer, "rephrased_content": None}
     )
-    chat_history["awaiting_clarification"] = False
+    # Hand the answer to the resume worker; keep awaiting_clarification True until
+    # the resume actually completes so a stray click can't double-resume.
+    chat_history["pending_clarification_answer"] = answer
+    chat_history["followups"] = []
 
-    resumed: dict[str, Any] = langgraph.resume_workflow(answer, thread_id=thread_id)
+    return chat_history, True, True
+
+
+@callback(
+    Output("chat-store", "data", allow_duplicate=True),
+    Output("trigger-resume", "data", allow_duplicate=True),
+    Output("is-thinking", "data", allow_duplicate=True),
+    Input("trigger-resume", "data"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def process_resume(
+    is_trigger: bool, chat_history: dict[str, Any]
+) -> tuple[dict[str, Any] | NoUpdate, bool, bool]:
+    """Resume the paused thread with the recorded MCQ answer (the slow LLM step)."""
+
+    if not is_trigger:
+        return no_update, False, False
+
+    chat_history = chat_history or {}
+    answer = chat_history.pop("pending_clarification_answer", None)
+    if not answer:
+        return no_update, False, False
+
+    chat_history["awaiting_clarification"] = False
+    thread_id = chat_history.get("thread_id")
+
+    try:
+        resumed: dict[str, Any] = langgraph.resume_workflow(answer, thread_id=thread_id)
+    except Exception:
+        logger.exception("Failed to resume workflow after clarification")
+        chat_history["messages"].append(
+            {
+                "type": "AIMessage",
+                "content": (
+                    "Sorry — I couldn't continue after that clarification. "
+                    "Please ask your question again."
+                ),
+                "has_data_overflow": False,
+            }
+        )
+        chat_history["followups"] = []
+        return chat_history, False, False
 
     # A follow-up clarification can (rarely) be raised after resuming.
     interrupts = resumed.get("__interrupt__")
