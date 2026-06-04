@@ -30,7 +30,7 @@ body {
     margin: 0;
     padding: 0;
     overflow-x: hidden;
-    font-family: 'Arial';
+    font-family: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
     color: var(--ink-900);
     background: radial-gradient(1200px 600px at 10% -10%, rgba(0, 44, 119, 0.06), transparent 60%),
         radial-gradient(900px 500px at 110% 10%, rgba(197, 53, 50, 0.05), transparent 60%),
@@ -205,73 +205,187 @@ body {
 
 .type-area {
     bottom: 0;
-    padding: 10px 12px;
-    padding-bottom: 6px;
+    display: flex;
+    flex-direction: column;
+    pointer-events: auto;
+}
+
+/* ---------- Composer (Claude-style pill) ---------- */
+.composer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 7px 7px 9px;
     border: 1px solid var(--border-mid);
-    border-radius: var(--radius-lg);
-    background: rgba(255, 255, 255, 0.75);
+    border-radius: var(--radius-pill);
+    background: rgba(255, 255, 255, 0.92);
     backdrop-filter: blur(14px) saturate(160%);
     -webkit-backdrop-filter: blur(14px) saturate(160%);
     box-shadow: var(--shadow-md);
-    transition: box-shadow var(--transition-med), border-color var(--transition-fast);
+    transition: box-shadow var(--transition-med), border-color var(--transition-fast),
+        transform var(--transition-fast);
 }
 
-.type-area:focus-within {
-    border-color: var(--marsh-blue);
-    box-shadow: 0 10px 30px rgba(0, 44, 119, 0.18);
+.composer:focus-within {
+    border-color: var(--marsh-blue-2);
+    box-shadow: 0 12px 34px rgba(11, 75, 255, 0.16);
 }
 
-.type-area .form-control,
-.type-area input {
+.composer-input.form-control,
+.composer-input,
+.composer input {
     border: none !important;
     background: transparent !important;
     box-shadow: none !important;
+    outline: none !important;
     font-size: 15px;
     color: var(--ink-900);
+    flex: 1 1 auto;
+    padding: 8px 6px;
 }
 
-.type-area .form-control::placeholder {
+.composer-input::placeholder {
     color: var(--ink-300);
 }
 
+/* Round "+" pitch-builder trigger (replaces the big button). */
+.pitch-trigger-btn {
+    flex: 0 0 auto;
+    width: 38px;
+    height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50% !important;
+    border: 1px solid var(--border-mid) !important;
+    background: var(--surface-0) !important;
+    color: var(--marsh-blue) !important;
+    font-size: 17px;
+    padding: 0 !important;
+    box-shadow: var(--shadow-sm);
+    transition: transform var(--transition-med), background-color var(--transition-fast),
+        box-shadow var(--transition-fast), color var(--transition-fast);
+}
+
+.pitch-trigger-btn:hover {
+    background: rgba(11, 75, 255, 0.08) !important;
+    color: var(--marsh-blue-2) !important;
+    transform: rotate(90deg);
+    box-shadow: var(--shadow-md);
+}
+
+/* Send — solid accent circle. */
 .send-btn {
-    background-color: transparent;
-    border: 1px solid transparent;
-    bottom: 0;
-    transition: transform var(--transition-fast), background-color var(--transition-fast);
+    flex: 0 0 auto;
+    width: 38px;
+    height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50% !important;
+    border: none !important;
+    background: var(--marsh-blue) !important;
+    color: #fff !important;
+    font-size: 18px;
+    padding: 0 !important;
+    box-shadow: 0 4px 12px rgba(0, 15, 71, 0.28);
+    transition: transform var(--transition-fast), background-color var(--transition-fast),
+        box-shadow var(--transition-fast);
 }
 
 .send-btn:hover {
-    background-color: rgba(0, 44, 119, 0.08);
-    color: var(--marsh-blue);
-    border: 1px solid transparent;
+    background: var(--marsh-blue-2) !important;
+    color: #fff !important;
     cursor: pointer;
-    transform: translateY(-1px);
+    transform: translateY(-1px) scale(1.04);
+    box-shadow: 0 6px 16px rgba(11, 75, 255, 0.35);
 }
 
 .send-btn:active {
-    transform: translateY(0);
+    transform: translateY(0) scale(0.97);
 }
 
-.pitch-builder-btn {
-    display: inline-flex;
+/* Stop — red pulse, shown while a turn streams. */
+.stop-btn {
+    flex: 0 0 auto;
+    width: 38px;
+    height: 38px;
     align-items: center;
-    gap: 2px;
-    min-width: 148px;
-    border-radius: var(--radius-pill) !important;
-    border: 1px solid rgba(0, 44, 119, 0.14) !important;
-    background: #ffffff !important;
-    color: var(--marsh-blue) !important;
-    font-weight: 700 !important;
-    font-size: 13px !important;
-    box-shadow: var(--shadow-sm);
-    transition: transform var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
+    justify-content: center;
+    border-radius: 50% !important;
+    border: none !important;
+    background: var(--marsh-red) !important;
+    color: #fff !important;
+    font-size: 15px;
+    padding: 0 !important;
+    box-shadow: 0 4px 12px rgba(197, 53, 50, 0.3);
+    transition: transform var(--transition-fast), filter var(--transition-fast);
+    animation: stopPulse 1.6s ease-in-out infinite;
 }
 
-.pitch-builder-btn:hover {
-    background: rgba(0, 44, 119, 0.06) !important;
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-md);
+.stop-btn:hover {
+    filter: brightness(1.08);
+    transform: scale(1.05);
+    cursor: pointer;
+}
+
+@keyframes stopPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(197, 53, 50, 0.38); }
+    50% { box-shadow: 0 0 0 7px rgba(197, 53, 50, 0); }
+}
+
+/* ---------- Live "Running X agent… · Ns" status bar ---------- */
+.thinking-bar {
+    align-items: center;
+    gap: 10px;
+    margin: 0 auto 10px;
+    padding: 8px 16px;
+    width: fit-content;
+    max-width: 100%;
+    background: rgba(255, 255, 255, 0.94);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-pill);
+    box-shadow: var(--shadow-sm);
+    font-size: 13px;
+    color: var(--ink-700);
+    animation: cardIn 280ms cubic-bezier(.2, .7, .2, 1) both;
+}
+
+.thinking-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--marsh-blue-2);
+    animation: thinkingPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes thinkingPulse {
+    0% { transform: scale(0.75); box-shadow: 0 0 0 0 rgba(11, 75, 255, 0.45); }
+    70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(11, 75, 255, 0); }
+    100% { transform: scale(0.75); box-shadow: 0 0 0 0 rgba(11, 75, 255, 0); }
+}
+
+.thinking-agent {
+    font-weight: 600;
+    color: var(--marsh-blue);
+}
+
+.thinking-elapsed {
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-500);
+    font-weight: 500;
+}
+
+.thinking-elapsed:not(:empty)::before {
+    content: "· ";
+    color: var(--ink-300);
+}
+
+.composer-disclaimer {
+    text-align: center;
+    font-size: 11px;
+    color: var(--ink-300);
+    margin-top: 7px;
 }
 
 .pitch-builder-drawer {
@@ -370,8 +484,8 @@ body {
     color: var(--ink-800);
     font-size: 13px;
     font-weight: 700;
-    font-family: Arial;
-    letter-spacing: 0px;
+    letter-spacing: 0.2px;
+    text-transform: uppercase;
 }
 
 .pitch-section-icon {

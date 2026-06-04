@@ -6,6 +6,7 @@ from io import BytesIO
 
 import pandas as pd
 from langchain_core.messages import HumanMessage, AIMessage
+from langgraph.types import Command
 from typing_extensions import Any, Optional
 
 
@@ -66,6 +67,7 @@ from ui.helper import (
 )
 
 from document_builder.models import ReportConfig
+from ui.jobs import Job, start_job, get_job, cancel_job, clear_job
 
 #  ── Logger ────────────────────────────────────────────────────────────────────────────────────────
 
@@ -92,6 +94,26 @@ clientside_callback(
     Output("chat-box", "data-scroll-anchor"),
     Input("chat-box", "children"),
     prevent_initial_call=True,
+)
+
+# ── TOGGLE THINKING BAR + SEND/STOP BUTTON  ─────────────────────────────────────────────────────────────
+# Instant, clientside: while a turn is streaming we reveal the status bar and the
+# stop button, and hide the send button. No server round-trip so it feels snappy.
+clientside_callback(
+    """
+    function(thinking) {
+        const on = !!thinking;
+        return [
+            {display: on ? 'flex' : 'none'},
+            {display: on ? 'none' : 'inline-flex'},
+            {display: on ? 'inline-flex' : 'none'}
+        ];
+    }
+    """,
+    Output("thinking-bar", "style"),
+    Output("send-btn", "style"),
+    Output("stop-btn", "style"),
+    Input("is-thinking", "data"),
 )
 
 # ── PITCH BUILDER CALLBACKS  ───────────────────────────────────────────────────────────────────────────
@@ -698,62 +720,208 @@ def _update_chat_history(
     return chat_history
 
 
+# Friendly, human-readable labels for the live "Running X agent…" status line.
+# Keys are the main-graph node names (see core.graph.main.create_workflow).
+NODE_LABELS = {
+    "context_filler": "Understanding your question",
+    "clarify_decide": "Checking for ambiguity",
+    "clarify_gate": "Waiting on your clarification",
+    "rephraser_agent": "Rephrasing the query",
+    "router": "Routing to the right data",
+    "survey_agent": "Querying broker-survey data",
+    "gpr_agent": "Querying premium data",
+    "combiner_agent": "Combining survey + premium",
+    "analyst_agent": "Running the analyst agent",
+    "fallback": "Composing a response",
+    "survey_data_overflow": "Preparing the data export",
+    "survey_insight": "Writing the insight",
+    "gpr_insight": "Writing the insight",
+    "gimmi_sqlagent_node": "Pulling GIMMI detail",
+    "gimmi_execute_sql": "Pulling GIMMI detail",
+    "gimmi_sql_fixer_agent": "Refining the query",
+    "gimmi_insight": "Writing the GIMMI insight",
+    "followup_node": "Suggesting follow-ups",
+}
+
+
+def _node_label(node: str | None) -> str:
+    if not node:
+        return "Thinking"
+    return NODE_LABELS.get(node, f"Running {node.replace('_', ' ')}")
+
+
+def _commit_turn(
+    chat_history: dict[str, Any], state: dict[str, Any]
+) -> dict[str, Any]:
+    """Fold a completed (non-interrupted) turn's final state into the transcript."""
+    rephrased_query = state.get("rephrased_user_query")
+    table = state.get("current_route")
+    last_human = next(
+        (
+            m.get("content")
+            for m in reversed(chat_history.get("messages", []))
+            if m.get("type") == "HumanMessage"
+        ),
+        None,
+    )
+    if last_human is not None:
+        chat_history = _update_last_chat_message(chat_history, last_human, rephrased_query)
+    chat_history = _update_chat_history(chat_history, state, table)
+    chat_history["followups"] = state.get("followup_questions") or []
+    return chat_history
+
+
+def _launch_job(thread_id: str, input_obj: Any) -> None:
+    """Start a streaming graph run for `thread_id` in a background thread."""
+
+    def worker(job: Job) -> None:
+        for ev in langgraph.stream_workflow(
+            input_obj, thread_id=thread_id, cancel=job.cancel
+        ):
+            if "interrupt" in ev:
+                job.interrupt = ev["interrupt"] or {}
+            elif "node" in ev:
+                job.current_node = ev["node"]
+        if job.cancel.is_set():
+            job.cancelled = True
+        else:
+            # Pull the merged AgentState the UI renders from (route, results, …).
+            job.state = langgraph.get_state_values(thread_id)
+
+    start_job(thread_id, worker)
+
+
 @callback(
-    Output("chat-store", "data", allow_duplicate=True),
     Output("trigger-gpt", "data", allow_duplicate=True),
-    Output("is-thinking", "data", allow_duplicate=True),
+    Output("job-poll", "disabled", allow_duplicate=True),
+    Output("thinking-agent", "children", allow_duplicate=True),
     Input("trigger-gpt", "data"),
     State("chat-store", "data"),
     prevent_initial_call=True,
 )
-def process_workflow(
+def launch_new_job(
     is_trigger: bool, chat_history: dict[str, Any]
-) -> tuple[dict[str, Any] | NoUpdate, bool, bool]:
-
+) -> tuple[bool, bool | NoUpdate, str | NoUpdate]:
+    """Kick off a streaming run for a new user turn (non-blocking)."""
     if not is_trigger:
-        return no_update, False, False
+        return False, no_update, no_update
 
     chat_history = chat_history or {}
-    thread_id = chat_history.setdefault("thread_id", uuid.uuid4().hex[:12])
-
-    user_input: list[str] = [
+    thread_id = chat_history.get("thread_id") or uuid.uuid4().hex[:12]
+    user_input = [
         msg for msg in chat_history["messages"] if msg["type"] == "HumanMessage"
     ][-1]["content"]
 
-    messages: list[Any] = [HumanMessage(content=user_input)]
-
-    # Trigger the Agent State Workflow
     state_obj = AgentState(
-        messages=messages, survey_attempts=0, gpr_attempts=0, gimmi_attempts=0
+        messages=[HumanMessage(content=user_input)],
+        survey_attempts=0,
+        gpr_attempts=0,
+        gimmi_attempts=0,
     )
-    updated_state: dict[str, Any] = langgraph.trigger_workflow(
-        state_obj, thread_id=thread_id
-    )
+    _launch_job(thread_id, state_obj)
+    return False, False, "Starting…"
 
-    # HITL: the graph paused at the clarify gate (or the analyst middleware) with
-    # an MCQ. Render the clarification card and wait for the user's answer; the
-    # same thread resumes in `submit_clarification`.
-    interrupts = updated_state.get("__interrupt__")
-    if interrupts:
-        payload = getattr(interrupts[0], "value", {}) or {}
+
+@callback(
+    Output("trigger-resume", "data", allow_duplicate=True),
+    Output("job-poll", "disabled", allow_duplicate=True),
+    Output("thinking-agent", "children", allow_duplicate=True),
+    Input("trigger-resume", "data"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def launch_resume_job(
+    is_trigger: bool, chat_history: dict[str, Any]
+) -> tuple[bool, bool | NoUpdate, str | NoUpdate]:
+    """Kick off a streaming resume after the user answers a clarify card."""
+    if not is_trigger:
+        return False, no_update, no_update
+
+    chat_history = chat_history or {}
+    answer = chat_history.get("pending_clarification_answer")
+    thread_id = chat_history.get("thread_id")
+    if not answer or not thread_id:
+        return False, no_update, no_update
+
+    _launch_job(thread_id, Command(resume=answer))
+    return False, False, "Resuming…"
+
+
+@callback(
+    Output("chat-store", "data", allow_duplicate=True),
+    Output("is-thinking", "data", allow_duplicate=True),
+    Output("job-poll", "disabled", allow_duplicate=True),
+    Output("thinking-agent", "children", allow_duplicate=True),
+    Output("thinking-elapsed", "children", allow_duplicate=True),
+    Input("job-poll", "n_intervals"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def poll_job(
+    n_intervals: int, chat_history: dict[str, Any]
+) -> tuple[Any, Any, Any, Any, Any]:
+    """Poll the running job each tick; on completion, commit and stop polling."""
+    chat_history = chat_history or {}
+    thread_id = chat_history.get("thread_id")
+    job = get_job(thread_id)
+
+    if job is None:
+        return no_update, no_update, True, no_update, no_update
+
+    elapsed = f"{job.elapsed_seconds()}s"
+
+    # Still running — update the live status line, leave the transcript alone.
+    if not job.done:
+        return no_update, no_update, no_update, _node_label(job.current_node), elapsed
+
+    # Finished: tear the job down and finalize the turn.
+    clear_job(thread_id)
+    chat_history.pop("pending_clarification_answer", None)
+    chat_history["awaiting_clarification"] = False
+
+    if job.cancelled:
         chat_history.setdefault("messages", []).append(
-            {"type": "ClarifyCard", "payload": payload}
+            {"type": "AIMessage", "content": "_Stopped._", "has_data_overflow": False}
+        )
+        chat_history["followups"] = []
+        return chat_history, False, True, "", ""
+
+    if job.error:
+        logger.error("Chat job failed: %s", job.error)
+        chat_history.setdefault("messages", []).append(
+            {
+                "type": "AIMessage",
+                "content": "Sorry — something went wrong while answering. Please try again.",
+                "has_data_overflow": False,
+            }
+        )
+        chat_history["followups"] = []
+        return chat_history, False, True, "", ""
+
+    if job.interrupt is not None:
+        chat_history.setdefault("messages", []).append(
+            {"type": "ClarifyCard", "payload": job.interrupt}
         )
         chat_history["awaiting_clarification"] = True
         chat_history["followups"] = []
-        return chat_history, False, False
+        return chat_history, False, True, "", ""
 
-    rephrased_query = updated_state.get("rephrased_user_query")
-    table = updated_state.get("current_route")
+    chat_history = _commit_turn(chat_history, job.state)
+    return chat_history, False, True, "", ""
 
-    chat_history = _update_last_chat_message(chat_history, user_input, rephrased_query)
-    chat_history = _update_chat_history(chat_history, updated_state, table)
 
-    # Follow-up suggestions are produced by the terminal follow-up node, so they
-    # carry full turn context (question, route, answer, SQL evidence).
-    chat_history["followups"] = updated_state.get("followup_questions") or []
-
-    return chat_history, False, False
+@callback(
+    Output("thinking-agent", "children", allow_duplicate=True),
+    Input("stop-btn", "n_clicks"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def stop_job(n_clicks: int, chat_history: dict[str, Any]) -> str | NoUpdate:
+    """Cooperatively cancel the in-flight run; the poll loop finalizes the rest."""
+    if not n_clicks:
+        return no_update
+    cancel_job((chat_history or {}).get("thread_id"))
+    return "Stopping…"
 
 
 # 3. -------------------------- RENDER CHAT ---------------------------------------
@@ -854,9 +1022,9 @@ def render_chat(
                 except Exception:
                     logger.exception("Error rendering the data-overflow message")
 
-        if is_thinking:
-            chat_items.append(html.Div("Thinking", className="message typing-dots"))
-        else:
+        # The live "Running X agent… · Ns" status renders in the dedicated
+        # thinking-bar above the input (updated by poll_job), not inline here.
+        if not is_thinking:
             followups = (chat_history or {}).get("followups") or []
             block = followup_suggestions(followups)
             if block is not None:
@@ -965,7 +1133,7 @@ def submit_clarification(
     """Record the user's MCQ answer, drop the card, and trigger the resume worker.
 
     Kept deliberately fast (no LLM call) so the thinking indicator paints
-    immediately; `process_resume` does the actual graph resume.
+    immediately; `launch_resume_job` streams the actual graph resume.
     """
 
     triggered = ctx.triggered_id
@@ -1002,63 +1170,6 @@ def submit_clarification(
     chat_history["followups"] = []
 
     return chat_history, True, True
-
-
-@callback(
-    Output("chat-store", "data", allow_duplicate=True),
-    Output("trigger-resume", "data", allow_duplicate=True),
-    Output("is-thinking", "data", allow_duplicate=True),
-    Input("trigger-resume", "data"),
-    State("chat-store", "data"),
-    prevent_initial_call=True,
-)
-def process_resume(
-    is_trigger: bool, chat_history: dict[str, Any]
-) -> tuple[dict[str, Any] | NoUpdate, bool, bool]:
-    """Resume the paused thread with the recorded MCQ answer (the slow LLM step)."""
-
-    if not is_trigger:
-        return no_update, False, False
-
-    chat_history = chat_history or {}
-    answer = chat_history.pop("pending_clarification_answer", None)
-    if not answer:
-        return no_update, False, False
-
-    chat_history["awaiting_clarification"] = False
-    thread_id = chat_history.get("thread_id")
-
-    try:
-        resumed: dict[str, Any] = langgraph.resume_workflow(answer, thread_id=thread_id)
-    except Exception:
-        logger.exception("Failed to resume workflow after clarification")
-        chat_history["messages"].append(
-            {
-                "type": "AIMessage",
-                "content": (
-                    "Sorry — I couldn't continue after that clarification. "
-                    "Please ask your question again."
-                ),
-                "has_data_overflow": False,
-            }
-        )
-        chat_history["followups"] = []
-        return chat_history, False, False
-
-    # A follow-up clarification can (rarely) be raised after resuming.
-    interrupts = resumed.get("__interrupt__")
-    if interrupts:
-        payload = getattr(interrupts[0], "value", {}) or {}
-        chat_history["messages"].append({"type": "ClarifyCard", "payload": payload})
-        chat_history["awaiting_clarification"] = True
-        chat_history["followups"] = []
-        return chat_history, False, False
-
-    table = resumed.get("current_route")
-    chat_history = _update_chat_history(chat_history, resumed, table)
-    chat_history["followups"] = resumed.get("followup_questions") or []
-
-    return chat_history, False, False
 
 
 # 5. -------------------------- DOWNLOAD BTN FOR ADDITIONAL DATA ---------------------------------------

@@ -187,6 +187,9 @@ def chatbot_page():
             dcc.Store(id="is-thinking", data=False),  # flag to show loader
             dcc.Store(id="has-chart", data=False),
             dcc.Store(id="overflow_data", data={}),
+            # Polls the in-process streaming job each second for live status +
+            # completion; enabled by launch_new_job / launch_resume_job.
+            dcc.Interval(id="job-poll", interval=1000, n_intervals=0, disabled=True),
             dbc.Container(
                 [
                     dbc.Row(
@@ -211,44 +214,66 @@ def chatbot_page():
                         [
                             dbc.Col(
                                 [
+                                    # Live status bar — shown only while a turn is
+                                    # streaming. poll_job updates the agent label +
+                                    # elapsed seconds; a clientside callback toggles
+                                    # its visibility off is-thinking.
                                     html.Div(
                                         [
-                                            dbc.InputGroup(
-                                                [
-                                                    dbc.Button(
-                                                        [
-                                                            html.I(
-                                                                className="bi bi-window-sidebar",
-                                                                style={
-                                                                    "paddingRight": "8px"
-                                                                },
-                                                            ),
-                                                            "Pitch Builder",
-                                                        ],
-                                                        id="pitch-builder-btn",
-                                                        n_clicks=0,
-                                                        className="pitch-builder-btn",
-                                                    ),
-                                                    dbc.Input(
-                                                        id="user-input",
-                                                        placeholder="Ask anything",
-                                                        debounce=True,
-                                                    ),
-                                                    dbc.Button(
-                                                        html.I(
-                                                            className="bi bi-arrow-up-circle-fill",
-                                                            style={
-                                                                "fontSize": "30px",
-                                                                "color": "black",
-                                                            },
-                                                        ),
-                                                        id="send-btn",
-                                                        n_clicks=0,
-                                                        className="send-btn",
-                                                    ),
-                                                ]
+                                            html.Span(className="thinking-dot"),
+                                            html.Span(
+                                                "Thinking",
+                                                id="thinking-agent",
+                                                className="thinking-agent",
                                             ),
-                                        ]
+                                            html.Span(
+                                                "",
+                                                id="thinking-elapsed",
+                                                className="thinking-elapsed",
+                                            ),
+                                        ],
+                                        id="thinking-bar",
+                                        className="thinking-bar",
+                                        style={"display": "none"},
+                                    ),
+                                    html.Div(
+                                        [
+                                            dbc.Button(
+                                                html.I(className="bi bi-plus-lg"),
+                                                id="pitch-builder-btn",
+                                                n_clicks=0,
+                                                className="pitch-trigger-btn",
+                                            ),
+                                            dbc.Tooltip(
+                                                "Pitch Builder",
+                                                target="pitch-builder-btn",
+                                                placement="top",
+                                            ),
+                                            dbc.Input(
+                                                id="user-input",
+                                                placeholder="Ask anything",
+                                                debounce=True,
+                                                className="composer-input",
+                                            ),
+                                            dbc.Button(
+                                                html.I(className="bi bi-arrow-up"),
+                                                id="send-btn",
+                                                n_clicks=0,
+                                                className="send-btn",
+                                            ),
+                                            dbc.Button(
+                                                html.I(className="bi bi-stop-fill"),
+                                                id="stop-btn",
+                                                n_clicks=0,
+                                                className="stop-btn",
+                                                style={"display": "none"},
+                                            ),
+                                        ],
+                                        className="composer",
+                                    ),
+                                    html.Div(
+                                        "Virtual Analyst can make mistakes. Verify important figures.",
+                                        className="composer-disclaimer",
                                     ),
                                 ],
                                 lg=12,

@@ -49,4 +49,6 @@ app.layout = html.Div(
 from ui.callbacks import *
 
 if __name__ == "__main__":
-    app.run(debug=True, port=8080, dev_tools_hot_reload=False)
+    # threaded=True so the poll callbacks keep being served while a streaming
+    # chat turn runs in its own daemon thread (see ui/jobs.py).
+    app.run(debug=True, port=8080, dev_tools_hot_reload=False, threaded=True)

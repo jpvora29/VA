@@ -201,6 +201,51 @@ class LangGraph:
         )
         return state
 
+    def stream_workflow(
+        self,
+        input_obj: Any,
+        *,
+        thread_id: str | None = None,
+        cancel: Any | None = None,
+    ):
+        """Stream a turn node-by-node so the UI can show live progress.
+
+        `input_obj` is either a fresh state dict (new turn) or a `Command`
+        (resume). Yields small dicts:
+          - {"node": <name>}        as each graph node finishes, and
+          - {"interrupt": <payload>} when the graph pauses at the HITL gate.
+
+        Cooperative cancellation: if `cancel` (a `threading.Event`) is set, the
+        loop stops at the next node boundary — LangGraph cannot abort a node
+        mid-flight, so a stop takes effect once the current node returns.
+        """
+        if self._compiled_app is None:
+            self._compiled_app = self.create_workflow()
+        config = checkpoint_config(thread_id or self.default_thread_id)
+        log_event(logger, "workflow_stream_start", node="main_workflow")
+        for chunk in self._compiled_app.stream(
+            input_obj, config=config, stream_mode="updates"
+        ):
+            if cancel is not None and cancel.is_set():
+                return
+            if "__interrupt__" in chunk:
+                interrupts = chunk["__interrupt__"]
+                payload = getattr(interrupts[0], "value", {}) if interrupts else {}
+                yield {"interrupt": payload}
+                continue
+            for node_name in chunk:
+                yield {"node": node_name}
+            if cancel is not None and cancel.is_set():
+                return
+
+    def get_state_values(self, thread_id: str | None = None) -> dict[str, Any]:
+        """Read the merged channel values for a thread (the full AgentState)."""
+        if self._compiled_app is None:
+            self._compiled_app = self.create_workflow()
+        config = checkpoint_config(thread_id or self.default_thread_id)
+        snapshot = self._compiled_app.get_state(config)
+        return dict(snapshot.values) if snapshot and snapshot.values else {}
+
     def resume_workflow(
         self, value: Any, *, thread_id: str | None = None
     ) -> dict[str, Any]:
