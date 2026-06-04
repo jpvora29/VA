@@ -5,7 +5,9 @@
     --marsh-blue-2: #0b4bff;
     --marsh-red: rgb(197, 53, 50);
     --ink-900: #0b1320;
+    --ink-800: #1c2636;
     --ink-700: #2b3647;
+    --ink-600: #424d61;
     --ink-500: #5b6577;
     --ink-300: #9aa3b2;
     --surface-0: #ffffff;
@@ -439,14 +441,19 @@ body {
     align-items: flex-start;
     justify-content: space-between;
     gap: 14px;
-    padding: 18px 20px;
-    background: linear-gradient(90deg, var(--marsh-blue), var(--marsh-blue-2));
+    padding: 22px 22px 20px;
+    background:
+        radial-gradient(120% 140% at 0% 0%, rgba(255, 255, 255, 0.18), transparent 55%),
+        linear-gradient(120deg, var(--marsh-blue) 0%, var(--marsh-blue-2) 100%);
     color: #ffffff;
+    box-shadow: 0 6px 18px rgba(0, 15, 71, 0.18);
 }
 
+.pitch-builder-title,
 .pitch-drawer-title {
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 800;
+    letter-spacing: 0.2px;
 }
 
 .pitch-drawer-subtitle {
@@ -468,12 +475,20 @@ body {
 }
 
 .pitch-section {
-    margin: 14px;
-    padding: 14px;
+    margin: 16px;
+    padding: 18px;
     border: 1px solid var(--border-soft);
-    border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.92);
-    box-shadow: var(--shadow-sm);
+    border-radius: var(--radius-lg);
+    background: #ffffff;
+    box-shadow: 0 6px 20px rgba(10, 22, 54, 0.05);
+    transition: box-shadow var(--transition-med), transform var(--transition-fast),
+        border-color var(--transition-fast);
+}
+
+.pitch-section:hover {
+    box-shadow: 0 12px 30px rgba(10, 22, 54, 0.09);
+    border-color: var(--border-mid);
+    transform: translateY(-1px);
 }
 
 .pitch-section-title {
@@ -513,14 +528,14 @@ body {
 }
 
 .pitch-theme-description {
-    margin-top: 9px;
-    padding: 9px 10px;
-    border-left: 3px solid var(--marsh-red);
-    border-radius: 8px;
-    background: rgba(197, 53, 50, 0.06);
+    margin-top: 11px;
+    padding: 11px 13px;
+    border-left: 3px solid var(--marsh-blue-2);
+    border-radius: 10px;
+    background: rgba(11, 75, 255, 0.05);
     color: var(--ink-700);
     font-size: 12.5px;
-    line-height: 1.45;
+    line-height: 1.5;
 }
 
 .pitch-filter-grid {
@@ -541,7 +556,7 @@ body {
 /* Dropdown outer shell */
 
 .pitch-dropdown {
-    font-family: Arial;
+    font-family: inherit;
     font-size: 12.5px;
     font-weight: 500;
 }
@@ -549,13 +564,19 @@ body {
 .pitch-dropdown .Select-control,
 .pitch-dropdown .Select__control,
 .pitch-dropdown>div:first-child {
-    min-height: 36px !important;
-    border: 1.5px solid #dce3ee !important;
-    border-radius: 9px !important;
-    background: #f5f7fc !important;
-    box-shadow: none !important;
+    min-height: 40px !important;
+    border: 1.5px solid #e2e8f3 !important;
+    border-radius: 11px !important;
+    background: #ffffff !important;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.04) !important;
     cursor: pointer !important;
     transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease !important;
+}
+
+.pitch-dropdown .Select-control:focus-within,
+.pitch-dropdown .Select__control--is-focused {
+    border-color: var(--marsh-blue-2) !important;
+    box-shadow: 0 0 0 3px rgba(11, 75, 255, 0.12) !important;
 }
 
 .pitch-dropdown .Select-multi-value-wrapper,
@@ -654,25 +675,36 @@ body {
 /* Clear button */
 .pitch-dropdown .Select-clear-zone,
 .pitch-dropdown .Select__clear-indicator {
-    color: var(--ink-300) m !important;
+    color: var(--ink-300) !important;
 }
 
 .pitch-primary-btn,
 .pitch-generate-btn {
     width: 100%;
     margin-top: 12px;
+    padding: 12px 16px !important;
     border: none !important;
-    border-radius: 10px !important;
-    font-weight: 800 !important;
-    box-shadow: var(--shadow-sm);
+    border-radius: 13px !important;
+    font-weight: 700 !important;
+    font-size: 14px !important;
+    letter-spacing: 0.2px;
+    color: #ffffff !important;
+    background: linear-gradient(135deg, var(--marsh-blue) 0%, var(--marsh-blue-2) 100%) !important;
+    box-shadow: 0 8px 20px rgba(11, 75, 255, 0.28);
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast),
+        filter var(--transition-fast);
 }
 
-.pitch-primary-btn {
-    background: var(--marsh-blue) !important;
+.pitch-primary-btn:hover,
+.pitch-generate-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 28px rgba(11, 75, 255, 0.38);
+    filter: brightness(1.04);
 }
 
-.pitch-generate-btn {
-    background: var(--marsh-blue) !important;
+.pitch-primary-btn:active,
+.pitch-generate-btn:active {
+    transform: translateY(0);
 }
 
 .pitch-data-summary {
@@ -725,23 +757,24 @@ body {
 .pitch-step-strip {
     display: flex;
     align-items: flex-start;
-    padding: 13px 24px 11px;
-    background: #f0f3f9;
+    padding: 15px 26px 13px;
+    background: rgba(255, 255, 255, 0.55);
     border-bottom: 1px solid var(--border-soft);
+    backdrop-filter: blur(6px);
 }
 
 .pitch-step-num {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
-    background: var(--marsh-blue);
+    background: linear-gradient(135deg, var(--marsh-blue) 0%, var(--marsh-blue-2) 100%);
     color: #ffffff;
     font-size: 11px;
     font-weight: 800;
-    box-shadow: 0 2px 6px rgba(0, 44, 119, 0.22);
+    box-shadow: 0 3px 8px rgba(11, 75, 255, 0.28);
 }
 
 .pitch-step {
@@ -780,7 +813,7 @@ body {
 
 .pitch-question-card:hover {
     border-color: rgba(0, 44, 119, 0.24);
-    box-shadow: 0 12 28px rgba(10, 22, 54, 0.075);
+    box-shadow: 0 12px 28px rgba(10, 22, 54, 0.075);
     transform: translateY(-1px)
 }
 

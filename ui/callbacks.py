@@ -175,14 +175,14 @@ def set_pitch_builder_drawer_class(
         "position": "absolute",
         "top": 0,
         "right": 0,
-        "width": "min(470px, 96vw)",
+        "width": "min(480px, 96vw)",
         "height": "100vh",
         "overflowY": "auto",
-        "background": "#f5f7fb",
-        "borderLeft": "1px solid rgba(12, 25, 58, 0.14)",
-        "boxShadow": "0 20px 48px rgba(10, 22, 54, 0.12)",
+        "background": "linear-gradient(180deg, #ffffff 0%, #f6f8fc 100%)",
+        "borderLeft": "1px solid rgba(12, 25, 58, 0.10)",
+        "boxShadow": "-24px 0 60px rgba(10, 22, 54, 0.16)",
         "transform": "translate(0)" if is_open else "translateX(100%)",
-        "transition": "transform 260ms cubic-bezier(.4, .0, .2, 1)",
+        "transition": "transform 320ms cubic-bezier(.16, .84, .44, 1)",
     }
 
     if is_open:
@@ -724,8 +724,12 @@ def _update_chat_history(
 # Keys are the main-graph node names (see core.graph.main.create_workflow).
 NODE_LABELS = {
     "context_filler": "Understanding your question",
-    "clarify_decide": "Checking for ambiguity",
-    "clarify_gate": "Waiting on your clarification",
+    # clarify_decide / clarify_gate run on EVERY turn (they're pass-throughs when
+    # nothing is ambiguous), so their label must stay neutral — otherwise the
+    # status falsely reads "clarifying…" on turns that never ask anything. A real
+    # clarification surfaces as its own card, not via this status line.
+    "clarify_decide": "Analyzing your question",
+    "clarify_gate": "Analyzing your question",
     "rephraser_agent": "Rephrasing the query",
     "router": "Routing to the right data",
     "survey_agent": "Querying broker-survey data",
