@@ -212,8 +212,17 @@ class LangGraph:
 
         `input_obj` is either a fresh state dict (new turn) or a `Command`
         (resume). Yields small dicts:
-          - {"node": <name>}        as each graph node finishes, and
+          - {"node": <name>}        as each graph node STARTS, and
           - {"interrupt": <payload>} when the graph pauses at the HITL gate.
+
+        We stream with both "updates" and "debug" modes. The node label comes
+        from the "debug" channel's `task` event, which fires when a node is
+        about to run — NOT from "updates", which only fires once a node has
+        finished. That distinction matters for the slow `analyst_agent`: with
+        completion-only events the UI would sit on the PREVIOUS node's label
+        ("Routing to the right data") for the agent's entire run and never show
+        it actually running. Interrupts still come through "updates" as
+        `__interrupt__`.
 
         Cooperative cancellation: if `cancel` (a `threading.Event`) is set, the
         loop stops at the next node boundary — LangGraph cannot abort a node
@@ -223,20 +232,23 @@ class LangGraph:
             self._compiled_app = self.create_workflow()
         config = checkpoint_config(thread_id or self.default_thread_id)
         log_event(logger, "workflow_stream_start", node="main_workflow")
-        for chunk in self._compiled_app.stream(
-            input_obj, config=config, stream_mode="updates"
+        for mode, chunk in self._compiled_app.stream(
+            input_obj, config=config, stream_mode=["updates", "debug"]
         ):
             if cancel is not None and cancel.is_set():
                 return
+            if mode == "debug":
+                # `task` fires as a node is about to execute -> live label.
+                if chunk.get("type") == "task":
+                    node_name = (chunk.get("payload") or {}).get("name")
+                    if node_name:
+                        yield {"node": node_name}
+                continue
+            # mode == "updates": only used to surface a pending HITL interrupt.
             if "__interrupt__" in chunk:
                 interrupts = chunk["__interrupt__"]
                 payload = getattr(interrupts[0], "value", {}) if interrupts else {}
                 yield {"interrupt": payload}
-                continue
-            for node_name in chunk:
-                yield {"node": node_name}
-            if cancel is not None and cancel.is_set():
-                return
 
     def get_state_values(self, thread_id: str | None = None) -> dict[str, Any]:
         """Read the merged channel values for a thread (the full AgentState)."""
