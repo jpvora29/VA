@@ -1822,23 +1822,24 @@ th {
    Login screen + collapsible sidebar + feedback (memory feature)
    ==================================================================== */
 
-/* ---------- App shell layout ---------- */
+/* ---------- App shell layout ----------
+   Keep the shell a plain block (NOT a column flex): .custom-navbar has
+   flex-grow:1, which in a column flex would balloon the navbar vertically.
+   The navbar sits on top in normal flow; .app-body is the horizontal split. */
 .app-shell {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
+    min-height: 100vh;
 }
 
 .app-body {
     display: flex;
-    flex: 1 1 auto;
-    min-height: 0;
     height: calc(100vh - 58px);
 }
 
 .app-body .main-container {
     height: 100%;
+    flex: 1 1 auto;
     min-width: 0;
+    width: auto;
 }
 
 /* ---------- Login screen ---------- */
@@ -2156,4 +2157,25 @@ th {
 
 .msg-feedback-btn.active {
     color: var(--marsh-blue-2);
+}
+
+/* ---------- Shift fixed composer to respect the sidebar ----------
+   .input-area is position:fixed (full viewport width by default), so it would
+   sit under the sidebar. Offset its left edge by the sidebar width and let it
+   stretch to the right edge instead of forcing width:100%. */
+.app-body .input-area {
+    left: 264px;
+    width: auto;
+    transition: left var(--transition-med);
+}
+
+/* Collapsed rail: narrower offset. app-sidebar is a sibling of .main-container. */
+.app-sidebar-collapsed ~ .main-container .input-area {
+    left: 60px;
+}
+
+@media (max-width: 768px) {
+    .app-body .input-area {
+        left: 0;
+    }
 }

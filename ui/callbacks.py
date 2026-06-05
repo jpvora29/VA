@@ -486,6 +486,13 @@ def generate_pitch_report(
     dict[str, str],
     str,
 ]:
+    # Guard against the spurious fire when the pitch drawer mounts dynamically
+    # (it now lives inside the login-gated app shell, so its button appears after
+    # the initial page load — and Dash's prevent_initial_call does NOT suppress
+    # callbacks whose inputs are added dynamically). Only run on a real click.
+    if not n_clicks:
+        return no_update, no_update, no_update, no_update, no_update, no_update
+
     questions = [
         (question or f"Question {index + 1}").strip()
         for index, question in enumerate(questions or [])
@@ -590,6 +597,10 @@ def update_pitch_progress(
     if triggered_id == "pitch-generate-report-btn" and generate_clicks:
         return False, {"width": "12%"}, "12% Starting"
     if triggered_id != "pitch-progress-interval":
+        return no_update, no_update, no_update
+    # Spurious fire when the interval mounts dynamically (ticks=0): don't enable
+    # the bar or it would start animating on page refresh.
+    if not ticks:
         return no_update, no_update, no_update
 
     pct = min(92, 18 + ((ticks or 0) * 9))
