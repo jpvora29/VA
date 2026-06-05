@@ -134,7 +134,12 @@ def pick_charts(question: str, evidence: List[Evidence]) -> List[Dict[str, Any]]
             chart_data = nodes[flow](user_query=question, sql_output=rows[:_LLM_ROW_CAP])
             if not isinstance(chart_data, dict):
                 continue
-            if str(chart_data.get("chart_type", "none")).lower() == "none":
+            # Use the SAME falsy-aware normalization the renderer uses
+            # (`chart_functions._sanitize_spec`): an empty string / None /
+            # whitespace chart_type is "none". A bare `== "none"` check let those
+            # through, so the chart was appended here but then rejected downstream
+            # as "data is scalar" — surfacing a scalar flag for a real dataset.
+            if str(chart_data.get("chart_type") or "none").strip().lower() == "none":
                 continue
             charts.append(
                 {

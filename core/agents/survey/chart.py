@@ -4,8 +4,8 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 import dspy
-from pydantic import BaseModel
 
+from core.agents.common.chart_spec import normalize_chart_spec
 from core.schemas.survey import SurveyChartSignature
 from logger import get_logger
 
@@ -29,7 +29,4 @@ class SurveyChartNode(dspy.Module):
         )
         logger.debug("Survey chart reasoning: %s", result)
 
-        if isinstance(result.chart_data, BaseModel):
-            return dict(result.chart_data)
-
-        return result.chart_data
+        return normalize_chart_spec(result.chart_data)

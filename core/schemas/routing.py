@@ -157,11 +157,14 @@ class ContextFillerSignature(dspy.Signature):
         for a specific carrier/slice/period with no comparison or reasoning
         ("Zurich's premium in Canada 2024?", "AXA's NPS?"). Stays on the fast
         deterministic path.
-      - "analytical": anything interpretive or multi-step — compare, rank,
-        trend, growth, "why", "how is X performing/positioned", "analyse",
-        breakdowns ("by product/industry/segment"), whitespace/opportunity, or
-        ANY table_family == "both" (HYBRID) query. These get the proactive
-        analyst agent. When unsure between the two, prefer "analytical".
+      - "analytical": interpretive or genuinely multi-step — compare/vs peers,
+        trend or growth framed for interpretation, "why", "how is X
+        performing/positioned", "analyse", a cross of two+ dimensions/metrics,
+        whitespace/opportunity, or ANY table_family == "both" (HYBRID) query.
+        These get the proactive analyst agent. NOTE: a plain single-dimension
+        breakdown / GROUP BY ("SoW across products", "premium by region") is a
+        "lookup" — a breakdown alone is not analytical. (Re-decided downstream by
+        DepthClassifierSignature.)
 
     [INHERITANCE POLICY]
     - P0: Always begin with the current user query.
@@ -232,20 +235,31 @@ class DepthClassifierSignature(dspy.Signature):
     question as 'lookup' produces a shallow, unhelpful answer.
 
     [DECIDE 'lookup' WHEN]
-    - The user names ONE metric for ONE carrier/slice/period and wants the value.
-    - There is no comparison, ranking, trend, driver, or interpretation requested.
+    - The query is answerable by a SINGLE SQL query, even if it aggregates or
+      groups. This INCLUDES a plain breakdown of ONE metric across ONE dimension
+      ("SoW across products", "premium by region", "score by section") and a
+      simple ranking / top-N ("top 5 carriers by premium"). A GROUP BY is still a
+      lookup — a breakdown by itself does NOT make a query analytical.
+    - The user names a metric (optionally for a carrier/slice/period) and wants
+      the value(s), with no comparison, driver ("why"), or interpretation.
     - Examples:
         * "What is Zurich's premium in Canada in 2024?"  -> lookup
         * "AXA's NPS?"                                    -> lookup
         * "Chubb's rank in Singapore last year?"         -> lookup
+        * "SoW across products"                          -> lookup
+        * "Premium by region for Zurich"                 -> lookup
+        * "Top 5 carriers by gross premium"              -> lookup
 
     [DECIDE 'analytical' WHEN]
-    - The question is interpretive or multi-step: compare, rank, trend, growth,
-      YoY/QoQ, "why", "how is X doing/performing/positioned", "analyse",
-      "benchmark", "vs peers", competitive position, portfolio health.
-    - It asks for a breakdown across a dimension ("by product", "by industry",
-      "by segment", "across products", "per region").
-    - It touches whitespace, opportunity, appetite gaps, or contradictions.
+    - The question is interpretive or genuinely multi-step — it needs more than
+      one query or a layer of reasoning on top of the numbers:
+        * comparison against peers / benchmark ("vs peers", "compare X and Y"),
+        * a trend the user wants explained, or growth/YoY/QoQ framed as movement
+          to interpret ("how has X changed", "what's driving growth"),
+        * "why", "how is X doing/performing/positioned", "analyse", competitive
+          position, portfolio/carrier health,
+        * a cross of TWO+ dimensions or metrics ("premium vs NPS by product"),
+        * whitespace, opportunity, appetite gaps, or contradictions.
     - Examples:
         * "How is Zurich performing vs peers by product?"   -> analytical
         * "Why did AXA's premium drop in 2024?"             -> analytical
@@ -254,7 +268,10 @@ class DepthClassifierSignature(dspy.Signature):
 
     [HARD RULE]
     - If table_family is "both" (HYBRID), the answer is ALWAYS "analytical".
-    - When genuinely unsure between the two, prefer "analytical".
+    - A single-dimension breakdown / GROUP BY with no comparison, no "why", and
+      no peer/trend interpretation is a 'lookup', not 'analytical'.
+    - When genuinely unsure between a plain breakdown and a comparison, prefer
+      'lookup'; reserve 'analytical' for clear interpretive / multi-step intent.
     """
 
     current_user_query: str = dspy.InputField(

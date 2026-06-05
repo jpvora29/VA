@@ -4,8 +4,8 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 import dspy
-from pydantic import BaseModel
 
+from core.agents.common.chart_spec import normalize_chart_spec
 from core.schemas.gpr import GPRChartSignature
 from logger import get_logger
 
@@ -31,7 +31,4 @@ class GPRChartNode(dspy.Module):
         )
         logger.debug("GPR chart reasoning: %s", result)
 
-        if isinstance(result.chart_data, BaseModel):
-            return dict(result.chart_data)
-
-        return result.chart_data
+        return normalize_chart_spec(result.chart_data)

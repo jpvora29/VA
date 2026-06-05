@@ -166,3 +166,12 @@ def test_accepts_pydantic_chart_output():
                        series=["Carrier_Group"], bar_mode=["group"], title="t")
     fig, msg = generate_chart(_bar_df(), spec)
     assert isinstance(fig, go.Figure) and msg == "Successful"
+
+
+def test_accepts_list_of_specs():
+    """A chart node can hand back a *list* of specs (LLM emitting multiple charts);
+    generate_chart should unwrap to the first instead of degrading to scalar."""
+    spec = {"chart_type": "bar", "x": "Product_Line", "y": ["Premium"],
+            "series": ["Carrier_Group"], "bar_mode": ["group"], "title": "t"}
+    fig, msg = generate_chart(_bar_df(), [spec, spec])
+    assert isinstance(fig, go.Figure) and msg == "Successful"

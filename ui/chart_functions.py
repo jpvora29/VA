@@ -82,6 +82,13 @@ def _as_dict(spec: Any) -> Dict[str, Any]:
     """Accept a ChartOutput pydantic model, a plain dict, or a legacy object."""
     if spec is None:
         return {}
+    # The analyst/chart nodes are contracted to one spec, but a list can slip
+    # through (e.g. the LLM emitting multiple charts in one field). Unwrap to the
+    # first usable element rather than scraping it to {} and degrading to scalar.
+    if isinstance(spec, (list, tuple)):
+        spec = next((s for s in spec if s), None)
+        if spec is None:
+            return {}
     if isinstance(spec, dict):
         return dict(spec)
     # pydantic v1/v2 model
