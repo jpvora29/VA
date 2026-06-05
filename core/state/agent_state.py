@@ -51,6 +51,11 @@ class AgentState(TypedDict):
     gpr_chart: Dict
     combined_chart: Dict
 
+    # Up to 3 chart specs produced by the analyst agent's chart-picker, each
+    # {"title", "rows", "chart_data"}. The deterministic rails use the per-flow
+    # *_chart fields above; the analyst path carries its own multi-chart list.
+    analyst_charts: List
+
     current_route: Literal["survey", "premium", "both", "fallback"]
     out_of_scope_answer: str
 

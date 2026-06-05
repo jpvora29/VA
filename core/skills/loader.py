@@ -31,7 +31,9 @@ priority: 50                  # higher = injected earlier in concatenated output
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
@@ -68,8 +70,39 @@ class Skill:
             return True
         if not self.triggers:
             return False
-        q = query.lower()
-        return any(trigger.lower() in q for trigger in self.triggers)
+        return any(_trigger_hit(trigger, query) for trigger in self.triggers)
+
+
+@lru_cache(maxsize=512)
+def _trigger_pattern(trigger: str) -> "re.Pattern[str]":
+    """Word-boundary regex for a trigger phrase, built once per trigger.
+
+    Plain substring matching fires on incidental overlaps — "mom" inside
+    "momentum", "top" inside "stopped" / "top-of-mind", "re" inside "premium" —
+    which loads the wrong analytical skill. Anchoring on word boundaries
+    restricts a trigger to whole-word/phrase hits. Internal whitespace in a
+    multi-word trigger spans hyphens/extra spaces so "year over year",
+    "year-over-year", and "year  over  year" all match.
+
+    A trailing optional inflection (`s`/`es`/`ed`/`ing`) preserves the plural and
+    verb forms substring matching used to catch — so trigger "peer" still hits
+    "peers", "competitor" hits "competitors", "rank" hits "ranking" — without
+    re-admitting the incidental-substring false positives above ("momentum" still
+    does NOT match "mom" because "entum" is not a valid suffix).
+    """
+    parts = [re.escape(tok) for tok in trigger.lower().split()]
+    body = r"[\s\-]+".join(parts)
+    # Lookarounds (not `\b`) so boundaries work next to non-word chars like "&".
+    return re.compile(
+        rf"(?<![a-z0-9]){body}(?:s|es|ed|ing)?(?![a-z0-9])", re.IGNORECASE
+    )
+
+
+def _trigger_hit(trigger: str, query: str) -> bool:
+    trigger = trigger.strip()
+    if not trigger:
+        return False
+    return _trigger_pattern(trigger).search(query) is not None
 
 
 @dataclass

@@ -2,7 +2,7 @@ from datetime import datetime
 
 from dash import html, dcc, dash_table
 import dash_bootstrap_components as dbc
-from document_builder.report_generator import PITCH_THEMES
+from document_builder.report_generator import PITCH_THEMES, theme_options
 
 
 # Example questions surfaced on the welcome screen and (mirrored) in the
@@ -174,6 +174,111 @@ def followup_suggestions(followups: list[str]):
             ),
         ],
         className="followup-block",
+    )
+
+
+def ai_message(content: str, is_insight: bool):
+    """Render an assistant turn with a hover copy-to-clipboard action.
+
+    `dcc.Clipboard` copies its `content` natively, so no callback is needed.
+    The insight variant keeps the consulting-card chrome; the base variant is a
+    plain bubble. Both are position:relative so the copy button can sit top-right.
+    """
+    copy = dcc.Clipboard(
+        content=content,
+        title="Copy",
+        className="msg-copy",
+    )
+
+    if is_insight:
+        return html.Div(
+            [
+                html.Div(
+                    [
+                        html.Span("✨", className="insight-card-badge-icon"),
+                        html.Span(
+                            "Consulting Insight", className="insight-card-badge-text"
+                        ),
+                    ],
+                    className="insight-card-badge",
+                ),
+                dcc.Markdown(
+                    content, className="insight-card-body", link_target="_blank"
+                ),
+                copy,
+            ],
+            className="message insight-card",
+        )
+
+    return html.Div(
+        [dcc.Markdown(content), copy],
+        className="message gpt-message",
+    )
+
+
+def chart_block(figure, columns: list[str], records: list[dict], idx: int):
+    """A chart with a Chart/Data switch that flips to the underlying rows.
+
+    The graph and the data table are both rendered; a clientside callback
+    (see ui.callbacks) toggles their visibility off the switch buttons. `idx`
+    must be unique per chart within a turn so the MATCH callback pairs them.
+    """
+    table = dash_table.DataTable(
+        columns=[{"name": str(c), "id": str(c)} for c in columns],
+        data=records,
+        page_size=10,
+        sort_action="native",
+        style_as_list_view=True,
+        style_table={"overflowX": "auto", "maxHeight": "440px", "overflowY": "auto"},
+        style_cell={
+            "fontFamily": "'Inter', sans-serif",
+            "fontSize": "13px",
+            "padding": "8px 12px",
+            "textAlign": "left",
+            "border": "none",
+            "borderBottom": "1px solid rgba(12, 25, 58, 0.06)",
+        },
+        style_header={
+            "fontWeight": "600",
+            "fontSize": "12px",
+            "textTransform": "uppercase",
+            "letterSpacing": "0.04em",
+            "backgroundColor": "#f5f7fb",
+            "borderBottom": "1px solid rgba(12, 25, 58, 0.12)",
+        },
+    )
+
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.Button(
+                        [html.I(className="bi bi-bar-chart-line"), "Chart"],
+                        id={"type": "chart-toggle-chart", "idx": idx},
+                        n_clicks=0,
+                        className="chart-view-btn active",
+                    ),
+                    html.Button(
+                        [html.I(className="bi bi-table"), "Data"],
+                        id={"type": "chart-toggle-data", "idx": idx},
+                        n_clicks=0,
+                        className="chart-view-btn",
+                    ),
+                ],
+                className="chart-view-switch",
+            ),
+            html.Div(
+                dcc.Graph(figure=figure, className="gpt-chart-display"),
+                id={"type": "chart-fig", "idx": idx},
+            ),
+            html.Div(
+                table,
+                id={"type": "chart-table", "idx": idx},
+                className="chart-data-wrap",
+                style={"display": "none"},
+            ),
+        ],
+        className="chart-block",
     )
 
 
@@ -376,8 +481,8 @@ def pitch_builder_drawer():
                             ),
                             dcc.Dropdown(
                                 id="pitch-theme",
-                                options=["performance_analyze"],
-                                value="performance_analyze",
+                                options=theme_options(),
+                                value="performance_pitch",
                                 clearable=False,
                                 className="pitch-dropdown",
                             ),

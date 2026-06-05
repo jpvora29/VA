@@ -3,7 +3,7 @@ name: survey-timeframe
 description: Interpretation of relative time references (YoY, last year, recent, latest) against the Survey_Year column.
 flow: survey
 scope: [planner]
-triggers: [yoy, y-o-y, year over year, year-over-year, last year, prior year, previous year, recent, recently, latest, most recent, this year, current year]
+triggers: [yoy, y-o-y, year over year, year-over-year, last year, prior year, previous year, recent, recently, latest, most recent, this year, current year, trend, improvement, improving, declining, over time, over the years]
 priority: 60
 ---
 

@@ -32,12 +32,16 @@ class SurveySQLJoinChecker(BaseModel):
 class ChartOutput(BaseModel):
     """Structured output representing chart configuration for visualization."""
 
-    chart_type: Literal["bar", "line", "pie", "donut", "scatter", "none"] = Field(
-        # chart_type: Literal['column', 'line', 'pie', 'donut', 'stacked_column', 'scatter', "none"] = Field(
+    chart_type: Literal[
+        "bar", "line", "pie", "donut", "scatter", "waterfall", "combo", "none"
+    ] = Field(
         ...,
         description=(
-            "Type of chart to generate, e.g., 'bar', 'line', 'pie', 'scatter', 'area', 'none'. "
-            "Should be chosen based on the metric and intent of the user query."
+            "Type of chart to generate. One of: 'bar', 'line', 'pie', 'donut', "
+            "'scatter', 'waterfall' (a bridge/movement decomposition), 'combo' "
+            "(bars for an absolute measure + a line for a rate/% on a secondary "
+            "axis), or 'none' (single scalar / nothing chartable). Choose based on "
+            "the metric and intent of the user query."
         ),
     )
 
@@ -118,6 +122,27 @@ class ChartOutput(BaseModel):
         description=(
             "Sorting order for X-axis values based on Y metric. "
             "'asc' for ascending, 'desc' for descending, or 'none' to keep natural data order."
+        ),
+    )
+
+    secondary_y: List[str] = Field(
+        default_factory=list,
+        description=(
+            "ONLY for chart_type='combo'. The measure column(s) drawn as a LINE on "
+            "a SECONDARY (right-hand) axis — typically a rate/percentage (e.g. "
+            "'Growth_%', 'Share_of_Wallet'), while the columns in 'y' are drawn as "
+            "BARS on the primary axis (typically an absolute amount like Premium). "
+            "Use the EXACT column names from sql_output. Empty for all other charts."
+        ),
+    )
+
+    waterfall_measures: List[str] = Field(
+        default_factory=list,
+        description=(
+            "ONLY for chart_type='waterfall'. Optional per-step markers, one entry "
+            "per X category in order, each either 'relative' (a +/- movement) or "
+            "'total' (an absolute subtotal/total bar). Leave empty to treat every "
+            "step as 'relative'; the engine then appends a final 'total' bar."
         ),
     )
 

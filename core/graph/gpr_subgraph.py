@@ -392,22 +392,26 @@ class GPRSubGraph:
             return "gpr_end_max_iterations"
 
     def gpr_execute_sql_router(state: AgentState):
-        # if not state.get("gpr_sql_error", False):
-        #     return "premium_chart_data_creation"
-        # else:
-        #     return "gpr_sql_fixer_agent"
         if not state.get("gpr_sql_error", False):
-            return "end"
+            return "premium_chart_data_creation"
         else:
             return "gpr_sql_fixer_agent"
 
     def premium_chart_data_creation(state: AgentState) -> AgentState:
-        # print("In premium_chart_data_creation")
-        # print("Statetet\n", state)
-        gpr_query_output = state["gpr_query_result"]
+        gpr_query_output = state.get("gpr_query_result")
         question = state["messages"][-1].content
 
-        # survey_query_output_updated = GeneralFunctions.reshape_for_chart(survey_query_output)
+        # Guard: only chart a genuine, non-empty result set. On a SQL error
+        # `gpr_query_result` is an error string; on overflow / no rows it is empty.
+        # In those cases skip charting (no-op) so the fixer/overflow paths are
+        # unaffected and the UI simply renders no chart.
+        if (
+            not isinstance(gpr_query_output, list)
+            or not gpr_query_output
+            or state.get("gpr_overflow", False)
+        ):
+            return {}
+
         gpr_query_output_updated = gpr_query_output
         logger.debug("GPR chart input rows: %s", gpr_query_output_updated)
         skill_rules = get_skill_loader().chart("gpr", question)
@@ -442,7 +446,7 @@ class GPRSubGraph:
     # gpr_graph.add_node("gpr_sql_join_rewriter", gpr_sql_join_rewriter)
     gpr_graph.add_node("gpr_sql_fixer_agent", gpr_sql_fixer_agent)
     gpr_graph.add_node("gpr_end_max_iterations", gpr_end_max_iterations)
-    # gpr_graph.add_node("premium_chart_data_creation", premium_chart_data_creation)
+    gpr_graph.add_node("premium_chart_data_creation", premium_chart_data_creation)
 
     gpr_graph.add_edge(START, "gpr_normalizer_agent")
     # gpr_graph.add_edge("gpr_normalizer_agent", "gpr_column_selector_agent")
@@ -465,8 +469,7 @@ class GPRSubGraph:
         "gpr_execute_sql",
         gpr_execute_sql_router,
         {
-            "end": END,
-            # "premium_chart_data_creation": "premium_chart_data_creation",
+            "premium_chart_data_creation": "premium_chart_data_creation",
             "gpr_sql_fixer_agent": "gpr_sql_fixer_agent",
         },
     )
@@ -481,7 +484,7 @@ class GPRSubGraph:
     )
 
     gpr_graph.add_edge("gpr_end_max_iterations", END)
-    # gpr_graph.add_edge("premium_chart_data_creation", END)
+    gpr_graph.add_edge("premium_chart_data_creation", END)
 
     GPRAgent = gpr_graph.compile()
     # mermaid_code = GPRAgent.get_graph().draw_mermaid()

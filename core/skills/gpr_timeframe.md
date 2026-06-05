@@ -3,7 +3,7 @@ name: gpr-timeframe
 description: GPR timeframe interpretation for Billing_Date, Year, Quarter, YoY, YTD, TTM, and renewals.
 flow: gpr
 scope: [planner, sql, response]
-triggers: [yoy, year over year, year-over-year, last year, prior year, previous year, latest, recent, ytd, ttm, trailing twelve, rolling 12, month-on-month, mom, quarter, renewal, renewals, expiry]
+triggers: [yoy, year over year, year-over-year, last year, prior year, previous year, latest, recent, ytd, ttm, trailing twelve, rolling 12, month-on-month, mom, quarter, renewal, renewals, expiry, growth, grow, grew, trend, declining, decline, increasing, decreasing, over time, over the years, trajectory]
 priority: 75
 ---
 

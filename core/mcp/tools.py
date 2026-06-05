@@ -14,6 +14,7 @@ the existing layer (`GeneralFunctions`, `GetValidData`, `assert_read_only`,
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from rapidfuzz import fuzz, process, utils
@@ -56,6 +57,42 @@ def _route(flow: str) -> str:
     return _ROUTE_BY_FLOW.get(flow, flow)
 
 
+# Matches the `Carrier_Name` identifier (bare, bracketed, or quoted) but only
+# OUTSIDE single-quoted string literals — handled by splitting on quotes below.
+_CARRIER_NAME_IDENT = re.compile(r"(?i)\bCarrier_Name\b")
+
+
+def _enforce_gpr_carrier_group(sql: str, *, node: Optional[str] = None) -> str:
+    """Deterministically rewrite `Carrier_Name` -> `Carrier_Group` in GPR SQL.
+
+    "Always use Carrier_Group, never Carrier_Name" is a hard GPR business rule
+    carried in every planner/SQL skill and the fixer rules, yet the LLM still
+    emits `Carrier_Name` on some turns — silently returning wrong rows when the
+    column exists. Prose can't guarantee a never-do constraint, so we enforce it
+    at the single shared execute chokepoint instead. The rewrite only touches the
+    column identifier outside string literals, so values like '... Carrier_Name
+    ...' inside quotes are left untouched.
+    """
+    if "carrier_name" not in sql.lower():
+        return sql
+    # Replace only in the segments OUTSIDE single-quoted literals (even indexes).
+    segments = sql.split("'")
+    changed = False
+    for i in range(0, len(segments), 2):
+        new_segment = _CARRIER_NAME_IDENT.sub("Carrier_Group", segments[i])
+        if new_segment != segments[i]:
+            changed = True
+            segments[i] = new_segment
+    if changed:
+        log_event(
+            logger,
+            "gpr_carrier_name_rewritten",
+            route="premium",
+            node=node or "gpr_execute_sql",
+        )
+    return "'".join(segments)
+
+
 def execute_sql(
     flow: str,
     sql: str,
@@ -71,6 +108,8 @@ def execute_sql(
     failures come back as `ExecuteSQLResult.error`.
     """
     sql = (sql or "").strip()
+    if flow == "gpr":
+        sql = _enforce_gpr_carrier_group(sql, node=node)
     route = _route(flow)
     node = node or f"{flow}_execute_sql"
     session = Initialization.Session()
@@ -240,35 +279,98 @@ def _candidate_values(flow: str, column: str) -> List[str]:
     return get_distinct_values(flow, column)
 
 
+# Generic corporate/legal/insurance tokens that carry no identifying signal. A
+# plain `partial_ratio` lets these dominate alignment, so "Zurich Insurance"
+# wrongly matches "KB Insurance" and "AIG Insurance" matches "MUANG THAI
+# INSURANCE". Stripping them before scoring makes the distinctive token ("zurich",
+# "aig") decide the match. Kept broad but safe — these never disambiguate a value.
+_GENERIC_TOKENS = frozenset(
+    {
+        "insurance", "insurer", "insurers", "assurance", "reinsurance",
+        "group", "holdings", "holding", "company", "companies", "co",
+        "ltd", "limited", "corporation", "corp", "incorporated", "inc",
+        "plc", "pcl", "ag", "sa", "nv", "se", "general", "public",
+        "and", "of", "the", "&",
+    }
+)
+
+_NON_ALNUM = re.compile(r"[^a-z0-9 ]+")
+
+
+def _clean_for_match(value: str) -> str:
+    """Lowercase, drop punctuation, and remove generic corporate tokens.
+
+    Falls back to the punctuation-stripped string if every token is generic
+    (e.g. a value literally named "Group"), so it never returns empty.
+    """
+    lowered = _NON_ALNUM.sub(" ", value.lower())
+    tokens = [t for t in lowered.split() if t and t not in _GENERIC_TOKENS]
+    return " ".join(tokens) if tokens else lowered.strip()
+
+
 def match_column_values(
     flow: str,
     column: str,
     term: str,
     *,
     top_n: int = 10,
-    score_cutoff: int = 60,
+    score_cutoff: int = 80,
 ) -> List[str]:
     """Fuzzy-match a user term to the valid values of ANY column.
 
-    Works for industry (`SIC_Major_Class`), `SIC_Minor_Class`, `Business_Line`,
-    `Cover_Line`, `Product_Line`, `Client_Segment`, `Region`, survey `Sections`
-    / `Attributes`, etc. Candidates come from the precomputed valid_values when
-    available, otherwise from `get_distinct_values`. Returns the best matches in
-    descending score order (empty if the column is unknown or nothing clears the
-    cutoff).
+    Works for carriers (`Carrier_Group` / `Carrier`), industry
+    (`SIC_Major_Class`), `Product_Line`, `Business_Line`, `Cover_Line`,
+    `Client_Segment`, `Region`, survey `Sections` / `Attributes`, etc.
+
+    Resolution order, most-specific first:
+      1. Exact case-insensitive match -> returned alone (no fuzzy noise).
+      2. Composite fuzzy score over *generic-token-stripped* strings:
+         `max(token_set_ratio, WRatio)`. token_set handles word reordering and
+         common-word collisions (the failure mode of plain partial_ratio);
+         WRatio rescues abbreviations/typos. Plain `ratio` breaks ties so the
+         tightest full match (e.g. "SWISS RE" for "Swiss Reinsurance") ranks
+         above looser ones ("SWISS LIFE").
+
+    Returns the best matches in descending score order, deduplicated, empty when
+    the column is unknown or nothing clears the cutoff.
     """
     candidates = _candidate_values(flow, column)
     if not candidates:
         return []
-    matches = process.extract(
-        term,
-        candidates,
-        scorer=fuzz.partial_ratio,
-        processor=utils.default_process,
-        limit=top_n,
-        score_cutoff=score_cutoff,
-    )
-    return [match[0] for match in matches]
+
+    term_norm = (term or "").strip()
+    if not term_norm:
+        return []
+
+    # 1) Exact case-insensitive hit wins outright.
+    for candidate in candidates:
+        if candidate.lower() == term_norm.lower():
+            return [candidate]
+
+    cleaned_term = _clean_for_match(term_norm)
+    if not cleaned_term:
+        return []
+
+    scored: List[tuple[str, float, float]] = []
+    for candidate in candidates:
+        cleaned_candidate = _clean_for_match(candidate)
+        score = max(
+            fuzz.token_set_ratio(cleaned_term, cleaned_candidate),
+            fuzz.WRatio(cleaned_term, cleaned_candidate),
+        )
+        if score >= score_cutoff:
+            tiebreak = fuzz.ratio(cleaned_term, cleaned_candidate)
+            scored.append((candidate, score, tiebreak))
+
+    scored.sort(key=lambda item: (item[1], item[2]), reverse=True)
+
+    result: List[str] = []
+    for candidate, _score, _tb in scored:
+        if candidate not in result:
+            result.append(candidate)
+        if len(result) >= top_n:
+            break
+    return result
 
 
 def fix_sql(

@@ -26,6 +26,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 from typing_extensions import Annotated, TypedDict
 
+from core.agents.analyst.chart_picker import pick_charts
 from core.agents.analyst.generic_solver import solve_generic
 from core.agents.analyst.insight_writer import write_insight
 from core.agents.analyst.peer_solver import solve_peer
@@ -58,6 +59,8 @@ class AnalystState(TypedDict):
     # add-reducer so parallel solver nodes merge their evidence instead of racing.
     evidence: Annotated[List[Evidence], add]
     answer: str
+    # Up to 3 chart specs picked from the gathered evidence (title/rows/chart_data).
+    charts: List[dict]
 
 
 def _model():
@@ -198,6 +201,19 @@ def writer_node(state: AnalystState) -> dict:
     return {"answer": answer}
 
 
+def chart_picker_node(state: AnalystState) -> dict:
+    """Pick and build up to 3 charts from the gathered evidence (best-effort)."""
+    charts = pick_charts(state["question"], list(state.get("evidence", [])))
+    log_event(
+        logger,
+        "analyst_charts_done",
+        node="analyst_chart_picker",
+        route=state["route"],
+        chart_count=len(charts),
+    )
+    return {"charts": charts}
+
+
 def build_analyst_subgraph():
     """Compile the analyst subgraph (no checkpointer — runs inside the main graph)."""
     graph = StateGraph(AnalystState)
@@ -208,6 +224,7 @@ def build_analyst_subgraph():
     graph.add_node("generic_solver_node", generic_solver_node)
     graph.add_node("join_node", join_node)
     graph.add_node("writer_node", writer_node)
+    graph.add_node("chart_picker_node", chart_picker_node)
 
     graph.add_edge(START, "planner_node")
     graph.add_edge("planner_node", "schema_identifier_node")
@@ -219,7 +236,8 @@ def build_analyst_subgraph():
     graph.add_edge("peer_solver_node", "join_node")
     graph.add_edge("generic_solver_node", "join_node")
     graph.add_edge("join_node", "writer_node")
-    graph.add_edge("writer_node", END)
+    graph.add_edge("writer_node", "chart_picker_node")
+    graph.add_edge("chart_picker_node", END)
 
     return graph.compile()
 

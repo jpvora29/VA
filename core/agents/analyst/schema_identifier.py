@@ -32,12 +32,18 @@ minimal grounding the downstream solvers need:
 2. `join_keys` — short notes on how those tables relate. For peer work, remember:
    the `Overall_Peer_Group` values in `Peers` ARE `Carrier_Group` names, so
    `GPR.Carrier_Group` is filtered against them directly — there is NO row-join.
-3. `values_to_resolve` — every dimension FILTER the sub-questions imply whose
-   wording is loose and must be matched to exact valid values (industry /
-   SIC_Major_Class, Product_Line, Cover_Line, Business_Line, Client_Segment,
-   Region, survey Sections / Attributes, etc.). Give the exact column and the
-   user's loose term. Do NOT list carriers/countries already exact, metrics, or
-   numbers/years.
+3. `values_to_resolve` — EVERY dimension FILTER the sub-questions name, given as
+   the exact column + the user's loose wording. This is critical: the stored
+   values are rarely what users type (e.g. "Zurich" is stored as "ZURICH GROUP",
+   "Chubb" as "CHUBB LIMITED"), so a carrier/country left unresolved produces a
+   query that silently returns nothing. ALWAYS include:
+     - the carrier(s) the question names -> column "Carrier_Group" (GPR) or
+       "Carrier" (survey), even when the name looks already correct;
+     - any country/region named;
+     - industry / SIC_Major_Class, Product_Line, Cover_Line, Business_Line,
+       Client_Segment, survey Sections / Attributes, etc.
+   Do NOT list metrics, aggregations, or numbers/years. Use "Marsh" as-is — it is
+   the broker, never a carrier, so never flag it for resolution.
 4. `notes` — any other one-line grounding hint (optional).
 
 Be minimal and precise. Never invent columns or tables not in the schema."""

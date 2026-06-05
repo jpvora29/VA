@@ -3,7 +3,7 @@ name: gpr-ranking
 description: Ranking, top-N, bottom-N, and rank movement rules for GPR.
 flow: gpr
 scope: [planner, sql, response]
-triggers: [rank, ranking, top, bottom, highest, lowest, leader, leaders, competitor, top 5]
+triggers: [rank, ranking, top, bottom, highest, lowest, biggest, largest, smallest, leading, leader, leaders, competitor, most premium]
 priority: 80
 ---
 

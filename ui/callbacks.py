@@ -22,6 +22,7 @@ from dash import (
     ctx,
     clientside_callback,
     ALL,
+    MATCH,
     NoUpdate,
 )
 
@@ -30,7 +31,13 @@ from dash import dash_table
 import dash_bootstrap_components as dbc
 from dash.development.base_component import Component
 
-from ui.components.chatbot import chatbot_page, clarify_card, followup_suggestions
+from ui.components.chatbot import (
+    chatbot_page,
+    clarify_card,
+    followup_suggestions,
+    ai_message,
+    chart_block,
+)
 from core.backend import (
     LangGraph,
     AgentState,
@@ -86,7 +93,7 @@ clientside_callback(
     function(children) {
         const el = document.getElementById('chat-box');
         if (el) {
-            setTimeout(() => {el.scrollBottom = el.ScrollHeight;}, 30);
+            setTimeout(() => {el.scrollTop = el.scrollHeight;}, 30);
         }
         return window.dash_clientside.no_update;
     }
@@ -114,6 +121,32 @@ clientside_callback(
     Output("send-btn", "style"),
     Output("stop-btn", "style"),
     Input("is-thinking", "data"),
+)
+
+# ── CHART ↔ DATA VIEW TOGGLE  ───────────────────────────────────────────────────────────────────────
+# Instant, clientside: flip a chart between its figure and the underlying rows.
+# Pairs each switch with its own chart via MATCH on the shared `idx`.
+clientside_callback(
+    """
+    function(chartClicks, dataClicks) {
+        const ctx = window.dash_clientside.callback_context;
+        const trig = ctx.triggered.length ? ctx.triggered[0].prop_id : '';
+        const showData = trig.indexOf('chart-toggle-data') !== -1;
+        return [
+            {display: showData ? 'none' : 'block'},
+            {display: showData ? 'block' : 'none'},
+            showData ? 'chart-view-btn' : 'chart-view-btn active',
+            showData ? 'chart-view-btn active' : 'chart-view-btn',
+        ];
+    }
+    """,
+    Output({"type": "chart-fig", "idx": MATCH}, "style"),
+    Output({"type": "chart-table", "idx": MATCH}, "style"),
+    Output({"type": "chart-toggle-chart", "idx": MATCH}, "className"),
+    Output({"type": "chart-toggle-data", "idx": MATCH}, "className"),
+    Input({"type": "chart-toggle-chart", "idx": MATCH}, "n_clicks"),
+    Input({"type": "chart-toggle-data", "idx": MATCH}, "n_clicks"),
+    prevent_initial_call=True,
 )
 
 # ── PITCH BUILDER CALLBACKS  ───────────────────────────────────────────────────────────────────────────
@@ -599,10 +632,29 @@ def _update_last_chat_message(
     return chat_history
 
 
+def _append_chart_messages(
+    chat_history: dict[str, Any], charts: list[dict[str, Any]]
+) -> None:
+    """Append one `SQLOutputForCharts` message per analyst chart spec."""
+    for chart in charts or []:
+        chat_history["messages"].append(
+            {
+                "type": "SQLOutputForCharts",
+                "updated_query": chart.get("rows"),
+                "chart_data": chart.get("chart_data"),
+            }
+        )
+
+
 def _update_chat_history(
     chat_history: dict[str, Any], updated_state: dict[str, Any], table: str
 ) -> dict[str, Any]:
     """Update the Chat History as per the query route"""
+
+    # The analyst agent produces its own list of up to 3 charts (each with its own
+    # rows). When present, render those instead of the single per-flow chart that
+    # the deterministic rails attach.
+    analyst_charts = updated_state.get("analyst_charts") or []
 
     if table == "survey":
 
@@ -630,13 +682,16 @@ def _update_chat_history(
                     "has_data_overflow": False,
                 }
             )
-            chat_history["messages"].append(
-                {
-                    "type": "SQLOutputForCharts",
-                    "updated_query": sql_output_updated_for_charts,
-                    "chart_data": survey_chart_data,
-                }
-            )
+            if analyst_charts:
+                _append_chart_messages(chat_history, analyst_charts)
+            else:
+                chat_history["messages"].append(
+                    {
+                        "type": "SQLOutputForCharts",
+                        "updated_query": sql_output_updated_for_charts,
+                        "chart_data": survey_chart_data,
+                    }
+                )
 
     elif table == "premium":
         gpr_response = updated_state.get("gpr_response", "")
@@ -652,13 +707,16 @@ def _update_chat_history(
             }
         )
 
-        chat_history["messages"].append(
-            {
-                "type": "SQLOutputForCharts",
-                "updated_query": sql_output_updated_for_charts,
-                "chart_data": gpr_chart_data,
-            }
-        )
+        if analyst_charts:
+            _append_chart_messages(chat_history, analyst_charts)
+        else:
+            chat_history["messages"].append(
+                {
+                    "type": "SQLOutputForCharts",
+                    "updated_query": sql_output_updated_for_charts,
+                    "chart_data": gpr_chart_data,
+                }
+            )
 
         gimmi_response = updated_state.get("gimmi_response", "")
         if gimmi_response:
@@ -690,22 +748,25 @@ def _update_chat_history(
         )
 
         # Attach charts for each lens when data is present.
-        if survey_rows and survey_chart_data:
-            chat_history["messages"].append(
-                {
-                    "type": "SQLOutputForCharts",
-                    "updated_query": survey_rows,
-                    "chart_data": survey_chart_data,
-                }
-            )
-        if gpr_rows and gpr_chart_data:
-            chat_history["messages"].append(
-                {
-                    "type": "SQLOutputForCharts",
-                    "updated_query": gpr_rows,
-                    "chart_data": gpr_chart_data,
-                }
-            )
+        if analyst_charts:
+            _append_chart_messages(chat_history, analyst_charts)
+        else:
+            if survey_rows and survey_chart_data:
+                chat_history["messages"].append(
+                    {
+                        "type": "SQLOutputForCharts",
+                        "updated_query": survey_rows,
+                        "chart_data": survey_chart_data,
+                    }
+                )
+            if gpr_rows and gpr_chart_data:
+                chat_history["messages"].append(
+                    {
+                        "type": "SQLOutputForCharts",
+                        "updated_query": gpr_rows,
+                        "chart_data": gpr_chart_data,
+                    }
+                )
 
     elif table == "fallback":
         fallback = updated_state.get("out_of_scope_answer", None)
@@ -942,21 +1003,35 @@ def render_chat(
 ) -> list[Any] | NoUpdate:
 
     chat_items: list[Any] = []
+    chart_idx = 0  # unique, stable per-chart id for the Chart/Data toggle
 
     if chat_history:
         for msg in chat_history["messages"]:
             if msg["type"] == "SQLOutputForCharts":
+                # Skip entirely when there is no chart spec or no rows (e.g. an
+                # analyst turn whose route had no per-flow chart attached).
+                if not msg.get("chart_data") or not msg.get("updated_query"):
+                    continue
                 try:
+                    df = pd.DataFrame(msg["updated_query"])
                     fig, chart_message = generate_chart(
-                        df=pd.DataFrame(msg["updated_query"]),
+                        df=df,
                         chart_outputs=msg["chart_data"],
                     )
 
                     if fig is not None:
                         chat_items.append(
-                            dcc.Graph(figure=fig, className="message gpt-chart-display")
+                            chart_block(
+                                fig,
+                                list(df.columns),
+                                df.to_dict("records"),
+                                chart_idx,
+                            )
                         )
-                    else:
+                        chart_idx += 1
+                    elif chart_message:
+                        # Only surface a flag for a genuine reason (e.g. scalar);
+                        # an empty message means "nothing to draw" — stay silent.
                         chat_items.append(
                             html.Div(chart_message, className="message gpt-chart-flag")
                         )
@@ -981,33 +1056,7 @@ def render_chat(
                     or content.count("### ") >= 2
                 )
 
-                if is_insight:
-                    card = html.Div(
-                        [
-                            html.Div(
-                                [
-                                    html.Span(
-                                        "✨", className="insight-card-badge-icon"
-                                    ),
-                                    html.Span(
-                                        "Consulting Insight",
-                                        className="insight-card-badge-text",
-                                    ),
-                                ],
-                                className="insight-card-badge",
-                            ),
-                            dcc.Markdown(
-                                content,
-                                className="insight-card-body",
-                                link_target="_blank",
-                            ),
-                        ],
-                        className="message insight-card",
-                    )
-                    chat_items.append(card)
-                else:
-                    parts = [dcc.Markdown(content)]
-                    chat_items.append(html.Div(parts, className="message gpt-message"))
+                chat_items.append(ai_message(content, is_insight))
 
             elif msg["type"] == "ClarifyCard":
                 chat_items.append(clarify_card(msg.get("payload") or {}))
@@ -1048,12 +1097,13 @@ def render_chat(
     Output("is-thinking", "data"),
     Output("user-input", "value"),
     Input("send-btn", "n_clicks"),
+    Input("user-input", "n_submit"),
     State("user-input", "value"),
     State("chat-store", "data"),
     prevent_initial_call=True,
 )
 def update_chat(
-    n_clicks: int, user_input: str, chat_history: dict[str, Any]
+    n_clicks: int, n_submit: int, user_input: str, chat_history: dict[str, Any]
 ) -> tuple[dict[str, Any], Optional[bool], Optional[bool], Optional[str]]:
 
     chat_history = chat_history or {}

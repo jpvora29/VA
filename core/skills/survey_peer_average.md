@@ -3,7 +3,7 @@ name: survey-peer-average
 description: Peer Average / peer score calculation for Survey flow — Peers table lookup followed by Carriers table filter.
 flow: survey
 scope: [planner]
-triggers: [peer, peers, peer average, peer score, peer group, vs peers, against peers, compared to peers, peer comparison]
+triggers: [peer, peers, peer average, peer score, peer group, vs peers, against peers, compared to peers, peer comparison, competitor, rival, competition]
 priority: 70
 ---
 

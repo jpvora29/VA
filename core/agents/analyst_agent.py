@@ -54,6 +54,7 @@ def analyst_agent_node(state: AgentState) -> AgentState:
 
     answer = ""
     evidence: List[Evidence] = []
+    charts: List[Any] = []
     with latency_timer() as timing:
         try:
             # HITL clarification happens upstream in the checkpointed main graph
@@ -62,6 +63,7 @@ def analyst_agent_node(state: AgentState) -> AgentState:
             result = _subgraph.AnalystAgent.invoke(subgraph_input)
             answer = (result.get("answer") or "").strip()
             evidence = result.get("evidence") or []
+            charts = result.get("charts") or []
         except GraphInterrupt:
             # A clarify MCQ is pending — let it bubble to the checkpointed main
             # graph so the UI can ask and resume. Never swallow this as an error.
@@ -100,12 +102,21 @@ def analyst_agent_node(state: AgentState) -> AgentState:
         return []
 
     if route == "survey":
-        return {"survey_response": answer, "survey_query_result": _rows_for("survey")}
+        return {
+            "survey_response": answer,
+            "survey_query_result": _rows_for("survey"),
+            "analyst_charts": charts,
+        }
     if route == "both":
         return {
             "combined_response": answer,
             "survey_query_result": _rows_for("survey"),
             "gpr_query_result": _rows_for("gpr"),
+            "analyst_charts": charts,
         }
     # premium (and any default)
-    return {"gpr_response": answer, "gpr_query_result": _rows_for("gpr")}
+    return {
+        "gpr_response": answer,
+        "gpr_query_result": _rows_for("gpr"),
+        "analyst_charts": charts,
+    }

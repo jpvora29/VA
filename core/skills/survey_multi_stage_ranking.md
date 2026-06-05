@@ -3,7 +3,7 @@ name: survey-multi-stage-ranking
 description: Two-level (top N of X, then top M of Y) ranking pattern. Triggered by top/best/highest/ranking phrasings.
 flow: survey
 scope: [planner]
-triggers: [top, best, highest, lowest, bottom, rank, ranking, leader, leaders]
+triggers: [top, best, highest, lowest, bottom, rank, ranking, leader, leaders, biggest, largest, worst]
 priority: 80
 ---
 

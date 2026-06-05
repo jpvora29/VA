@@ -1064,6 +1064,86 @@ body {
     transform: translateY(-2px);
 }
 
+/* ---------- Message copy action ---------- */
+.gpt-message,
+.insight-card {
+    position: relative;
+}
+
+.msg-copy {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    color: var(--ink-300);
+    opacity: 0;
+    cursor: pointer;
+    transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+
+.gpt-message:hover .msg-copy,
+.insight-card:hover .msg-copy {
+    opacity: 1;
+}
+
+.msg-copy:hover {
+    color: var(--marsh-blue-2);
+}
+
+/* ---------- Chart / Data toggle ---------- */
+.chart-block {
+    align-self: stretch;
+    width: 100%;
+    margin: 8px 0;
+    animation: messageIn 320ms cubic-bezier(.2, .7, .2, 1) both;
+}
+
+.chart-block .gpt-chart-display {
+    margin: 0;
+    animation: none;
+}
+
+.chart-view-switch {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+    margin-bottom: 6px;
+}
+
+.chart-view-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Inter', sans-serif;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--ink-500);
+    background: var(--surface-0);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-pill);
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.chart-view-btn:hover {
+    color: var(--ink-800);
+    border-color: var(--border-mid);
+}
+
+.chart-view-btn.active {
+    color: #fff;
+    background: var(--marsh-blue);
+    border-color: var(--marsh-blue);
+}
+
+.chart-data-wrap {
+    background: var(--surface-0);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    padding: 12px;
+    box-shadow: var(--shadow-sm);
+}
+
 .overflow-message {
     align-self: flex-start;
     font-family: 'Inter', sans-serif;

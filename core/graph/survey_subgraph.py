@@ -417,12 +417,8 @@ class SurveySubGraph:
             return "survey_end_max_iterations"
 
     def survey_execute_sql_router(state: AgentState):
-        # if not state.get("survey_sql_error", False):
-        #     return "survey_chart_data_creation"
-        # else:
-        #     return "survey_sql_fixer_agent"
         if not state.get("survey_sql_error", False):
-            return "end"
+            return "survey_chart_data_creation"
         else:
             return "survey_sql_fixer_agent"
 
@@ -434,10 +430,20 @@ class SurveySubGraph:
         return "survey_execute_sql"
 
     def survey_chart_data_creation(state: AgentState) -> AgentState:
-        survey_query_output = state["survey_query_result"]
+        survey_query_output = state.get("survey_query_result")
         question = state["messages"][-1].content
 
-        # survey_query_output_updated = GeneralFunctions.reshape_for_chart(survey_query_output)
+        # Guard: only chart a genuine, non-empty result set. On a SQL error the
+        # result is a list-wrapped error string; on overflow / no rows skip
+        # charting (no-op) so the fixer/overflow paths are unaffected.
+        if (
+            not isinstance(survey_query_output, list)
+            or not survey_query_output
+            or state.get("survey_sql_error", False)
+            or state.get("survey_overflow", False)
+        ):
+            return {}
+
         survey_query_output_updated = survey_query_output
         logger.debug("Survey chart input rows: %s", survey_query_output_updated)
         skill_rules = get_skill_loader().chart("survey", question)
@@ -469,7 +475,7 @@ class SurveySubGraph:
     survey_graph.add_node("survey_planner", survey_planner_node)
     survey_graph.add_node("survey_convert_to_sql", survey_convert_nl_to_sql)
     survey_graph.add_node("survey_execute_sql", survey_execute_sql)
-    # survey_graph.add_node("survey_chart_data_creation", survey_chart_data_creation)
+    survey_graph.add_node("survey_chart_data_creation", survey_chart_data_creation)
     # survey_graph.add_node("survey_sql_join_rewriter", survey_sql_join_rewriter)
     survey_graph.add_node("survey_sql_fixer_agent", survey_sql_fixer_agent)
     survey_graph.add_node("survey_end_max_iterations", survey_end_max_iterations)
@@ -496,8 +502,7 @@ class SurveySubGraph:
         "survey_execute_sql",
         survey_execute_sql_router,
         {
-            "end": END,
-            # "survey_chart_data_creation": "survey_chart_data_creation",
+            "survey_chart_data_creation": "survey_chart_data_creation",
             "survey_sql_fixer_agent": "survey_sql_fixer_agent",
         },
     )
@@ -511,7 +516,7 @@ class SurveySubGraph:
         },
     )
 
-    # survey_graph.add_edge("survey_chart_data_creation", END)
+    survey_graph.add_edge("survey_chart_data_creation", END)
     survey_graph.add_edge("survey_end_max_iterations", END)
 
     SurveyAgent = survey_graph.compile()
