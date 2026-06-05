@@ -13,6 +13,9 @@ from config.valid_values_config import *  # noqa: F401,F403 - preserves legacy g
 from core.agents.common import (
     BaseSQLFixerNode,
     annotate_plan_notes,
+    log_sql_failure,
+    recalled_sql_examples,
+    record_recovered_sql_fix,
 )
 from core.mcp.tools import execute_sql
 from core.agents.gpr.chart import GPRChartNode
@@ -248,11 +251,17 @@ class GPRSubGraph:
             used_skills=bool(skill_rules),
         )
 
+        # Augment the static few-shots with this user's past verified fixes for
+        # similar premium questions, so a previously-corrected pattern is reused.
+        recalled = recalled_sql_examples(
+            state.get("user_id"), "premium", question, k=3
+        )
+
         sql_agent = GPRSQLAgentNode(
             gpr_schema=gpr_schema,
             peer_schema=peers_schema,
             rules=query_rules,
-            few_shot=GPRRules.gpr_query_few_shots,
+            few_shot=GPRRules.gpr_query_few_shots + recalled,
         )
 
         sql_query_output = sql_agent(
@@ -282,6 +291,10 @@ class GPRSubGraph:
                 "gpr_query_result": f"Error executing SQL query: {result.error}",
                 "gpr_sql_error": True,
             }
+
+        # Success: if a fixer ran earlier this turn, persist the verified fix so
+        # similar future queries can recall the working SQL.
+        record_recovered_sql_fix(state, route="premium", working_sql=sql_query)
 
         logger.debug("GPR query fetched %d row(s)", result.row_count)
         return {"gpr_query_result": result.rows, "gpr_sql_error": False}
@@ -365,7 +378,13 @@ class GPRSubGraph:
             definitions=GetValidData.definitions_gpr,
         )
 
-        return {"gpr_sql_query": corrected_query, "gpr_attempts": 1}
+        # Breadcrumb the failure so a subsequent successful execute can record the
+        # verified failed_sql → working_sql pair into episodic memory.
+        return {
+            "gpr_sql_query": corrected_query,
+            "gpr_attempts": 1,
+            **log_sql_failure(question, sql_query, error_message, "premium"),
+        }
 
     def gpr_check_if_join_required_router(state: AgentState) -> AgentState:
         if re.search(r"(?i)join", state["gpr_sql_query"]):

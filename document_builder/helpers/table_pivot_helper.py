@@ -113,6 +113,8 @@ def _format_score(value: Any) -> str:
 
 def _format_year(value: Any) -> str:
     n = parse_signed_number(value)
+    # Years are plain integers — no thousands separators, no decimals.
+    return f"{int(n)}" if n is not None else "-"
 
 
 def _is_year_header(header: str) -> bool:

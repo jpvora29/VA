@@ -19,6 +19,17 @@ from core.schemas.routing import RoutingContext
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
 
+    # Owning user (from the lightweight login). Threaded in from the UI so memory
+    # nodes can scope episodic recall/record per user. Optional so non-UI callers
+    # (tests, MCP) still type-check.
+    user_id: Optional[str]
+
+    # Verified SQL error→fix breadcrumbs for this turn. Each fixer node appends a
+    # {failed_sql, error, route} entry; on a successful retry the execute node
+    # persists the pair to episodic memory. `add` so entries accumulate across the
+    # fixer loop instead of overwriting.
+    sql_error_log: Annotated[List, add]
+
     # Structured routing context produced by ContextFillingAgent. Consumed by
     # the rephraser (for inheritance) and the router (for deterministic
     # dispatch). Optional so first-turn / fallback paths still type-check.

@@ -1,13 +1,26 @@
 """Per-workflow LangGraph checkpointers.
 
 Chat and pitch intentionally use separate checkpointer instances so their
-state histories can evolve independently. The default adapter is in-memory;
-the builder functions make it straightforward to swap chat or pitch to a
-Sqlite/Postgres saver later without touching workflow code.
+state histories can evolve independently.
+
+The chat checkpointer is **persistent** (SQLite, via ``langgraph-checkpoint-sqlite``)
+so a reopened conversation resumes its full graph memory — message history,
+routing context — even across server restarts. Because a conversation's id is its
+LangGraph ``thread_id``, clicking a saved chat lines up with its stored checkpoint
+and the next turn continues the thread instead of starting cold. It writes its own
+``checkpoints*`` tables into the same ``app_state.db`` file used by the readable app
+state (``core/store/db.py``). Pitch keeps an in-memory saver.
+
+If the Sqlite saver package is unavailable we fall back to an in-memory saver, so
+the app still runs (losing only cross-restart continuity).
 """
 from __future__ import annotations
 
+import logging
+import sqlite3
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 _chat_checkpointer: Optional[Any] = None
@@ -26,11 +39,32 @@ def _new_memory_checkpointer() -> Any:
         return MemorySaver()
 
 
+def _new_sqlite_checkpointer() -> Any:
+    """Persistent SQLite saver over the app-state DB, or None if unavailable."""
+    try:
+        from langgraph.checkpoint.sqlite import SqliteSaver
+
+        from core.store.db import app_db_path
+
+        # check_same_thread=False: the streaming chat job runs in a daemon thread.
+        conn = sqlite3.connect(app_db_path(), check_same_thread=False)
+        saver = SqliteSaver(conn)
+        saver.setup()  # idempotent: creates checkpoints tables on first run
+        return saver
+    except Exception:  # pragma: no cover - degrade gracefully to in-memory
+        logger.warning(
+            "Persistent SqliteSaver unavailable; chat memory will not survive "
+            "restarts.",
+            exc_info=True,
+        )
+        return None
+
+
 def build_chat_checkpointer() -> Any:
-    """Singleton checkpointer for the interactive chat workflow."""
+    """Singleton persistent checkpointer for the interactive chat workflow."""
     global _chat_checkpointer
     if _chat_checkpointer is None:
-        _chat_checkpointer = _new_memory_checkpointer()
+        _chat_checkpointer = _new_sqlite_checkpointer() or _new_memory_checkpointer()
     return _chat_checkpointer
 
 

@@ -37,6 +37,27 @@ from ui.components.chatbot import (
     followup_suggestions,
     ai_message,
     chart_block,
+    welcome_hero,
+    pitch_builder_drawer,
+)
+from ui.components.navbar import build_navbar
+from ui.components.sidebar import (
+    login_screen,
+    app_sidebar,
+    conversation_list_children,
+)
+from core.store.users import get_or_create_user
+from core.store.conversations import (
+    list_conversations,
+    save_conversation,
+    load_conversation,
+    delete_conversation,
+)
+from core.memory.episodic import episodic_store
+from core.memory import semantic
+from core.memory.suggestions import (
+    generate_starter_questions,
+    invalidate as invalidate_suggestions,
 )
 from core.backend import (
     LangGraph,
@@ -47,6 +68,7 @@ from core.backend import (
     PitchBuilderWorkflow,
 )
 from ui.chart_functions import generate_chart
+from core.agents.common.chart_spec import normalize_chart_spec
 from sqlalchemy import inspect, text
 from document_builder.report_generator import (
     get_theme,
@@ -585,17 +607,221 @@ def update_pitch_progress(
 # ── CHAT AREA SPECIFIC  ───────────────────────────────────────────────────────────────────────────
 
 
-# 1. -------------------------- RENDER PAGE ---------------------------------------
+# 0. -------------------------- AUTH + APP SHELL ---------------------------------------
+
+
+def _current_user(user_store: dict[str, Any] | None) -> tuple[Optional[int], str]:
+    """Return (user_id, username) from the user-store, or (None, '')."""
+    user_store = user_store or {}
+    uid = user_store.get("id")
+    try:
+        uid = int(uid) if uid is not None else None
+    except (TypeError, ValueError):
+        uid = None
+    return uid, (user_store.get("username") or "")
+
+
+def _app_shell(user_id: int, username: str) -> Component:
+    """Full post-login layout: navbar + sidebar + chat + pitch drawer."""
+    conversations = list_conversations(user_id)
+    starters = generate_starter_questions(user_id)
+    return html.Div(
+        [
+            build_navbar(),
+            html.Div(
+                [
+                    app_sidebar(conversations, username, collapsed=False),
+                    html.Div(
+                        html.Div(
+                            chatbot_page(username, starters),
+                            id="main-content",
+                            className="main-content",
+                        ),
+                        className="main-container",
+                    ),
+                ],
+                className="app-body",
+            ),
+            pitch_builder_drawer(),
+        ],
+        className="app-shell",
+    )
 
 
 @callback(
-    Output("main-content", "children"),
+    Output("app-root", "children"),
+    Input("user-store", "data"),
+)
+def render_app_root(user_store: dict[str, Any] | None) -> Component:
+    """Login gate: show the sign-in screen until a username is chosen."""
+    user_id, username = _current_user(user_store)
+    if user_id is None:
+        return login_screen()
+    return _app_shell(user_id, username)
+
+
+@callback(
+    Output("user-store", "data"),
+    Output("active-conversation", "data", allow_duplicate=True),
+    Output("login-error", "children"),
+    Input("login-submit", "n_clicks"),
+    Input("login-username", "n_submit"),
+    State("login-username", "value"),
+    prevent_initial_call=True,
+)
+def handle_login(
+    n_clicks: int, n_submit: int, username: str | None
+) -> tuple[Any, Any, Any]:
+    """Create-or-fetch the user, seed semantic profile, and sign them in."""
+    username = (username or "").strip()
+    if not username:
+        return no_update, no_update, "Please enter a username."
+    user = get_or_create_user(username)
+    # Seed semantic memory so the welcome hero can greet by name.
+    semantic.set_fact(user["id"], "username", user["username"])
+    semantic.set_fact(user["id"], "display_name", user["username"])
+    return {"id": user["id"], "username": user["username"]}, None, ""
+
+
+@callback(
+    Output("user-store", "data", allow_duplicate=True),
+    Output("active-conversation", "data", allow_duplicate=True),
+    Input("logout-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def handle_logout(n_clicks: int) -> tuple[Any, Any]:
+    if not n_clicks:
+        return no_update, no_update
+    return None, None
+
+
+# 1. -------------------------- SIDEBAR: LIST / NEW / OPEN / DELETE ---------------------------------------
+
+
+@callback(
+    Output("conversation-list", "children"),
+    Input("chat-store", "data"),
+    Input("active-conversation", "data"),
+    State("user-store", "data"),
+    prevent_initial_call=True,
+)
+def refresh_sidebar(
+    chat_history: dict[str, Any], active_id: str | None, user_store: dict[str, Any]
+) -> Any:
+    """Re-render the conversation list after a turn commits / open / delete."""
+    user_id, _ = _current_user(user_store)
+    if user_id is None:
+        return no_update
+    return conversation_list_children(list_conversations(user_id), active_id)
+
+
+@callback(
+    Output("chat-store", "data", allow_duplicate=True),
+    Output("active-conversation", "data", allow_duplicate=True),
+    Output("chat-box", "children", allow_duplicate=True),
+    Input("new-chat-btn", "n_clicks"),
+    State("user-store", "data"),
+    prevent_initial_call=True,
+)
+def start_new_chat(n_clicks: int, user_store: dict[str, Any]) -> tuple[Any, Any, Any]:
+    """Reset to a fresh, empty conversation with the welcome hero."""
+    if not n_clicks:
+        return no_update, no_update, no_update
+    user_id, username = _current_user(user_store)
+    starters = generate_starter_questions(user_id) if user_id is not None else None
+    # Empty ({}) chat-store is falsy, so render_chat leaves the hero we set here.
+    return {}, None, [welcome_hero(username, starters)]
+
+
+@callback(
+    Output("chat-store", "data", allow_duplicate=True),
+    Output("active-conversation", "data", allow_duplicate=True),
+    Input({"type": "conv-item", "id": ALL}, "n_clicks"),
+    State("user-store", "data"),
+    prevent_initial_call=True,
+)
+def open_conversation(
+    n_clicks_list: list[int | None], user_store: dict[str, Any]
+) -> tuple[Any, Any]:
+    """Load a saved conversation back into chat-store (transcript + thread_id)."""
+    triggered = ctx.triggered_id
+    triggered_value = ctx.triggered[0]["value"] if ctx.triggered else None
+    if not isinstance(triggered, dict) or not triggered_value:
+        return no_update, no_update
+    conv_id = triggered.get("id")
+    user_id, _ = _current_user(user_store)
+    if user_id is None or not conv_id:
+        return no_update, no_update
+    stored = load_conversation(user_id, conv_id)
+    if stored is None:
+        return no_update, no_update
+    stored.setdefault("thread_id", conv_id)
+    return stored, conv_id
+
+
+@callback(
+    Output("conversation-list", "children", allow_duplicate=True),
+    Output("chat-store", "data", allow_duplicate=True),
+    Output("active-conversation", "data", allow_duplicate=True),
+    Output("chat-box", "children", allow_duplicate=True),
+    Input({"type": "conv-del", "id": ALL}, "n_clicks"),
+    State("user-store", "data"),
+    State("active-conversation", "data"),
+    prevent_initial_call=True,
+)
+def delete_conversation_cb(
+    n_clicks_list: list[int | None],
+    user_store: dict[str, Any],
+    active_id: str | None,
+) -> tuple[Any, Any, Any, Any]:
+    """Delete a chat; if it was the open one, fall back to a fresh hero."""
+    triggered = ctx.triggered_id
+    triggered_value = ctx.triggered[0]["value"] if ctx.triggered else None
+    if not isinstance(triggered, dict) or not triggered_value:
+        return no_update, no_update, no_update, no_update
+    conv_id = triggered.get("id")
+    user_id, username = _current_user(user_store)
+    if user_id is None or not conv_id:
+        return no_update, no_update, no_update, no_update
+
+    delete_conversation(user_id, conv_id)
+    items = conversation_list_children(list_conversations(user_id), active_id)
+
+    if conv_id == active_id:
+        starters = generate_starter_questions(user_id)
+        return items, {}, None, [welcome_hero(username, starters)]
+    return items, no_update, no_update, no_update
+
+
+# 2. -------------------------- SIDEBAR COLLAPSE (clientside) ---------------------------------------
+
+clientside_callback(
+    """
+    function(n_clicks, collapsed) {
+        const next = !collapsed;
+        const base = 'app-sidebar';
+        return [next ? base + ' app-sidebar-collapsed' : base, next];
+    }
+    """,
+    Output("app-sidebar", "className"),
+    Output("sidebar-collapsed", "data"),
+    Input("sidebar-collapse-btn", "n_clicks"),
+    State("sidebar-collapsed", "data"),
+    prevent_initial_call=True,
+)
+
+
+# 1b. -------------------------- RENDER PAGE (legacy nav link) ---------------------------------------
+
+
+@callback(
     Output("nav-chatbot", "active"),
     Input("nav-chatbot", "n_clicks"),
+    prevent_initial_call=True,
 )
-def render_page(chatbot_clicks: int) -> tuple[Component, bool]:
-
-    return chatbot_page(), True
+def render_page(chatbot_clicks: int) -> bool:
+    # The single nav item stays active; the chat page is mounted by the app shell.
+    return True
 
 
 # 2. -------------------------- TRIGGER WOKFLOW + CHAT-STORE UPDATION ---------------------------------------
@@ -636,12 +862,25 @@ def _append_chart_messages(
     chat_history: dict[str, Any], charts: list[dict[str, Any]]
 ) -> None:
     """Append one `SQLOutputForCharts` message per analyst chart spec."""
-    for chart in charts or []:
+    logger.info("append_chart_messages: received %d analyst chart(s)", len(charts or []))
+    for i, chart in enumerate(charts or []):
+        rows = chart.get("rows")
+        # Coerce a ChartOutput model / list-of-specs into a plain dict. A pydantic
+        # model here is NOT JSON-serializable and would break the chat-store write
+        # (and was being dropped by the dict-only checks downstream).
+        chart_data = normalize_chart_spec(chart.get("chart_data"))
+        logger.info(
+            "append_chart_messages[%d]: rows=%s chart_type=%r keys=%s",
+            i,
+            (len(rows) if isinstance(rows, list) else type(rows).__name__),
+            (chart_data or {}).get("chart_type") if isinstance(chart_data, dict) else type(chart_data).__name__,
+            list(chart.keys()),
+        )
         chat_history["messages"].append(
             {
                 "type": "SQLOutputForCharts",
-                "updated_query": chart.get("rows"),
-                "chart_data": chart.get("chart_data"),
+                "updated_query": rows,
+                "chart_data": chart_data,
             }
         )
 
@@ -655,6 +894,9 @@ def _update_chat_history(
     # rows). When present, render those instead of the single per-flow chart that
     # the deterministic rails attach.
     analyst_charts = updated_state.get("analyst_charts") or []
+    logger.info(
+        "update_chat_history: table=%r analyst_charts=%d", table, len(analyst_charts)
+    )
 
     if table == "survey":
 
@@ -673,7 +915,7 @@ def _update_chat_history(
             survey_response = updated_state.get("survey_response", "")
             sql_output = updated_state.get("survey_query_result")
             sql_output_updated_for_charts = sql_output
-            survey_chart_data = updated_state.get("survey_chart")
+            survey_chart_data = normalize_chart_spec(updated_state.get("survey_chart"))
 
             chat_history["messages"].append(
                 {
@@ -697,7 +939,7 @@ def _update_chat_history(
         gpr_response = updated_state.get("gpr_response", "")
         sql_output = updated_state.get("gpr_query_result", [])
         sql_output_updated_for_charts = sql_output
-        gpr_chart_data = updated_state.get("gpr_chart")
+        gpr_chart_data = normalize_chart_spec(updated_state.get("gpr_chart"))
 
         chat_history["messages"].append(
             {
@@ -734,8 +976,8 @@ def _update_chat_history(
             or updated_state.get("combined_result")
             or ""
         )
-        survey_chart_data = updated_state.get("survey_chart")
-        gpr_chart_data = updated_state.get("gpr_chart")
+        survey_chart_data = normalize_chart_spec(updated_state.get("survey_chart"))
+        gpr_chart_data = normalize_chart_spec(updated_state.get("gpr_chart"))
         survey_rows = updated_state.get("survey_query_result") or []
         gpr_rows = updated_state.get("gpr_query_result") or []
 
@@ -862,10 +1104,11 @@ def _launch_job(thread_id: str, input_obj: Any) -> None:
     Output("thinking-agent", "children", allow_duplicate=True),
     Input("trigger-gpt", "data"),
     State("chat-store", "data"),
+    State("user-store", "data"),
     prevent_initial_call=True,
 )
 def launch_new_job(
-    is_trigger: bool, chat_history: dict[str, Any]
+    is_trigger: bool, chat_history: dict[str, Any], user_store: dict[str, Any]
 ) -> tuple[bool, bool | NoUpdate, str | NoUpdate]:
     """Kick off a streaming run for a new user turn (non-blocking)."""
     if not is_trigger:
@@ -873,12 +1116,14 @@ def launch_new_job(
 
     chat_history = chat_history or {}
     thread_id = chat_history.get("thread_id") or uuid.uuid4().hex[:12]
+    user_id, _ = _current_user(user_store)
     user_input = [
         msg for msg in chat_history["messages"] if msg["type"] == "HumanMessage"
     ][-1]["content"]
 
     state_obj = AgentState(
         messages=[HumanMessage(content=user_input)],
+        user_id=str(user_id) if user_id is not None else None,
         survey_attempts=0,
         gpr_attempts=0,
         gimmi_attempts=0,
@@ -920,10 +1165,11 @@ def launch_resume_job(
     Output("thinking-elapsed", "children", allow_duplicate=True),
     Input("job-poll", "n_intervals"),
     State("chat-store", "data"),
+    State("user-store", "data"),
     prevent_initial_call=True,
 )
 def poll_job(
-    n_intervals: int, chat_history: dict[str, Any]
+    n_intervals: int, chat_history: dict[str, Any], user_store: dict[str, Any]
 ) -> tuple[Any, Any, Any, Any, Any]:
     """Poll the running job each tick; on completion, commit and stop polling."""
     chat_history = chat_history or {}
@@ -972,7 +1218,41 @@ def poll_job(
         return chat_history, False, True, "", ""
 
     chat_history = _commit_turn(chat_history, job.state)
+    _persist_turn(user_store, chat_history, job.state)
     return chat_history, False, True, "", ""
+
+
+def _persist_turn(
+    user_store: dict[str, Any] | None,
+    chat_history: dict[str, Any],
+    state: dict[str, Any],
+) -> None:
+    """Save the transcript and record an episodic 'question' for this turn.
+
+    Best-effort: persistence/memory failures must never break the chat turn.
+    """
+    user_id, _ = _current_user(user_store)
+    if user_id is None:
+        return
+    thread_id = chat_history.get("thread_id")
+    try:
+        save_conversation(user_id, thread_id, chat_history)
+        last_human = next(
+            (
+                m.get("content")
+                for m in reversed(chat_history.get("messages", []))
+                if m.get("type") == "HumanMessage"
+            ),
+            None,
+        )
+        if last_human:
+            episodic_store.record_question(
+                user_id, thread_id, last_human, state.get("current_route")
+            )
+            # New activity may change tailored suggestions on the next New chat.
+            invalidate_suggestions(user_id)
+    except Exception:  # pragma: no cover - never break a turn on persistence
+        logger.exception("Failed to persist turn / record episode")
 
 
 @callback(
@@ -1006,17 +1286,29 @@ def render_chat(
     chart_idx = 0  # unique, stable per-chart id for the Chart/Data toggle
 
     if chat_history:
-        for msg in chat_history["messages"]:
+        for msg_idx, msg in enumerate(chat_history["messages"]):
             if msg["type"] == "SQLOutputForCharts":
                 # Skip entirely when there is no chart spec or no rows (e.g. an
                 # analyst turn whose route had no per-flow chart attached).
                 if not msg.get("chart_data") or not msg.get("updated_query"):
+                    logger.info(
+                        "render_chat: skipping chart msg (chart_data=%s updated_query=%s)",
+                        bool(msg.get("chart_data")),
+                        bool(msg.get("updated_query")),
+                    )
                     continue
                 try:
                     df = pd.DataFrame(msg["updated_query"])
                     fig, chart_message = generate_chart(
                         df=df,
                         chart_outputs=msg["chart_data"],
+                    )
+                    logger.info(
+                        "render_chat: chart_type=%r df_shape=%s -> fig=%s msg=%r",
+                        msg["chart_data"].get("chart_type") if isinstance(msg["chart_data"], dict) else type(msg["chart_data"]).__name__,
+                        df.shape,
+                        fig is not None,
+                        chart_message,
                     )
 
                     if fig is not None:
@@ -1056,7 +1348,7 @@ def render_chat(
                     or content.count("### ") >= 2
                 )
 
-                chat_items.append(ai_message(content, is_insight))
+                chat_items.append(ai_message(content, is_insight, idx=msg_idx))
 
             elif msg["type"] == "ClarifyCard":
                 chat_items.append(clarify_card(msg.get("payload") or {}))
@@ -1260,3 +1552,65 @@ def download_data(n_clicks, chat_history, chat_messages):
             return None
 
     return no_update
+
+
+# 6. -------------------------- THUMBS UP/DOWN FEEDBACK ---------------------------------------
+
+
+# Instant visual confirmation: mark the clicked thumb active (clientside, no
+# round-trip). The server callback below records it to episodic memory.
+clientside_callback(
+    """
+    function(up, down) {
+        const ctx = window.dash_clientside.callback_context;
+        const trig = ctx.triggered.length ? ctx.triggered[0].prop_id : '';
+        const isUp = trig.indexOf('"rating":"up"') !== -1;
+        return [
+            isUp ? 'msg-feedback-btn active' : 'msg-feedback-btn',
+            !isUp ? 'msg-feedback-btn active' : 'msg-feedback-btn',
+        ];
+    }
+    """,
+    Output({"type": "msg-feedback", "idx": MATCH, "rating": "up"}, "className"),
+    Output({"type": "msg-feedback", "idx": MATCH, "rating": "down"}, "className"),
+    Input({"type": "msg-feedback", "idx": MATCH, "rating": "up"}, "n_clicks"),
+    Input({"type": "msg-feedback", "idx": MATCH, "rating": "down"}, "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output("feedback-sink", "data"),
+    Input({"type": "msg-feedback", "idx": ALL, "rating": ALL}, "n_clicks"),
+    State("chat-store", "data"),
+    State("user-store", "data"),
+    State("active-conversation", "data"),
+    prevent_initial_call=True,
+)
+def record_message_feedback(
+    n_clicks_list: list[int | None],
+    chat_history: dict[str, Any],
+    user_store: dict[str, Any],
+    active_id: str | None,
+) -> Any:
+    """Persist a thumbs up/down for an answer into episodic memory."""
+    triggered = ctx.triggered_id
+    triggered_value = ctx.triggered[0]["value"] if ctx.triggered else None
+    if not isinstance(triggered, dict) or not triggered_value:
+        return no_update
+
+    user_id, _ = _current_user(user_store)
+    if user_id is None:
+        return no_update
+
+    rating = triggered.get("rating")
+    idx = triggered.get("idx")
+    chat_history = chat_history or {}
+    conv_id = (chat_history.get("thread_id")) or active_id
+    messages = chat_history.get("messages", [])
+    note = None
+    if isinstance(idx, int) and 0 <= idx < len(messages):
+        note = (messages[idx].get("content") or "")[:300]
+
+    episodic_store.record_feedback(user_id, conv_id, rating, note)
+    return {"idx": idx, "rating": rating}

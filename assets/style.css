@@ -1818,3 +1818,342 @@ th {
     background: var(--marsh-blue-2) !important;
     border-color: var(--marsh-blue-2) !important;
 }
+/* ====================================================================
+   Login screen + collapsible sidebar + feedback (memory feature)
+   ==================================================================== */
+
+/* ---------- App shell layout ---------- */
+.app-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+.app-body {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    height: calc(100vh - 58px);
+}
+
+.app-body .main-container {
+    height: 100%;
+    min-width: 0;
+}
+
+/* ---------- Login screen ---------- */
+.login-screen {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    width: 100%;
+    background:
+        radial-gradient(1200px 600px at 50% -10%, rgba(11, 75, 255, 0.10), transparent 60%),
+        var(--surface-1);
+}
+
+.login-card {
+    width: min(420px, 92vw);
+    background: var(--surface-0);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    padding: 40px 36px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.login-badge {
+    width: 52px;
+    height: 52px;
+    margin: 0 auto 4px;
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius-md);
+    background: var(--marsh-blue);
+    color: #fff;
+    font-size: 22px;
+}
+
+.login-title {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--ink-900);
+    margin: 0;
+}
+
+.login-subtitle {
+    font-size: 14px;
+    color: var(--ink-500);
+    margin: 0 0 6px;
+    line-height: 1.5;
+}
+
+.login-input {
+    height: 46px;
+    border-radius: var(--radius-pill) !important;
+    border: 1px solid var(--border-mid) !important;
+    padding: 0 18px !important;
+    font-size: 15px;
+}
+
+.login-input:focus {
+    border-color: var(--marsh-blue-2) !important;
+    box-shadow: 0 0 0 3px rgba(11, 75, 255, 0.12) !important;
+}
+
+.login-submit {
+    height: 46px;
+    border-radius: var(--radius-pill) !important;
+    background: var(--marsh-blue) !important;
+    border-color: var(--marsh-blue) !important;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.login-submit:hover {
+    background: var(--marsh-blue-2) !important;
+    border-color: var(--marsh-blue-2) !important;
+}
+
+.login-error {
+    min-height: 18px;
+    font-size: 13px;
+    color: var(--marsh-red);
+}
+
+/* ---------- Sidebar ---------- */
+.app-sidebar {
+    flex: 0 0 264px;
+    width: 264px;
+    background: var(--surface-0);
+    border-right: 1px solid var(--border-soft);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: width var(--transition-med), flex-basis var(--transition-med);
+}
+
+.app-sidebar-collapsed {
+    flex-basis: 60px;
+    width: 60px;
+}
+
+.sidebar-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 12px;
+}
+
+.new-chat-btn {
+    flex: 1 1 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: flex-start;
+    background: var(--surface-1) !important;
+    color: var(--ink-900) !important;
+    border: 1px solid var(--border-mid) !important;
+    border-radius: var(--radius-md) !important;
+    font-weight: 600;
+    font-size: 14px;
+    padding: 9px 14px !important;
+}
+
+.new-chat-btn:hover {
+    background: var(--surface-2) !important;
+}
+
+.sidebar-collapse-btn {
+    flex: 0 0 auto;
+    background: transparent !important;
+    color: var(--ink-500) !important;
+    border: 1px solid var(--border-soft) !important;
+    border-radius: var(--radius-sm) !important;
+    padding: 8px 10px !important;
+}
+
+.sidebar-collapse-btn:hover {
+    background: var(--surface-1) !important;
+    color: var(--ink-900) !important;
+}
+
+.app-sidebar-collapsed .new-chat-btn span,
+.app-sidebar-collapsed .sidebar-section-label,
+.app-sidebar-collapsed .conversation-list,
+.app-sidebar-collapsed .user-name,
+.app-sidebar-collapsed .logout-btn {
+    display: none;
+}
+
+.app-sidebar-collapsed .sidebar-top {
+    flex-direction: column;
+}
+
+.sidebar-section-label {
+    padding: 6px 18px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-300);
+}
+
+.conversation-list {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 4px 8px;
+}
+
+.sidebar-empty {
+    padding: 12px 14px;
+    font-size: 13px;
+    color: var(--ink-300);
+}
+
+.conv-item {
+    display: flex;
+    align-items: center;
+    border-radius: var(--radius-sm);
+    margin-bottom: 2px;
+    transition: background var(--transition-fast);
+}
+
+.conv-item:hover {
+    background: var(--surface-1);
+}
+
+.conv-item-active {
+    background: var(--surface-2);
+}
+
+.conv-item-open {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    background: transparent;
+    border: none;
+    padding: 9px 10px;
+    text-align: left;
+    cursor: pointer;
+    color: var(--ink-700);
+}
+
+.conv-item-icon {
+    color: var(--ink-300);
+    font-size: 14px;
+    flex: 0 0 auto;
+}
+
+.conv-item-title {
+    flex: 1 1 auto;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 13.5px;
+}
+
+.conv-item-del {
+    flex: 0 0 auto;
+    background: transparent;
+    border: none;
+    color: var(--ink-300);
+    cursor: pointer;
+    padding: 6px 10px;
+    opacity: 0;
+    transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+
+.conv-item:hover .conv-item-del {
+    opacity: 1;
+}
+
+.conv-item-del:hover {
+    color: var(--marsh-red);
+}
+
+.sidebar-footer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--border-soft);
+}
+
+.user-avatar {
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    border-radius: var(--radius-pill);
+    background: var(--marsh-blue);
+    color: #fff;
+    display: grid;
+    place-items: center;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.user-name {
+    flex: 1 1 auto;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--ink-800);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.logout-btn {
+    flex: 0 0 auto;
+    background: transparent !important;
+    color: var(--ink-500) !important;
+    border: none !important;
+    padding: 6px 8px !important;
+}
+
+.logout-btn:hover {
+    color: var(--marsh-red) !important;
+}
+
+/* ---------- Message feedback (thumbs) ---------- */
+.msg-feedback {
+    display: inline-flex;
+    gap: 4px;
+    position: absolute;
+    right: 14px;
+    bottom: 8px;
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+}
+
+.message:hover .msg-feedback {
+    opacity: 1;
+}
+
+.msg-feedback-btn {
+    background: transparent;
+    border: none;
+    color: var(--ink-300);
+    cursor: pointer;
+    padding: 3px 6px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.msg-feedback-btn:hover {
+    background: var(--surface-1);
+    color: var(--ink-700);
+}
+
+.msg-feedback-btn.active {
+    color: var(--marsh-blue-2);
+}

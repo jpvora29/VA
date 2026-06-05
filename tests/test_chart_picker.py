@@ -56,3 +56,24 @@ def test_keeps_valid_chart_type(monkeypatch):
     assert len(charts) == 1
     assert charts[0]["chart_data"]["chart_type"] == "bar"
     assert charts[0]["rows"] == _chartable_rows()
+
+
+def test_keeps_chart_when_node_returns_pydantic_model(monkeypatch):
+    """The reported bug: dspy hands back a ChartOutput MODEL, not a dict.
+
+    The old `isinstance(chart_data, dict)` gate silently dropped it. The picker
+    must now coerce the model to a plain dict and keep the chart.
+    """
+    from core.schemas.survey import ChartOutput
+
+    model = ChartOutput(
+        chart_type="line", x="Product", y=["Premium"], series=[], bar_mode=[],
+        is_legend=True, y_agg="none", title="Trend", sort="none",
+        secondary_y=[], waterfall_measures=[],
+    )
+    _patch_node(monkeypatch, model)
+    charts = cp.pick_charts("premium trend", _evidence())
+    assert len(charts) == 1
+    cd = charts[0]["chart_data"]
+    assert isinstance(cd, dict)  # coerced — JSON-safe for the chat-store
+    assert cd["chart_type"] == "line"

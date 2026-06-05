@@ -85,6 +85,7 @@ def analyst_agent_node(state: AgentState) -> AgentState:
         route=route,
         tool_calls=len(evidence),
         answered=bool(answer),
+        charts=len(charts),
         duration_ms=timing.get("duration_ms"),
     )
 

@@ -6,7 +6,12 @@ from typing import Any, Dict, List
 
 import dspy
 
-from core.agents.common import BaseSQLFixerNode
+from core.agents.common import (
+    BaseSQLFixerNode,
+    log_sql_failure,
+    recalled_sql_text,
+    record_recovered_sql_fix,
+)
 from core.data.general import GeneralFunctions
 from core.data.valid_values import GetValidData
 from core.initialization import Initialization
@@ -34,12 +39,15 @@ class GIMMISQLAgentNode(dspy.Module):
         definitions: Dict[str, str],
         rules: str,
         valid_values: Dict[str, Any],
+        recalled_examples: str = "",
     ) -> None:
         super().__init__()
         self.gimmi_schema = gimmi_schema
         self.definitions = definitions
         self.rules = rules
         self.valid_values = valid_values
+        # Text block of the user's past verified fixes for similar GIMMI queries.
+        self.recalled_examples = recalled_examples
 
         self.predictor = dspy.ChainOfThought(GIMMISQLAgentSignature)
 
@@ -51,6 +59,8 @@ class GIMMISQLAgentNode(dspy.Module):
             f"Rules:\n{self.rules}\n"
             f"Valid Values:\n{self.valid_values}\n"
         )
+        if self.recalled_examples:
+            context += f"\n{self.recalled_examples}\n"
 
         result = self.predictor(
             context=context,
@@ -73,6 +83,9 @@ def gimmi_sqlagent_node(state: AgentState) -> AgentState:
         definitions=GetValidData.gimmi_definitions,
         rules=query_rules,
         valid_values=GetValidData.gimmi_valid_values,
+        recalled_examples=recalled_sql_text(
+            state.get("user_id"), "gimmi", question, k=3
+        ),
     )
     gimmi_sql_output = gimmi_sql_agent(user_query=question)
 
@@ -95,6 +108,8 @@ def gimmi_execute_sql(state: AgentState) -> AgentState:
             "gimmi_query_result": f"Error executing SQL query: {result.error}",
             "gimmi_sql_error": True,
         }
+
+    record_recovered_sql_fix(state, route="gimmi", working_sql=sql_query)
 
     logger.debug("GIMMI query fetched %d row(s)", result.row_count)
     return {"gimmi_query_result": result.rows, "gimmi_sql_error": False}
@@ -130,7 +145,11 @@ def gimmi_sql_fixer_agent(state: AgentState) -> AgentState:
         definitions=GetValidData.gimmi_definitions,
     )
 
-    return {"gimmi_sql_query": corrected_query, "gimmi_attempts": 1}
+    return {
+        "gimmi_sql_query": corrected_query,
+        "gimmi_attempts": 1,
+        **log_sql_failure(question, sql_query, error_message, "gimmi"),
+    }
 
 
 def gimmi_end_max_iterations(state: AgentState) -> AgentState:

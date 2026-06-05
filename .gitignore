@@ -18,3 +18,7 @@ skill_reference_code/
 
 # Generated app artifacts
 generated_reports/
+
+# App-state DB (users, saved chats, episodic/semantic memory, graph checkpoints)
+app_state.db
+app_state.db-*

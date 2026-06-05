@@ -20,6 +20,7 @@ import logging
 import re
 from typing import Any, Dict, List
 
+from core.agents.common.chart_spec import normalize_chart_spec
 from core.agents.gpr.chart import GPRChartNode
 from core.agents.survey.chart import SurveyChartNode
 from core.observability import log_event
@@ -131,9 +132,13 @@ def pick_charts(question: str, evidence: List[Evidence]) -> List[Dict[str, Any]]
         try:
             if flow not in nodes:
                 nodes[flow] = _chart_node(flow, _chart_rules(flow, question))
-            chart_data = nodes[flow](user_query=question, sql_output=rows[:_LLM_ROW_CAP])
-            if not isinstance(chart_data, dict):
-                continue
+            # Always coerce to a plain dict: dspy can hand back a ChartOutput
+            # MODEL (or a list of specs), which the old `isinstance(dict)` check
+            # silently skipped — so the analyst produced charts that never
+            # rendered. normalize_chart_spec flattens model/list/dict to one dict.
+            chart_data = normalize_chart_spec(
+                nodes[flow](user_query=question, sql_output=rows[:_LLM_ROW_CAP])
+            )
             # Use the SAME falsy-aware normalization the renderer uses
             # (`chart_functions._sanitize_spec`): an empty string / None /
             # whitespace chart_type is "none". A bare `== "none"` check let those

@@ -13,6 +13,9 @@ from config.valid_values_config import *  # noqa: F401,F403 - preserves legacy g
 from core.agents.common import (
     BaseSQLFixerNode,
     annotate_plan_notes,
+    log_sql_failure,
+    recalled_sql_examples,
+    record_recovered_sql_fix,
 )
 from core.mcp.tools import execute_sql
 from core.agents.survey.chart import SurveyChartNode
@@ -233,11 +236,15 @@ class SurveySubGraph:
             used_skills=bool(skill_rules),
         )
 
+        recalled = recalled_sql_examples(
+            state.get("user_id"), "survey", question, k=3
+        )
+
         sql_agent = SQLAgentNode(
             carrier_schema=carriers_schema,
             peer_schema=peers_schema,
             rules=query_rules,
-            few_shot=SurveyRules.survey_query_few_shots,
+            few_shot=SurveyRules.survey_query_few_shots + recalled,
         )
 
         sql_query_output = sql_agent(
@@ -270,6 +277,8 @@ class SurveySubGraph:
                 "survey_sql_error": True,
                 "survey_overflow": False,
             }
+
+        record_recovered_sql_fix(state, route="survey", working_sql=sql_query)
 
         logger.debug("Survey query fetched %d row(s)", result.row_count)
         query_result = GeneralFunctions.clean_sql_output(
@@ -397,6 +406,7 @@ class SurveySubGraph:
         return {
             "survey_sql_query": corrected_query,
             "survey_attempts": 1,
+            **log_sql_failure(question, sql_query, error_message, "survey"),
         }
 
     def survey_end_max_iterations(state: AgentState) -> AgentState:

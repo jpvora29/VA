@@ -12,6 +12,101 @@ from typing import Any, Dict, List, Optional
 import dspy
 
 from core.schemas.analytical import SQLAgentSignature, SQLFixerOutput
+from logger import get_logger
+
+logger = get_logger(__name__)
+
+
+# ── Episodic SQL-fix learning helpers ───────────────────────────────────────
+# These let any flow (a) recall a user's past error→fix pairs as extra few-shot
+# examples at generation time, and (b) record a *verified* fix once the corrected
+# query actually executes. Episodic memory is imported lazily so importing this
+# module stays free of the DB/memory layer.
+
+
+def recalled_sql_examples(
+    user_id: Any, route: str, question: str, k: int = 3
+) -> List[Any]:
+    """Past verified fixes for similar questions, as ``dspy.Example`` few-shots."""
+    if not user_id:
+        return []
+    try:
+        from core.memory.episodic import episodic_store
+
+        fixes = episodic_store.recall_sql_fixes(user_id, route, question, k=k)
+        return [
+            dspy.Example(user_query=f["question"], sql_query=f["sql"]).with_inputs(
+                "user_query"
+            )
+            for f in fixes
+        ]
+    except Exception:  # pragma: no cover - recall must never break generation
+        logger.exception("recalled_sql_examples failed")
+        return []
+
+
+def recalled_sql_text(user_id: Any, route: str, question: str, k: int = 3) -> str:
+    """Same recall as :func:`recalled_sql_examples`, rendered as prompt text.
+
+    For flows (e.g. GIMMI) whose SQL signature takes a single ``context`` string
+    instead of a typed ``few_shot`` field.
+    """
+    if not user_id:
+        return ""
+    try:
+        from core.memory.episodic import episodic_store
+
+        fixes = episodic_store.recall_sql_fixes(user_id, route, question, k=k)
+    except Exception:  # pragma: no cover
+        logger.exception("recalled_sql_text failed")
+        return ""
+    if not fixes:
+        return ""
+    blocks = [
+        f"-- Example (previously corrected):\n-- Q: {f['question']}\n{f['sql']}"
+        for f in fixes
+    ]
+    return "Worked examples from this user's history:\n" + "\n\n".join(blocks)
+
+
+def log_sql_failure(question: str, failed_sql: str, error: Any, route: str) -> dict:
+    """Build the ``sql_error_log`` breadcrumb a fixer node appends to state."""
+    return {
+        "sql_error_log": [
+            {
+                "question": question,
+                "failed_sql": failed_sql,
+                "error": str(error)[:2000],
+                "route": route,
+            }
+        ]
+    }
+
+
+def record_recovered_sql_fix(state: dict, route: str, working_sql: str) -> None:
+    """If this turn recovered from a SQL error, persist the verified fix.
+
+    Called from an execute node on success: reads the latest ``sql_error_log``
+    breadcrumb (set by the fixer) and stores ``failed_sql → working_sql`` against
+    the user. Best-effort; never raises into the graph.
+    """
+    log = state.get("sql_error_log") or []
+    if not log:
+        return
+    last = log[-1]
+    try:
+        from core.memory.episodic import episodic_store
+
+        episodic_store.record_sql_fix(
+            user_id=state.get("user_id"),
+            route=route,
+            question=last.get("question", "") or "",
+            failed_sql=last.get("failed_sql", "") or "",
+            error=last.get("error", "") or "",
+            working_sql=working_sql or "",
+        )
+    except Exception:  # pragma: no cover - recording must never break a turn
+        logger.exception("record_recovered_sql_fix failed")
 
 
 class BaseSQLAgentNode(dspy.Module):

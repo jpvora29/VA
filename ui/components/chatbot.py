@@ -110,8 +110,33 @@ def clarify_card(payload: dict):
     return html.Div(children, className="message clarify-card")
 
 
-def welcome_hero():
+# A small rotation of icons for LLM-tailored starter questions (which arrive as
+# plain strings, without their own icon).
+_STARTER_ICONS = [
+    "bi bi-pie-chart",
+    "bi bi-graph-up-arrow",
+    "bi bi-people",
+    "bi bi-bar-chart-line",
+]
+
+
+def starter_chips(starters: list[str] | None = None) -> list:
+    """Chips for the welcome hero — tailored strings if given, else the defaults."""
+    if starters:
+        return [
+            suggestion_chip(question, _STARTER_ICONS[index % len(_STARTER_ICONS)], index)
+            for index, question in enumerate(starters)
+        ]
+    return [
+        suggestion_chip(question, icon, index)
+        for index, (icon, question) in enumerate(STARTER_SUGGESTIONS)
+    ]
+
+
+def welcome_hero(name: str = "", starters: list[str] | None = None):
     """Empty-state hero shown before the first message is sent."""
+    greeting = f"{_greeting()}, "
+    accent = name.strip() if name and name.strip() else "let's dig into the data"
     return html.Div(
         [
             html.Div(
@@ -122,11 +147,8 @@ def welcome_hero():
                     ),
                     html.H1(
                         [
-                            f"{_greeting()}, ",
-                            html.Span(
-                                "let's dig into the data",
-                                className="welcome-accent",
-                            ),
+                            greeting,
+                            html.Span(accent, className="welcome-accent"),
                         ],
                         className="welcome-title",
                     ),
@@ -141,10 +163,8 @@ def welcome_hero():
             ),
             html.Div("Try one of these", className="welcome-suggest-label"),
             html.Div(
-                [
-                    suggestion_chip(question, icon, index)
-                    for index, (icon, question) in enumerate(STARTER_SUGGESTIONS)
-                ],
+                starter_chips(starters),
+                id="starter-suggestions",
                 className="suggestion-grid",
             ),
         ],
@@ -177,18 +197,46 @@ def followup_suggestions(followups: list[str]):
     )
 
 
-def ai_message(content: str, is_insight: bool):
-    """Render an assistant turn with a hover copy-to-clipboard action.
+def feedback_bar(idx: int):
+    """Thumbs up/down for an assistant turn; click is recorded to episodic memory.
+
+    `idx` is the message's position in the transcript so the recording callback
+    (and the clientside active-state toggle) can pair the click to its answer.
+    """
+    return html.Div(
+        [
+            html.Button(
+                html.I(className="bi bi-hand-thumbs-up"),
+                id={"type": "msg-feedback", "idx": idx, "rating": "up"},
+                n_clicks=0,
+                className="msg-feedback-btn",
+                title="Helpful",
+            ),
+            html.Button(
+                html.I(className="bi bi-hand-thumbs-down"),
+                id={"type": "msg-feedback", "idx": idx, "rating": "down"},
+                n_clicks=0,
+                className="msg-feedback-btn",
+                title="Not helpful",
+            ),
+        ],
+        className="msg-feedback",
+    )
+
+
+def ai_message(content: str, is_insight: bool, idx: int = 0):
+    """Render an assistant turn with copy + thumbs-up/down feedback actions.
 
     `dcc.Clipboard` copies its `content` natively, so no callback is needed.
     The insight variant keeps the consulting-card chrome; the base variant is a
-    plain bubble. Both are position:relative so the copy button can sit top-right.
+    plain bubble. Both are position:relative so the actions can sit top-right.
     """
     copy = dcc.Clipboard(
         content=content,
         title="Copy",
         className="msg-copy",
     )
+    feedback = feedback_bar(idx)
 
     if is_insight:
         return html.Div(
@@ -206,12 +254,13 @@ def ai_message(content: str, is_insight: bool):
                     content, className="insight-card-body", link_target="_blank"
                 ),
                 copy,
+                feedback,
             ],
             className="message insight-card",
         )
 
     return html.Div(
-        [dcc.Markdown(content), copy],
+        [dcc.Markdown(content), copy, feedback],
         className="message gpt-message",
     )
 
@@ -282,7 +331,7 @@ def chart_block(figure, columns: list[str], records: list[dict], idx: int):
     )
 
 
-def chatbot_page():
+def chatbot_page(username: str = "", starters: list[str] | None = None):
 
     return html.Div(
         [
@@ -292,6 +341,7 @@ def chatbot_page():
             dcc.Store(id="is-thinking", data=False),  # flag to show loader
             dcc.Store(id="has-chart", data=False),
             dcc.Store(id="overflow_data", data={}),
+            dcc.Store(id="feedback-sink", data={}),  # write-only sink for thumb clicks
             # Polls the in-process streaming job each second for live status +
             # completion; enabled by launch_new_job / launch_resume_job.
             dcc.Interval(id="job-poll", interval=1000, n_intervals=0, disabled=True),
@@ -304,7 +354,7 @@ def chatbot_page():
                                     html.Div(
                                         id="chat-box",
                                         className="chat-bot-text-area",
-                                        children=[welcome_hero()],
+                                        children=[welcome_hero(username, starters)],
                                     ),
                                     dcc.Download(id="download-excel"),
                                 ],

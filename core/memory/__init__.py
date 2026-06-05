@@ -1,1 +1,4 @@
-"""Long-term memory store — populated in Phase 3. See episodic.py."""
+"""Long-term memory: episodic (events/feedback/SQL fixes) + semantic (profile)."""
+from core.memory.episodic import EpisodicStore, SqliteEpisodicStore, episodic_store
+
+__all__ = ["EpisodicStore", "SqliteEpisodicStore", "episodic_store"]

@@ -9,8 +9,6 @@ import dash_bootstrap_components as dbc
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from ui.components.navbar import build_navbar
-from ui.components.chatbot import pitch_builder_drawer
 
 app = dash.Dash(
     __name__,
@@ -23,26 +21,21 @@ app = dash.Dash(
 )
 
 
-navbar = build_navbar()
-
 app.layout = html.Div(
     [
+        # ── Global, persistent stores ───────────────────────────────────────
+        # user-store survives refresh (local) so the lightweight login sticks.
+        dcc.Store(id="user-store", storage_type="local"),
+        dcc.Store(id="active-conversation", storage_type="local"),
+        dcc.Store(id="sidebar-collapsed", storage_type="local", data=False),
         dcc.Store(id="filter-store", storage_type="session"),
         dcc.Store(id="pitch-builder-open", data=False),
         dcc.Store(id="pitch-builder-store", data={}),
         dcc.Store(id="pitch-options-cache", data={}, storage_type="session"),
         dcc.Download(id="download-pitch-report"),
-        # Navbar
-        navbar,
-        # Body Section
-        html.Div(
-            [
-                # Main Content
-                html.Div(id="main-content", className="main-content")
-            ],
-            className="main-container",
-        ),
-        pitch_builder_drawer(),
+        # Either the login screen or the full app shell (navbar + sidebar +
+        # chat + pitch drawer), chosen by `render_app_root` off `user-store`.
+        html.Div(id="app-root"),
     ]
 )
 

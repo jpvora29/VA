@@ -1,25 +1,47 @@
 from typing import Any, Optional
+import re
 
 # --- Formatter helpers ---------------------------------------
 
 
 def parse_signed_number(text: str) -> Optional[float]:
+    """Parse a number out of messy text, PRESERVING sign and decimals.
+
+    Handles thousands separators, currency symbols/codes ("$", "USD"), "%",
+    units, and both leading-minus and accounting-style "(1,234.5)" negatives.
+
+    The previous implementation stripped everything except digits and "+"
+    (``[^\\d+]+``), which silently deleted the decimal point and the minus sign —
+    turning "57,616,719.76" into 5,761,671,976 and "-9.25%" into +925. That single
+    defect is what made the KPI premium, YoY growth, and survey score all wrong.
+    """
     if text is None:
         return None
-    s = (
-        str(text)
-        .strip()
-        .replace(",", "")
-        .replace("%", "")
-        .replace("USD", "")
-        .replace("$", "")
-    )
-    if not s or s in {"-"}:
+    s = str(text).strip()
+    if not s:
         return None
+
+    # Negative when a '-' precedes the first digit, or the value is parenthesised.
+    first_digit = re.search(r"\d", s)
+    if first_digit is None:
+        return None
+    prefix = s[: first_digit.start()]
+    negative = "-" in prefix or (s.startswith("(") and s.rstrip().endswith(")"))
+
+    # Keep only digits and the decimal point; drop currency, commas, %, units, signs.
+    cleaned = re.sub(r"[^\d.]", "", s)
+    # If multiple dots survive odd input, treat the last as the decimal separator.
+    if cleaned.count(".") > 1:
+        head, _, tail = cleaned.rpartition(".")
+        cleaned = head.replace(".", "") + "." + tail
+    if not cleaned or cleaned == ".":
+        return None
+
     try:
-        return float(s)
+        value = float(cleaned)
     except ValueError:
         return None
+    return -value if negative else value
 
 
 def format_pct(value: Any, with_sign: bool = True) -> str:
