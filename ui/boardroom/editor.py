@@ -73,6 +73,42 @@ def _note(text):
     return html.Div([html.I(className="bi bi-info-circle"), html.Span(text)], className="bm-ef-note")
 
 
+def _image_field(url: str = ""):
+    """Image / logo picker: upload a local file (stored inline as a data URI) or
+    paste a URL. The hidden-but-collected ``url`` input is what ``apply_editor``
+    reads, so an upload simply writes its base64 contents into that field."""
+    has = bool((url or "").strip())
+    return html.Div(
+        [
+            html.Label("Image / logo", className="bm-ef-label"),
+            dcc.Upload(
+                id="bm-img-upload",
+                children=html.Div(
+                    [
+                        html.I(className="bi bi-upload"),
+                        html.Span("Drag & drop or click to upload from your device"),
+                        html.Small("PNG, JPG, SVG or GIF", className="bm-img-upload-hint"),
+                    ],
+                    className="bm-img-upload-inner",
+                ),
+                accept="image/*",
+                multiple=False,
+                className="bm-img-upload",
+            ),
+            html.Div("— or paste an image URL —", className="bm-ef-subnote"),
+            dcc.Input(
+                id=_ef("url"), value=url, debounce=False, className="bm-ef-input",
+                placeholder="https://… (or upload a file above)",
+            ),
+            html.Img(
+                id="bm-img-preview", src=url, className="bm-img-preview",
+                style={} if has else {"display": "none"},
+            ),
+        ],
+        className="bm-ef-row",
+    )
+
+
 # ── text<->structure helpers ──
 
 
@@ -145,7 +181,7 @@ def build_editor_body(widget: Dict[str, Any]):
         for i, q in enumerate((data.get("q") or [])[:4]):
             fields.append(_textarea(f"quad.{i}", f"{q.get('title', 'Quadrant')} (one per line)", "\n".join(q.get("items") or [])))
     elif content == "image":
-        fields.append(_text("url", "Image URL", data.get("url", "")))
+        fields.append(_image_field(data.get("url", "")))
         fields.append(_text("caption", "Caption", data.get("caption", "")))
     elif content == "section_title":
         fields.append(_text("text", "Title text", data.get("text", "")))
@@ -163,12 +199,27 @@ def build_editor_body(widget: Dict[str, Any]):
                 ],
                 className="bm-ef-kpi",
             ))
+    elif content == "callout":
+        fields.append(_textarea("text", "Message", data.get("text", "")))
+        fields.append(_select("tone", "Tone", data.get("tone", "neutral"), TONE_OPTS))
     elif content == "chart":
         fields.append(_select("chart_type", "Chart type", meta.get("chart_type") or "", CHART_TYPES))
         fields.append(_select("sort", "Sort", meta.get("sort") or "", SORT_OPTS))
     elif kind == "commentary":
         fields.append(_text("headline", "Headline", data.get("headline", "")))
         fields.append(_textarea("commentary_text", "Commentary — one point per line", _commentary_to_text(data)))
+    elif kind == "insights":
+        txt = "\n".join(
+            f"{c.get('headline','')} :: {c.get('detail','')} :: {c.get('tone','neutral')}"
+            for c in (data.get("insights") or [])
+        )
+        fields.append(_textarea("insights_text", "Insights — one per line: headline :: detail :: tone", txt))
+    elif kind == "timeline":
+        txt = "\n".join(
+            f"{e.get('period','')} :: {e.get('title','')} :: {e.get('detail','')} :: {e.get('tone','neutral')}"
+            for e in (data.get("timeline") or [])
+        )
+        fields.append(_textarea("timeline_text", "Timeline — one per line: period :: title :: detail :: tone", txt))
     else:
         fields.append(_note("Structural widget: edit title, colour, width and visibility here. "
                             "Per-item editing is coming soon — duplicate it to annotate freely."))
@@ -249,6 +300,11 @@ def apply_editor(widget: Dict[str, Any], values: Dict[str, Any], user_id: str | 
         for key, val in values.items():
             if key.startswith("kpi."):
                 _set_path(data, key, val)
+    elif content == "callout":
+        if "text" in values:
+            data["text"] = values["text"]
+        if "tone" in values:
+            data["tone"] = values["tone"]
     elif content == "chart":
         meta["chart_type"] = values.get("chart_type") or None
         meta["sort"] = values.get("sort") or None
@@ -258,6 +314,35 @@ def apply_editor(widget: Dict[str, Any], values: Dict[str, Any], user_id: str | 
         if "commentary_text" in values:
             pts = [ln for ln in (values["commentary_text"] or "").splitlines() if ln.strip()]
             data["sections"] = [{"heading": "Commentary", "points": pts}] if pts else []
+    elif kind == "insights":
+        if "insights_text" in values:
+            items = []
+            for ln in (values["insights_text"] or "").splitlines():
+                if not ln.strip():
+                    continue
+                p = [x.strip() for x in ln.split("::")]
+                items.append({
+                    "headline": p[0] if p else "",
+                    "detail": p[1] if len(p) > 1 else "",
+                    "tone": p[2] if len(p) > 2 else "neutral",
+                    "icon": "bi bi-lightbulb",
+                })
+            data["insights"] = items
+    elif kind == "timeline":
+        if "timeline_text" in values:
+            evts = []
+            for ln in (values["timeline_text"] or "").splitlines():
+                if not ln.strip():
+                    continue
+                p = [x.strip() for x in ln.split("::")]
+                evts.append({
+                    "period": p[0] if p else "",
+                    "title": p[1] if len(p) > 1 else "",
+                    "detail": p[2] if len(p) > 2 else "",
+                    "tone": p[3] if len(p) > 3 else "neutral",
+                    "category": "other",
+                })
+            data["timeline"] = evts
 
     if "theme" in values:
         meta["theme"] = values["theme"]

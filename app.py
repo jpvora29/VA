@@ -40,6 +40,8 @@ app.layout = html.Div(
         dcc.Store(id="boardroom-edit-mode", data=False),
         dcc.Store(id="boardroom-edit-target", data=None),
         dcc.Store(id="boardroom-add-target", data=None),
+        # Remembers each boardroom card's current page so edits don't jump to page 0.
+        dcc.Store(id="boardroom-active-page", data={}),
         dcc.Store(id="custom-peers-open", data=False),
         dcc.Download(id="download-pitch-report"),
         # Either the login screen or the full app shell (navbar + sidebar +

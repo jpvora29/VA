@@ -84,35 +84,20 @@ def build_document_from_digest(digest: Dict[str, Any], n_charts: int = 0) -> Dic
 
 def blank_page(doc: Dict[str, Any], *, template: str | None = None) -> str:
     """Add a blank (or template) page; return its id."""
+    def _w(kind, size="md"):
+        return model.make_widget(
+            kind, copy.deepcopy(LIBRARY_BY_KIND[kind]["default_data"]), origin="user",
+            size=size, title=LIBRARY_BY_KIND[kind]["label"],
+        )
+
     widgets: List[Dict[str, Any]] = []
     title = "New page"
     if template == "exec_summary":
         title = "Executive summary"
-        widgets = [
-            model.make_widget("section_title", {"text": "Executive summary"}, origin="user", size="full"),
-            model.make_widget(
-                "executive_takeaway",
-                copy.deepcopy(LIBRARY_BY_KIND["executive_takeaway"]["default_data"]),
-                origin="user",
-                size="full",
-            ),
-            model.make_widget(
-                "recommendation",
-                copy.deepcopy(LIBRARY_BY_KIND["recommendation"]["default_data"]),
-                origin="user",
-                size="md",
-            ),
-        ]
+        widgets = [_w("key_message", "full"), _w("commentary", "full")]
     elif template == "actions":
         title = "Actions & owners"
-        widgets = [
-            model.make_widget(
-                "action_tracker",
-                copy.deepcopy(LIBRARY_BY_KIND["action_tracker"]["default_data"]),
-                origin="user",
-                size="full",
-            ),
-        ]
+        widgets = [_w("action_tracker", "full")]
     page = model.make_page(title, widgets, icon="bi bi-file-earmark-plus", template=template)
     doc.setdefault("pages", []).append(page)
     return page["id"]

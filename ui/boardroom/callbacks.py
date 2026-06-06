@@ -95,6 +95,43 @@ def widget_actions(_dup, _hide, _del, _reset, _up, _down, chat_history):
     return chat_history
 
 
+@callback(
+    Output("chat-store", "data", allow_duplicate=True),
+    Input({"type": "bm-w-size", "idx": ALL, "wid": ALL, "size": ALL}, "n_clicks"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def set_widget_size(_clicks, chat_history):
+    """Inline width buttons (S/M/L/Full) = direct positioning on the governed grid."""
+    tid = ctx.triggered_id
+    if not isinstance(tid, dict) or not _triggered_value():
+        return no_update
+    doc = _doc_at(chat_history, tid.get("idx"))
+    _, w = model.find_widget(doc, tid.get("wid")) if doc else (None, None)
+    if not w:
+        return no_update
+    w["meta"]["size"] = tid.get("size")
+    return chat_history
+
+
+@callback(
+    Output("boardroom-active-page", "data"),
+    Input({"type": "bm-slider", "idx": ALL}, "value"),
+    State({"type": "bm-slider", "idx": ALL}, "id"),
+    State("boardroom-active-page", "data"),
+    prevent_initial_call=True,
+)
+def track_active_page(values, ids, store):
+    """Remember each card's current page so an edit-driven re-render restores it
+    instead of snapping back to page 0. Writes a side store that render_chat reads
+    as State, so navigating pages never triggers a server re-render itself."""
+    out = dict(store or {})
+    for v, i in zip(values, ids):
+        if v is not None and isinstance(i, dict):
+            out[str(i.get("idx"))] = v
+    return out
+
+
 # ───────────────────────── editor modal ─────────────────────────
 
 
@@ -166,6 +203,23 @@ def reset_in_editor(n, target, chat_history):
 )
 def cancel_editor(n):
     return False if n else no_update
+
+
+@callback(
+    Output({"type": "bm-ef", "key": "url"}, "value"),
+    Output("bm-img-preview", "src"),
+    Output("bm-img-preview", "style"),
+    Input("bm-img-upload", "contents"),
+    prevent_initial_call=True,
+)
+def image_upload(contents):
+    """Local-file image/logo upload. ``dcc.Upload.contents`` is a base64 data URI,
+    which we write straight into the editor's ``url`` field (collected on Save) and
+    mirror into a live preview. Works for both the user Image/Logo widget and any
+    other image-content widget."""
+    if not contents:
+        return no_update, no_update, no_update
+    return contents, contents, {}
 
 
 # ───────────────────────── add-widget library ─────────────────────────

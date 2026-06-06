@@ -22,6 +22,8 @@ from ui.boardroom import catalog, widgets_generated, widgets_library
 from ui.boardroom.model import SIZE_SPAN, SIZES
 from ui.boardroom.themes import theme
 
+_SIZE_LABELS = {"sm": "S", "md": "M", "lg": "L", "full": "Full"}
+
 
 def _id(t: str, card_idx: int, **kw) -> Dict[str, Any]:
     d = {"type": t, "idx": card_idx}
@@ -87,10 +89,26 @@ def _widget_chrome(widget, card_idx, page_id, i, n):
     if meta.get("locked"):
         left.append(html.Span([html.I(className="bi bi-lock-fill")], className="bm-w-badge locked"))
 
+    # Inline width control = direct positioning on the governed grid.
+    size_now = meta.get("size", "md")
+    size_group = html.Div(
+        [
+            html.Button(
+                _SIZE_LABELS[s],
+                id=_id("bm-w-size", card_idx, wid=wid, size=s),
+                n_clicks=0,
+                className="bm-size-btn" + (" active" if s == size_now else ""),
+                title=f"Set width: {_SIZE_LABELS[s]}",
+            )
+            for s in SIZES
+        ],
+        className="bm-size-group",
+    )
+
     buttons = [
         _icon_btn("bm-w-edit", card_idx, "bi bi-pencil-square", "Edit", wid=wid),
-        _icon_btn("bm-w-up", card_idx, "bi bi-arrow-up", "Move up", wid=wid) if i > 0 else None,
-        _icon_btn("bm-w-down", card_idx, "bi bi-arrow-down", "Move down", wid=wid) if i < n - 1 else None,
+        _icon_btn("bm-w-up", card_idx, "bi bi-arrow-up", "Move earlier", wid=wid) if i > 0 else None,
+        _icon_btn("bm-w-down", card_idx, "bi bi-arrow-down", "Move later", wid=wid) if i < n - 1 else None,
         _icon_btn("bm-w-dup", card_idx, "bi bi-files", "Duplicate", wid=wid),
         _icon_btn(
             "bm-w-hide", card_idx,
@@ -107,7 +125,10 @@ def _widget_chrome(widget, card_idx, page_id, i, n):
     return html.Div(
         [
             html.Div(left, className="bm-w-meta"),
-            html.Div([b for b in buttons if b is not None], className="bm-w-actions"),
+            html.Div(
+                [size_group, html.Div([b for b in buttons if b is not None], className="bm-w-actions")],
+                className="bm-w-controls",
+            ),
         ],
         className="bm-w-chrome",
     )
@@ -121,16 +142,27 @@ def _render_widget(widget, figures, edit_mode, card_idx, page_id, i, n):
 
     size = meta.get("size", "md")
     span = SIZE_SPAN.get(size, 6)
-    th = theme(meta.get("theme"))
+    theme_key = meta.get("theme") or "default"
+    th = theme(theme_key)
 
     inner = [_widget_chrome(widget, card_idx, page_id, i, n)] if edit_mode else []
     inner.append(html.Div(_widget_body(widget, figures), className="bm-gw-body"))
 
-    cls = "bm-gw" + (" is-hidden" if hidden else "") + (" is-edit" if edit_mode else "")
+    cls = (
+        "bm-gw"
+        + (" is-hidden" if hidden else "")
+        + (" is-edit" if edit_mode else "")
+        + (" is-themed" if theme_key != "default" else "")
+    )
     return html.Div(
         inner,
         className=cls,
-        style={"gridColumn": f"span {span}", "--bm-accent": th["accent"]},
+        style={
+            "gridColumn": f"span {span}",
+            "--bm-accent": th["accent"],
+            "--bm-soft": th["soft"],
+            "--bm-ink": th["ink"],
+        },
     )
 
 
@@ -177,7 +209,7 @@ def _page_toolbar(page, card_idx):
     )
 
 
-def _render_page(page, figures, edit_mode, card_idx, page_index):
+def _render_page(page, figures, edit_mode, card_idx, page_index, active_page=0):
     widgets = page.get("widgets", [])
     n = len(widgets)
     grid_items = [
@@ -207,7 +239,7 @@ def _render_page(page, figures, edit_mode, card_idx, page_index):
         children,
         id=_id("bm-page", card_idx, page=page_index),
         className="bm-page",
-        style=({} if page_index == 0 else {"display": "none"}),
+        style=({} if page_index == active_page else {"display": "none"}),
     )
 
 
@@ -243,7 +275,7 @@ def _header(doc, edit_mode, card_idx):
     return html.Div([title_block, html.Div(actions, className="bm-actions")], className="bm-header")
 
 
-def _pager(pages, card_idx):
+def _pager(pages, card_idx, active_page=0):
     if len(pages) <= 1:
         return None
     marks = {p: {"label": pg.get("title", f"Page {p+1}")} for p, pg in enumerate(pages)}
@@ -255,7 +287,7 @@ def _pager(pages, card_idx):
             ),
             dcc.Slider(
                 id=_id("bm-slider", card_idx),
-                min=0, max=len(pages) - 1, step=None, value=0, marks=marks, included=False,
+                min=0, max=len(pages) - 1, step=None, value=active_page, marks=marks, included=False,
                 className="bm-slider",
             ),
         ],
@@ -263,19 +295,27 @@ def _pager(pages, card_idx):
     )
 
 
-def render_document(doc: Dict[str, Any], figures: Optional[List[Any]] = None, *, edit_mode: bool = False, card_idx: int = 0):
-    """Render a whole document to a Dash card."""
+def render_document(
+    doc: Dict[str, Any],
+    figures: Optional[List[Any]] = None,
+    *,
+    edit_mode: bool = False,
+    card_idx: int = 0,
+    active_page: int = 0,
+):
+    """Render a whole document to a Dash card. `active_page` keeps the viewer on the
+    page they were on across edit-driven re-renders (no jump back to page 0)."""
     doc = doc or {}
     figures = figures or []
-    all_pages = doc.get("pages", []) or []
-    # View mode hides pages flagged off-export-only? No — export flag is separate.
-    pages = all_pages
+    pages = doc.get("pages", []) or []
+    # Clamp the remembered page (a page may have been deleted since).
+    active_page = max(0, min(active_page or 0, max(0, len(pages) - 1)))
 
-    page_divs = [_render_page(pg, figures, edit_mode, card_idx, p) for p, pg in enumerate(pages)]
+    page_divs = [_render_page(pg, figures, edit_mode, card_idx, p, active_page) for p, pg in enumerate(pages)]
 
     children = [_header(doc, edit_mode, card_idx), html.Div(page_divs, className="bm-pages")]
 
-    pager = _pager(pages, card_idx)
+    pager = _pager(pages, card_idx, active_page)
     if pager is not None:
         children.append(pager)
 

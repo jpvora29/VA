@@ -137,6 +137,16 @@ def render_content(content: str, widget: Dict[str, Any]):
             className="bm-quote",
         )
 
+    if content == "callout":
+        t = tone(data.get("tone"))
+        return html.Div(
+            [
+                html.I(className="bi bi-megaphone bm-callout-icon"),
+                html.Div(data.get("text", ""), className="bm-callout-text"),
+            ],
+            className=f"bm-callout {t}",
+        )
+
     if content == "kpis":
         kpis = data.get("kpis") or []
         return html.Div([_kpi_tile(c) for c in kpis], className="bm-kpi-grid")

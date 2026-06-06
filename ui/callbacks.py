@@ -1731,10 +1731,14 @@ def backfill_boardroom_docs(chat_history: dict[str, Any]) -> Any:
     Input("chat-store", "data"),
     Input("is-thinking", "data"),
     Input("boardroom-edit-mode", "data"),
+    State("boardroom-active-page", "data"),
     prevent_initial_call=True,
 )
 def render_chat(
-    chat_history: dict[str, Any], is_thinking: bool, edit_mode: bool
+    chat_history: dict[str, Any],
+    is_thinking: bool,
+    edit_mode: bool,
+    active_pages: dict[str, Any],
 ) -> list[Any] | NoUpdate:
 
     chat_items: list[Any] = []
@@ -1786,9 +1790,11 @@ def render_chat(
                     except Exception:
                         logger.exception("Boardroom: failed to build a chart figure")
                         figures.append(None)
+                active_page = int((active_pages or {}).get(str(msg_idx), 0) or 0)
                 chat_items.append(
                     render_boardroom_document(
-                        doc, figures, edit_mode=bool(edit_mode), card_idx=msg_idx
+                        doc, figures, edit_mode=bool(edit_mode),
+                        card_idx=msg_idx, active_page=active_page,
                     )
                 )
 
