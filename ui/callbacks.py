@@ -289,36 +289,27 @@ def render_boardroom_mode_cue(is_on: bool):
     return boardroom_mode_cue(bool(is_on))
 
 
-# Multi-page boardroom card: a clientside pager. For each card (MATCH on idx), the
-# clicked dot's `page` becomes active — its page is shown and the rest hidden.
-# Pure clientside so paging never round-trips to the server or re-runs the graph.
+# Multi-page boardroom card: a clientside slider pager. The slider value (the page
+# index) shows that page and hides the rest. Pure clientside so paging never
+# round-trips to the server or re-runs the graph. State carries the page ids so the
+# function knows how many pages to toggle for this card (MATCH on idx).
 clientside_callback(
     """
-    function(nClicks) {
-        const n = (nClicks || []).length;
-        let active = 0;
-        const ctx = (window.dash_clientside && window.dash_clientside.callback_context) || null;
-        if (ctx && ctx.triggered && ctx.triggered.length && ctx.triggered[0].prop_id
-            && ctx.triggered[0].prop_id !== '.') {
-            try { active = JSON.parse(ctx.triggered[0].prop_id.split('.')[0]).page; }
-            catch (e) { active = 0; }
-        } else {
-            let mx = -1;
-            for (let i = 0; i < n; i++) { const v = nClicks[i] || 0; if (v > mx) { mx = v; active = i; } }
-            if (mx <= 0) active = 0;
-        }
+    function(value, pageIds) {
+        const n = (pageIds || []).length;
+        let active = (value === null || value === undefined) ? 0 : value;
+        if (active < 0) active = 0;
+        if (active > n - 1) active = n - 1;
         const styles = [];
-        const classes = [];
         for (let i = 0; i < n; i++) {
             styles.push(i === active ? {} : {display: 'none'});
-            classes.push(i === active ? 'bm-pager-dot active' : 'bm-pager-dot');
         }
-        return [styles, classes];
+        return styles;
     }
     """,
     Output({"type": "bm-page", "idx": MATCH, "page": ALL}, "style"),
-    Output({"type": "bm-pager-dot", "idx": MATCH, "page": ALL}, "className"),
-    Input({"type": "bm-pager-dot", "idx": MATCH, "page": ALL}, "n_clicks"),
+    Input({"type": "bm-slider", "idx": MATCH}, "value"),
+    State({"type": "bm-page", "idx": MATCH, "page": ALL}, "id"),
 )
 
 

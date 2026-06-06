@@ -13,7 +13,7 @@ produced, so it cannot contradict the underlying answer.
 """
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 import dspy
 from pydantic import BaseModel, Field
@@ -315,17 +315,22 @@ class BoardroomSignature(dspy.Signature):
       written analysis.
     - 0-4 risk items only if the analysis genuinely surfaces risks.
 
-    [QUERY-DEPENDENT WIDGETS — populate ONLY when the data clearly supports them]
-    - timeline: when the answer spans multiple years/periods, list the major
-      movements (premium, rank, score, product) in order.
-    - opportunity_map: when multiple countries and/or products are covered, build a
-      country×product whitespace/growth heatmap (sparse cells are fine).
-    - opportunities: when the data exposes whitespace (carrier premium low while
-      Marsh/peer activity is high), list those gaps with a gap_score and a move.
-    - positioning: when BOTH premium strength AND broker/survey perception signals
-      exist for the carriers, place them on the 2x2 matrix.
-    Leave each of these empty/null when the current answer does not support it.
-    Do NOT fabricate periods, countries, products, or perception scores.
+    [QUERY-DEPENDENT WIDGETS — be GENEROUS: populate whenever the data supports it]
+    Scan the commentary AND every result set in `sql_output` (it is keyed by lens,
+    e.g. 'premium' and 'survey'). Populate a widget whenever the needed signal is
+    present in ANY lens — do not require it to be the primary lens:
+    - timeline: if two or more periods/years appear anywhere, list the major
+      movements (premium, rank, score, product) in chronological order.
+    - opportunity_map: if two or more countries OR two or more products appear,
+      build a country×product whitespace/growth heatmap (sparse cells are fine).
+    - opportunities: if any area shows carrier premium low while Marsh/peer activity
+      is higher, list those gaps with a gap_score and a recommended move.
+    - positioning: if premium figures AND broker/survey perception or score values
+      both appear (even across different lenses/rows), place the carriers on the
+      2x2 matrix (premium strength x, broker perception y).
+    Only leave a widget empty/null when its signal is genuinely absent. Never
+    fabricate periods, countries, products, premiums, or perception scores — derive
+    every value from the commentary or rows.
     - A `comparison` block WHEN AND ONLY WHEN the answer compares two or more
       entities (carrier vs peer set, several carriers, or one metric across
       subjects). Align every metric's values to the subject order so the UI can
@@ -341,8 +346,8 @@ class BoardroomSignature(dspy.Signature):
 
     user_query: str = dspy.InputField(desc="The user's original question.")
     route: str = dspy.InputField(desc="Which analytical lens produced the answer (survey/premium/both/analyst/fallback).")
-    commentary: str = dspy.InputField(desc="The finished written analysis to distil.")
-    sql_output: list = dspy.InputField(desc="Underlying result rows (may be a truncated sample).")
+    commentary: str = dspy.InputField(desc="The finished written analysis to distil (may carry several lenses, each under a '## Lens' heading).")
+    sql_output: Any = dspy.InputField(desc="Underlying result rows keyed by lens, e.g. {'premium': [...], 'survey': [...]} (truncated samples).")
     digest: BoardroomDigest = dspy.OutputField(
         desc="Structured boardroom dashboard digest faithful to the commentary."
     )

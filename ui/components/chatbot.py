@@ -1392,15 +1392,26 @@ def boardroom_card(digest: dict, figures: list | None = None, idx: int = 0):
     children = [header, html.Div(page_divs, className="bm-pages")]
 
     if len(pages) > 1:
+        marks = {p: {"label": t} for p, (t, ic, secs) in enumerate(pages)}
         pager = html.Div(
             [
-                html.Button(
-                    [html.I(className=ic), html.Span(t)],
-                    id={"type": "bm-pager-dot", "idx": idx, "page": p},
-                    n_clicks=0,
-                    className="bm-pager-dot" + (" active" if p == 0 else ""),
-                )
-                for p, (t, ic, secs) in enumerate(pages)
+                html.Div(
+                    [
+                        html.I(className="bi bi-layers-half"),
+                        html.Span(f"{len(pages)} pages · drag the slider to navigate"),
+                    ],
+                    className="bm-pager-caption",
+                ),
+                dcc.Slider(
+                    id={"type": "bm-slider", "idx": idx},
+                    min=0,
+                    max=len(pages) - 1,
+                    step=None,
+                    value=0,
+                    marks=marks,
+                    included=False,
+                    className="bm-slider",
+                ),
             ],
             className="bm-pager",
         )

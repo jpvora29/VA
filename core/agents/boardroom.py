@@ -34,7 +34,7 @@ class BoardroomDigestModule(dspy.Module):
         self.predictor = dspy.ChainOfThought(BoardroomSignature)
 
     def forward(
-        self, user_query: str, route: str, commentary: str, sql_output: List[Any]
+        self, user_query: str, route: str, commentary: str, sql_output: Any
     ):
         with dspy.context(lm=Initialization.dspy_creative):
             result = self.predictor(
@@ -50,31 +50,40 @@ class BoardroomDigestModule(dspy.Module):
 _BOARDROOM_MODULE = BoardroomDigestModule()
 
 
-def _primary_commentary(state: AgentState) -> str:
-    """Pick the answer text the active route actually produced."""
-    for key in (
-        "combined_response",
-        "gpr_response",
-        "survey_response",
-        "out_of_scope_answer",
+def _gather_commentary(state: AgentState) -> str:
+    """Collect EVERY answer text the turn produced, labelled by lens.
+
+    Feeding all lenses (premium + survey + combined + gimmi) — not just the first —
+    gives the digest model the cross-signal context the advanced widgets need
+    (e.g. premium AND broker perception for the peer-positioning matrix)."""
+    parts = []
+    for label, key in (
+        ("Combined", "combined_response"),
+        ("Premium", "gpr_response"),
+        ("Broker survey", "survey_response"),
+        ("GIMMI", "gimmi_response"),
+        ("Answer", "out_of_scope_answer"),
     ):
         text = (state.get(key) or "").strip()
         if text:
-            # Premium turns can append a GIMMI paragraph; fold it in for context.
-            if key == "gpr_response":
-                gimmi = (state.get("gimmi_response") or "").strip()
-                if gimmi:
-                    return f"{text}\n\n{gimmi}"
-            return text
-    return ""
+            parts.append(f"## {label}\n{text}")
+    return "\n\n".join(parts)
 
 
-def _primary_rows(state: AgentState) -> List[Any]:
-    for key in ("combined_result", "gpr_query_result", "survey_query_result"):
+def _gather_rows(state: AgentState) -> Dict[str, Any]:
+    """All available result sets, keyed by lens, so the model can build timelines,
+    country/product maps, and premium-vs-perception positioning from real rows."""
+    data: Dict[str, Any] = {}
+    for label, key in (
+        ("premium", "gpr_query_result"),
+        ("survey", "survey_query_result"),
+        ("combined", "combined_result"),
+        ("gimmi", "gimmi_query_result"),
+    ):
         rows = state.get(key)
         if rows:
-            return list(rows)[:_MAX_DIGEST_ROWS]
-    return []
+            data[label] = list(rows)[:_MAX_DIGEST_ROWS]
+    return data
 
 
 def boardroom_node(state: AgentState) -> Dict[str, Any]:
@@ -88,14 +97,14 @@ def boardroom_node(state: AgentState) -> Dict[str, Any]:
     if not state.get("boardroom_mode"):
         return {"boardroom": None}
 
-    commentary = _primary_commentary(state)
+    commentary = _gather_commentary(state)
     if not commentary:
         # Nothing was answered (e.g. a clarify-only turn) — clear any stale digest.
         return {"boardroom": None}
 
     user_query = state["messages"][-1].content if state.get("messages") else ""
     route = state.get("current_route") or "analyst"
-    rows = _primary_rows(state)
+    rows = _gather_rows(state)
 
     try:
         digest = _BOARDROOM_MODULE(
