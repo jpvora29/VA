@@ -321,8 +321,12 @@ def toggle_custom_peers_modal(
 @callback(
     Output("custom-peers-modal", "is_open"),
     Input("custom-peers-open", "data"),
+    prevent_initial_call=True,
 )
 def render_custom_peers_modal_open(is_open: bool) -> bool:
+    # prevent_initial_call so the dialog never writes `is_open` on first mount —
+    # it relies on the component's own `is_open=False` default and only reacts to
+    # genuine open/close events from the store.
     return bool(is_open)
 
 
@@ -1245,7 +1249,9 @@ def _update_chat_history(
     # Boardroom Mode: the terminal boardroom_node distilled the answer into a
     # structured digest. Render the whole turn as a single inline dashboard card
     # (KPIs + commentary + charts) instead of plain commentary + chart blocks.
-    boardroom = updated_state.get("boardroom")
+    # Gate on `boardroom_mode` too: the persistent checkpointer can carry a stale
+    # digest from a previous turn, so only honour it when this turn ran in mode.
+    boardroom = updated_state.get("boardroom") if updated_state.get("boardroom_mode") else None
     if boardroom:
         chat_history["messages"].append(
             {

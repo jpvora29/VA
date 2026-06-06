@@ -849,6 +849,154 @@ def _bm_risk(item: dict):
     )
 
 
+def _bm_insight(card: dict):
+    """A polished executive insight callout (narrative takeaway, not a metric)."""
+    tone = _bm_tone(card.get("tone"))
+    detail = card.get("detail") or ""
+    return html.Div(
+        [
+            html.Div(
+                html.I(className=card.get("icon") or "bi bi-lightbulb"),
+                className=f"bm-insight-icon {tone}",
+            ),
+            html.Div(
+                [
+                    html.Div(card.get("headline", ""), className="bm-insight-headline"),
+                    html.Div(detail, className="bm-insight-detail") if detail else None,
+                ],
+                className="bm-insight-copy",
+            ),
+        ],
+        className=f"bm-insight-card {tone}",
+    )
+
+
+def _bm_battlecard(bc: dict):
+    """An auto-generated competitive profile card for one carrier."""
+
+    def _col(title, icon, items, kind):
+        items = [i for i in (items or []) if i]
+        if not items:
+            return None
+        return html.Div(
+            [
+                html.Div(
+                    [html.I(className=icon), html.Span(title)],
+                    className=f"bm-bc-col-title {kind}",
+                ),
+                html.Ul([html.Li(i) for i in items], className="bm-bc-list"),
+            ],
+            className="bm-bc-col",
+        )
+
+    cols = [
+        _col("Strengths", "bi bi-hand-thumbs-up", bc.get("strengths"), "good"),
+        _col("Weaknesses", "bi bi-hand-thumbs-down", bc.get("weaknesses"), "danger"),
+        _col("Product gaps", "bi bi-grid-3x3-gap", bc.get("product_gaps"), "warn"),
+    ]
+    cols = [c for c in cols if c is not None]
+
+    footer = (
+        html.Div(
+            [
+                html.I(className="bi bi-chat-quote"),
+                html.Span(bc.get("broker_perception")),
+            ],
+            className="bm-bc-perception",
+        )
+        if bc.get("broker_perception")
+        else None
+    )
+
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Div(
+                                (bc.get("carrier") or "?")[:2].upper(),
+                                className="bm-bc-avatar",
+                            ),
+                            html.Div(bc.get("carrier", ""), className="bm-bc-name"),
+                        ],
+                        className="bm-bc-id",
+                    ),
+                    html.Div(bc.get("peer_position", ""), className="bm-bc-position")
+                    if bc.get("peer_position")
+                    else None,
+                ],
+                className="bm-bc-head",
+            ),
+            html.Div(cols, className="bm-bc-cols") if cols else None,
+            footer,
+        ],
+        className="bm-battlecard",
+    )
+
+
+def _bm_comparison(comp: dict):
+    """A side-by-side comparison panel: subjects as columns, metrics as rows."""
+    subjects = comp.get("subjects") or []
+    metrics = comp.get("metrics") or []
+    if not subjects or not metrics:
+        return None
+    highlight = comp.get("highlight", 0)
+
+    # Header: a blank corner cell + one column per subject.
+    header = html.Div(
+        [html.Div("", className="bm-cmp-cell bm-cmp-corner")]
+        + [
+            html.Div(
+                s,
+                className="bm-cmp-cell bm-cmp-subject"
+                + (" highlight" if i == highlight else ""),
+            )
+            for i, s in enumerate(subjects)
+        ],
+        className="bm-cmp-row bm-cmp-head",
+    )
+
+    rows = []
+    for m in metrics:
+        values = m.get("values") or []
+        tones = m.get("tones") or []
+        cells = [html.Div(m.get("label", ""), className="bm-cmp-cell bm-cmp-metric")]
+        for i in range(len(subjects)):
+            val = values[i] if i < len(values) else "—"
+            tone = _bm_tone(tones[i]) if i < len(tones) else "neutral"
+            cells.append(
+                html.Div(
+                    val,
+                    className=f"bm-cmp-cell bm-cmp-value {tone}"
+                    + (" highlight" if i == highlight else ""),
+                )
+            )
+        rows.append(html.Div(cells, className="bm-cmp-row"))
+
+    # Drive the CSS grid column count off the subject count.
+    grid_style = {
+        "gridTemplateColumns": f"minmax(120px, 1.4fr) repeat({len(subjects)}, minmax(90px, 1fr))"
+    }
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.I(className="bi bi-layout-split"),
+                    html.Span("Side-by-side comparison"),
+                ],
+                className="bm-section-title",
+            ),
+            html.Div(
+                [header] + rows,
+                className="bm-cmp-grid",
+                style=grid_style,
+            ),
+        ],
+        className="bm-comparison",
+    )
+
+
 def boardroom_card(digest: dict, figures: list | None = None, idx: int = 0):
     """The inline Boardroom dashboard: one self-contained card for an answer.
 
@@ -860,9 +1008,12 @@ def boardroom_card(digest: dict, figures: list | None = None, idx: int = 0):
     figures = figures or []
 
     kpis = digest.get("kpis") or []
+    insights = digest.get("insights") or []
     commentary = digest.get("commentary") or []
     risks = digest.get("risks") or []
     headline = (digest.get("headline") or "").strip()
+    comparison = digest.get("comparison")
+    battlecards = digest.get("battlecards") or []
 
     # ── Header ───────────────────────────────────────────────────────────────
     header = html.Div(
@@ -900,6 +1051,43 @@ def boardroom_card(digest: dict, figures: list | None = None, idx: int = 0):
     # ── KPI row ──────────────────────────────────────────────────────────────
     kpi_row = (
         html.Div([_bm_kpi(c) for c in kpis], className="bm-kpi-grid") if kpis else None
+    )
+
+    # ── Executive insight cards ──────────────────────────────────────────────
+    insights_row = (
+        html.Div(
+            [
+                html.Div(
+                    [html.I(className="bi bi-stars"), html.Span("Executive insights")],
+                    className="bm-section-title",
+                ),
+                html.Div([_bm_insight(c) for c in insights], className="bm-insight-grid"),
+            ],
+            className="bm-insights",
+        )
+        if insights
+        else None
+    )
+
+    # ── Carrier battlecards ──────────────────────────────────────────────────
+    battlecards_section = (
+        html.Div(
+            [
+                html.Div(
+                    [
+                        html.I(className="bi bi-clipboard-data"),
+                        html.Span("Carrier battlecards"),
+                    ],
+                    className="bm-section-title",
+                ),
+                html.Div(
+                    [_bm_battlecard(b) for b in battlecards], className="bm-bc-grid"
+                ),
+            ],
+            className="bm-battlecards"
+        )
+        if battlecards
+        else None
     )
 
     # ── Commentary rail (left) ───────────────────────────────────────────────
@@ -946,10 +1134,20 @@ def boardroom_card(digest: dict, figures: list | None = None, idx: int = 0):
 
     body = html.Div([commentary_rail, charts_col], className="bm-body")
 
-    return html.Div(
-        [header, kpi_row, body] if kpi_row is not None else [header, body],
-        className="message boardroom-card",
-    )
+    comparison_panel = _bm_comparison(comparison) if comparison else None
+
+    children = [header]
+    if kpi_row is not None:
+        children.append(kpi_row)
+    if insights_row is not None:
+        children.append(insights_row)
+    if comparison_panel is not None:
+        children.append(comparison_panel)
+    children.append(body)
+    if battlecards_section is not None:
+        children.append(battlecards_section)
+
+    return html.Div(children, className="message boardroom-card")
 
 
 def custom_peers_modal():

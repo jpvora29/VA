@@ -13,7 +13,7 @@ produced, so it cannot contradict the underlying answer.
 """
 from __future__ import annotations
 
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 import dspy
 from pydantic import BaseModel, Field
@@ -60,6 +60,82 @@ class RiskItem(BaseModel):
     tone: Tone = Field(default="warn", description="Bar colour tone matching the severity.")
 
 
+class InsightCard(BaseModel):
+    """A polished, single-takeaway executive callout (not a bare metric tile)."""
+
+    headline: str = Field(
+        description="A punchy, self-contained takeaway, e.g. 'Rank dropped 4 places', "
+        "'Property drives 62% of premium', 'Cyber whitespace exists'.",
+    )
+    detail: str = Field(
+        default="",
+        description="One short supporting sentence giving the so-what. May be empty.",
+    )
+    icon: str = Field(
+        default="bi bi-lightbulb",
+        description="A Bootstrap-icon class fitting the insight (e.g. 'bi bi-arrow-down-right', 'bi bi-pie-chart', 'bi bi-binoculars').",
+    )
+    tone: Tone = Field(
+        default="neutral",
+        description="Sentiment from the carrier's perspective: good/warn/danger/neutral.",
+    )
+
+
+class Battlecard(BaseModel):
+    """An auto-generated competitive profile for one carrier."""
+
+    carrier: str = Field(description="Carrier / carrier group name.")
+    peer_position: str = Field(
+        default="",
+        description="One-line standing vs peers, e.g. '#14 of 18, below peer average on premium'.",
+    )
+    strengths: List[str] = Field(
+        default_factory=list, description="1-3 grounded strengths from the analysis."
+    )
+    weaknesses: List[str] = Field(
+        default_factory=list, description="1-3 grounded weaknesses from the analysis."
+    )
+    product_gaps: List[str] = Field(
+        default_factory=list,
+        description="0-3 lines of products/segments where the carrier is under-represented or absent (whitespace).",
+    )
+    broker_perception: str = Field(
+        default="",
+        description="One line on broker/survey perception if the analysis covers it; else empty.",
+    )
+
+
+class ComparisonMetric(BaseModel):
+    """One metric row in a side-by-side comparison, aligned across subjects."""
+
+    label: str = Field(description="Metric name, e.g. 'Gross Premium' or 'Rank'.")
+    values: List[str] = Field(
+        default_factory=list,
+        description="Formatted value per subject, in the SAME order as ComparisonView.subjects.",
+    )
+    tones: List[Tone] = Field(
+        default_factory=list,
+        description="Optional sentiment tone per subject (same order/length as values). May be empty.",
+    )
+
+
+class ComparisonView(BaseModel):
+    """A side-by-side comparison of two or more subjects (carrier vs peers, etc.)."""
+
+    subjects: List[str] = Field(
+        default_factory=list,
+        description="The entities being compared, e.g. ['Zurich', 'Peer Avg', 'AXA']. 2-5 items.",
+    )
+    metrics: List[ComparisonMetric] = Field(
+        default_factory=list,
+        description="Metric rows; each carries one value per subject in subject order.",
+    )
+    highlight: int = Field(
+        default=0,
+        description="Index of the primary subject (the carrier in focus) to visually emphasise.",
+    )
+
+
 class BoardroomDigest(BaseModel):
     """Structured dashboard view of a single answer."""
 
@@ -76,6 +152,14 @@ class BoardroomDigest(BaseModel):
         default_factory=list,
         description="3-5 KPI cards covering the most decision-relevant numbers in the answer.",
     )
+    insights: List[InsightCard] = Field(
+        default_factory=list,
+        description=(
+            "2-4 polished executive insight cards — punchy, narrative takeaways (NOT bare "
+            "metric tiles), e.g. 'Rank dropped 4 places', 'Property drives 62% of premium', "
+            "'Cyber whitespace exists'. Distil the most board-worthy conclusions."
+        ),
+    )
     commentary: List[CommentarySection] = Field(
         default_factory=list,
         description="1-3 commentary sections distilled from the written analysis.",
@@ -83,6 +167,23 @@ class BoardroomDigest(BaseModel):
     risks: List[RiskItem] = Field(
         default_factory=list,
         description="0-4 risk/watch items if the analysis surfaces any; otherwise empty.",
+    )
+    comparison: Optional[ComparisonView] = Field(
+        default=None,
+        description=(
+            "Populate ONLY when the answer compares two or more entities (e.g. carrier "
+            "vs peers, multiple carriers, or the same metric across subjects) so the UI "
+            "can show a side-by-side view. Leave null for single-subject answers."
+        ),
+    )
+    battlecards: List[Battlecard] = Field(
+        default_factory=list,
+        description=(
+            "One competitive profile per carrier discussed (the subject carrier and, when "
+            "the analysis covers them, the key peers). Populate strengths/weaknesses/"
+            "product_gaps/broker_perception ONLY from facts in the commentary or rows; "
+            "leave a dimension empty rather than inventing. Empty list for non-carrier answers."
+        ),
     )
 
 
@@ -99,9 +200,21 @@ class BoardroomSignature(dspy.Signature):
       display and tagged with the correct sentiment tone from the carrier's
       perspective (a premium decline is 'danger', a rank improvement is 'good').
     - A single-sentence `headline` stating the bottom line.
+    - 2-4 `insights`: polished executive callouts — punchy narrative takeaways
+      (e.g. 'Rank dropped 4 places', 'Property drives 62% of premium', 'Cyber
+      whitespace exists'), each with a one-line so-what. These are conclusions,
+      not bare metrics.
+    - `battlecards`: one competitive profile per carrier the analysis discusses
+      (subject carrier + key peers when covered), with strengths, weaknesses,
+      product gaps / whitespace, and broker perception — every line grounded in
+      the commentary or rows. Leave a dimension empty rather than inventing.
     - 1-3 commentary sections (heading + 2-4 crisp bullets) distilled from the
       written analysis.
     - 0-4 risk items only if the analysis genuinely surfaces risks.
+    - A `comparison` block WHEN AND ONLY WHEN the answer compares two or more
+      entities (carrier vs peer set, several carriers, or one metric across
+      subjects). Align every metric's values to the subject order so the UI can
+      render a clean side-by-side. For single-subject answers, leave it null.
 
     [HARD CONSTRAINTS]
     - Use ONLY numbers and facts present in the commentary or rows. Never invent,

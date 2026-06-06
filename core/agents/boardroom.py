@@ -78,14 +78,20 @@ def _primary_rows(state: AgentState) -> List[Any]:
 
 
 def boardroom_node(state: AgentState) -> Dict[str, Any]:
-    """Distil the turn's answer into a `BoardroomDigest` when boardroom mode is on."""
+    """Distil the turn's answer into a `BoardroomDigest` when boardroom mode is on.
+
+    CRITICAL: every non-success path must explicitly return ``{"boardroom": None}``.
+    The chat graph uses a persistent checkpointer that *merges* state across turns,
+    so returning ``{}`` here would leave a PRIOR turn's digest in the checkpoint and
+    the UI would wrongly re-render a dashboard for a plain answer.
+    """
     if not state.get("boardroom_mode"):
-        return {}
+        return {"boardroom": None}
 
     commentary = _primary_commentary(state)
     if not commentary:
-        # Nothing was answered (e.g. a clarify-only turn) — skip silently.
-        return {}
+        # Nothing was answered (e.g. a clarify-only turn) — clear any stale digest.
+        return {"boardroom": None}
 
     user_query = state["messages"][-1].content if state.get("messages") else ""
     route = state.get("current_route") or "analyst"
@@ -98,7 +104,6 @@ def boardroom_node(state: AgentState) -> Dict[str, Any]:
             commentary=commentary,
             sql_output=rows,
         )
-        Initialization.log_prompt_cache_usage(response=digest, label="boardroom_digest")
         return {"boardroom": digest.model_dump()}
     except Exception as exc:  # noqa: BLE001 - never break the turn over a presentation step
         log_event(
@@ -108,4 +113,4 @@ def boardroom_node(state: AgentState) -> Dict[str, Any]:
             route=route,
             error=str(exc),
         )
-        return {}
+        return {"boardroom": None}
