@@ -36,6 +36,10 @@ app.layout = html.Div(
         # dashboard card instead of plain commentary. Memory storage (not session)
         # so every fresh launch starts in normal mode — the user opts in per visit.
         dcc.Store(id="boardroom-mode-store", data=False),
+        # Editable Boardroom builder state.
+        dcc.Store(id="boardroom-edit-mode", data=False),
+        dcc.Store(id="boardroom-edit-target", data=None),
+        dcc.Store(id="boardroom-add-target", data=None),
         dcc.Store(id="custom-peers-open", data=False),
         dcc.Download(id="download-pitch-report"),
         # Either the login screen or the full app shell (navbar + sidebar +

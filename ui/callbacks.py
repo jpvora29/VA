@@ -39,11 +39,18 @@ from ui.components.chatbot import (
     chart_block,
     welcome_hero,
     pitch_builder_drawer,
-    boardroom_card,
     boardroom_mode_cue,
     custom_peers_modal,
     custom_peers_cue,
 )
+
+# Editable Boardroom builder package. Importing `boardroom_callbacks` registers all
+# edit-mode callbacks (side effect). `render_boardroom_document` replaces the old
+# read-only card; `build_boardroom_document` turns a digest into an editable doc.
+from ui.boardroom.render import render_document as render_boardroom_document
+from ui.boardroom.builder import build_document_from_digest as build_boardroom_document
+from ui.boardroom.editor import all_modals as boardroom_modals
+from ui.boardroom import callbacks as boardroom_callbacks  # noqa: F401  (registers callbacks)
 from ui.components.navbar import build_navbar
 from ui.components.sidebar import (
     login_screen,
@@ -982,6 +989,7 @@ def _app_shell(user_id: int, username: str) -> Component:
             ),
             pitch_builder_drawer(),
             custom_peers_modal(),
+            boardroom_modals(),
         ],
         className="app-shell",
     )
@@ -1287,11 +1295,17 @@ def _update_chat_history(
     # digest from a previous turn, so only honour it when this turn ran in mode.
     boardroom = updated_state.get("boardroom") if updated_state.get("boardroom_mode") else None
     if boardroom:
+        charts = _collect_dashboard_charts(updated_state, table)
+        # Build the editable document ONCE and persist it on the message, so user
+        # edits (values, layout, added widgets/pages) survive re-renders and save
+        # with the conversation.
+        doc = build_boardroom_document(boardroom, len(charts))
         chat_history["messages"].append(
             {
                 "type": "Boardroom",
                 "digest": boardroom,
-                "charts": _collect_dashboard_charts(updated_state, table),
+                "doc": doc,
+                "charts": charts,
             }
         )
         return chat_history
@@ -1691,10 +1705,11 @@ def stop_job(n_clicks: int, chat_history: dict[str, Any]) -> str | NoUpdate:
     Output("chat-box", "children"),
     Input("chat-store", "data"),
     Input("is-thinking", "data"),
+    Input("boardroom-edit-mode", "data"),
     prevent_initial_call=True,
 )
 def render_chat(
-    chat_history: dict[str, Any], is_thinking: bool
+    chat_history: dict[str, Any], is_thinking: bool, edit_mode: bool
 ) -> list[Any] | NoUpdate:
 
     chat_items: list[Any] = []
@@ -1706,21 +1721,35 @@ def render_chat(
     if chat_history and chat_history.get("messages"):
         for msg_idx, msg in enumerate(chat_history["messages"]):
             if msg["type"] == "Boardroom":
-                # Build real plotly figures from the attached chart specs, then
-                # hand the digest + figures to the inline dashboard card.
+                # The editable document is built + stored at commit time; rebuild it
+                # for legacy messages that predate the builder.
+                specs = msg.get("charts") or []
+                doc = msg.get("doc") or build_boardroom_document(
+                    msg.get("digest") or {}, len(specs)
+                )
+                # Per-chart-widget chart_type overrides (from edits) -> {spec_index: type}.
+                overrides: dict[int, str] = {}
+                for page in doc.get("pages", []):
+                    for w in page.get("widgets", []):
+                        if w.get("kind") == "charts":
+                            si = (w.get("data") or {}).get("spec_index")
+                            ct = (w.get("meta") or {}).get("chart_type")
+                            if isinstance(si, int) and ct:
+                                overrides[si] = ct
+                # Figures kept index-aligned with specs (None where unbuildable) so a
+                # chart widget's spec_index always maps to the right figure.
                 figures: list[Any] = []
-                for spec in msg.get("charts") or []:
+                for i, spec in enumerate(specs):
                     chart_data = spec.get("chart_data")
                     rows = spec.get("rows")
                     if not chart_data or not rows:
+                        figures.append(None)
                         continue
                     try:
-                        fig, _ = generate_chart(
-                            df=pd.DataFrame(rows), chart_outputs=chart_data
-                        )
+                        if i in overrides and isinstance(chart_data, dict):
+                            chart_data = {**chart_data, "chart_type": overrides[i]}
+                        fig, _ = generate_chart(df=pd.DataFrame(rows), chart_outputs=chart_data)
                         if fig is not None:
-                            # Compact the figure so charts read as dashboard widgets
-                            # (smaller, tighter) rather than dominating the card.
                             fig.update_layout(
                                 height=260,
                                 margin=dict(l=8, r=8, t=36, b=8),
@@ -1728,11 +1757,14 @@ def render_chat(
                                 title=dict(font=dict(size=13)),
                                 legend=dict(font=dict(size=10)),
                             )
-                            figures.append(fig)
+                        figures.append(fig)
                     except Exception:
                         logger.exception("Boardroom: failed to build a chart figure")
+                        figures.append(None)
                 chat_items.append(
-                    boardroom_card(msg.get("digest") or {}, figures, idx=msg_idx)
+                    render_boardroom_document(
+                        doc, figures, edit_mode=bool(edit_mode), card_idx=msg_idx
+                    )
                 )
 
             elif msg["type"] == "SQLOutputForCharts":
