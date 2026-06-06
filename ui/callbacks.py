@@ -1702,6 +1702,31 @@ def stop_job(n_clicks: int, chat_history: dict[str, Any]) -> str | NoUpdate:
 
 
 @callback(
+    Output("chat-store", "data", allow_duplicate=True),
+    Input("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def backfill_boardroom_docs(chat_history: dict[str, Any]) -> Any:
+    """Ensure every Boardroom message carries a *persisted* editable document.
+
+    The doc is normally built at commit time, but messages from before that change
+    (or any path that only stored a digest) need one too — otherwise render_chat
+    would rebuild a throwaway doc with fresh widget ids on every paint, so the edit
+    buttons' ids would never match what the edit callbacks look up. We persist a
+    stable doc once; subsequent fires find docs present and no-op (no render loop).
+    """
+    if not chat_history:
+        return no_update
+    changed = False
+    for msg in chat_history.get("messages") or []:
+        if msg.get("type") == "Boardroom" and not msg.get("doc"):
+            specs = msg.get("charts") or []
+            msg["doc"] = build_boardroom_document(msg.get("digest") or {}, len(specs))
+            changed = True
+    return chat_history if changed else no_update
+
+
+@callback(
     Output("chat-box", "children"),
     Input("chat-store", "data"),
     Input("is-thinking", "data"),

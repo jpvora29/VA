@@ -65,8 +65,7 @@ def toggle_edit_mode(clicks, current):
     State("chat-store", "data"),
     prevent_initial_call=True,
 )
-def widget_actions(*args):
-    chat_history = args[-1]
+def widget_actions(_dup, _hide, _del, _reset, _up, _down, chat_history):
     tid = ctx.triggered_id
     if not isinstance(tid, dict) or not _triggered_value():
         return no_update
@@ -219,8 +218,7 @@ def library_pick(clicks, target, chat_history):
     State("chat-store", "data"),
     prevent_initial_call=True,
 )
-def page_actions(*args):
-    chat_history = args[-1]
+def page_actions(_add, _dup, _del, _up, _down, _lock, _exp, chat_history):
     tid = ctx.triggered_id
     if not isinstance(tid, dict) or not _triggered_value():
         return no_update
