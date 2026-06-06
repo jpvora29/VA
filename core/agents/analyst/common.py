@@ -16,6 +16,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langgraph.errors import GraphRecursionError
 
+from core.agents.common.peers import custom_peer_directive
 from core.analysis import get_lens_library
 from core.mcp.tools import (
     execute_sql,
@@ -211,6 +212,8 @@ def _solver_prompt(
     route: str,
     schema_slice: SchemaSlice,
     prior_digest: str,
+    custom_peers: Dict | None = None,
+    custom_peers_active: bool = False,
 ) -> str:
     library = get_lens_library()
     lens_body = library.body(lens) or "(no specific lens — answer the sub-question directly)"
@@ -232,6 +235,12 @@ def _solver_prompt(
         if prior_digest
         else ""
     )
+
+    # Session-pinned custom peers (from the UI) override the Peers-table resolution.
+    peer_override = custom_peer_directive(
+        custom_peers, flow, active=custom_peers_active
+    )
+    custom_peers_block = f"\n{peer_override}\n" if peer_override else ""
 
     return f"""{role}
 
@@ -259,7 +268,7 @@ table IS Marsh's book of business (the market proxy).
 path uses: Carrier_Group handling, peer averages via the Peers table,
 Share-of-Wallet / appetite math, Marsh premium, rolling-12M, ranking, etc.]
 {rules}
-{prior_block}
+{custom_peers_block}{prior_block}
 [RULES]
 - Use run_sql for ALL data. Never invent a number you did not retrieve.
 - Prefer the pre-resolved filter values above; only call resolve_value for a
@@ -287,6 +296,8 @@ def run_solver(
     recursion_limit: int,
     peer_only: bool = False,
     prior_digest: str = "",
+    custom_peers: Dict | None = None,
+    custom_peers_active: bool = False,
 ) -> List[Evidence]:
     """Run one bounded ReAct solver and return the evidence it gathered.
 
@@ -306,6 +317,8 @@ def run_solver(
         route=route,
         schema_slice=schema_slice,
         prior_digest=prior_digest,
+        custom_peers=custom_peers,
+        custom_peers_active=custom_peers_active,
     )
     agent = create_agent(model, tools, system_prompt=system_prompt)
     try:

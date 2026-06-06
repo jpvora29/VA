@@ -393,16 +393,58 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                     ),
                                     html.Div(
                                         [
-                                            dbc.Button(
-                                                html.I(className="bi bi-plus-lg"),
-                                                id="pitch-builder-btn",
-                                                n_clicks=0,
-                                                className="pitch-trigger-btn",
+                                            dbc.DropdownMenu(
+                                                [
+                                                    dbc.DropdownMenuItem(
+                                                        [
+                                                            html.I(
+                                                                className="bi bi-easel2 composer-menu-icon"
+                                                            ),
+                                                            "Pitch Builder",
+                                                        ],
+                                                        id="menu-pitch-builder",
+                                                        n_clicks=0,
+                                                    ),
+                                                    dbc.DropdownMenuItem(
+                                                        [
+                                                            html.I(
+                                                                className="bi bi-grid-1x2 composer-menu-icon"
+                                                            ),
+                                                            "Boardroom Mode",
+                                                        ],
+                                                        id="menu-boardroom-mode",
+                                                        n_clicks=0,
+                                                    ),
+                                                    dbc.DropdownMenuItem(
+                                                        [
+                                                            html.I(
+                                                                className="bi bi-people composer-menu-icon"
+                                                            ),
+                                                            "Custom Peers",
+                                                        ],
+                                                        id="menu-custom-peers",
+                                                        n_clicks=0,
+                                                    ),
+                                                ],
+                                                id="composer-add-menu",
+                                                label=html.I(className="bi bi-plus-lg"),
+                                                direction="up",
+                                                caret=False,
+                                                toggleClassName="pitch-trigger-btn",
+                                                className="composer-add-wrap",
                                             ),
-                                            dbc.Tooltip(
-                                                "Pitch Builder",
-                                                target="pitch-builder-btn",
-                                                placement="top",
+                                            # Visual cue (like Claude's Search pill)
+                                            # shown only while a custom peer set is
+                                            # pinned for this conversation.
+                                            html.Div(
+                                                id="custom-peers-cue",
+                                                className="custom-peers-cue",
+                                            ),
+                                            # Armed-state pill for Boardroom Mode; the
+                                            # next answer renders as a dashboard card.
+                                            html.Div(
+                                                id="boardroom-mode-cue",
+                                                className="boardroom-mode-cue",
                                             ),
                                             dbc.Input(
                                                 id="user-input",
@@ -724,6 +766,342 @@ def pitch_builder_drawer():
             "pointerEvents": "none",
             "visibility": "hidden",
         },
+    )
+
+
+def boardroom_mode_cue(is_on: bool):
+    """Composer pill shown while Boardroom Mode is armed for the next answer."""
+    if not is_on:
+        return None
+    return html.Div(
+        [
+            html.I(className="bi bi-grid-1x2-fill boardroom-mode-cue-icon"),
+            html.Span("Boardroom Mode", className="boardroom-mode-cue-text"),
+            html.Button(
+                html.I(className="bi bi-x"),
+                id="boardroom-mode-clear",
+                n_clicks=0,
+                className="boardroom-mode-cue-clear",
+                title="Turn off Boardroom Mode",
+            ),
+        ],
+        className="boardroom-mode-cue-pill",
+    )
+
+
+_BM_RISK_WIDTH = {"high": 92, "med": 62, "medium": 62, "low": 32}
+
+
+def _bm_tone(value: str) -> str:
+    """Clamp an arbitrary tone string to the four supported classes."""
+    v = (value or "neutral").strip().lower()
+    return v if v in ("good", "warn", "danger", "neutral") else "neutral"
+
+
+def _bm_kpi(card: dict):
+    tone = _bm_tone(card.get("tone"))
+    icon = card.get("icon") or "bi bi-graph-up"
+    delta = card.get("delta") or ""
+    children = [
+        html.Div(html.I(className=icon), className=f"bm-kpi-icon {tone}"),
+        html.Div(
+            [
+                html.Div(card.get("label", ""), className="bm-kpi-label"),
+                html.Div(card.get("value", ""), className="bm-kpi-value"),
+            ]
+            + ([html.Div(delta, className=f"bm-kpi-delta {tone}")] if delta else []),
+            className="bm-kpi-copy",
+        ),
+    ]
+    return html.Div(children, className="bm-kpi-card")
+
+
+def _bm_commentary(section: dict):
+    points = section.get("points") or []
+    return html.Div(
+        [
+            html.Div(section.get("heading", ""), className="bm-commentary-heading"),
+            html.Ul([html.Li(p) for p in points], className="bm-commentary-list"),
+        ],
+        className="bm-commentary-section",
+    )
+
+
+def _bm_risk(item: dict):
+    tone = _bm_tone(item.get("tone"))
+    severity = item.get("severity", "")
+    width = _BM_RISK_WIDTH.get(severity.strip().lower(), 50)
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.Span(item.get("label", ""), className="bm-risk-name"),
+                    html.Span(severity, className=f"bm-risk-pill {tone}"),
+                ],
+                className="bm-risk-head",
+            ),
+            html.Div(
+                html.Div(className=f"bm-risk-fill {tone}", style={"width": f"{width}%"}),
+                className="bm-risk-track",
+            ),
+        ],
+        className="bm-risk-item",
+    )
+
+
+def boardroom_card(digest: dict, figures: list | None = None, idx: int = 0):
+    """The inline Boardroom dashboard: one self-contained card for an answer.
+
+    Layout: header (title + Export to PPT) · KPI row · [commentary rail | charts]
+    · risks. `digest` is the `BoardroomDigest` dict from the boardroom_node;
+    `figures` are pre-built plotly figures for the attached chart specs.
+    """
+    digest = digest or {}
+    figures = figures or []
+
+    kpis = digest.get("kpis") or []
+    commentary = digest.get("commentary") or []
+    risks = digest.get("risks") or []
+    headline = (digest.get("headline") or "").strip()
+
+    # ── Header ───────────────────────────────────────────────────────────────
+    header = html.Div(
+        [
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.I(className="bi bi-grid-1x2-fill"),
+                            html.Span("Boardroom"),
+                        ],
+                        className="bm-eyebrow",
+                    ),
+                    html.Div(
+                        digest.get("title", "Executive Summary"), className="bm-title"
+                    ),
+                    html.Div(digest.get("subtitle", ""), className="bm-subtitle")
+                    if digest.get("subtitle")
+                    else None,
+                ],
+                className="bm-title-block",
+            ),
+            html.Button(
+                [html.I(className="bi bi-file-earmark-slides"), "Export to PPT"],
+                id={"type": "boardroom-export", "idx": idx},
+                n_clicks=0,
+                className="bm-export-btn",
+                disabled=True,
+                title="PowerPoint export is coming soon",
+            ),
+        ],
+        className="bm-header",
+    )
+
+    # ── KPI row ──────────────────────────────────────────────────────────────
+    kpi_row = (
+        html.Div([_bm_kpi(c) for c in kpis], className="bm-kpi-grid") if kpis else None
+    )
+
+    # ── Commentary rail (left) ───────────────────────────────────────────────
+    rail_children = []
+    if headline:
+        rail_children.append(html.Div(headline, className="bm-headline"))
+    rail_children.extend(_bm_commentary(s) for s in commentary)
+    if risks:
+        rail_children.append(
+            html.Div(
+                [html.Div("Risks & watch items", className="bm-commentary-heading")]
+                + [_bm_risk(r) for r in risks],
+                className="bm-risk-block",
+            )
+        )
+    commentary_rail = html.Div(rail_children, className="bm-rail")
+
+    # ── Charts (right) ───────────────────────────────────────────────────────
+    chart_panels = [
+        html.Div(
+            dcc.Graph(
+                figure=fig,
+                className="bm-chart-fig",
+                config={"displayModeBar": False, "responsive": True},
+            ),
+            className="bm-chart-panel",
+        )
+        for fig in figures
+    ]
+    charts_col = (
+        html.Div(chart_panels, className="bm-charts")
+        if chart_panels
+        else html.Div(
+            html.Div(
+                [
+                    html.I(className="bi bi-bar-chart-line"),
+                    html.Span("No chart for this view"),
+                ],
+                className="bm-charts-empty",
+            ),
+            className="bm-charts",
+        )
+    )
+
+    body = html.Div([commentary_rail, charts_col], className="bm-body")
+
+    return html.Div(
+        [header, kpi_row, body] if kpi_row is not None else [header, body],
+        className="message boardroom-card",
+    )
+
+
+def custom_peers_modal():
+    """Dialog to pin a hand-picked peer set for the current conversation.
+
+    Flow → Country → Carrier cascade, then a multi-select of every other carrier
+    (Survey) / Carrier_Group (GPR) in that country. The callbacks live in
+    ui.callbacks; `is_open` is driven by the `custom-peers-open` store.
+    """
+    return dbc.Modal(
+        [
+            dbc.ModalHeader(
+                dbc.ModalTitle(
+                    [
+                        html.I(className="bi bi-people custom-peers-title-icon"),
+                        "Custom Peers",
+                    ]
+                ),
+                close_button=True,
+            ),
+            dbc.ModalBody(
+                [
+                    html.Div(
+                        "Pin a peer set for this conversation. Peer comparisons "
+                        "will use exactly these instead of the default peer group.",
+                        className="custom-peers-subtitle",
+                    ),
+                    html.Div(
+                        [
+                            html.Label("Data", className="custom-peers-label"),
+                            dbc.RadioItems(
+                                id="custom-peers-flow",
+                                options=[
+                                    {"label": "Survey (Carrier)", "value": "survey"},
+                                    {"label": "GPR (Carrier Group)", "value": "gpr"},
+                                ],
+                                value="gpr",
+                                inline=True,
+                                className="custom-peers-flow",
+                            ),
+                        ],
+                        className="custom-peers-field",
+                    ),
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.Label("Country", className="custom-peers-label"),
+                                    dcc.Dropdown(
+                                        id="custom-peers-country",
+                                        placeholder="Select country",
+                                        className="pitch-dropdown",
+                                    ),
+                                ],
+                                className="custom-peers-field",
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("Carrier", className="custom-peers-label"),
+                                    dcc.Dropdown(
+                                        id="custom-peers-carrier",
+                                        placeholder="Select carrier",
+                                        className="pitch-dropdown",
+                                    ),
+                                ],
+                                className="custom-peers-field",
+                            ),
+                        ],
+                        className="custom-peers-row",
+                    ),
+                    html.Div(
+                        [
+                            html.Label(
+                                [
+                                    "Peers",
+                                    html.Span(
+                                        id="custom-peers-count",
+                                        className="custom-peers-count",
+                                    ),
+                                ],
+                                className="custom-peers-label",
+                            ),
+                            dcc.Dropdown(
+                                id="custom-peers-list",
+                                placeholder="Select peers to benchmark against",
+                                multi=True,
+                                className="pitch-dropdown",
+                            ),
+                        ],
+                        className="custom-peers-field",
+                    ),
+                ]
+            ),
+            dbc.ModalFooter(
+                [
+                    dbc.Button(
+                        "Cancel",
+                        id="custom-peers-cancel",
+                        n_clicks=0,
+                        className="custom-peers-cancel-btn",
+                    ),
+                    dbc.Button(
+                        "Apply peers",
+                        id="custom-peers-apply",
+                        n_clicks=0,
+                        className="custom-peers-apply-btn",
+                        disabled=True,
+                    ),
+                ]
+            ),
+        ],
+        id="custom-peers-modal",
+        is_open=False,
+        centered=True,
+        backdrop=True,
+        className="custom-peers-modal",
+    )
+
+
+def custom_peers_cue(custom_peers: dict | None):
+    """The composer pill shown when a custom peer set is active (else nothing)."""
+    custom_peers = custom_peers or {}
+    peers = custom_peers.get("peers") or []
+    carrier = custom_peers.get("carrier")
+    if not peers or not carrier:
+        return None
+    flow_label = "GPR" if (custom_peers.get("flow") or "").lower() == "gpr" else "Survey"
+    return html.Div(
+        [
+            html.Button(
+                [
+                    html.I(className="bi bi-people custom-peers-cue-icon"),
+                    html.Span(
+                        f"{len(peers)} custom peers · {carrier}",
+                        className="custom-peers-cue-text",
+                    ),
+                    html.Span(flow_label, className="custom-peers-cue-flow"),
+                ],
+                id="custom-peers-edit",
+                n_clicks=0,
+                className="custom-peers-cue-body",
+                title="Edit custom peers",
+            ),
+            html.Button(
+                html.I(className="bi bi-x-lg"),
+                id="custom-peers-clear",
+                n_clicks=0,
+                className="custom-peers-cue-clear",
+                title="Clear custom peers",
+            ),
+        ],
+        className="custom-peers-cue-pill",
     )
 
 

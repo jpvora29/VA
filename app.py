@@ -32,6 +32,10 @@ app.layout = html.Div(
         dcc.Store(id="pitch-builder-open", data=False),
         dcc.Store(id="pitch-builder-store", data={}),
         dcc.Store(id="pitch-options-cache", data={}, storage_type="session"),
+        # Per-session Boardroom Mode toggle: when on, the next answer renders as
+        # an inline dashboard card instead of plain commentary.
+        dcc.Store(id="boardroom-mode-store", storage_type="session", data=False),
+        dcc.Store(id="custom-peers-open", data=False),
         dcc.Download(id="download-pitch-report"),
         # Either the login screen or the full app shell (navbar + sidebar +
         # chat + pitch drawer), chosen by `render_app_root` off `user-store`.

@@ -17,6 +17,7 @@ from core.agents.common import (
     recalled_sql_examples,
     record_recovered_sql_fix,
 )
+from core.agents.common.peers import custom_peer_directive
 from core.mcp.tools import execute_sql
 from core.agents.gpr.chart import GPRChartNode
 from core.agents.gpr.planner import GPRPlannerNode
@@ -240,6 +241,15 @@ class GPRSubGraph:
         gpr_schema = schema.get("GPR", [])
         peers_schema = schema.get("Peers", [])
         query_plan = state["gpr_reasoning"]
+        # Session-pinned custom peers override the Peers-table resolution for this
+        # conversation; append the directive so the SQL agent uses the exact set.
+        directive = custom_peer_directive(
+            state.get("custom_peers"),
+            "gpr",
+            active=state.get("custom_peers_active", False),
+        )
+        if directive:
+            query_plan = f"{query_plan}\n\n{directive}"
         skill_rules = get_skill_loader().sql("gpr", question)
         query_rules = skill_rules if skill_rules else GPRRules.query_rules
         log_event(

@@ -93,3 +93,19 @@ class AgentState(TypedDict):
 
     # Suggested next questions produced by the terminal follow-up node.
     followup_questions: List[str]
+
+    # Session-scoped custom peer override (set from the UI "Custom Peers" dialog).
+    # When present + active, peer comparisons use this hand-picked set instead of
+    # resolving the peer group from the `Peers` table. Shape:
+    #   {"flow": "gpr"|"survey", "country": str, "carrier": str, "peers": [str]}
+    # `custom_peers_active` is the per-turn switch: the carrier-mismatch HITL gate
+    # flips it to False when the user opts to use database peers for this turn.
+    custom_peers: Optional[Dict]
+    custom_peers_active: bool
+
+    # Boardroom Mode (set per-turn from the UI toggle). When True, the terminal
+    # `boardroom_node` distils the answer into `boardroom` — a structured
+    # `BoardroomDigest` dict (KPIs + commentary sections + risks) the UI renders
+    # as an inline dashboard card instead of plain commentary.
+    boardroom_mode: bool
+    boardroom: Optional[Dict]

@@ -390,6 +390,249 @@ body {
     margin-top: 7px;
 }
 
+/* ---------- Boardroom Mode (inline dashboard card) ---------- */
+
+/* Composer "armed" pill — mirrors the custom-peers cue. */
+.boardroom-mode-cue { display: contents; }
+.boardroom-mode-cue-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px 4px 10px;
+    margin-right: 6px;
+    border-radius: 999px;
+    background: rgba(11, 75, 255, 0.10);
+    border: 1px solid rgba(11, 75, 255, 0.22);
+    color: #0b4bff;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.boardroom-mode-cue-icon { font-size: 13px; }
+.boardroom-mode-cue-clear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(11, 75, 255, 0.12);
+    color: #0b4bff;
+    cursor: pointer;
+    line-height: 1;
+}
+.boardroom-mode-cue-clear:hover { background: rgba(11, 75, 255, 0.22); }
+
+/* The inline dashboard card itself. */
+.boardroom-card {
+    width: 100%;
+    max-width: 100%;
+    background: #f7f9fd;
+    border: 1px solid #dfe6f2;
+    border-radius: 16px;
+    padding: 18px;
+    box-shadow: 0 10px 30px rgba(10, 22, 54, 0.06);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* Header */
+.bm-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+.bm-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #0b4bff;
+}
+.bm-title {
+    font-size: 22px;
+    font-weight: 800;
+    color: #0b1320;
+    margin-top: 4px;
+    line-height: 1.2;
+}
+.bm-subtitle {
+    font-size: 13px;
+    color: #5b6577;
+    margin-top: 2px;
+}
+.bm-export-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 14px;
+    border-radius: 10px;
+    border: 1px solid #d2dcec;
+    background: #ffffff;
+    color: #1c2636;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.bm-export-btn:hover:not(:disabled) { border-color: #0b4bff; color: #0b4bff; }
+.bm-export-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* KPI grid */
+.bm-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+}
+.bm-kpi-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #ffffff;
+    border: 1px solid #e4eaf4;
+    border-radius: 12px;
+    padding: 14px;
+}
+.bm-kpi-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    font-size: 17px;
+    flex-shrink: 0;
+    background: #eef3fa;
+    color: #0b4bff;
+}
+.bm-kpi-icon.good { background: rgba(31, 157, 85, 0.12); color: #1f9d55; }
+.bm-kpi-icon.warn { background: rgba(240, 180, 41, 0.16); color: #b9810a; }
+.bm-kpi-icon.danger { background: rgba(197, 53, 50, 0.12); color: #c53532; }
+.bm-kpi-icon.neutral { background: #eef3fa; color: #0b4bff; }
+.bm-kpi-copy { display: flex; flex-direction: column; min-width: 0; }
+.bm-kpi-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #5b6577;
+}
+.bm-kpi-value {
+    font-size: 22px;
+    font-weight: 800;
+    color: #0b1320;
+    line-height: 1.15;
+}
+.bm-kpi-delta { font-size: 12px; font-weight: 600; margin-top: 1px; }
+.bm-kpi-delta.good { color: #1f9d55; }
+.bm-kpi-delta.warn { color: #b9810a; }
+.bm-kpi-delta.danger { color: #c53532; }
+.bm-kpi-delta.neutral { color: #5b6577; }
+
+/* Body: commentary rail + charts */
+.bm-body {
+    display: grid;
+    grid-template-columns: minmax(260px, 360px) 1fr;
+    gap: 16px;
+    align-items: start;
+}
+.bm-rail {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    background: #ffffff;
+    border: 1px solid #e4eaf4;
+    border-radius: 12px;
+    padding: 16px;
+}
+.bm-headline {
+    font-size: 14px;
+    font-weight: 700;
+    color: #0b1320;
+    line-height: 1.4;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #eef1f7;
+}
+.bm-commentary-section { display: flex; flex-direction: column; gap: 6px; }
+.bm-commentary-heading {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #1c2636;
+}
+.bm-commentary-list {
+    margin: 0;
+    padding-left: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+.bm-commentary-list li {
+    font-size: 13px;
+    line-height: 1.5;
+    color: #344054;
+}
+
+/* Risks */
+.bm-risk-block { display: flex; flex-direction: column; gap: 10px; }
+.bm-risk-item { display: flex; flex-direction: column; gap: 5px; }
+.bm-risk-head { display: flex; align-items: center; justify-content: space-between; }
+.bm-risk-name { font-size: 12px; font-weight: 600; color: #1c2636; }
+.bm-risk-pill {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.bm-risk-pill.good { background: rgba(31, 157, 85, 0.14); color: #1f9d55; }
+.bm-risk-pill.warn { background: rgba(240, 180, 41, 0.18); color: #b9810a; }
+.bm-risk-pill.danger { background: rgba(197, 53, 50, 0.14); color: #c53532; }
+.bm-risk-pill.neutral { background: #eef3fa; color: #5b6577; }
+.bm-risk-track { height: 7px; border-radius: 999px; background: #eef1f7; overflow: hidden; }
+.bm-risk-fill { height: 100%; border-radius: 999px; }
+.bm-risk-fill.good { background: #1f9d55; }
+.bm-risk-fill.warn { background: #f0b429; }
+.bm-risk-fill.danger { background: #c53532; }
+.bm-risk-fill.neutral { background: #94a2b8; }
+
+/* Charts column */
+.bm-charts { display: flex; flex-direction: column; gap: 14px; }
+.bm-chart-panel {
+    background: #ffffff;
+    border: 1px solid #e4eaf4;
+    border-radius: 12px;
+    padding: 8px;
+}
+.bm-chart-fig { width: 100%; }
+.bm-charts-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 180px;
+    color: #94a2b8;
+    font-size: 13px;
+    background: #ffffff;
+    border: 1px dashed #d2dcec;
+    border-radius: 12px;
+}
+.bm-charts-empty i { font-size: 22px; }
+
+@media (max-width: 900px) {
+    .bm-body { grid-template-columns: 1fr; }
+}
+
 .pitch-builder-drawer {
     position: fixed;
     inset: 0;
@@ -2178,4 +2421,135 @@ th {
     .app-body .input-area {
         left: 0;
     }
+}
+
+/* ====================================================================
+   Custom Peers — composer "+" menu, dialog, and active cue
+   ==================================================================== */
+.composer-add-wrap .dropdown-menu {
+    border-radius: 14px;
+    border: 1px solid var(--border-soft, rgba(12, 25, 58, 0.10));
+    box-shadow: 0 18px 48px rgba(10, 22, 54, 0.16);
+    padding: 6px;
+    min-width: 210px;
+}
+.composer-add-wrap .dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-radius: 10px;
+    padding: 9px 12px;
+    font-size: 14px;
+    font-weight: 500;
+}
+.composer-add-wrap .dropdown-item:hover {
+    background: rgba(11, 75, 255, 0.08);
+}
+.composer-menu-icon {
+    font-size: 15px;
+    color: #0b4bff;
+}
+
+/* Active-peers cue pill in the composer (mirrors Claude's Search pill) */
+.custom-peers-cue {
+    display: flex;
+    align-items: center;
+}
+.custom-peers-cue-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    background: rgba(11, 75, 255, 0.10);
+    border: 1px solid rgba(11, 75, 255, 0.28);
+    border-radius: 999px;
+    padding: 2px 4px 2px 2px;
+    margin-right: 6px;
+    max-width: 280px;
+}
+.custom-peers-cue-body {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: transparent;
+    border: none;
+    color: #0b3bd6;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 4px 8px;
+    border-radius: 999px;
+    cursor: pointer;
+    max-width: 230px;
+}
+.custom-peers-cue-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.custom-peers-cue-flow {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: rgba(11, 75, 255, 0.18);
+    color: #0b3bd6;
+    border-radius: 6px;
+    padding: 1px 6px;
+}
+.custom-peers-cue-icon { font-size: 13px; }
+.custom-peers-cue-clear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: none;
+    background: transparent;
+    color: #0b3bd6;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 11px;
+}
+.custom-peers-cue-clear:hover { background: rgba(11, 75, 255, 0.18); }
+
+/* Custom Peers dialog */
+.custom-peers-title-icon { margin-right: 8px; color: #0b4bff; }
+.custom-peers-subtitle {
+    color: var(--text-muted, #5b6478);
+    font-size: 13px;
+    margin-bottom: 16px;
+}
+.custom-peers-field { margin-bottom: 14px; }
+.custom-peers-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+.custom-peers-label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted, #5b6478);
+    margin-bottom: 6px;
+}
+.custom-peers-count {
+    margin-left: 6px;
+    text-transform: none;
+    letter-spacing: 0;
+    color: #0b4bff;
+    font-weight: 600;
+}
+.custom-peers-flow { display: flex; gap: 18px; }
+.custom-peers-apply-btn {
+    background: #0b4bff;
+    border: none;
+    color: #fff;
+    font-weight: 600;
+}
+.custom-peers-apply-btn:disabled { opacity: 0.5; }
+.custom-peers-cancel-btn {
+    background: transparent;
+    border: 1px solid var(--border-soft, rgba(12, 25, 58, 0.14));
+    color: var(--text-muted, #5b6478);
 }

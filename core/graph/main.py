@@ -11,8 +11,10 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
 from core.agents.analyst_agent import analyst_agent_node
+from core.agents.boardroom import boardroom_node
 from core.agents.context_filler import ContextFillingAgent
 from core.graph.hitl import clarify_decide, clarify_gate
+from core.graph.custom_peers_gate import custom_peer_gate
 from core.agents.fallback import Fallback
 from core.agents.followup import followup_node
 from core.agents.gimmi.response import check_if_gimmi_required, gimmi_insight
@@ -57,6 +59,7 @@ class LangGraph:
         self.context_filler = ContextFillingAgent().context_filler_agent
         self.clarify_decide = clarify_decide
         self.clarify_gate = clarify_gate
+        self.custom_peer_gate = custom_peer_gate
         self.rephraser_agent = QueryRephraseAgent().rephraser_agent
         self.router = RouterNode().router_node
         self.survey_agent = SurveySubGraph().SurveyAgent
@@ -73,6 +76,7 @@ class LangGraph:
         self.gimmi_end_max_iterations = gimmi_end_max_iterations
         self.gimmi_insight = gimmi_insight
         self.followup_node = followup_node
+        self.boardroom_node = boardroom_node
 
     def create_workflow(self):
         workflow = StateGraph(self.state_schema)
@@ -80,6 +84,7 @@ class LangGraph:
         workflow.add_node("context_filler", self.context_filler)
         workflow.add_node("clarify_decide", self.clarify_decide)
         workflow.add_node("clarify_gate", self.clarify_gate)
+        workflow.add_node("custom_peer_gate", self.custom_peer_gate)
         workflow.add_node("rephraser_agent", self.rephraser_agent)
         workflow.add_node("router", self.router)
         workflow.add_node("survey_agent", self.survey_agent)
@@ -96,6 +101,7 @@ class LangGraph:
         workflow.add_node("gimmi_end_max_iterations", self.gimmi_end_max_iterations)
         workflow.add_node("gimmi_insight", self.gimmi_insight)
         workflow.add_node("followup_node", self.followup_node)
+        workflow.add_node("boardroom_node", self.boardroom_node)
 
         workflow.add_edge(START, "context_filler")
         # HITL clarify hook: decide (LLM, conservative) -> gate (interrupts only
@@ -103,7 +109,10 @@ class LangGraph:
         workflow.add_edge("context_filler", "clarify_decide")
         workflow.add_edge("clarify_decide", "clarify_gate")
         workflow.add_edge("clarify_gate", "rephraser_agent")
-        workflow.add_edge("rephraser_agent", "router")
+        # Custom-peer mismatch HITL: pauses only when a pinned peer set is active
+        # and the turn asks about a different carrier. Pass-through otherwise.
+        workflow.add_edge("rephraser_agent", "custom_peer_gate")
+        workflow.add_edge("custom_peer_gate", "router")
 
         # Conditional routing
         workflow.add_conditional_edges(
@@ -170,8 +179,10 @@ class LangGraph:
 
         workflow.add_edge("gimmi_insight", "followup_node")
 
-        # Single terminal node: every route produces follow-up suggestions, then ends.
-        workflow.add_edge("followup_node", END)
+        # Single terminal funnel: every route produces follow-up suggestions, then
+        # the boardroom digest (a no-op unless Boardroom Mode is on), then ends.
+        workflow.add_edge("followup_node", "boardroom_node")
+        workflow.add_edge("boardroom_node", END)
 
         compile_kwargs = {}
         if self.checkpointer is not None:

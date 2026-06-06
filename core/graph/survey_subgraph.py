@@ -17,6 +17,7 @@ from core.agents.common import (
     recalled_sql_examples,
     record_recovered_sql_fix,
 )
+from core.agents.common.peers import custom_peer_directive
 from core.mcp.tools import execute_sql
 from core.agents.survey.chart import SurveyChartNode
 from core.agents.survey.planner import PlannerNode
@@ -225,6 +226,16 @@ class SurveySubGraph:
         peers_schema = schema.get("Peers", [])
 
         query_plan = state["survey_reasoning"]
+        # Session-pinned custom peers override the Peers-table resolution for this
+        # conversation. Inject only into the SQL agent's plan text — NOT into
+        # `survey_reasoning`, which is re-parsed as JSON by survey_execute_sql.
+        directive = custom_peer_directive(
+            state.get("custom_peers"),
+            "survey",
+            active=state.get("custom_peers_active", False),
+        )
+        if directive:
+            query_plan = f"{query_plan}\n\n{directive}"
         skill_rules = get_skill_loader().sql("survey", question)
         query_rules = skill_rules if skill_rules else SurveyRules.query_rules
         log_event(

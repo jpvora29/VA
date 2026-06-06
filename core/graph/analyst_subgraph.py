@@ -54,6 +54,9 @@ class AnalystState(TypedDict):
     route: str
     flow: str
     routing_context: Optional[RoutingContext]
+    # Session-pinned custom peer override + per-turn switch (see AgentState).
+    custom_peers: Optional[dict]
+    custom_peers_active: bool
     plan: AnalysisPlan
     schema_slice: SchemaSlice
     # add-reducer so parallel solver nodes merge their evidence instead of racing.
@@ -117,6 +120,8 @@ def _payload(state: AnalystState, sub_question: str, lens: str) -> dict:
         "flow": state["flow"],
         "route": state["route"],
         "schema_slice": state["schema_slice"],
+        "custom_peers": state.get("custom_peers"),
+        "custom_peers_active": state.get("custom_peers_active", False),
     }
 
 
@@ -143,6 +148,8 @@ def peer_solver_node(payload: dict) -> dict:
         flow=payload["flow"],
         route=payload["route"],
         schema_slice=payload["schema_slice"],
+        custom_peers=payload.get("custom_peers"),
+        custom_peers_active=payload.get("custom_peers_active", False),
     )
     return {"evidence": rows}
 
@@ -157,6 +164,8 @@ def generic_solver_node(payload: dict) -> dict:
         flow=payload["flow"],
         route=payload["route"],
         schema_slice=payload["schema_slice"],
+        custom_peers=payload.get("custom_peers"),
+        custom_peers_active=payload.get("custom_peers_active", False),
     )
     return {"evidence": rows}
 
@@ -183,6 +192,8 @@ def join_node(state: AnalystState) -> dict:
             route=state["route"],
             schema_slice=state["schema_slice"],
             prior_digest=digest_evidence(accumulated),
+            custom_peers=state.get("custom_peers"),
+            custom_peers_active=state.get("custom_peers_active", False),
         )
         accumulated.extend(rows)
         new_rows.extend(rows)

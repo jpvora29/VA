@@ -39,6 +39,10 @@ from ui.components.chatbot import (
     chart_block,
     welcome_hero,
     pitch_builder_drawer,
+    boardroom_card,
+    boardroom_mode_cue,
+    custom_peers_modal,
+    custom_peers_cue,
 )
 from ui.components.navbar import build_navbar
 from ui.components.sidebar import (
@@ -93,6 +97,8 @@ from ui.helper import (
     pitch_cache_key,
     latest_option_value,
     has_pitch_filters,
+    distinct_peer_countries,
+    distinct_peer_carriers,
 )
 
 from document_builder.models import ReportConfig
@@ -178,7 +184,7 @@ clientside_callback(
 
 @callback(
     Output("pitch-builder-open", "data"),
-    Input("pitch-builder-btn", "n_clicks", allow_optional=True),
+    Input("menu-pitch-builder", "n_clicks", allow_optional=True),
     Input("pitch-close-btn", "n_clicks"),
     State("pitch-builder-open", "data"),
     prevent_initital_call=True,
@@ -186,10 +192,10 @@ clientside_callback(
 def toggle_pitch_builder(
     open_clicks: int, close_clicks: int, is_open: bool
 ) -> bool | NoUpdate:
-    """Checking whether the Pitch Builder btn is clicked"""
+    """Open the Pitch Builder drawer from the composer "+" menu; close from its X."""
 
     triggered_id = ctx.triggered_id
-    if triggered_id == "pitch-builder-btn" and open_clicks:
+    if triggered_id == "menu-pitch-builder" and open_clicks:
         return True
     if triggered_id == "pitch-close-btn" and close_clicks:
         return False
@@ -249,6 +255,289 @@ def set_pitch_builder_drawer_class(
         )
 
     return class_name, drawer_style, backdrop_style, panel_style
+
+
+@callback(
+    Output("boardroom-mode-store", "data"),
+    Input("menu-boardroom-mode", "n_clicks", allow_optional=True),
+    Input("boardroom-mode-clear", "n_clicks", allow_optional=True),
+    State("boardroom-mode-store", "data"),
+    prevent_initial_call=True,
+)
+def toggle_boardroom_mode(
+    menu_clicks: int, clear_clicks: int, is_on: bool
+) -> bool | NoUpdate:
+    """Flip Boardroom Mode on/off from the composer menu (or the cue's clear button).
+
+    When on, `launch_new_job` passes `boardroom_mode=True` into the graph and the
+    terminal `boardroom_node` produces the dashboard digest for the next answer.
+    """
+    triggered_id = ctx.triggered_id
+    if triggered_id == "boardroom-mode-clear" and clear_clicks:
+        return False
+    if triggered_id == "menu-boardroom-mode" and menu_clicks:
+        return not bool(is_on)
+    return no_update
+
+
+@callback(
+    Output("boardroom-mode-cue", "children"),
+    Input("boardroom-mode-store", "data"),
+)
+def render_boardroom_mode_cue(is_on: bool):
+    """Show a composer pill while Boardroom Mode is armed for the next answer."""
+    return boardroom_mode_cue(bool(is_on))
+
+
+# ════════════════════════════ CUSTOM PEERS ════════════════════════════════════
+# A session-scoped, hand-picked peer set. Opened from the composer "+" menu; the
+# selection is stored inside chat-store ("custom_peers") so it persists per
+# conversation via save_conversation/open_conversation. A composer cue shows it is
+# active. The graph (see core.graph) injects it into peer SQL and runs a HITL gate
+# when the user later asks about a different carrier.
+
+
+@callback(
+    Output("custom-peers-open", "data"),
+    Input("menu-custom-peers", "n_clicks", allow_optional=True),
+    Input("custom-peers-edit", "n_clicks", allow_optional=True),
+    Input("custom-peers-cancel", "n_clicks", allow_optional=True),
+    Input("custom-peers-apply", "n_clicks", allow_optional=True),
+    State("custom-peers-open", "data"),
+    prevent_initial_call=True,
+)
+def toggle_custom_peers_modal(
+    open_clicks: int, edit_clicks: int, cancel_clicks: int, apply_clicks: int, is_open: bool
+) -> bool | NoUpdate:
+    """Open the Custom Peers dialog from the "+" menu or the cue; close on cancel/apply."""
+    triggered = ctx.triggered_id
+    if triggered in ("menu-custom-peers", "custom-peers-edit"):
+        return True
+    if triggered in ("custom-peers-cancel", "custom-peers-apply"):
+        return False
+    return no_update
+
+
+@callback(
+    Output("custom-peers-modal", "is_open"),
+    Input("custom-peers-open", "data"),
+)
+def render_custom_peers_modal_open(is_open: bool) -> bool:
+    return bool(is_open)
+
+
+@callback(
+    Output("custom-peers-flow", "value"),
+    Input("custom-peers-open", "data"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def seed_custom_peers_flow(is_open: bool, chat_history: dict[str, Any]) -> str | NoUpdate:
+    """On open, default the data-source radio to the pinned set's flow if editing."""
+    if not is_open:
+        return no_update
+    stored = (chat_history or {}).get("custom_peers") or {}
+    return stored.get("flow") or "gpr"
+
+
+def _peer_option_value(options: list[dict[str, str]], preferred: str | None) -> str | None:
+    values = [opt["value"] for opt in options]
+    if preferred:
+        for value in values:
+            if str(value).strip().lower() == str(preferred).strip().lower():
+                return value
+    return values[0] if values else None
+
+
+@callback(
+    Output("custom-peers-country", "options"),
+    Output("custom-peers-country", "value"),
+    Input("custom-peers-open", "data"),
+    Input("custom-peers-flow", "value"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def load_custom_peer_countries(
+    is_open: bool, flow: str, chat_history: dict[str, Any]
+) -> tuple[Any, Any]:
+    """Country options for the chosen data source; prefill the pinned country if editing."""
+    if not is_open:
+        return no_update, no_update
+    options = distinct_peer_countries(flow)
+    stored = (chat_history or {}).get("custom_peers") or {}
+    preferred = stored.get("country") if stored.get("flow") == flow else None
+    return options, _peer_option_value(options, preferred or PREFFERED_PITCH_COUNTRY)
+
+
+@callback(
+    Output("custom-peers-carrier", "options"),
+    Output("custom-peers-carrier", "value"),
+    Input("custom-peers-open", "data"),
+    Input("custom-peers-flow", "value"),
+    Input("custom-peers-country", "value"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def load_custom_peer_carriers(
+    is_open: bool, flow: str, country: str | None, chat_history: dict[str, Any]
+) -> tuple[Any, Any]:
+    """Subject-carrier options for the country; prefill the pinned carrier if editing."""
+    if not is_open or not country:
+        return no_update, no_update
+    options = distinct_peer_carriers(flow, country)
+    stored = (chat_history or {}).get("custom_peers") or {}
+    preferred = (
+        stored.get("carrier")
+        if stored.get("flow") == flow and stored.get("country") == country
+        else None
+    )
+    return options, _peer_option_value(options, preferred or PREFFERED_PITCH_CARRIER)
+
+
+@callback(
+    Output("custom-peers-list", "options"),
+    Output("custom-peers-list", "value"),
+    Input("custom-peers-open", "data"),
+    Input("custom-peers-flow", "value"),
+    Input("custom-peers-country", "value"),
+    Input("custom-peers-carrier", "value"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def load_custom_peer_list(
+    is_open: bool,
+    flow: str,
+    country: str | None,
+    carrier: str | None,
+    chat_history: dict[str, Any],
+) -> tuple[Any, Any]:
+    """Every other carrier/group in the country as selectable peers (subject excluded)."""
+    if not is_open or not country:
+        return no_update, no_update
+    all_carriers = distinct_peer_carriers(flow, country)
+    subject = (carrier or "").strip().lower()
+    options = [opt for opt in all_carriers if opt["value"].strip().lower() != subject]
+
+    # On a fresh open while editing, restore the pinned peers; otherwise reset so a
+    # carrier/country/flow change does not carry stale peers across.
+    stored = (chat_history or {}).get("custom_peers") or {}
+    is_open_event = ctx.triggered_id == "custom-peers-open"
+    if (
+        is_open_event
+        and stored.get("flow") == flow
+        and stored.get("country") == country
+        and stored.get("carrier") == carrier
+    ):
+        valid = {opt["value"] for opt in options}
+        return options, [p for p in (stored.get("peers") or []) if p in valid]
+    return options, []
+
+
+@callback(
+    Output("custom-peers-apply", "disabled"),
+    Output("custom-peers-count", "children"),
+    Input("custom-peers-carrier", "value"),
+    Input("custom-peers-list", "value"),
+)
+def toggle_custom_peers_apply(carrier: str | None, peers: list[str] | None) -> tuple[bool, str]:
+    """Enable Apply only once a subject carrier and at least one peer are chosen."""
+    peers = peers or []
+    count = f" ({len(peers)} selected)" if peers else ""
+    return (not (carrier and peers)), count
+
+
+@callback(
+    Output("chat-store", "data", allow_duplicate=True),
+    Output("trigger-resume", "data", allow_duplicate=True),
+    Output("is-thinking", "data", allow_duplicate=True),
+    Input("custom-peers-apply", "n_clicks"),
+    State("custom-peers-flow", "value"),
+    State("custom-peers-country", "value"),
+    State("custom-peers-carrier", "value"),
+    State("custom-peers-list", "value"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def apply_custom_peers(
+    n_clicks: int,
+    flow: str,
+    country: str | None,
+    carrier: str | None,
+    peers: list[str] | None,
+    chat_history: dict[str, Any],
+) -> tuple[Any, Any, Any]:
+    """Pin the selected peer set into chat-store; if a mismatch HITL is pending,
+    treat this as the "Pick new peers" answer and resume the paused thread."""
+    if not n_clicks or not carrier or not peers:
+        return no_update, no_update, no_update
+
+    chat_history = chat_history or {}
+    new_peers = {
+        "flow": flow,
+        "country": country,
+        "carrier": carrier,
+        "peers": list(peers),
+    }
+    chat_history["custom_peers"] = new_peers
+
+    # "Pick new peers" path: a carrier-mismatch card is awaiting an answer — drop
+    # it, record the choice, and resume the graph with the freshly chosen set.
+    pending_card = next(
+        (
+            m
+            for m in reversed(chat_history.get("messages", []))
+            if m.get("type") == "ClarifyCard"
+        ),
+        None,
+    )
+    is_mismatch = (
+        chat_history.get("awaiting_clarification")
+        and pending_card
+        and (pending_card.get("payload") or {}).get("kind") == "custom_peer_mismatch"
+    )
+    if is_mismatch:
+        chat_history["messages"] = [
+            m for m in chat_history.get("messages", []) if m.get("type") != "ClarifyCard"
+        ]
+        chat_history["messages"].append(
+            {
+                "type": "HumanMessage",
+                "content": "Use my new custom peers",
+                "rephrased_content": None,
+            }
+        )
+        chat_history["pending_clarification_answer"] = {
+            "action": "use_custom",
+            "custom_peers": new_peers,
+        }
+        chat_history["followups"] = []
+        return chat_history, True, True
+
+    return chat_history, no_update, no_update
+
+
+@callback(
+    Output("custom-peers-cue", "children"),
+    Input("chat-store", "data"),
+)
+def render_custom_peers_cue(chat_history: dict[str, Any]):
+    """Show the composer pill whenever a custom peer set is pinned."""
+    return custom_peers_cue((chat_history or {}).get("custom_peers"))
+
+
+@callback(
+    Output("chat-store", "data", allow_duplicate=True),
+    Input("custom-peers-clear", "n_clicks"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def clear_custom_peers(n_clicks: int, chat_history: dict[str, Any]) -> Any:
+    """The cue's ✕ clears the override; peer queries fall back to the Peers table."""
+    if not n_clicks:
+        return no_update
+    chat_history = chat_history or {}
+    chat_history.pop("custom_peers", None)
+    return chat_history
 
 
 # 3. -------------------------- LOAD COUNTRY OPTIONS AND VALUE ---------------------------------------
@@ -654,6 +943,7 @@ def _app_shell(user_id: int, username: str) -> Component:
                 className="app-body",
             ),
             pitch_builder_drawer(),
+            custom_peers_modal(),
         ],
         className="app-shell",
     )
@@ -896,10 +1186,75 @@ def _append_chart_messages(
         )
 
 
+def _collect_dashboard_charts(
+    updated_state: dict[str, Any], table: str
+) -> list[dict[str, Any]]:
+    """Gather the turn's chart specs as a flat [{rows, chart_data}] list.
+
+    Mirrors the per-route chart selection used for the inline chat rendering, but
+    returns the specs so the Boardroom card can lay them out inside the dashboard
+    instead of appending separate chart blocks.
+    """
+    analyst_charts = updated_state.get("analyst_charts") or []
+    if analyst_charts:
+        return [
+            {
+                "rows": chart.get("rows"),
+                "chart_data": normalize_chart_spec(chart.get("chart_data")),
+            }
+            for chart in analyst_charts
+        ]
+
+    specs: list[dict[str, Any]] = []
+    if table == "survey":
+        specs.append(
+            {
+                "rows": updated_state.get("survey_query_result"),
+                "chart_data": normalize_chart_spec(updated_state.get("survey_chart")),
+            }
+        )
+    elif table == "premium":
+        specs.append(
+            {
+                "rows": updated_state.get("gpr_query_result"),
+                "chart_data": normalize_chart_spec(updated_state.get("gpr_chart")),
+            }
+        )
+    elif table == "both":
+        specs.append(
+            {
+                "rows": updated_state.get("survey_query_result"),
+                "chart_data": normalize_chart_spec(updated_state.get("survey_chart")),
+            }
+        )
+        specs.append(
+            {
+                "rows": updated_state.get("gpr_query_result"),
+                "chart_data": normalize_chart_spec(updated_state.get("gpr_chart")),
+            }
+        )
+    # Keep only specs that have both a chart and rows to draw it from.
+    return [s for s in specs if s.get("rows") and s.get("chart_data")]
+
+
 def _update_chat_history(
     chat_history: dict[str, Any], updated_state: dict[str, Any], table: str
 ) -> dict[str, Any]:
     """Update the Chat History as per the query route"""
+
+    # Boardroom Mode: the terminal boardroom_node distilled the answer into a
+    # structured digest. Render the whole turn as a single inline dashboard card
+    # (KPIs + commentary + charts) instead of plain commentary + chart blocks.
+    boardroom = updated_state.get("boardroom")
+    if boardroom:
+        chat_history["messages"].append(
+            {
+                "type": "Boardroom",
+                "digest": boardroom,
+                "charts": _collect_dashboard_charts(updated_state, table),
+            }
+        )
+        return chat_history
 
     # The analyst agent produces its own list of up to 3 charts (each with its own
     # rows). When present, render those instead of the single per-flow chart that
@@ -1059,6 +1414,7 @@ NODE_LABELS = {
     "gimmi_sql_fixer_agent": "Refining the query",
     "gimmi_insight": "Writing the GIMMI insight",
     "followup_node": "Suggesting follow-ups",
+    "boardroom_node": "Building the boardroom view",
 }
 
 
@@ -1116,10 +1472,14 @@ def _launch_job(thread_id: str, input_obj: Any) -> None:
     Input("trigger-gpt", "data"),
     State("chat-store", "data"),
     State("user-store", "data"),
+    State("boardroom-mode-store", "data"),
     prevent_initial_call=True,
 )
 def launch_new_job(
-    is_trigger: bool, chat_history: dict[str, Any], user_store: dict[str, Any]
+    is_trigger: bool,
+    chat_history: dict[str, Any],
+    user_store: dict[str, Any],
+    boardroom_mode: bool,
 ) -> tuple[bool, bool | NoUpdate, str | NoUpdate]:
     """Kick off a streaming run for a new user turn (non-blocking)."""
     if not is_trigger:
@@ -1132,12 +1492,16 @@ def launch_new_job(
         msg for msg in chat_history["messages"] if msg["type"] == "HumanMessage"
     ][-1]["content"]
 
+    custom_peers = chat_history.get("custom_peers") or None
     state_obj = AgentState(
         messages=[HumanMessage(content=user_input)],
         user_id=str(user_id) if user_id is not None else None,
         survey_attempts=0,
         gpr_attempts=0,
         gimmi_attempts=0,
+        custom_peers=custom_peers,
+        custom_peers_active=bool(custom_peers and custom_peers.get("peers")),
+        boardroom_mode=bool(boardroom_mode),
     )
     _launch_job(thread_id, state_obj)
     return False, False, "Starting…"
@@ -1298,7 +1662,28 @@ def render_chat(
 
     if chat_history:
         for msg_idx, msg in enumerate(chat_history["messages"]):
-            if msg["type"] == "SQLOutputForCharts":
+            if msg["type"] == "Boardroom":
+                # Build real plotly figures from the attached chart specs, then
+                # hand the digest + figures to the inline dashboard card.
+                figures: list[Any] = []
+                for spec in msg.get("charts") or []:
+                    chart_data = spec.get("chart_data")
+                    rows = spec.get("rows")
+                    if not chart_data or not rows:
+                        continue
+                    try:
+                        fig, _ = generate_chart(
+                            df=pd.DataFrame(rows), chart_outputs=chart_data
+                        )
+                        if fig is not None:
+                            figures.append(fig)
+                    except Exception:
+                        logger.exception("Boardroom: failed to build a chart figure")
+                chat_items.append(
+                    boardroom_card(msg.get("digest") or {}, figures, idx=msg_idx)
+                )
+
+            elif msg["type"] == "SQLOutputForCharts":
                 # Skip entirely when there is no chart spec or no rows (e.g. an
                 # analyst turn whose route had no per-flow chart attached).
                 if not msg.get("chart_data") or not msg.get("updated_query"):
@@ -1475,6 +1860,7 @@ def ask_suggested_question(
     Output("chat-store", "data", allow_duplicate=True),
     Output("trigger-resume", "data", allow_duplicate=True),
     Output("is-thinking", "data", allow_duplicate=True),
+    Output("custom-peers-open", "data", allow_duplicate=True),
     Input({"type": "clarify-option", "value": ALL}, "n_clicks"),
     Input("clarify-free-submit", "n_clicks"),
     State("clarify-free-text", "value"),
@@ -1486,7 +1872,7 @@ def submit_clarification(
     free_clicks: int | None,
     free_text: str | None,
     chat_history: dict[str, Any],
-) -> tuple[dict[str, Any] | NoUpdate, Optional[bool], Optional[bool]]:
+) -> tuple[Any, Any, Any, Any]:
     """Record the user's MCQ answer, drop the card, and trigger the resume worker.
 
     Kept deliberately fast (no LLM call) so the thinking indicator paints
@@ -1498,21 +1884,39 @@ def submit_clarification(
 
     # Guard the spurious fire when the card first mounts (n_clicks 0/None).
     if not triggered_value:
-        return no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update
 
     if isinstance(triggered, dict) and triggered.get("type") == "clarify-option":
         answer = (triggered.get("value") or "").strip()
     elif triggered == "clarify-free-submit":
         answer = (free_text or "").strip()
     else:
-        return no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update
 
     if not answer:
-        return no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update
 
     chat_history = chat_history or {}
     if not chat_history.get("awaiting_clarification"):
-        return no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update
+
+    # "Pick new peers" on the carrier-mismatch card opens the Custom Peers dialog
+    # instead of resuming; the thread stays paused until apply_custom_peers resumes
+    # it with the freshly chosen set. Leave the card + awaiting flag intact.
+    pending_card = next(
+        (
+            m
+            for m in reversed(chat_history.get("messages", []))
+            if m.get("type") == "ClarifyCard"
+        ),
+        None,
+    )
+    if (
+        pending_card
+        and (pending_card.get("payload") or {}).get("kind") == "custom_peer_mismatch"
+        and answer == "Pick new peers"
+    ):
+        return no_update, no_update, no_update, True
 
     # Drop the clarify card; record the answer in the transcript as a user turn.
     chat_history["messages"] = [
@@ -1526,7 +1930,7 @@ def submit_clarification(
     chat_history["pending_clarification_answer"] = answer
     chat_history["followups"] = []
 
-    return chat_history, True, True
+    return chat_history, True, True, no_update
 
 
 # 5. -------------------------- DOWNLOAD BTN FOR ADDITIONAL DATA ---------------------------------------

@@ -223,3 +223,40 @@ def pitch_cache_key(*parts: list[str]):
 
 def has_pitch_filters(country: str | None, carrier: str | None, year: int | None):
     return bool(country and carrier and year)
+
+
+# ── CUSTOM PEERS  ───────────────────────────────────────────────────────────────────────────
+# Peer selection for the "Custom Peers" dialog. GPR peers are `Carrier_Group`
+# values, survey peers are `Carrier` values; both are sourced from the precomputed
+# country->carrier maps so no DB round-trip is needed.
+from config.valid_values_config import (  # noqa: E402 - kept local to this feature
+    valid_country_carrier,
+    valid_country_carrier_gpr,
+)
+
+
+def _peer_country_map(flow: str) -> dict[str, list[str]]:
+    return valid_country_carrier_gpr if (flow or "").lower() == "gpr" else valid_country_carrier
+
+
+def distinct_peer_countries(flow: str) -> OptionList:
+    """Countries available for the chosen data source (GPR or Survey)."""
+    return _sort_pitch_values(set(_peer_country_map(flow).keys()))
+
+
+def distinct_peer_carriers(flow: str, country: str | None) -> OptionList:
+    """Carriers (Survey) / Carrier_Groups (GPR) for `country`, case-insensitively."""
+    if not country:
+        return []
+    mapping = _peer_country_map(flow)
+    target = country.strip().lower()
+    for key, carriers in mapping.items():
+        if key.strip().lower() == target:
+            # De-dupe case/space variants while preserving the canonical spelling.
+            seen: dict[str, str] = {}
+            for carrier in carriers:
+                norm = str(carrier).strip().lower()
+                if norm and norm not in seen:
+                    seen[norm] = str(carrier).strip()
+            return _sort_pitch_values(set(seen.values()))
+    return []

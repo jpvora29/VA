@@ -49,6 +49,8 @@ def analyst_agent_node(state: AgentState) -> AgentState:
         "route": route,
         "flow": flow,
         "routing_context": state.get("routing_context"),
+        "custom_peers": state.get("custom_peers"),
+        "custom_peers_active": state.get("custom_peers_active", False),
         "evidence": [],
     }
 
