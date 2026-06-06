@@ -136,6 +136,77 @@ class ComparisonView(BaseModel):
     )
 
 
+# ─────────── Query-dependent advanced widgets (populate only when relevant) ───────────
+
+
+class TimelineEvent(BaseModel):
+    """One dated movement in the carrier's history."""
+
+    period: str = Field(description="Year or year-quarter, e.g. '2022' or '2023 Q2'.")
+    title: str = Field(description="Short event title, e.g. 'Premium +12%' or 'Rank #10 → #14'.")
+    detail: str = Field(default="", description="One short supporting line. May be empty.")
+    category: Literal["premium", "rank", "score", "product", "other"] = Field(
+        default="other", description="Which kind of movement this is."
+    )
+    tone: Tone = Field(default="neutral")
+
+
+class MapCell(BaseModel):
+    """One product×country cell in the opportunity heatmap."""
+
+    row: str = Field(description="Product / segment label (heatmap row).")
+    col: str = Field(description="Country / market label (heatmap column).")
+    intensity: int = Field(
+        default=0, ge=0, le=100,
+        description="Whitespace/growth-priority intensity 0-100 (higher = bigger opportunity).",
+    )
+    tone: Tone = Field(default="neutral", description="Cell sentiment (good=priority, warn=watch).")
+    note: str = Field(default="", description="Optional short hover note.")
+
+
+class OpportunityMap(BaseModel):
+    """A country×product whitespace / growth-priority heatmap."""
+
+    rows: List[str] = Field(default_factory=list, description="Row labels (products/segments).")
+    cols: List[str] = Field(default_factory=list, description="Column labels (countries/markets).")
+    cells: List[MapCell] = Field(default_factory=list, description="Populated cells (sparse ok).")
+    legend: str = Field(default="", description="Short legend, e.g. 'Darker = higher growth priority'.")
+
+
+class Opportunity(BaseModel):
+    """One detected whitespace where the carrier trails Marsh/peer activity."""
+
+    area: str = Field(description="Opportunity area, e.g. 'Cyber — Canada' or 'Construction segment'.")
+    dimension: Literal["product", "segment", "industry", "country", "other"] = Field(
+        default="product"
+    )
+    carrier_level: str = Field(default="", description="The carrier's current presence/premium.")
+    peer_level: str = Field(default="", description="Marsh/peer activity level for context.")
+    gap_score: int = Field(
+        default=0, ge=0, le=100,
+        description="Size of the opportunity 0-100 (carrier low + peer/Marsh high = high).",
+    )
+    recommendation: str = Field(default="", description="One-line suggested move.")
+    tone: Tone = Field(default="good")
+
+
+class PositioningPoint(BaseModel):
+    """One carrier plotted on the premium-strength vs broker-perception matrix."""
+
+    label: str = Field(description="Carrier name.")
+    premium_strength: int = Field(default=50, ge=0, le=100, description="X axis 0-100.")
+    broker_perception: int = Field(default=50, ge=0, le=100, description="Y axis 0-100.")
+    is_subject: bool = Field(default=False, description="True for the carrier in focus.")
+    tone: Tone = Field(default="neutral")
+
+
+class PositioningMatrix(BaseModel):
+    """2x2: premium strength (x) vs broker perception (y)."""
+
+    points: List[PositioningPoint] = Field(default_factory=list)
+    note: str = Field(default="", description="Optional one-line read of the positioning.")
+
+
 class BoardroomDigest(BaseModel):
     """Structured dashboard view of a single answer."""
 
@@ -186,6 +257,38 @@ class BoardroomDigest(BaseModel):
         ),
     )
 
+    # ── Query-dependent advanced widgets — populate ONLY when the data supports them ──
+    timeline: List[TimelineEvent] = Field(
+        default_factory=list,
+        description=(
+            "Insight Timeline: major carrier movements across periods (premium growth, rank "
+            "moves, score shifts, product changes). Populate ONLY when the answer spans "
+            "multiple years/periods; else empty."
+        ),
+    )
+    opportunity_map: Optional[OpportunityMap] = Field(
+        default=None,
+        description=(
+            "Market Opportunity Map: a country×product whitespace/growth heatmap. Populate "
+            "ONLY when the answer covers multiple countries and/or products; else null."
+        ),
+    )
+    opportunities: List[Opportunity] = Field(
+        default_factory=list,
+        description=(
+            "Opportunity Radar: detected whitespace where the carrier's premium is low but "
+            "Marsh/peer activity is high. Populate ONLY when the data exposes such gaps; else empty."
+        ),
+    )
+    positioning: Optional[PositioningMatrix] = Field(
+        default=None,
+        description=(
+            "Peer Positioning Matrix (2x2: premium strength vs broker perception). Populate "
+            "ONLY when BOTH premium and survey/perception signals are present for the carriers; "
+            "else null."
+        ),
+    )
+
 
 class BoardroomSignature(dspy.Signature):
     """
@@ -211,6 +314,18 @@ class BoardroomSignature(dspy.Signature):
     - 1-3 commentary sections (heading + 2-4 crisp bullets) distilled from the
       written analysis.
     - 0-4 risk items only if the analysis genuinely surfaces risks.
+
+    [QUERY-DEPENDENT WIDGETS — populate ONLY when the data clearly supports them]
+    - timeline: when the answer spans multiple years/periods, list the major
+      movements (premium, rank, score, product) in order.
+    - opportunity_map: when multiple countries and/or products are covered, build a
+      country×product whitespace/growth heatmap (sparse cells are fine).
+    - opportunities: when the data exposes whitespace (carrier premium low while
+      Marsh/peer activity is high), list those gaps with a gap_score and a move.
+    - positioning: when BOTH premium strength AND broker/survey perception signals
+      exist for the carriers, place them on the 2x2 matrix.
+    Leave each of these empty/null when the current answer does not support it.
+    Do NOT fabricate periods, countries, products, or perception scores.
     - A `comparison` block WHEN AND ONLY WHEN the answer compares two or more
       entities (carrier vs peer set, several carriers, or one metric across
       subjects). Align every metric's values to the subject order so the UI can

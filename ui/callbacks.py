@@ -289,6 +289,39 @@ def render_boardroom_mode_cue(is_on: bool):
     return boardroom_mode_cue(bool(is_on))
 
 
+# Multi-page boardroom card: a clientside pager. For each card (MATCH on idx), the
+# clicked dot's `page` becomes active — its page is shown and the rest hidden.
+# Pure clientside so paging never round-trips to the server or re-runs the graph.
+clientside_callback(
+    """
+    function(nClicks) {
+        const n = (nClicks || []).length;
+        let active = 0;
+        const ctx = (window.dash_clientside && window.dash_clientside.callback_context) || null;
+        if (ctx && ctx.triggered && ctx.triggered.length && ctx.triggered[0].prop_id
+            && ctx.triggered[0].prop_id !== '.') {
+            try { active = JSON.parse(ctx.triggered[0].prop_id.split('.')[0]).page; }
+            catch (e) { active = 0; }
+        } else {
+            let mx = -1;
+            for (let i = 0; i < n; i++) { const v = nClicks[i] || 0; if (v > mx) { mx = v; active = i; } }
+            if (mx <= 0) active = 0;
+        }
+        const styles = [];
+        const classes = [];
+        for (let i = 0; i < n; i++) {
+            styles.push(i === active ? {} : {display: 'none'});
+            classes.push(i === active ? 'bm-pager-dot active' : 'bm-pager-dot');
+        }
+        return [styles, classes];
+    }
+    """,
+    Output({"type": "bm-page", "idx": MATCH, "page": ALL}, "style"),
+    Output({"type": "bm-pager-dot", "idx": MATCH, "page": ALL}, "className"),
+    Input({"type": "bm-pager-dot", "idx": MATCH, "page": ALL}, "n_clicks"),
+)
+
+
 # ════════════════════════════ CUSTOM PEERS ════════════════════════════════════
 # A session-scoped, hand-picked peer set. Opened from the composer "+" menu; the
 # selection is stored inside chat-store ("custom_peers") so it persists per
@@ -309,11 +342,21 @@ def render_boardroom_mode_cue(is_on: bool):
 def toggle_custom_peers_modal(
     open_clicks: int, edit_clicks: int, cancel_clicks: int, apply_clicks: int, is_open: bool
 ) -> bool | NoUpdate:
-    """Open the Custom Peers dialog from the "+" menu or the cue; close on cancel/apply."""
+    """Open the Custom Peers dialog from the "+" menu or the cue; close on cancel/apply.
+
+    Guard every branch on a *truthy* n_clicks: the `allow_optional` inputs fire a
+    spurious callback as they mount, with `triggered_id` resolving to one of these
+    ids but n_clicks still 0/None. Without the click guard that spurious fire would
+    open the dialog on page load.
+    """
     triggered = ctx.triggered_id
-    if triggered in ("menu-custom-peers", "custom-peers-edit"):
+    if triggered == "menu-custom-peers" and open_clicks:
         return True
-    if triggered in ("custom-peers-cancel", "custom-peers-apply"):
+    if triggered == "custom-peers-edit" and edit_clicks:
+        return True
+    if triggered == "custom-peers-cancel" and cancel_clicks:
+        return False
+    if triggered == "custom-peers-apply" and apply_clicks:
         return False
     return no_update
 
@@ -1666,7 +1709,10 @@ def render_chat(
     chat_items: list[Any] = []
     chart_idx = 0  # unique, stable per-chart id for the Chart/Data toggle
 
-    if chat_history:
+    # Guard on messages presence: chat-store can hold side state (e.g. custom_peers)
+    # before any turn exists. Returning [] then would wipe the welcome hero, so only
+    # re-render once there is an actual transcript.
+    if chat_history and chat_history.get("messages"):
         for msg_idx, msg in enumerate(chat_history["messages"]):
             if msg["type"] == "Boardroom":
                 # Build real plotly figures from the attached chart specs, then
@@ -1682,6 +1728,15 @@ def render_chat(
                             df=pd.DataFrame(rows), chart_outputs=chart_data
                         )
                         if fig is not None:
+                            # Compact the figure so charts read as dashboard widgets
+                            # (smaller, tighter) rather than dominating the card.
+                            fig.update_layout(
+                                height=260,
+                                margin=dict(l=8, r=8, t=36, b=8),
+                                font=dict(size=11),
+                                title=dict(font=dict(size=13)),
+                                legend=dict(font=dict(size=10)),
+                            )
                             figures.append(fig)
                     except Exception:
                         logger.exception("Boardroom: failed to build a chart figure")

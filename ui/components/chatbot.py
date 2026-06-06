@@ -997,12 +997,220 @@ def _bm_comparison(comp: dict):
     )
 
 
-def boardroom_card(digest: dict, figures: list | None = None, idx: int = 0):
-    """The inline Boardroom dashboard: one self-contained card for an answer.
+_TONE_RGB = {
+    "good": "31,157,85",
+    "warn": "240,180,41",
+    "danger": "197,53,50",
+    "neutral": "11,75,255",
+}
 
-    Layout: header (title + Export to PPT) · KPI row · [commentary rail | charts]
-    · risks. `digest` is the `BoardroomDigest` dict from the boardroom_node;
-    `figures` are pre-built plotly figures for the attached chart specs.
+
+def _tone_rgba(tone: str, opacity: float) -> str:
+    return f"rgba({_TONE_RGB.get(_bm_tone(tone), _TONE_RGB['neutral'])},{round(opacity, 2)})"
+
+
+def _bm_widget(title: str, icon: str, body, extra_class: str = ""):
+    """Standard widget shell: a section title + a panel — keeps every analytic
+    widget visually consistent with the rest of the dashboard."""
+    return html.Div(
+        [
+            html.Div(
+                [html.I(className=icon), html.Span(title)],
+                className="bm-section-title",
+            ),
+            body,
+        ],
+        className=("bm-widget " + extra_class).strip(),
+    )
+
+
+def _bm_timeline(events: list):
+    """Insight Timeline — major carrier movements across periods."""
+    cat_icon = {
+        "premium": "bi bi-cash-stack",
+        "rank": "bi bi-trophy",
+        "score": "bi bi-stars",
+        "product": "bi bi-box-seam",
+        "other": "bi bi-dot",
+    }
+    items = []
+    for e in events:
+        tone = _bm_tone(e.get("tone"))
+        items.append(
+            html.Div(
+                [
+                    html.Div(e.get("period", ""), className="bm-tl-period"),
+                    html.Div(className=f"bm-tl-dot {tone}"),
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.I(className=cat_icon.get(e.get("category", "other"), "bi bi-dot")),
+                                    html.Span(e.get("title", "")),
+                                ],
+                                className="bm-tl-title",
+                            ),
+                            html.Div(e.get("detail", ""), className="bm-tl-detail")
+                            if e.get("detail")
+                            else None,
+                        ],
+                        className="bm-tl-body",
+                    ),
+                ],
+                className="bm-tl-item",
+            )
+        )
+    return _bm_widget(
+        "Insight timeline", "bi bi-hourglass-split", html.Div(items, className="bm-timeline")
+    )
+
+
+def _bm_opportunity_map(m: dict):
+    """Market Opportunity Map — country×product whitespace/growth heatmap."""
+    rows = m.get("rows") or []
+    cols = m.get("cols") or []
+    cells = m.get("cells") or []
+    if not rows or not cols:
+        return None
+    lut = {(c.get("row"), c.get("col")): c for c in cells}
+    grid_style = {
+        "gridTemplateColumns": f"minmax(96px, 1.3fr) repeat({len(cols)}, minmax(56px, 1fr))"
+    }
+    header = [html.Div("", className="bm-map-cell bm-map-corner")] + [
+        html.Div(c, className="bm-map-cell bm-map-colhead") for c in cols
+    ]
+    body_rows = [html.Div(header, className="bm-map-row bm-map-head")]
+    for r in rows:
+        cells_row = [html.Div(r, className="bm-map-cell bm-map-rowhead")]
+        for c in cols:
+            cell = lut.get((r, c))
+            if cell:
+                inten = max(0, min(100, int(cell.get("intensity", 0))))
+                tone = _bm_tone(cell.get("tone"))
+                cells_row.append(
+                    html.Div(
+                        str(inten),
+                        className=f"bm-map-cell bm-map-val {tone}",
+                        style={"backgroundColor": _tone_rgba(tone, 0.12 + 0.0085 * inten)},
+                        title=cell.get("note") or f"{r} · {c}: {inten}",
+                    )
+                )
+            else:
+                cells_row.append(html.Div("", className="bm-map-cell bm-map-empty"))
+        body_rows.append(html.Div(cells_row, className="bm-map-row"))
+    grid = html.Div(body_rows, className="bm-map-grid", style=grid_style)
+    legend = (
+        html.Div(m.get("legend", ""), className="bm-map-legend") if m.get("legend") else None
+    )
+    return _bm_widget(
+        "Market opportunity map", "bi bi-globe-americas", html.Div([grid, legend])
+    )
+
+
+def _bm_radar(ops: list):
+    """Opportunity Radar — ranked whitespace gaps (carrier low, Marsh/peers high)."""
+    ops = sorted(ops, key=lambda o: o.get("gap_score", 0), reverse=True)
+    items = []
+    for o in ops:
+        tone = _bm_tone(o.get("tone"))
+        gap = max(0, min(100, int(o.get("gap_score", 0))))
+        levels = None
+        if o.get("carrier_level") or o.get("peer_level"):
+            levels = html.Div(
+                [
+                    html.Span(
+                        [html.I(className="bi bi-building"), f"Carrier: {o.get('carrier_level', '—')}"],
+                        className="bm-opp-meta",
+                    ),
+                    html.Span(
+                        [html.I(className="bi bi-people"), f"Marsh/Peers: {o.get('peer_level', '—')}"],
+                        className="bm-opp-meta",
+                    ),
+                ],
+                className="bm-opp-levels",
+            )
+        items.append(
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Span(o.get("area", ""), className="bm-opp-area"),
+                            html.Span((o.get("dimension", "") or "").title(), className="bm-opp-dim"),
+                            html.Span(str(gap), className=f"bm-opp-score {tone}"),
+                        ],
+                        className="bm-opp-head",
+                    ),
+                    html.Div(
+                        html.Div(className=f"bm-opp-fill {tone}", style={"width": f"{gap}%"}),
+                        className="bm-opp-track",
+                    ),
+                    levels,
+                    html.Div(
+                        [html.I(className="bi bi-arrow-right-circle"), html.Span(o.get("recommendation", ""))],
+                        className="bm-opp-rec",
+                    )
+                    if o.get("recommendation")
+                    else None,
+                ],
+                className="bm-opp-item",
+            )
+        )
+    return _bm_widget("Opportunity radar", "bi bi-radar", html.Div(items, className="bm-opp-list"))
+
+
+def _bm_positioning(mx: dict):
+    """Peer Positioning Matrix — 2x2 premium strength vs broker perception."""
+    pts = mx.get("points") or []
+    if not pts:
+        return None
+    dots = []
+    for p in pts:
+        x = max(0, min(100, int(p.get("premium_strength", 50))))
+        y = max(0, min(100, int(p.get("broker_perception", 50))))
+        tone = _bm_tone(p.get("tone"))
+        sub = " subject" if p.get("is_subject") else ""
+        dots.append(
+            html.Div(
+                [
+                    html.Span(className=f"bm-pos-dot {tone}{sub}"),
+                    html.Span(p.get("label", ""), className="bm-pos-label"),
+                ],
+                className="bm-pos-point",
+                style={"left": f"{x}%", "bottom": f"{y}%"},
+                title=f"{p.get('label', '')}: premium {x}, perception {y}",
+            )
+        )
+    plot = html.Div(
+        [
+            html.Div("Emerging", className="bm-pos-q q-tl"),
+            html.Div("Strong", className="bm-pos-q q-tr"),
+            html.Div("Underperforming", className="bm-pos-q q-bl"),
+            html.Div("Vulnerable", className="bm-pos-q q-br"),
+            html.Div(className="bm-pos-axis-x"),
+            html.Div(className="bm-pos-axis-y"),
+        ]
+        + dots,
+        className="bm-pos-plot",
+    )
+    wrap = html.Div(
+        [
+            html.Div("Broker perception →", className="bm-pos-ylab"),
+            html.Div(plot, className="bm-pos-plotwrap"),
+            html.Div("Premium strength →", className="bm-pos-xlab"),
+        ],
+        className="bm-pos-wrap",
+    )
+    note = html.Div(mx.get("note", ""), className="bm-pos-note") if mx.get("note") else None
+    return _bm_widget("Peer positioning matrix", "bi bi-grid-3x3", html.Div([wrap, note]))
+
+
+def boardroom_card(digest: dict, figures: list | None = None, idx: int = 0):
+    """The inline Boardroom dashboard: one self-contained, multi-page card.
+
+    The content is split across pages (Summary · Visuals · Opportunities ·
+    Battlecards) with a pager below, so the first page stays clean and charts /
+    heavy analytics live on later pages. Empty pages are dropped. `digest` is the
+    `BoardroomDigest` dict from boardroom_node; `figures` are prebuilt plotly figs.
     """
     digest = digest or {}
     figures = figures or []
@@ -1055,57 +1263,57 @@ def boardroom_card(digest: dict, figures: list | None = None, idx: int = 0):
 
     # ── Executive insight cards ──────────────────────────────────────────────
     insights_row = (
-        html.Div(
-            [
-                html.Div(
-                    [html.I(className="bi bi-stars"), html.Span("Executive insights")],
-                    className="bm-section-title",
-                ),
-                html.Div([_bm_insight(c) for c in insights], className="bm-insight-grid"),
-            ],
-            className="bm-insights",
+        _bm_widget(
+            "Executive insights",
+            "bi bi-stars",
+            html.Div([_bm_insight(c) for c in insights], className="bm-insight-grid"),
         )
         if insights
         else None
     )
 
-    # ── Carrier battlecards ──────────────────────────────────────────────────
-    battlecards_section = (
-        html.Div(
-            [
-                html.Div(
-                    [
-                        html.I(className="bi bi-clipboard-data"),
-                        html.Span("Carrier battlecards"),
-                    ],
-                    className="bm-section-title",
-                ),
-                html.Div(
-                    [_bm_battlecard(b) for b in battlecards], className="bm-bc-grid"
-                ),
-            ],
-            className="bm-battlecards"
+    # ── Editable commentary (headline + sections) ────────────────────────────
+    comm_children = []
+    if headline:
+        comm_children.append(html.Div(headline, className="bm-headline"))
+    comm_children.extend(_bm_commentary(s) for s in commentary)
+    commentary_block = None
+    if comm_children:
+        commentary_block = _bm_widget(
+            "Commentary",
+            "bi bi-card-text",
+            html.Div(
+                [
+                    html.Div(
+                        comm_children,
+                        className="bm-rail-editable",
+                        contentEditable="true",
+                    ),
+                    html.Div(
+                        [
+                            html.I(className="bi bi-pencil"),
+                            html.Span("Editable — click any line to refine"),
+                        ],
+                        className="bm-edit-hint",
+                    ),
+                ]
+            ),
+            extra_class="bm-commentary-widget",
         )
-        if battlecards
+
+    risks_block = (
+        _bm_widget(
+            "Risks & watch items",
+            "bi bi-exclamation-triangle",
+            html.Div([_bm_risk(r) for r in risks], className="bm-risk-block"),
+        )
+        if risks
         else None
     )
 
-    # ── Commentary rail (left) ───────────────────────────────────────────────
-    rail_children = []
-    if headline:
-        rail_children.append(html.Div(headline, className="bm-headline"))
-    rail_children.extend(_bm_commentary(s) for s in commentary)
-    if risks:
-        rail_children.append(
-            html.Div(
-                [html.Div("Risks & watch items", className="bm-commentary-heading")]
-                + [_bm_risk(r) for r in risks],
-                className="bm-risk-block",
-            )
-        )
-    commentary_rail = html.Div(rail_children, className="bm-rail")
+    comparison_panel = _bm_comparison(comparison) if comparison else None
 
-    # ── Charts (right) ───────────────────────────────────────────────────────
+    # ── Charts (smaller, widget-styled grid) ─────────────────────────────────
     chart_panels = [
         html.Div(
             dcc.Graph(
@@ -1117,35 +1325,86 @@ def boardroom_card(digest: dict, figures: list | None = None, idx: int = 0):
         )
         for fig in figures
     ]
-    charts_col = (
-        html.Div(chart_panels, className="bm-charts")
-        if chart_panels
-        else html.Div(
-            html.Div(
-                [
-                    html.I(className="bi bi-bar-chart-line"),
-                    html.Span("No chart for this view"),
-                ],
-                className="bm-charts-empty",
-            ),
-            className="bm-charts",
+    charts_widget = (
+        _bm_widget(
+            "Charts",
+            "bi bi-bar-chart-line",
+            html.Div(chart_panels, className="bm-charts-grid"),
         )
+        if chart_panels
+        else None
     )
 
-    body = html.Div([commentary_rail, charts_col], className="bm-body")
+    # ── Carrier battlecards ──────────────────────────────────────────────────
+    battlecards_section = (
+        _bm_widget(
+            "Carrier battlecards",
+            "bi bi-clipboard-data",
+            html.Div([_bm_battlecard(b) for b in battlecards], className="bm-bc-grid"),
+        )
+        if battlecards
+        else None
+    )
 
-    comparison_panel = _bm_comparison(comparison) if comparison else None
+    # ── Query-dependent advanced widgets ─────────────────────────────────────
+    positioning_panel = _bm_positioning(digest.get("positioning")) if digest.get("positioning") else None
+    opp_map_panel = _bm_opportunity_map(digest.get("opportunity_map")) if digest.get("opportunity_map") else None
+    radar_panel = _bm_radar(digest.get("opportunities")) if digest.get("opportunities") else None
+    timeline_panel = _bm_timeline(digest.get("timeline")) if digest.get("timeline") else None
 
-    children = [header]
-    if kpi_row is not None:
-        children.append(kpi_row)
-    if insights_row is not None:
-        children.append(insights_row)
-    if comparison_panel is not None:
-        children.append(comparison_panel)
-    children.append(body)
-    if battlecards_section is not None:
-        children.append(battlecards_section)
+    # ── Compose pages (drop empties) ─────────────────────────────────────────
+    def _clean(items):
+        return [x for x in items if x is not None]
+
+    page_specs = [
+        ("Summary", "bi bi-clipboard2-pulse",
+         _clean([kpi_row, insights_row, commentary_block, risks_block, comparison_panel])),
+        ("Visuals", "bi bi-graph-up-arrow",
+         _clean([charts_widget, positioning_panel, opp_map_panel])),
+        ("Opportunities", "bi bi-compass",
+         _clean([radar_panel, timeline_panel])),
+        ("Battlecards", "bi bi-clipboard-data",
+         _clean([battlecards_section])),
+    ]
+    pages = [(t, ic, secs) for (t, ic, secs) in page_specs if secs]
+    if not pages:
+        pages = [
+            (
+                "Summary",
+                "bi bi-clipboard2-pulse",
+                [html.Div(
+                    [html.I(className="bi bi-info-circle"), html.Span("No structured view for this answer.")],
+                    className="bm-charts-empty",
+                )],
+            )
+        ]
+
+    page_divs = [
+        html.Div(
+            secs,
+            id={"type": "bm-page", "idx": idx, "page": p},
+            className="bm-page",
+            style=({} if p == 0 else {"display": "none"}),
+        )
+        for p, (t, ic, secs) in enumerate(pages)
+    ]
+
+    children = [header, html.Div(page_divs, className="bm-pages")]
+
+    if len(pages) > 1:
+        pager = html.Div(
+            [
+                html.Button(
+                    [html.I(className=ic), html.Span(t)],
+                    id={"type": "bm-pager-dot", "idx": idx, "page": p},
+                    n_clicks=0,
+                    className="bm-pager-dot" + (" active" if p == 0 else ""),
+                )
+                for p, (t, ic, secs) in enumerate(pages)
+            ],
+            className="bm-pager",
+        )
+        children.append(pager)
 
     return html.Div(children, className="message boardroom-card")
 
