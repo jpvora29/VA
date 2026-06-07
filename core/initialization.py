@@ -29,6 +29,14 @@ from logger import get_logger
 load_dotenv()
 logger = get_logger(__name__)
 
+# Per-request latency guards. Without these, a stalled/rate-limited Azure call
+# hangs a turn indefinitely — most visibly at the terminal follow-up node, which
+# leaves the UI stuck on "Suggesting follow-ups" until the background thread
+# eventually finishes. A bounded timeout + small retry cap makes the worst case a
+# short, recoverable wait instead. Both are env-overridable.
+_LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "60"))
+_LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "2"))
+
 
 class Initialization:
     """Process-wide LLM clients and database engine.
@@ -43,6 +51,8 @@ class Initialization:
         azure_endpoint=os.getenv("ENDPOINT"),
         api_version=os.getenv("VERSION"),
         model="gpt-41-mini",
+        timeout=_LLM_TIMEOUT,
+        max_retries=_LLM_MAX_RETRIES,
     )
 
     # Expressive variant (LangChain) for the pitch narrative + report writer, so
@@ -55,6 +65,8 @@ class Initialization:
         api_version=os.getenv("VERSION"),
         model="gpt-41-mini",
         temperature=0.4,
+        timeout=_LLM_TIMEOUT,
+        max_retries=_LLM_MAX_RETRIES,
     )
 
     # Dedicated low-cost client for context compression (LangChain
@@ -69,6 +81,8 @@ class Initialization:
         api_version=os.getenv("VERSION"),
         model="gpt-4o-mini",
         temperature=0,
+        timeout=_LLM_TIMEOUT,
+        max_retries=_LLM_MAX_RETRIES,
     )
 
     dspy_llm: dspy.LM = dspy.LM(
@@ -77,6 +91,8 @@ class Initialization:
         api_version=os.getenv("VERSION"),
         model=f"azure/{os.getenv('DEPLOYMENT')}",
         temperature=0,
+        num_retries=_LLM_MAX_RETRIES,
+        timeout=_LLM_TIMEOUT,
     )
 
     # Expressive variant for narrative nodes (chat responses, combined insight,
@@ -89,6 +105,8 @@ class Initialization:
         api_version=os.getenv("VERSION"),
         model=f"azure/{os.getenv('DEPLOYMENT')}",
         temperature=0.4,
+        num_retries=_LLM_MAX_RETRIES,
+        timeout=_LLM_TIMEOUT,
     )
 
     dspy.configure(lm=dspy_llm)

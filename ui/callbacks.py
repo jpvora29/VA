@@ -1710,21 +1710,6 @@ def _persist_turn(
         return
     thread_id = chat_history.get("thread_id")
     try:
-        # Generate a nice sidebar title once, from the opening question, and cache
-        # it on chat_history so re-saves (and the returned store) reuse it.
-        if not (chat_history.get("title") or "").strip():
-            first_human = next(
-                (
-                    m.get("content")
-                    for m in chat_history.get("messages", [])
-                    if m.get("type") == "HumanMessage" and (m.get("content") or "").strip()
-                ),
-                None,
-            )
-            if first_human:
-                nice = _generate_conversation_title(first_human)
-                if nice:
-                    chat_history["title"] = nice
         save_conversation(user_id, thread_id, chat_history)
         last_human = next(
             (
@@ -1742,6 +1727,53 @@ def _persist_turn(
             invalidate_suggestions(user_id)
     except Exception:  # pragma: no cover - never break a turn on persistence
         logger.exception("Failed to persist turn / record episode")
+
+
+@callback(
+    Output("chat-store", "data", allow_duplicate=True),
+    Input("chat-store", "data"),
+    State("user-store", "data"),
+    prevent_initial_call=True,
+)
+def generate_chat_title(
+    chat_history: dict[str, Any], user_store: dict[str, Any]
+) -> Any:
+    """Generate the nice sidebar title in its OWN request, off the commit path.
+
+    This used to live in `_persist_turn`, which runs inside `poll_job` *before* it
+    returns the committed answer — so the blocking title LLM call held the answer
+    off-screen (UI stuck on "Suggesting follow-ups") on the first turn. Here it
+    fires only after the answer is already committed + rendered: we caption the
+    chat once (when a title is missing and an answer exists), write it back to the
+    store, and let `persist_chat_edits` + `refresh_sidebar` pick it up.
+    """
+    if not chat_history or (chat_history.get("title") or "").strip():
+        return no_update
+    msgs = chat_history.get("messages") or []
+    has_answer = any(
+        m.get("type") in ("AIMessage", "Boardroom", "DataOverflow") for m in msgs
+    )
+    first_q = next(
+        (
+            m.get("content")
+            for m in msgs
+            if m.get("type") == "HumanMessage" and (m.get("content") or "").strip()
+        ),
+        None,
+    )
+    if not has_answer or not first_q:
+        return no_update
+    title = _generate_conversation_title(first_q)
+    if not title:
+        return no_update
+    chat_history["title"] = title
+    # Persist immediately so the sidebar refresh (which reads from the DB) shows
+    # the new title on this same store update.
+    user_id, _ = _current_user(user_store)
+    thread_id = chat_history.get("thread_id")
+    if user_id is not None and thread_id:
+        save_conversation(user_id, thread_id, chat_history)
+    return chat_history
 
 
 @callback(
