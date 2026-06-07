@@ -1731,22 +1731,28 @@ def _persist_turn(
 
 @callback(
     Output("chat-store", "data", allow_duplicate=True),
-    Input("chat-store", "data"),
+    Input("is-thinking", "data"),
+    State("chat-store", "data"),
     State("user-store", "data"),
     prevent_initial_call=True,
 )
 def generate_chat_title(
-    chat_history: dict[str, Any], user_store: dict[str, Any]
+    is_thinking: bool, chat_history: dict[str, Any], user_store: dict[str, Any]
 ) -> Any:
     """Generate the nice sidebar title in its OWN request, off the commit path.
 
     This used to live in `_persist_turn`, which runs inside `poll_job` *before* it
     returns the committed answer — so the blocking title LLM call held the answer
     off-screen (UI stuck on "Suggesting follow-ups") on the first turn. Here it
-    fires only after the answer is already committed + rendered: we caption the
-    chat once (when a title is missing and an answer exists), write it back to the
-    store, and let `persist_chat_edits` + `refresh_sidebar` pick it up.
+    fires when a turn finishes (`is-thinking` → False), AFTER the answer is already
+    committed + rendered. We trigger off `is-thinking` (not `chat-store`) so this
+    doesn't collide with `backfill_boardroom_docs`, which also writes `chat-store`
+    from a `chat-store` input — two callbacks writing the same output from the same
+    trigger is the "Duplicate callback outputs" error. We caption the chat once
+    (missing title + an answer exists) and let `refresh_sidebar` pick it up.
     """
+    if is_thinking:
+        return no_update
     if not chat_history or (chat_history.get("title") or "").strip():
         return no_update
     msgs = chat_history.get("messages") or []
