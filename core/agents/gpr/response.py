@@ -61,14 +61,14 @@ def gpr_insight(state: AgentState) -> AgentState:
     response_rules = skill_rules if skill_rules else GPRRules.response_rules
 
     try:
-        gpr_response = _GPR_RESPONSE_NODE(
-            user_query=question,
-            query_plan=reasoning_plan,
-            rules=response_rules,
-            valid_year_quarter=valid_year_quarter_gpr,
-            sql_output=query_output,
-        )
-        Initialization.log_prompt_cache_usage(response=gpr_response, label="gpr_insight")
+        with Initialization.dspy_usage("gpr_insight", node="gpr"):
+            gpr_response = _GPR_RESPONSE_NODE(
+                user_query=question,
+                query_plan=reasoning_plan,
+                rules=response_rules,
+                valid_year_quarter=valid_year_quarter_gpr,
+                sql_output=query_output,
+            )
     except Exception as exc:
         log_event(
             logger, "gpr_insight_error", logging.ERROR, route="premium", error=str(exc)

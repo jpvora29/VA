@@ -255,6 +255,9 @@ users to explore GPR and Survey data before involving AI.
 - Totals and subtotals
 - Table and chart preview
 - Drill into supporting records where permitted
+- Do VLOOKUPS
+- Data Filteration
+- Excel Commands
 
 ### Saved Analysis
 

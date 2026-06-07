@@ -8,6 +8,7 @@ governed-grid rules are enforced in one place.
 """
 from __future__ import annotations
 
+import copy
 import json
 from typing import Any, Dict, Optional
 
@@ -203,6 +204,47 @@ def reset_in_editor(n, target, chat_history):
 )
 def cancel_editor(n):
     return False if n else no_update
+
+
+@callback(
+    Output("bm-editor-body", "children", allow_duplicate=True),
+    Input({"type": "bm-ef-add", "list": ALL}, "n_clicks"),
+    Input({"type": "bm-ef-del", "list": ALL, "i": ALL}, "n_clicks"),
+    State({"type": "bm-ef", "key": ALL}, "value"),
+    State({"type": "bm-ef", "key": ALL}, "id"),
+    State("boardroom-edit-target", "data"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def edit_list_rows(_add, _del, values, ids, target, chat_history):
+    """Add / remove a repeatable item row live: apply the in-progress field values
+    to a working copy of the widget, mutate the targeted list, and re-render the
+    dialog body. ``chat-store`` is untouched — nothing persists until Save."""
+    tid = ctx.triggered_id
+    if not isinstance(tid, dict) or not _triggered_value() or not target:
+        return no_update
+    doc = _doc_at(chat_history, target.get("idx"))
+    _, w = model.find_widget(doc, target.get("wid")) if doc else (None, None)
+    if not w:
+        return no_update
+    path = tid.get("list")
+    spec = editor.spec_by_path(path)
+    if not spec:
+        return no_update
+
+    work = copy.deepcopy(w)
+    collected = {i["key"]: v for i, v in zip(ids, values)}
+    editor._materialize(work, collected, keep_empty=True)
+    data = work.setdefault("data", {})
+    items = list(editor._get_nested(data, path, []) or [])
+    if tid.get("type") == "bm-ef-add":
+        items.append(copy.deepcopy(spec["template"]))
+    else:
+        i = tid.get("i")
+        if isinstance(i, int) and 0 <= i < len(items):
+            items.pop(i)
+    editor._set_nested(data, path, items)
+    return editor.build_editor_body(work)
 
 
 @callback(

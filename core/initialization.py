@@ -10,7 +10,8 @@ the pre-refactor `core.backend` module.
 from __future__ import annotations
 
 import os
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 import dspy
 from dotenv import load_dotenv
@@ -18,7 +19,11 @@ from langchain_openai import AzureChatOpenAI
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from core.observability import extract_token_usage, log_event
+from core.observability import (
+    extract_token_usage,
+    normalize_dspy_usage,
+    record_token_usage,
+)
 from logger import get_logger
 
 load_dotenv()
@@ -52,6 +57,20 @@ class Initialization:
         temperature=0.4,
     )
 
+    # Dedicated low-cost client for context compression (LangChain
+    # SummarizationMiddleware). Summaries are throwaway scaffolding, so we point
+    # them at a cheaper deployment (gpt-4o-mini) instead of paying the solver
+    # model's rate. Falls back to the main DEPLOYMENT when SUMMARY_DEPLOYMENT is
+    # unset so existing environments keep working.
+    llm_summary: AzureChatOpenAI = AzureChatOpenAI(
+        azure_deployment=os.getenv("SUMMARY_DEPLOYMENT") or os.getenv("DEPLOYMENT"),
+        api_key=os.getenv("API_KEY"),
+        azure_endpoint=os.getenv("ENDPOINT"),
+        api_version=os.getenv("VERSION"),
+        model="gpt-4o-mini",
+        temperature=0,
+    )
+
     dspy_llm: dspy.LM = dspy.LM(
         api_key=os.getenv("API_KEY"),
         api_base=os.getenv("ENDPOINT"),
@@ -79,6 +98,25 @@ class Initialization:
 
     @staticmethod
     def log_prompt_cache_usage(response: Any, label: str = "") -> None:
-        token_usage = extract_token_usage(response)
-        if any(value is not None for value in token_usage.values()):
-            log_event(logger, "llm_token_usage", label=label, token_usage=token_usage)
+        """Log + accumulate token usage from a LangChain response object.
+
+        For dspy predictors the usage is NOT on the returned (parsed) object —
+        wrap those calls in `Initialization.dspy_usage(...)` instead.
+        """
+        record_token_usage(extract_token_usage(response), label=label)
+
+    @staticmethod
+    @contextmanager
+    def dspy_usage(label: str, node: str | None = None) -> Iterator[None]:
+        """Capture token usage for the dspy LM calls made inside the block.
+
+        dspy attaches usage to the LM call, not to the parsed value a module's
+        `forward` returns, so logging the returned object (the old pattern) always
+        came up empty. This wraps the predictor/module call in dspy's usage
+        tracker and records the real per-agent totals on exit.
+        """
+        with dspy.track_usage() as tracker:
+            yield
+        record_token_usage(
+            normalize_dspy_usage(tracker.get_total_tokens()), label=label, node=node
+        )

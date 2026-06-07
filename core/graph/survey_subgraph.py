@@ -258,11 +258,12 @@ class SurveySubGraph:
             few_shot=SurveyRules.survey_query_few_shots + recalled,
         )
 
-        sql_query_output = sql_agent(
-            user_query=question,
-            query_plan=query_plan,
-            valid_year_quarter=valid_years,
-        )
+        with Initialization.dspy_usage("survey_convert_nl_to_sql", node="survey"):
+            sql_query_output = sql_agent(
+                user_query=question,
+                query_plan=query_plan,
+                valid_year_quarter=valid_years,
+            )
 
         # state["survey_sql_query"] = sql_query_output
 

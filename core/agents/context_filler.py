@@ -170,13 +170,13 @@ class ContextFillingAgent:
             f"Routing + Inheritance Rules:\n{ContextFillingAgent.history_policy_rules}\n"
         )
 
-        routing_context = _CONTEXT_FILLER_NODE(
-            static_context=static_context,
-            current_user_query=question,
-            last_user_query=last_user_query,
-            conversation_history=conversation_history,
-        )
-        Initialization.log_prompt_cache_usage(routing_context, "context_filler_agent")
+        with Initialization.dspy_usage("context_filler_agent", node="context_filler"):
+            routing_context = _CONTEXT_FILLER_NODE(
+                static_context=static_context,
+                current_user_query=question,
+                last_user_query=last_user_query,
+                conversation_history=conversation_history,
+            )
 
         # Re-decide analysis_depth with a dedicated classifier. The combined
         # context-filler call reliably anchored on the "lookup" default, so the
@@ -184,11 +184,14 @@ class ContextFillingAgent:
         # the guess. (`fallback` queries keep whatever value — they never route
         # to the analyst agent anyway.)
         if routing_context.table_family != "fallback":
-            routing_context.analysis_depth = _DEPTH_CLASSIFIER_NODE(
-                current_user_query=question,
-                table_family=routing_context.table_family,
-                intent_type=routing_context.intent_type,
-            )
+            with Initialization.dspy_usage(
+                "depth_classifier", node="context_filler"
+            ):
+                routing_context.analysis_depth = _DEPTH_CLASSIFIER_NODE(
+                    current_user_query=question,
+                    table_family=routing_context.table_family,
+                    intent_type=routing_context.intent_type,
+                )
 
         log_event(
             logger,

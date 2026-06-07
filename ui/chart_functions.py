@@ -27,6 +27,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from ui.color_pallet import ColorPalette
+from core.observability import log_event
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -34,7 +35,27 @@ logger = get_logger(__name__)
 # ── Tunables ────────────────────────────────────────────────────────────────
 MAX_SERIES = 12          # distinct legend entries before we bucket the tail
 MAX_PIE_SLICES = 8       # pie/donut readability ceiling
+MAX_TITLE_LEN = 64       # one-line title budget before truncation
+MAX_TICK_LEN = 16        # category label length before we slant the axis
 _AGGS = {"sum", "mean", "count", "median", "min", "max"}
+
+# Deterministic chart-guard vocabulary (see _normalize_axes_and_type). The guard
+# corrects bad LLM specs that the prompt alone can't reliably prevent.
+_TREND_TERMS = {
+    "trend", "over time", "movement", "moved", "changed", "change", "yoy",
+    "year over year", "year-over-year", "month over month", "month-on-month",
+    "mom", "qoq", "quarter over quarter", "rolling", "trajectory", "evolution",
+    "growth over", "increase", "increasing", "decrease", "decreasing", "decline",
+    "declining", "progression", "historical",
+}
+# Column-name families. A *rate* measure (bounded ratio/percentage/score) must
+# never share a primary axis with an *amount* (premium/revenue counts) — that is
+# the "Premium in millions vs SoW on one axis" bug. Rates go on a combo line.
+_RATE_HINTS = (
+    "sow", "share of wallet", "wallet share", "appetite", "share of portfolio",
+    "portfolio share", "growth", "yoy", "%", "pct", "percent", "rate", "ratio",
+    "margin", "score", "nps", "share", "penetration", "win rate",
+)
 
 # ── Registry ──────────────────────────────────────────────────────────────────
 _TRACE_REGISTRY: Dict[str, Callable] = {}
@@ -76,6 +97,7 @@ class _Spec:
     y_agg: str = "none"
     sort: str = "none"
     title: str = ""
+    intent: str = ""  # original user query, stamped by core.agents.common.chart_spec
 
 
 def _as_dict(spec: Any) -> Dict[str, Any]:
@@ -225,6 +247,7 @@ def _sanitize_spec(
         y_agg=str(raw.get("y_agg") or "none").strip().lower(),
         sort=str(raw.get("sort") or "none").strip().lower(),
         title=str(raw.get("title") or ""),
+        intent=str(raw.get("intent") or ""),
     )
 
     df = _prepare_frame(df, spec)
@@ -268,6 +291,136 @@ def _prepare_frame(df: pd.DataFrame, spec: _Spec) -> pd.DataFrame:
         df = df.sort_values(spec.x)
 
     return df.reset_index(drop=True)
+
+
+# ── Deterministic chart guard ─────────────────────────────────────────────────
+#
+# The LLM picks chart_type and axes, but it is wrong often enough that a prompt
+# fix alone is not reliable: it over-prefers `line` whenever a year column is
+# present, lets numeric years render as a continuous axis (2024.2 ticks), and
+# packs an amount and a rate onto the same axis. `_normalize_axes_and_type` is the
+# deterministic safety net that runs after column reconciliation and corrects
+# these before rendering. Every correction is reported so the override is visible.
+
+
+def _is_year_like_name(col: str) -> bool:
+    n = str(col).strip().lower()
+    return n == "year" or n.endswith("_year") or n.endswith(" year")
+
+
+def _is_time_like_name(col: str) -> bool:
+    n = str(col).strip().lower()
+    return _is_year_like_name(col) or any(
+        t in n for t in ("date", "month", "quarter", "period", "week")
+    )
+
+
+def _is_year_axis(series: pd.Series, name: str) -> bool:
+    """True when a column should be treated as discrete year ticks."""
+    if _is_year_like_name(name):
+        return True
+    values = pd.to_numeric(series.dropna(), errors="coerce")
+    return (
+        len(values) > 0
+        and values.notna().all()
+        and values.between(1900, 2100).all()
+        and (values % 1 == 0).all()
+    )
+
+
+def _wants_trend(intent: str, title: str) -> bool:
+    text = f"{intent} {title}".lower()
+    return any(term in text for term in _TREND_TERMS)
+
+
+def _looks_like_rate(df: pd.DataFrame, col: str) -> bool:
+    """A bounded ratio/percentage/score measure — belongs on a combo line, never
+    on the same axis as an absolute amount."""
+    if any(h in _norm_key(col) for h in _RATE_HINTS):
+        return True
+    s = pd.to_numeric(df[col], errors="coerce").dropna()
+    if s.empty:
+        return False
+    hi = s.abs().max()
+    # Fractions (0–1) and percentage-scale values (0–100) read as rates.
+    return hi <= 1.0 or (s.between(-100, 100).all() and hi <= 100.0)
+
+
+def _normalize_axes_and_type(
+    df: pd.DataFrame, spec: _Spec
+) -> Tuple[pd.DataFrame, List[str]]:
+    """Correct chart_type and axis typing in place. Returns (df, override_reasons)."""
+    reasons: List[str] = []
+
+    # 1. Amount + rate on one axis → combo (rate on the secondary line axis).
+    #    Skip when the spec is already combo/pie/etc.; only fix bar/line.
+    if spec.chart_type in ("bar", "line") and len(spec.y) >= 2:
+        rates = [c for c in spec.y if _looks_like_rate(df, c)]
+        amounts = [c for c in spec.y if c not in rates]
+        # Magnitude guard: if not flagged by name/range but one measure dwarfs
+        # another (>100x), the small one is a rate sharing an amount's axis.
+        if not rates and amounts:
+            medians = {
+                c: pd.to_numeric(df[c], errors="coerce").abs().median() or 0.0
+                for c in spec.y
+            }
+            big = max(medians.values())
+            small = min(v for v in medians.values() if v > 0) if any(
+                v > 0 for v in medians.values()
+            ) else 0
+            if small and big / small > 100:
+                rates = [c for c in spec.y if medians[c] == small]
+                amounts = [c for c in spec.y if c not in rates]
+        if rates and amounts:
+            spec.chart_type = "combo"
+            spec.y = amounts
+            spec.secondary_y = list(dict.fromkeys([*spec.secondary_y, *rates]))
+            reasons.append("amount+rate→combo")
+
+    # 2. line → bar unless this is a genuine time trend.
+    if spec.chart_type == "line":
+        distinct_periods = df[spec.x].nunique(dropna=True) if spec.x in df else 0
+        is_trend = (
+            _is_time_like_name(spec.x)
+            and distinct_periods >= 2
+            and _wants_trend(spec.intent, spec.title)
+        )
+        if not is_trend:
+            spec.chart_type = "bar"
+            reasons.append("line→bar (not a trend)")
+
+    # 3. Year axis → discrete integer-string ticks (no 2024.2, sorted ascending).
+    if spec.chart_type in ("bar", "line", "combo") and spec.x in df and _is_year_axis(
+        df[spec.x], spec.x
+    ):
+        years = pd.to_numeric(df[spec.x], errors="coerce")
+        if years.notna().any():
+            df = df.copy()
+            df[spec.x] = years.astype("Int64").astype(str)
+            order = sorted(
+                {int(v) for v in years.dropna()},
+            )
+            df[spec.x] = pd.Categorical(
+                df[spec.x], categories=[str(y) for y in order], ordered=True
+            )
+            df = df.sort_values(spec.x).reset_index(drop=True)
+            reasons.append("year→categorical")
+
+    return df, reasons
+
+
+def _clean_title(spec: _Spec) -> str:
+    """One-line, length-capped title. Synthesize a concise one if missing/too long."""
+    title = (spec.title or "").strip().replace("\n", " ")
+    if not title or len(title) > MAX_TITLE_LEN:
+        measure = ", ".join(_pretty(c) for c in (spec.y + spec.secondary_y)[:2])
+        dim = _pretty(spec.x) if spec.x else ""
+        synthesized = f"{measure} by {dim}" if measure and dim else measure or title
+        if synthesized:
+            title = synthesized
+    if len(title) > MAX_TITLE_LEN:
+        title = title[: MAX_TITLE_LEN - 1].rsplit(" ", 1)[0] + "…"
+    return title
 
 
 def _series_key(df: pd.DataFrame, series: List[str]) -> Optional[pd.Series]:
@@ -490,7 +643,7 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
     fig.update_layout(
         template="plotly_white",
         title=dict(
-            text=_pretty(spec.title) if spec.title else "",
+            text=_clean_title(spec),
             x=0.02, xanchor="left", y=0.96,
             font=dict(size=17, color=_TITLE_INK, family=_FONT_FAMILY),
         ),
@@ -517,11 +670,19 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
             pass
 
     if not is_polar:
+        # Slant long category labels so they stay on ONE line instead of letting
+        # Plotly wrap them across two; numeric/short axes stay horizontal.
+        tickangle = 0
+        if spec.x in df.columns and not _is_numeric(df, spec.x):
+            longest = df[spec.x].astype(str).map(len).max() if len(df) else 0
+            many = df[spec.x].nunique(dropna=True) > 6
+            if longest and (longest > MAX_TICK_LEN or many):
+                tickangle = -30
         fig.update_xaxes(
             title=dict(text=_pretty(spec.x), font=dict(size=12, color="#5A6B82")),
             showgrid=False, showline=True, linecolor=_AXIS_LINE, linewidth=1,
             ticks="outside", tickcolor=_AXIS_LINE, tickfont=dict(size=11),
-            automargin=True,
+            tickangle=tickangle, automargin=True,
         )
         ytitle = ", ".join(_pretty(c) for c in spec.y)
         fig.update_yaxes(
@@ -556,6 +717,18 @@ def generate_chart(
         spec, prepared, message = _sanitize_spec(df, raw)
         if spec is None:
             return None, message
+
+        original_type = spec.chart_type
+        prepared, overrides = _normalize_axes_and_type(prepared, spec)
+        if overrides:
+            log_event(
+                logger,
+                "chart_spec_override",
+                node="chart_renderer",
+                original_chart_type=original_type,
+                final_chart_type=spec.chart_type,
+                reasons=overrides,
+            )
 
         builder = _TRACE_REGISTRY.get(spec.chart_type)
         if builder is None:

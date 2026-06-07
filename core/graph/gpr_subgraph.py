@@ -208,15 +208,12 @@ class GPRSubGraph:
             rules=planner_rules,
         )
 
-        query_plan = planner_node(
-            user_query=question,
-            routing_context=state.get("routing_context"),
-            valid_year_quarter=valid_year_quarter_gpr,
-        )
-
-        Initialization.log_prompt_cache_usage(
-            response=query_plan, label="gpr_planner_node"
-        )
+        with Initialization.dspy_usage("gpr_planner_node", node="gpr"):
+            query_plan = planner_node(
+                user_query=question,
+                routing_context=state.get("routing_context"),
+                valid_year_quarter=valid_year_quarter_gpr,
+            )
 
         # Deterministic, advisory grounding check: annotate (never block) the plan with
         # any tables/columns/filter values not present in the schema / valid values.
@@ -274,15 +271,12 @@ class GPRSubGraph:
             few_shot=GPRRules.gpr_query_few_shots + recalled,
         )
 
-        sql_query_output = sql_agent(
-            user_query=question,
-            query_plan=query_plan,
-            valid_year_quarter=valid_year_quarter_gpr,
-        )
-
-        Initialization.log_prompt_cache_usage(
-            response=sql_query_output, label="gpr_convert_nl_to_sql"
-        )
+        with Initialization.dspy_usage("gpr_convert_nl_to_sql", node="gpr"):
+            sql_query_output = sql_agent(
+                user_query=question,
+                query_plan=query_plan,
+                valid_year_quarter=valid_year_quarter_gpr,
+            )
 
         # state["gpr_sql_query"] = sql_query_output
 

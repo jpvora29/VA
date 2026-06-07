@@ -34,7 +34,7 @@ from core.graph.combiner_subgraph import CombinerGraph
 from core.graph.checkpointer import build_chat_checkpointer, checkpoint_config
 from core.graph.gpr_subgraph import GPRSubGraph
 from core.graph.survey_subgraph import SurveySubGraph
-from core.observability import latency_timer, log_event
+from core.observability import latency_timer, log_event, turn_context
 from core.state.agent_state import AgentState
 from logger import get_logger
 
@@ -198,19 +198,21 @@ class LangGraph:
     def trigger_workflow(
         self, state: dict[str, Any], *, thread_id: str | None = None
     ) -> dict[str, Any]:
-        log_event(logger, "workflow_start", node="main_workflow")
-        with latency_timer() as timing:
-            if self._compiled_app is None:
-                self._compiled_app = self.create_workflow()
-            config = checkpoint_config(thread_id or self.default_thread_id)
-            state = self._compiled_app.invoke(state, config=config)
-        log_event(
-            logger,
-            "workflow_end",
-            node="main_workflow",
-            duration_ms=timing.get("duration_ms"),
-        )
-        return state
+        tid = thread_id or self.default_thread_id
+        with turn_context(thread_id=tid):
+            log_event(logger, "workflow_start", node="main_workflow")
+            with latency_timer() as timing:
+                if self._compiled_app is None:
+                    self._compiled_app = self.create_workflow()
+                config = checkpoint_config(tid)
+                state = self._compiled_app.invoke(state, config=config)
+            log_event(
+                logger,
+                "workflow_end",
+                node="main_workflow",
+                duration_ms=timing.get("duration_ms"),
+            )
+            return state
 
     def stream_workflow(
         self,
@@ -241,25 +243,27 @@ class LangGraph:
         """
         if self._compiled_app is None:
             self._compiled_app = self.create_workflow()
-        config = checkpoint_config(thread_id or self.default_thread_id)
-        log_event(logger, "workflow_stream_start", node="main_workflow")
-        for mode, chunk in self._compiled_app.stream(
-            input_obj, config=config, stream_mode=["updates", "debug"]
-        ):
-            if cancel is not None and cancel.is_set():
-                return
-            if mode == "debug":
-                # `task` fires as a node is about to execute -> live label.
-                if chunk.get("type") == "task":
-                    node_name = (chunk.get("payload") or {}).get("name")
-                    if node_name:
-                        yield {"node": node_name}
-                continue
-            # mode == "updates": only used to surface a pending HITL interrupt.
-            if "__interrupt__" in chunk:
-                interrupts = chunk["__interrupt__"]
-                payload = getattr(interrupts[0], "value", {}) if interrupts else {}
-                yield {"interrupt": payload}
+        tid = thread_id or self.default_thread_id
+        config = checkpoint_config(tid)
+        with turn_context(thread_id=tid):
+            log_event(logger, "workflow_stream_start", node="main_workflow")
+            for mode, chunk in self._compiled_app.stream(
+                input_obj, config=config, stream_mode=["updates", "debug"]
+            ):
+                if cancel is not None and cancel.is_set():
+                    return
+                if mode == "debug":
+                    # `task` fires as a node is about to execute -> live label.
+                    if chunk.get("type") == "task":
+                        node_name = (chunk.get("payload") or {}).get("name")
+                        if node_name:
+                            yield {"node": node_name}
+                    continue
+                # mode == "updates": only used to surface a pending HITL interrupt.
+                if "__interrupt__" in chunk:
+                    interrupts = chunk["__interrupt__"]
+                    payload = getattr(interrupts[0], "value", {}) if interrupts else {}
+                    yield {"interrupt": payload}
 
     def get_state_values(self, thread_id: str | None = None) -> dict[str, Any]:
         """Read the merged channel values for a thread (the full AgentState)."""
@@ -278,16 +282,18 @@ class LangGraph:
         must be the SAME one that produced the `__interrupt__`, so its checkpoint
         carries the pending interrupt to resume.
         """
-        log_event(logger, "workflow_resume", node="main_workflow")
-        with latency_timer() as timing:
-            if self._compiled_app is None:
-                self._compiled_app = self.create_workflow()
-            config = checkpoint_config(thread_id or self.default_thread_id)
-            state = self._compiled_app.invoke(Command(resume=value), config=config)
-        log_event(
-            logger,
-            "workflow_end",
-            node="main_workflow",
-            duration_ms=timing.get("duration_ms"),
-        )
-        return state
+        tid = thread_id or self.default_thread_id
+        with turn_context(thread_id=tid):
+            log_event(logger, "workflow_resume", node="main_workflow")
+            with latency_timer() as timing:
+                if self._compiled_app is None:
+                    self._compiled_app = self.create_workflow()
+                config = checkpoint_config(tid)
+                state = self._compiled_app.invoke(Command(resume=value), config=config)
+            log_event(
+                logger,
+                "workflow_end",
+                node="main_workflow",
+                duration_ms=timing.get("duration_ms"),
+            )
+            return state

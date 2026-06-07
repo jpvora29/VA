@@ -33,10 +33,18 @@ Step 2 — What is the user really asking? Match intent to type:
   across categories like Carrier, Product, Country, Segment → `bar`.
 
 Step 3 — Disambiguation of the common confusions:
-- More than one year of data present → prefer `line` over `bar`.
+- Use `line` ONLY when the user asks for movement over time (trend, over time,
+  YoY, MoM, QoQ, rolling, trajectory, growth/decline) AND there are ≥2 distinct
+  periods. More than one year by itself is NOT enough — a multi-year comparison
+  across products/carriers/segments is grouped `bar` (x = `Year`, series = that
+  category), not `line`.
+- Never emit fractional year ticks (e.g. `2024.2`); years are discrete labels
+  `2023`, `2024`, `2025`.
 - Exactly one period, comparing categories → `bar`, not `line`.
 - Comparing two measures of the SAME unit across the same categories → `bar`
-  (two y columns). Of DIFFERENT units (amount vs %) → `combo`.
+  (two y columns). Of DIFFERENT units (amount vs rate/%, e.g. Premium vs SoW /
+  Appetite / Growth%) → `combo` with the amount as bars and each rate on
+  `secondary_y`. Never put an amount and a rate on the same axis.
 - > 6 categories for a share question → `bar`, not `pie`/`donut`.
 
 Step 4 — After picking the type, follow the dedicated per-type skill below for

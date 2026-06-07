@@ -31,16 +31,22 @@ priority: 50                  # higher = injected earlier in concatenated output
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
+from core.observability import log_event
+from logger import get_logger
+
 try:
     import yaml
 except ImportError:  # pragma: no cover - dependency-free fallback
     yaml = None
+
+logger = get_logger(__name__)
 
 
 SkillScope = str  # "planner" | "sql" | "response" | "chart" | "pitch"
@@ -60,17 +66,47 @@ class Skill:
     priority: int
     body: str
     source: Path
+    negative_triggers: tuple[str, ...] = ()
+    requires: tuple[str, ...] = ()
+    conflicts_with: tuple[str, ...] = ()
+    kind: str = ""
+    risk_level: str = ""
 
-    def matches(self, flow: SkillFlow, scope: SkillScope, query: str) -> bool:
+    def applies(self, flow: SkillFlow, scope: SkillScope) -> bool:
+        """Flow + scope compatibility, ignoring triggers.
+
+        Used both as the first gate in `matches` and to decide whether a
+        dependency pulled in via `requires` is valid for the current scope.
+        """
         if flow != self.flow and self.flow != "cross":
             return False
-        if scope not in self.scope:
+        return scope in self.scope
+
+    def positive_hit(self, query: str) -> bool:
+        """True when this skill's own triggers fire (or it is always-on)."""
+        if self.always:
+            return True
+        return any(_trigger_hit(t, query) for t in self.triggers)
+
+    def negative_hit(self, query: str) -> bool:
+        return any(_trigger_hit(t, query) for t in self.negative_triggers)
+
+    def matches(self, flow: SkillFlow, scope: SkillScope, query: str) -> bool:
+        if not self.applies(flow, scope):
             return False
         if self.always:
+            # An always-on skill is unconditional; negative_triggers gate only
+            # trigger-based matches (false-positive suppression), never always-on
+            # safety/base skills.
             return True
         if not self.triggers:
             return False
-        return any(_trigger_hit(trigger, query) for trigger in self.triggers)
+        if not self.positive_hit(query):
+            return False
+        # A positive trigger fired — suppress it if a negative trigger also hits
+        # (e.g. "competitor" fires peer-average, but "competitor product launch"
+        # is not a peer-benchmark question).
+        return not self.negative_hit(query)
 
 
 @lru_cache(maxsize=512)
@@ -105,15 +141,28 @@ def _trigger_hit(trigger: str, query: str) -> bool:
     return _trigger_pattern(trigger).search(query) is not None
 
 
+def _as_str_tuple(value: Any) -> tuple[str, ...]:
+    """Coerce a frontmatter scalar/list field into a tuple of strings."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, (list, tuple)):
+        return tuple(str(v) for v in value if v is not None)
+    return (str(value),)
+
+
 @dataclass
 class SkillLoader:
     """Reads `core/skills/*.md` once and serves them on demand."""
 
     skills_dir: Path = field(default_factory=lambda: Path(__file__).parent)
     _skills: list[Skill] = field(default_factory=list, init=False)
+    _by_name: dict[str, Skill] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         self._skills = self._discover()
+        self._by_name = {s.name: s for s in self._skills}
 
     def _discover(self) -> list[Skill]:
         skills: list[Skill] = []
@@ -143,28 +192,105 @@ class SkillLoader:
             return None
         if isinstance(scope, str):
             scope = [scope]
-        triggers = meta.get("triggers") or []
-        if isinstance(triggers, str):
-            triggers = [triggers]
         return Skill(
             name=str(name),
             description=str(description),
             flow=str(flow),
             scope=tuple(scope),
-            triggers=tuple(str(t) for t in triggers),
+            triggers=_as_str_tuple(meta.get("triggers")),
             always=bool(meta.get("always", False)),
             priority=int(meta.get("priority", 0)),
             body=body.strip("\n"),
             source=path,
+            negative_triggers=_as_str_tuple(meta.get("negative_triggers")),
+            requires=_as_str_tuple(meta.get("requires")),
+            conflicts_with=_as_str_tuple(meta.get("conflicts_with")),
+            kind=str(meta.get("kind") or ""),
+            risk_level=str(meta.get("risk_level") or ""),
         )
 
     def matching(
         self, flow: SkillFlow, scope: SkillScope, query: str
     ) -> list[Skill]:
-        matched = [s for s in self._skills if s.matches(flow, scope, query)]
-        # Higher priority first; stable on name as tiebreaker.
-        matched.sort(key=lambda s: (-s.priority, s.name))
+        # 1. Base matches: own triggers fired (or always-on), minus negatives.
+        base = [s for s in self._skills if s.matches(flow, scope, query)]
+        selected: dict[str, Skill] = {s.name: s for s in base}
+
+        # 2. Pull in `requires` dependencies (transitively) that are valid for
+        #    this flow+scope, even if their own triggers did not fire — a metric
+        #    skill's rules are incomplete without the rules it depends on (e.g.
+        #    Share of Wallet needs the Marsh-market denominator rule).
+        required_added: list[str] = []
+        dangling: list[str] = []
+        queue = list(base)
+        while queue:
+            skill = queue.pop()
+            for dep_name in skill.requires:
+                dep = self._by_name.get(dep_name)
+                if dep is None:
+                    dangling.append(dep_name)
+                    continue
+                if dep_name in selected or not dep.applies(flow, scope):
+                    continue
+                selected[dep_name] = dep
+                required_added.append(dep_name)
+                queue.append(dep)
+
+        matched = sorted(selected.values(), key=lambda s: (-s.priority, s.name))
+
+        # 3. Diagnostics: what fired, what was suppressed, what was pulled in,
+        #    and any declared conflicts among the selected set.
+        suppressed = [
+            s.name
+            for s in self._skills
+            if s.applies(flow, scope)
+            and not s.always
+            and s.positive_hit(query)
+            and s.negative_hit(query)
+        ]
+        conflicts = self._conflicts(matched)
+        if matched or suppressed or dangling:
+            log_event(
+                logger,
+                "skill_match",
+                logging.DEBUG,
+                node="skill_loader",
+                flow=flow,
+                scope=scope,
+                matched=[s.name for s in matched],
+                required_added=required_added,
+                suppressed=suppressed,
+                conflicts=conflicts,
+                dangling_requires=dangling,
+            )
+        if conflicts:
+            log_event(
+                logger,
+                "skill_conflict",
+                logging.WARNING,
+                node="skill_loader",
+                flow=flow,
+                scope=scope,
+                conflicts=conflicts,
+            )
         return matched
+
+    @staticmethod
+    def _conflicts(matched: list[Skill]) -> list[list[str]]:
+        """Pairs of co-selected skills that declare a conflict (either direction).
+
+        Per policy we keep both and only warn — contradictory rules are surfaced
+        for authoring review, never silently dropped from the prompt.
+        """
+        names = {s.name for s in matched}
+        pairs: list[list[str]] = []
+        for s in matched:
+            for other in s.conflicts_with:
+                if other in names:
+                    pair = sorted((s.name, other))
+                    if pair not in pairs:
+                        pairs.append(pair)
+        return pairs
 
     def load(
         self, flow: SkillFlow, scope: SkillScope, query: str
@@ -212,6 +338,60 @@ class SkillLoader:
 
     def pitch(self, flow: SkillFlow, query: str) -> Optional[str]:
         return self.load(flow, "pitch", query)
+
+    # Progressive disclosure: fetch a skill body on demand and enumerate what is
+    # available, so an agent can pull a rule whose trigger never fired.
+    def body(self, name: str) -> Optional[str]:
+        """Full body of a skill by name, or None if unknown."""
+        skill = self._by_name.get(name)
+        return skill.body if skill else None
+
+    def applicable(self, flow: SkillFlow, scope: SkillScope) -> list[Skill]:
+        """Every skill valid for this flow+scope, ignoring triggers.
+
+        This is the universe a `consult_skill` tool may draw from — the menu, as
+        opposed to `matching()` which is what fired for this query.
+        """
+        skills = [s for s in self._skills if s.applies(flow, scope)]
+        skills.sort(key=lambda s: (-s.priority, s.name))
+        return skills
+
+    # Authoring / CI guardrails.
+    def validate(self) -> list[str]:
+        """Return a list of skill-catalog issues (empty == healthy).
+
+        Catches the mistakes that silently degrade matching: missing required
+        frontmatter, duplicate names, and `requires`/`conflicts_with` pointing at
+        skills that do not exist. Intended for a CI test, not the hot path.
+        """
+        issues: list[str] = []
+        seen: set[str] = set()
+        known = set(self._by_name)
+        for skill in self._skills:
+            where = skill.source.name
+            if not skill.name:
+                issues.append(f"{where}: missing name")
+            if not skill.flow:
+                issues.append(f"{where}: missing flow")
+            if not skill.scope:
+                issues.append(f"{where}: missing scope")
+            if not skill.always and not skill.triggers:
+                issues.append(
+                    f"{where}: {skill.name} has neither always:true nor triggers "
+                    "(it can never match)"
+                )
+            if skill.name in seen:
+                issues.append(f"{where}: duplicate skill name {skill.name!r}")
+            seen.add(skill.name)
+            for dep in skill.requires:
+                if dep not in known:
+                    issues.append(f"{where}: {skill.name} requires unknown skill {dep!r}")
+            for other in skill.conflicts_with:
+                if other not in known:
+                    issues.append(
+                        f"{where}: {skill.name} conflicts_with unknown skill {other!r}"
+                    )
+        return issues
 
 
 _default_loader: Optional[SkillLoader] = None

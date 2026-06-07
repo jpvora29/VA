@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 
 import dspy
 
-from core.agents.common.chart_spec import normalize_chart_spec
+from core.agents.common.chart_spec import normalize_chart_spec, stamp_intent
 from core.schemas.gpr import GPRChartSignature
 from logger import get_logger
 
@@ -31,4 +31,4 @@ class GPRChartNode(dspy.Module):
         )
         logger.debug("GPR chart reasoning: %s", result)
 
-        return normalize_chart_spec(result.chart_data)
+        return stamp_intent(normalize_chart_spec(result.chart_data), user_query)

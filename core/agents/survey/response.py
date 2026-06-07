@@ -67,12 +67,13 @@ def survey_insight(state: AgentState) -> AgentState:
     response_rules = skill_rules if skill_rules else SurveyRules.response_rules
 
     try:
-        survey_response = _SURVEY_RESPONSE_NODE(
-            user_query=question,
-            query_plan=reasoning_plan,
-            rules=response_rules,
-            sql_output=query_output,
-        )
+        with Initialization.dspy_usage("survey_insight", node="survey"):
+            survey_response = _SURVEY_RESPONSE_NODE(
+                user_query=question,
+                query_plan=reasoning_plan,
+                rules=response_rules,
+                sql_output=query_output,
+            )
     except Exception as exc:
         log_event(
             logger, "survey_insight_error", logging.ERROR, route="survey", error=str(exc)

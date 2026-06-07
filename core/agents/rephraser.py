@@ -85,12 +85,12 @@ class QueryRephraseAgent:
         question = state["messages"][-1].content
         routing_context = state["routing_context"]
 
-        rephrased_output = _REPHRASER_NODE(
-            routing_context=routing_context,
-            construction_rules=QueryRephraseAgent.construction_rules,
-            current_user_query=question,
-        )
-        Initialization.log_prompt_cache_usage(rephrased_output, "rephraser_agent")
+        with Initialization.dspy_usage("rephraser_agent", node="rephraser"):
+            rephrased_output = _REPHRASER_NODE(
+                routing_context=routing_context,
+                construction_rules=QueryRephraseAgent.construction_rules,
+                current_user_query=question,
+            )
 
         last_msg = state["messages"][-1]
         logger.debug("Original user question: %s", question)

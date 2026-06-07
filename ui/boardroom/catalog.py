@@ -65,10 +65,39 @@ LIBRARY: List[Dict[str, Any]] = [
          {"text": "The single most important message for the board.", "tone": "neutral"}, "full"),
     _lib("image", "Image / Logo", "bi bi-image", "Add-ons", "image",
          {"url": "", "caption": ""}, "md"),
+    # ── Analytics group: the rich AI widgets, now user-addable & fully editable ──
+    _lib("opportunity_radar", "Opportunity radar", "bi bi-radar", "Analytics", "bespoke",
+         {"opportunities": [
+             {"area": "New opportunity", "dimension": "product", "carrier_level": "",
+              "peer_level": "", "gap_score": 50, "recommendation": "", "tone": "good"}]},
+         "lg"),
+    _lib("opportunity_map", "Heatmap / opportunity map", "bi bi-globe-americas", "Analytics", "bespoke",
+         {"opportunity_map": {
+             "rows": ["Product A"], "cols": ["Market 1"],
+             "cells": [{"row": "Product A", "col": "Market 1", "intensity": 50, "tone": "neutral", "note": ""}],
+             "legend": "Darker = higher growth priority"}},
+         "full"),
+    _lib("positioning", "2x2 peer matrix", "bi bi-grid-3x3", "Analytics", "bespoke",
+         {"positioning": {
+             "points": [{"label": "Carrier", "premium_strength": 50, "broker_perception": 50,
+                         "is_subject": True, "tone": "neutral"}],
+             "note": ""}},
+         "lg"),
+    _lib("comparison", "Comparison table", "bi bi-layout-split", "Analytics", "bespoke",
+         {"comparison": {
+             "subjects": ["Subject A", "Subject B"],
+             "metrics": [{"label": "Metric", "values": ["—", "—"], "tones": []}],
+             "highlight": 0}},
+         "full"),
+    _lib("battlecards", "Carrier battlecards", "bi bi-clipboard-data", "Analytics", "bespoke",
+         {"battlecards": [
+             {"carrier": "Carrier", "peer_position": "", "strengths": ["Strength"],
+              "weaknesses": [], "product_gaps": [], "broker_perception": ""}]},
+         "full"),
 ]
 
 LIBRARY_BY_KIND: Dict[str, Dict[str, Any]] = {w["kind"]: w for w in LIBRARY}
-CATEGORIES = ["Boardroom widgets", "Add-ons"]
+CATEGORIES = ["Boardroom widgets", "Add-ons", "Analytics"]
 
 
 def library_by_category() -> Dict[str, List[Dict[str, Any]]]:

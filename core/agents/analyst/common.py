@@ -16,6 +16,8 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langgraph.errors import GraphRecursionError
 
+from core.agents.analyst.middleware import build_solver_middleware
+from core.initialization import Initialization
 from core.agents.common.peers import custom_peer_directive
 from core.analysis import get_lens_library
 from core.mcp.tools import (
@@ -155,8 +157,26 @@ def build_tools(
         """
         return json.dumps(match_column_values(flow, column, term), default=str)
 
+    @tool
+    def consult_skill(name: str) -> str:
+        """Load the full rules of a skill listed in 'ADDITIONAL RULES AVAILABLE ON
+        DEMAND'. Pass the exact skill name. Returns the rule text, or a not-found
+        note if the name is unknown."""
+        body = get_skill_loader().body(name)
+        log_event(
+            logger,
+            "consult_skill",
+            node="analyst_solver",
+            lens=lens,
+            skill=name,
+            found=bool(body),
+        )
+        if not body:
+            return f"No skill named {name!r}. Use an exact name from the on-demand list."
+        return body
+
     if peer_only:
-        return [run_sql, resolve_value]
+        return [run_sql, resolve_value, consult_skill]
 
     @tool
     def list_values(flow: str, column: str) -> str:
@@ -168,7 +188,7 @@ def build_tools(
         """Return the precomputed valid column values for a flow."""
         return json.dumps(get_valid_values(flow), default=str)
 
-    return [run_sql, resolve_value, list_values, show_valid_values]
+    return [run_sql, resolve_value, consult_skill, list_values, show_valid_values]
 
 
 def domain_rules(route: str, primary_flow: str, trigger_text: str) -> str:
@@ -195,6 +215,36 @@ def domain_rules(route: str, primary_flow: str, trigger_text: str) -> str:
     return "\n\n".join(blocks)
 
 
+def skill_catalog(route: str, primary_flow: str, trigger_text: str) -> str:
+    """Menu of skills that APPLY to this flow but whose triggers did NOT fire.
+
+    The statically-injected `domain_rules` only carries skills a trigger matched.
+    This lists the rest by name + description so the solver can pull any of them
+    on demand via the `consult_skill` tool — closing trigger gaps without bloating
+    the prompt with every body up front (progressive disclosure). Returns "" when
+    nothing extra is available.
+    """
+    loader = get_skill_loader()
+    flows = ["gpr", "survey"] if route == "both" else [primary_flow]
+    scopes = ("planner", "sql")
+    already: set[str] = set()
+    available: dict[str, str] = {}
+    for flow in flows:
+        for scope in scopes:
+            already.update(s.name for s in loader.matching(flow, scope, trigger_text))
+            for s in loader.applicable(flow, scope):
+                available.setdefault(s.name, s.description)
+    menu = {n: d for n, d in available.items() if n not in already}
+    if not menu:
+        return ""
+    lines = "\n".join(f"- {name}: {desc}" for name, desc in sorted(menu.items()))
+    return (
+        "[ADDITIONAL RULES AVAILABLE ON DEMAND — these are NOT loaded above. If "
+        "one looks relevant to the sub-question, call consult_skill(name) to read "
+        "its full rules BEFORE writing the query.]\n" + lines
+    )
+
+
 _CONFIDENTIALITY = """[CONFIDENTIALITY — non-negotiable]
 - Peers are ALWAYS aggregated. NEVER expose an individual peer/carrier name in
   any output. Refer to peers only in aggregate ("peer average", "the peer set",
@@ -217,7 +267,9 @@ def _solver_prompt(
 ) -> str:
     library = get_lens_library()
     lens_body = library.body(lens) or "(no specific lens — answer the sub-question directly)"
-    rules = domain_rules(route, flow, f"{question} {sub_question}")
+    trigger_text = f"{question} {sub_question}"
+    rules = domain_rules(route, flow, trigger_text)
+    catalog = skill_catalog(route, flow, trigger_text)
     schema = json.dumps(get_schema(flow), default=str)
 
     # For a "both" route the perception lens may need the survey tables too, so
@@ -268,6 +320,8 @@ table IS Marsh's book of business (the market proxy).
 path uses: Carrier_Group handling, peer averages via the Peers table,
 Share-of-Wallet / appetite math, Marsh premium, rolling-12M, ranking, etc.]
 {rules}
+
+{catalog}
 {custom_peers_block}{prior_block}
 [RULES]
 - Use run_sql for ALL data. Never invent a number you did not retrieve.
@@ -320,7 +374,14 @@ def run_solver(
         custom_peers=custom_peers,
         custom_peers_active=custom_peers_active,
     )
-    agent = create_agent(model, tools, system_prompt=system_prompt)
+    agent = create_agent(
+        model,
+        tools,
+        system_prompt=system_prompt,
+        middleware=build_solver_middleware(
+            model, flow=flow, lens=lens, summary_model=Initialization.llm_summary
+        ),
+    )
     try:
         agent.invoke(
             {"messages": [HumanMessage(content=sub_question)]},
