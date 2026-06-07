@@ -1669,6 +1669,33 @@ def poll_job(
     return chat_history, False, True, "", ""
 
 
+def _generate_conversation_title(question: str) -> str:
+    """A short, human-friendly sidebar label for a chat (e.g. "Zurich Share of
+    Wallet · Canada"), generated once from the opening question.
+
+    Uses the cheap summary client (gpt-4o-mini); best-effort — returns "" on any
+    failure so the caller falls back to the truncated raw question.
+    """
+    q = (question or "").strip()
+    if not q:
+        return ""
+    prompt = (
+        "Generate a concise title (3-6 words, Title Case) describing the topic of "
+        "this insurance-analytics question, for a chat sidebar. Return ONLY the "
+        "title: no quotes, no surrounding text, no trailing punctuation.\n\n"
+        f"Question: {q[:500]}"
+    )
+    try:
+        resp = Initialization.llm_summary.invoke(prompt)
+        text = (getattr(resp, "content", "") or "").strip()
+        # Keep the first line, strip stray quotes / trailing punctuation.
+        text = text.splitlines()[0].strip().strip("\"'").rstrip(".!?,;:").strip()
+        return text[:60]
+    except Exception:  # pragma: no cover - titling must never break a turn
+        logger.exception("Failed to generate conversation title")
+        return ""
+
+
 def _persist_turn(
     user_store: dict[str, Any] | None,
     chat_history: dict[str, Any],
@@ -1683,6 +1710,21 @@ def _persist_turn(
         return
     thread_id = chat_history.get("thread_id")
     try:
+        # Generate a nice sidebar title once, from the opening question, and cache
+        # it on chat_history so re-saves (and the returned store) reuse it.
+        if not (chat_history.get("title") or "").strip():
+            first_human = next(
+                (
+                    m.get("content")
+                    for m in chat_history.get("messages", [])
+                    if m.get("type") == "HumanMessage" and (m.get("content") or "").strip()
+                ),
+                None,
+            )
+            if first_human:
+                nice = _generate_conversation_title(first_human)
+                if nice:
+                    chat_history["title"] = nice
         save_conversation(user_id, thread_id, chat_history)
         last_human = next(
             (
