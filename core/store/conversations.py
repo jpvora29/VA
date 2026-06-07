@@ -22,7 +22,15 @@ _TITLE_MAX = 60
 
 
 def _derive_title(chat_history: dict[str, Any]) -> str:
-    """Use the first human message as the conversation title (truncated)."""
+    """Conversation title: a short LLM-generated label when present, else the first
+    human message truncated.
+
+    A nice title is generated once at the UI layer (`_persist_turn`) and cached on
+    ``chat_history["title"]`` so it survives re-saves (e.g. boardroom edits) instead
+    of being recomputed from the raw question every time."""
+    cached = (chat_history.get("title") or "").strip()
+    if cached:
+        return cached if len(cached) <= _TITLE_MAX else cached[: _TITLE_MAX - 1] + "…"
     for msg in chat_history.get("messages", []) or []:
         if msg.get("type") == "HumanMessage" and (msg.get("content") or "").strip():
             text = msg["content"].strip().replace("\n", " ")
