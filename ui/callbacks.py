@@ -1730,59 +1730,6 @@ def _persist_turn(
 
 
 @callback(
-    Output("chat-store", "data", allow_duplicate=True),
-    Input("is-thinking", "data"),
-    State("chat-store", "data"),
-    State("user-store", "data"),
-    prevent_initial_call=True,
-)
-def generate_chat_title(
-    is_thinking: bool, chat_history: dict[str, Any], user_store: dict[str, Any]
-) -> Any:
-    """Generate the nice sidebar title in its OWN request, off the commit path.
-
-    This used to live in `_persist_turn`, which runs inside `poll_job` *before* it
-    returns the committed answer — so the blocking title LLM call held the answer
-    off-screen (UI stuck on "Suggesting follow-ups") on the first turn. Here it
-    fires when a turn finishes (`is-thinking` → False), AFTER the answer is already
-    committed + rendered. We trigger off `is-thinking` (not `chat-store`) so this
-    doesn't collide with `backfill_boardroom_docs`, which also writes `chat-store`
-    from a `chat-store` input — two callbacks writing the same output from the same
-    trigger is the "Duplicate callback outputs" error. We caption the chat once
-    (missing title + an answer exists) and let `refresh_sidebar` pick it up.
-    """
-    if is_thinking:
-        return no_update
-    if not chat_history or (chat_history.get("title") or "").strip():
-        return no_update
-    msgs = chat_history.get("messages") or []
-    has_answer = any(
-        m.get("type") in ("AIMessage", "Boardroom", "DataOverflow") for m in msgs
-    )
-    first_q = next(
-        (
-            m.get("content")
-            for m in msgs
-            if m.get("type") == "HumanMessage" and (m.get("content") or "").strip()
-        ),
-        None,
-    )
-    if not has_answer or not first_q:
-        return no_update
-    title = _generate_conversation_title(first_q)
-    if not title:
-        return no_update
-    chat_history["title"] = title
-    # Persist immediately so the sidebar refresh (which reads from the DB) shows
-    # the new title on this same store update.
-    user_id, _ = _current_user(user_store)
-    thread_id = chat_history.get("thread_id")
-    if user_id is not None and thread_id:
-        save_conversation(user_id, thread_id, chat_history)
-    return chat_history
-
-
-@callback(
     Output("persist-sink", "data"),
     Input("chat-store", "data"),
     State("user-store", "data"),
@@ -1829,25 +1776,62 @@ def stop_job(n_clicks: int, chat_history: dict[str, Any]) -> str | NoUpdate:
 @callback(
     Output("chat-store", "data", allow_duplicate=True),
     Input("chat-store", "data"),
+    State("user-store", "data"),
     prevent_initial_call=True,
 )
-def backfill_boardroom_docs(chat_history: dict[str, Any]) -> Any:
-    """Ensure every Boardroom message carries a *persisted* editable document.
+def enrich_chat_store(chat_history: dict[str, Any], user_store: dict[str, Any]) -> Any:
+    """One-time enrichments of a committed transcript: Boardroom docs + nice title.
 
-    The doc is normally built at commit time, but messages from before that change
-    (or any path that only stored a digest) need one too — otherwise render_chat
-    would rebuild a throwaway doc with fresh widget ids on every paint, so the edit
-    buttons' ids would never match what the edit callbacks look up. We persist a
-    stable doc once; subsequent fires find docs present and no-op (no render loop).
+    Both must WRITE chat-store, and chat-store is a write hub — a second
+    chat-store→chat-store callback would be scheduled alongside this one in the same
+    dispatch and trip Dash's "Duplicate callback outputs". So they share this single
+    callback. It runs after `poll_job` has already rendered the answer, so the
+    (blocking) title LLM call never delays the visible answer. Self-terminating:
+    once docs + title are present, subsequent fires no-op (no render loop).
+
+    1. **Boardroom docs** — the editable doc is normally built at commit time, but
+       messages from before that change (or any path that only stored a digest) need
+       one too, else render_chat rebuilds a throwaway doc with fresh widget ids on
+       every paint and the edit buttons' ids never match the edit callbacks.
+    2. **Sidebar title** — a short LLM-generated label from the opening question,
+       generated once when an answer exists; cached on `chat_history["title"]`.
     """
     if not chat_history:
         return no_update
     changed = False
+
+    # 1) Boardroom editable docs.
     for msg in chat_history.get("messages") or []:
         if msg.get("type") == "Boardroom" and not msg.get("doc"):
             specs = msg.get("charts") or []
             msg["doc"] = build_boardroom_document(msg.get("digest") or {}, len(specs))
             changed = True
+
+    # 2) Nice sidebar title, once a turn has actually produced an answer.
+    if not (chat_history.get("title") or "").strip():
+        msgs = chat_history.get("messages") or []
+        has_answer = any(
+            m.get("type") in ("AIMessage", "Boardroom", "DataOverflow") for m in msgs
+        )
+        first_q = next(
+            (
+                m.get("content")
+                for m in msgs
+                if m.get("type") == "HumanMessage" and (m.get("content") or "").strip()
+            ),
+            None,
+        )
+        if has_answer and first_q:
+            title = _generate_conversation_title(first_q)
+            if title:
+                chat_history["title"] = title
+                # Persist now so refresh_sidebar (reads the DB) shows the new title.
+                user_id, _ = _current_user(user_store)
+                thread_id = chat_history.get("thread_id")
+                if user_id is not None and thread_id:
+                    save_conversation(user_id, thread_id, chat_history)
+                changed = True
+
     return chat_history if changed else no_update
 
 
