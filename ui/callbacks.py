@@ -1562,6 +1562,18 @@ def launch_new_job(
         custom_peers=custom_peers,
         custom_peers_active=bool(custom_peers and custom_peers.get("peers")),
         boardroom_mode=bool(boardroom_mode),
+        # Clear the previous turn's chart/result outputs. The graph runs on a
+        # persistent checkpointer, and these channels have no reducer, so a turn
+        # that doesn't run a given chart/SQL node would otherwise inherit the last
+        # turn's value — which `_update_chat_history` then re-appends, surfacing a
+        # stale chart on a turn that produced none. Seeding them empty overwrites.
+        analyst_charts=[],
+        survey_chart={},
+        gpr_chart={},
+        combined_chart={},
+        survey_query_result=[],
+        gpr_query_result=[],
+        combined_result=[],
     )
     _launch_job(thread_id, state_obj)
     return False, False, "Starting…"

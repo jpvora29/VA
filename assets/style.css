@@ -234,6 +234,14 @@ body {
     box-shadow: 0 12px 34px rgba(11, 75, 255, 0.16);
 }
 
+/* Top row: the text field + send/stop, bottom-aligned so the buttons sit at the
+   foot of the input as it grows. */
+.composer-input-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+}
+
 .composer-input.form-control,
 .composer-input,
 .composer textarea,
@@ -245,7 +253,8 @@ body {
     font-size: 15px;
     line-height: 1.5;
     color: var(--ink-900);
-    width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
     min-height: 52px;
     max-height: 200px;
     resize: none;
@@ -258,18 +267,20 @@ body {
     color: var(--ink-300);
 }
 
-/* Bottom toolbar: + actions left, cues middle, send/stop right. */
+/* Bottom toolbar: + actions + cues (send lives up beside the input). */
 .composer-toolbar {
     display: flex;
     align-items: center;
     gap: 8px;
 }
 
+/* Send/stop group, aligned to the input row. */
 .composer-actions {
-    margin-left: auto;
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     gap: 6px;
+    padding-bottom: 4px;
 }
 
 /* Round "+" pitch-builder trigger (replaces the big button). */

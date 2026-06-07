@@ -394,16 +394,43 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                     ),
                                     html.Div(
                                         [
-                                            # Top row: the (growable) text field.
-                                            dcc.Textarea(
-                                                id="user-input",
-                                                placeholder="Ask anything",
-                                                className="composer-input",
-                                                rows=1,
+                                            # Top row: the (growable) text field with
+                                            # the send/stop buttons aligned to it.
+                                            html.Div(
+                                                [
+                                                    dcc.Textarea(
+                                                        id="user-input",
+                                                        placeholder="Ask anything",
+                                                        className="composer-input",
+                                                        rows=1,
+                                                    ),
+                                                    html.Div(
+                                                        [
+                                                            dbc.Button(
+                                                                html.I(
+                                                                    className="bi bi-arrow-up"
+                                                                ),
+                                                                id="send-btn",
+                                                                n_clicks=0,
+                                                                className="send-btn",
+                                                            ),
+                                                            dbc.Button(
+                                                                html.I(
+                                                                    className="bi bi-stop-fill"
+                                                                ),
+                                                                id="stop-btn",
+                                                                n_clicks=0,
+                                                                className="stop-btn",
+                                                                style={"display": "none"},
+                                                            ),
+                                                        ],
+                                                        className="composer-actions",
+                                                    ),
+                                                ],
+                                                className="composer-input-row",
                                             ),
-                                            # Bottom toolbar: + actions on the left,
-                                            # cues in the middle, send/stop on the right
-                                            # (Codex-style composer footer).
+                                            # Bottom toolbar: + actions and cues only;
+                                            # send stays up beside the input.
                                             html.Div(
                                                 [
                                                     dbc.DropdownMenu(
@@ -460,28 +487,6 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                                     html.Div(
                                                         id="boardroom-mode-cue",
                                                         className="boardroom-mode-cue",
-                                                    ),
-                                                    html.Div(
-                                                        [
-                                                            dbc.Button(
-                                                                html.I(
-                                                                    className="bi bi-arrow-up"
-                                                                ),
-                                                                id="send-btn",
-                                                                n_clicks=0,
-                                                                className="send-btn",
-                                                            ),
-                                                            dbc.Button(
-                                                                html.I(
-                                                                    className="bi bi-stop-fill"
-                                                                ),
-                                                                id="stop-btn",
-                                                                n_clicks=0,
-                                                                className="stop-btn",
-                                                                style={"display": "none"},
-                                                            ),
-                                                        ],
-                                                        className="composer-actions",
                                                     ),
                                                 ],
                                                 className="composer-toolbar",

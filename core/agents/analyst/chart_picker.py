@@ -85,6 +85,28 @@ def _dedup_key(ev: Evidence) -> str:
     return re.sub(r"\s+", " ", (ev.get("sql") or "")).strip().lower()
 
 
+def _norm_field(value: Any) -> tuple:
+    """Normalize a spec axis field (str or list of str) to a comparable tuple."""
+    if isinstance(value, (list, tuple)):
+        return tuple(str(v).strip().lower() for v in value if str(v).strip())
+    text = str(value or "").strip().lower()
+    return (text,) if text else ()
+
+
+def _chart_signature(chart_data: Dict[str, Any]) -> tuple:
+    """A shape-based identity for a built chart: type + axes + series.
+
+    Two charts with the same type, x, y and series render the same picture even if
+    they came from different SQL — so we collapse them to one (keeping the richer
+    candidate, since callers iterate best-chartability-first)."""
+    return (
+        str(chart_data.get("chart_type") or "").strip().lower(),
+        _norm_field(chart_data.get("x")),
+        _norm_field(chart_data.get("y")),
+        _norm_field(chart_data.get("series")),
+    )
+
+
 def _chart_node(flow: str, rules: str):
     return SurveyChartNode(rules) if flow == "survey" else GPRChartNode(rules)
 
@@ -123,6 +145,13 @@ def pick_charts(question: str, evidence: List[Evidence]) -> List[Dict[str, Any]]
     # Cache one chart node per flow (rules are flow-wide for the turn).
     nodes: Dict[str, Any] = {}
     charts: List[Dict[str, Any]] = []
+    # Distinct *rendered* charts only. Deduping by SQL text (the old key) keeps two
+    # different-SQL lenses that nonetheless draw the SAME chart — same type/axes,
+    # just different row coverage — so the user saw the "same" chart twice, one
+    # fuller and one sparser. Dedup on the produced spec's shape instead. `ranked`
+    # is sorted by chartability (which rewards more rows), so the first occurrence
+    # is the richer one and later duplicates are dropped.
+    seen_signatures: set[tuple] = set()
 
     for _score, ev in ranked:
         if len(charts) >= MAX_CHARTS:
@@ -146,6 +175,10 @@ def pick_charts(question: str, evidence: List[Evidence]) -> List[Dict[str, Any]]
             # as "data is scalar" — surfacing a scalar flag for a real dataset.
             if str(chart_data.get("chart_type") or "none").strip().lower() == "none":
                 continue
+            signature = _chart_signature(chart_data)
+            if signature in seen_signatures:
+                continue
+            seen_signatures.add(signature)
             charts.append(
                 {
                     "title": chart_data.get("title") or ev.get("lens", "") or "Analysis",
