@@ -125,7 +125,12 @@ pitch_workflow = PitchBuilderWorkflow()
 
 clientside_callback(
     """
-    function(children) {
+    function(children, editMode) {
+        // While the user is editing a Boardroom card, the chat repaints on every
+        // tweak — don't yank the viewport to the bottom mid-edit.
+        if (editMode) {
+            return window.dash_clientside.no_update;
+        }
         const el = document.getElementById('chat-box');
         if (el) {
             setTimeout(() => {el.scrollTop = el.scrollHeight;}, 30);
@@ -135,6 +140,7 @@ clientside_callback(
     """,
     Output("chat-box", "data-scroll-anchor"),
     Input("chat-box", "children"),
+    State("boardroom-edit-mode", "data"),
     prevent_initial_call=True,
 )
 
@@ -1685,6 +1691,33 @@ def _persist_turn(
 
 
 @callback(
+    Output("persist-sink", "data"),
+    Input("chat-store", "data"),
+    State("user-store", "data"),
+    State("is-thinking", "data"),
+    prevent_initial_call=True,
+)
+def persist_chat_edits(
+    chat_history: dict[str, Any], user_store: dict[str, Any], is_thinking: bool
+) -> NoUpdate:
+    """Persist out-of-turn edits to the transcript (e.g. Boardroom widget tweaks).
+
+    Boardroom edit callbacks mutate the ``doc`` inside ``chat-store`` but never run
+    a graph turn, so without this the changes only live in the in-memory store and
+    vanish on reopen. We skip while a turn is streaming — poll_job persists the
+    final transcript itself, and saving every poll tick would be wasteful.
+    """
+    if is_thinking:
+        return no_update
+    user_id, _ = _current_user(user_store)
+    thread_id = (chat_history or {}).get("thread_id")
+    if user_id is None or not thread_id:
+        return no_update
+    save_conversation(user_id, thread_id, chat_history)
+    return no_update
+
+
+@callback(
     Output("thinking-agent", "children", allow_duplicate=True),
     Input("stop-btn", "n_clicks"),
     State("chat-store", "data"),
@@ -1900,13 +1933,12 @@ def render_chat(
     Output("is-thinking", "data"),
     Output("user-input", "value"),
     Input("send-btn", "n_clicks"),
-    Input("user-input", "n_submit"),
     State("user-input", "value"),
     State("chat-store", "data"),
     prevent_initial_call=True,
 )
 def update_chat(
-    n_clicks: int, n_submit: int, user_input: str, chat_history: dict[str, Any]
+    n_clicks: int, user_input: str, chat_history: dict[str, Any]
 ) -> tuple[dict[str, Any], Optional[bool], Optional[bool], Optional[str]]:
 
     chat_history = chat_history or {}

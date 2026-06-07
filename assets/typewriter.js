@@ -94,12 +94,47 @@
         tick();
     }
 
+    // Codex-style composer behaviour for the <textarea>: Enter sends, Shift+Enter
+    // inserts a newline, and the field auto-grows with its content (capped by CSS
+    // max-height, after which it scrolls).
+    function autoGrow(input) {
+        input.style.height = "auto";
+        input.style.height = Math.min(input.scrollHeight, 200) + "px";
+    }
+
+    function wireComposer(input) {
+        if (input.dataset.composerInit === "1") {
+            return;
+        }
+        input.dataset.composerInit = "1";
+
+        input.addEventListener("keydown", function (e) {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                var send = document.getElementById("send-btn");
+                if (send) {
+                    send.click();
+                }
+            }
+        });
+
+        input.addEventListener("input", function () {
+            autoGrow(input);
+        });
+        autoGrow(input);
+    }
+
     function findAndStart() {
         var input = document.getElementById("user-input");
         if (!input) {
             return;
         }
         animate(input);
+        wireComposer(input);
+        // After a send, Dash clears the value — shrink the field back down.
+        if (!input.value) {
+            autoGrow(input);
+        }
         // If the conversation has already started (e.g. chip click), halt now.
         if (conversationStarted() && typeof input._twStop === "function") {
             input._twStop();

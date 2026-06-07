@@ -24,8 +24,10 @@ app = dash.Dash(
 app.layout = html.Div(
     [
         # ── Global, persistent stores ───────────────────────────────────────
-        # user-store survives refresh (local) so the lightweight login sticks.
-        dcc.Store(id="user-store", storage_type="local"),
+        # user-store uses *session* storage: it survives a page refresh within the
+        # same browser tab, but clears when the tab/window is closed — so every
+        # fresh launch lands on the login page instead of silently auto-signing-in.
+        dcc.Store(id="user-store", storage_type="session"),
         dcc.Store(id="active-conversation", storage_type="local"),
         dcc.Store(id="sidebar-collapsed", storage_type="local", data=False),
         dcc.Store(id="filter-store", storage_type="session"),

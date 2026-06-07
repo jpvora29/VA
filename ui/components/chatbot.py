@@ -342,6 +342,7 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
             dcc.Store(id="has-chart", data=False),
             dcc.Store(id="overflow_data", data={}),
             dcc.Store(id="feedback-sink", data={}),  # write-only sink for thumb clicks
+            dcc.Store(id="persist-sink", data={}),  # write-only sink for edit persistence
             # Polls the in-process streaming job each second for live status +
             # completion; enabled by launch_new_job / launch_resume_job.
             dcc.Interval(id="job-poll", interval=1000, n_intervals=0, disabled=True),
@@ -393,77 +394,97 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                     ),
                                     html.Div(
                                         [
-                                            dbc.DropdownMenu(
-                                                [
-                                                    dbc.DropdownMenuItem(
-                                                        [
-                                                            html.I(
-                                                                className="bi bi-easel2 composer-menu-icon"
-                                                            ),
-                                                            "Pitch Builder",
-                                                        ],
-                                                        id="menu-pitch-builder",
-                                                        n_clicks=0,
-                                                    ),
-                                                    dbc.DropdownMenuItem(
-                                                        [
-                                                            html.I(
-                                                                className="bi bi-grid-1x2 composer-menu-icon"
-                                                            ),
-                                                            "Boardroom Mode",
-                                                        ],
-                                                        id="menu-boardroom-mode",
-                                                        n_clicks=0,
-                                                    ),
-                                                    dbc.DropdownMenuItem(
-                                                        [
-                                                            html.I(
-                                                                className="bi bi-people composer-menu-icon"
-                                                            ),
-                                                            "Custom Peers",
-                                                        ],
-                                                        id="menu-custom-peers",
-                                                        n_clicks=0,
-                                                    ),
-                                                ],
-                                                id="composer-add-menu",
-                                                label=html.I(className="bi bi-plus-lg"),
-                                                direction="up",
-                                                caret=False,
-                                                toggleClassName="pitch-trigger-btn",
-                                                className="composer-add-wrap",
-                                            ),
-                                            # Visual cue (like Claude's Search pill)
-                                            # shown only while a custom peer set is
-                                            # pinned for this conversation.
-                                            html.Div(
-                                                id="custom-peers-cue",
-                                                className="custom-peers-cue",
-                                            ),
-                                            # Armed-state pill for Boardroom Mode; the
-                                            # next answer renders as a dashboard card.
-                                            html.Div(
-                                                id="boardroom-mode-cue",
-                                                className="boardroom-mode-cue",
-                                            ),
-                                            dbc.Input(
+                                            # Top row: the (growable) text field.
+                                            dcc.Textarea(
                                                 id="user-input",
                                                 placeholder="Ask anything",
-                                                debounce=True,
                                                 className="composer-input",
+                                                rows=1,
                                             ),
-                                            dbc.Button(
-                                                html.I(className="bi bi-arrow-up"),
-                                                id="send-btn",
-                                                n_clicks=0,
-                                                className="send-btn",
-                                            ),
-                                            dbc.Button(
-                                                html.I(className="bi bi-stop-fill"),
-                                                id="stop-btn",
-                                                n_clicks=0,
-                                                className="stop-btn",
-                                                style={"display": "none"},
+                                            # Bottom toolbar: + actions on the left,
+                                            # cues in the middle, send/stop on the right
+                                            # (Codex-style composer footer).
+                                            html.Div(
+                                                [
+                                                    dbc.DropdownMenu(
+                                                        [
+                                                            dbc.DropdownMenuItem(
+                                                                [
+                                                                    html.I(
+                                                                        className="bi bi-easel2 composer-menu-icon"
+                                                                    ),
+                                                                    "Pitch Builder",
+                                                                ],
+                                                                id="menu-pitch-builder",
+                                                                n_clicks=0,
+                                                            ),
+                                                            dbc.DropdownMenuItem(
+                                                                [
+                                                                    html.I(
+                                                                        className="bi bi-grid-1x2 composer-menu-icon"
+                                                                    ),
+                                                                    "Boardroom Mode",
+                                                                ],
+                                                                id="menu-boardroom-mode",
+                                                                n_clicks=0,
+                                                            ),
+                                                            dbc.DropdownMenuItem(
+                                                                [
+                                                                    html.I(
+                                                                        className="bi bi-people composer-menu-icon"
+                                                                    ),
+                                                                    "Custom Peers",
+                                                                ],
+                                                                id="menu-custom-peers",
+                                                                n_clicks=0,
+                                                            ),
+                                                        ],
+                                                        id="composer-add-menu",
+                                                        label=html.I(
+                                                            className="bi bi-plus-lg"
+                                                        ),
+                                                        direction="up",
+                                                        caret=False,
+                                                        toggleClassName="pitch-trigger-btn",
+                                                        className="composer-add-wrap",
+                                                    ),
+                                                    # Visual cue (like Claude's Search
+                                                    # pill) shown only while a custom
+                                                    # peer set is pinned.
+                                                    html.Div(
+                                                        id="custom-peers-cue",
+                                                        className="custom-peers-cue",
+                                                    ),
+                                                    # Armed-state pill for Boardroom
+                                                    # Mode; next answer is a card.
+                                                    html.Div(
+                                                        id="boardroom-mode-cue",
+                                                        className="boardroom-mode-cue",
+                                                    ),
+                                                    html.Div(
+                                                        [
+                                                            dbc.Button(
+                                                                html.I(
+                                                                    className="bi bi-arrow-up"
+                                                                ),
+                                                                id="send-btn",
+                                                                n_clicks=0,
+                                                                className="send-btn",
+                                                            ),
+                                                            dbc.Button(
+                                                                html.I(
+                                                                    className="bi bi-stop-fill"
+                                                                ),
+                                                                id="stop-btn",
+                                                                n_clicks=0,
+                                                                className="stop-btn",
+                                                                style={"display": "none"},
+                                                            ),
+                                                        ],
+                                                        className="composer-actions",
+                                                    ),
+                                                ],
+                                                className="composer-toolbar",
                                             ),
                                         ],
                                         className="composer",
