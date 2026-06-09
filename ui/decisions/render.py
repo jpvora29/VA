@@ -205,36 +205,17 @@ def detail_body(d: dict[str, Any], revisions: list[dict[str, Any]]) -> html.Div:
             ),
             _evidence_block(d.get("evidence") or []),
             _links_block(d.get("links") or {}),
-            html.Div(
-                [
-                    dbc.Button(
-                        [html.I(className="bi bi-pencil me-1"), "Edit"],
-                        id="decision-detail-edit",
-                        n_clicks=0,
-                        className="decision-action-btn",
-                    ),
-                    dbc.Button(
-                        [html.I(className="bi bi-arrow-counterclockwise me-1"), "Reopen"],
-                        id="decision-detail-reopen",
-                        n_clicks=0,
-                        className="decision-action-btn",
-                        disabled=d["status"] not in ("blocked", "archived"),
-                    ),
-                    dbc.Button(
-                        [html.I(className="bi bi-trash me-1"), "Delete"],
-                        id="decision-detail-delete",
-                        n_clicks=0,
-                        className="decision-action-btn decision-action-danger",
-                    ),
-                ],
-                className="decision-detail-actions",
-            ),
-            html.Hr(),
+            html.Hr(className="decision-detail-rule"),
             html.H5("Revision history", className="decision-history-title"),
             _history(revisions),
         ],
         className="decision-detail-body",
     )
+
+
+def reopen_disabled(status: str) -> bool:
+    """The Reopen action only applies to terminal-ish statuses."""
+    return status not in ("blocked", "archived")
 
 
 def _field(label: str, value: str | None) -> html.Div:
@@ -329,9 +310,41 @@ def decision_modals() -> html.Div:
     return html.Div(
         [
             dbc.Offcanvas(
-                html.Div(id="decision-detail-content"),
+                html.Div(
+                    [
+                        # Scrollable, dynamically-rendered fields + revision history.
+                        html.Div(id="decision-detail-content", className="decision-detail-scroll"),
+                        # Action bar is mounted statically so its buttons always
+                        # exist in the DOM (callbacks reference them as Inputs).
+                        html.Div(
+                            [
+                                dbc.Button(
+                                    [html.I(className="bi bi-pencil me-1"), "Edit"],
+                                    id="decision-detail-edit",
+                                    n_clicks=0,
+                                    className="decision-action-btn",
+                                ),
+                                dbc.Button(
+                                    [html.I(className="bi bi-arrow-counterclockwise me-1"), "Reopen"],
+                                    id="decision-detail-reopen",
+                                    n_clicks=0,
+                                    className="decision-action-btn",
+                                    disabled=True,
+                                ),
+                                dbc.Button(
+                                    [html.I(className="bi bi-trash me-1"), "Delete"],
+                                    id="decision-detail-delete",
+                                    n_clicks=0,
+                                    className="decision-action-btn decision-action-danger",
+                                ),
+                            ],
+                            className="decision-detail-actions",
+                        ),
+                    ],
+                    className="decision-detail-shell",
+                ),
                 id="decision-detail",
-                title="Decision",
+                title="Decision detail",
                 placement="end",
                 is_open=False,
                 className="decision-detail-canvas",

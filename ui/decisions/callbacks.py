@@ -53,12 +53,20 @@ def set_active_view(*_: Any) -> str:
 @callback(
     Output("view-chat", "className"),
     Output("view-board", "className"),
+    Output("nav-chat-view", "className"),
+    Output("nav-decision-board", "className"),
     Input("active-view", "data"),
 )
-def toggle_views(view: str | None) -> tuple[str, str]:
-    if view == "board":
-        return "view-pane view-hidden", "view-pane"
-    return "view-pane", "view-pane view-hidden"
+def toggle_views(view: str | None) -> tuple[str, str, str, str]:
+    on_board = view == "board"
+    base = "sidebar-nav-item"
+    active = f"{base} sidebar-nav-active"
+    return (
+        "view-pane view-hidden" if on_board else "view-pane",
+        "view-pane" if on_board else "view-pane view-hidden",
+        base if on_board else active,
+        active if on_board else base,
+    )
 
 
 # ── Board painting (search / filter / sort) ─────────────────────────────────
@@ -95,19 +103,21 @@ def paint_board(view, search, statuses, priorities, sort, _version, user_store):
     Output("decision-detail", "is_open"),
     Output("decision-detail-content", "children"),
     Output("decision-detail-target", "data"),
+    Output("decision-detail-reopen", "disabled"),
     Input({"type": "decision-card", "id": ALL}, "n_clicks"),
     State("user-store", "data"),
     prevent_initial_call=True,
 )
 def open_detail(_clicks, user_store):
     if not _clicked():
-        return no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update
     uid = _uid(user_store)
     did = ctx.triggered_id["id"]
     d = store.get_decision(uid, did)
     if d is None:
-        return no_update, no_update, no_update
-    return True, render.detail_body(d, store.list_revisions(uid, did)), did
+        return no_update, no_update, no_update, no_update
+    body = render.detail_body(d, store.list_revisions(uid, did))
+    return True, body, did, render.reopen_disabled(d["status"])
 
 
 # ── Pin / unpin ─────────────────────────────────────────────────────────────
