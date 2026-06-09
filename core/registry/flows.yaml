@@ -11,6 +11,12 @@
 # Column roles: entity | measure | temporal | continuous | filter
 # card_cap: distinct-count threshold for the gate — <= cap injects in full,
 #           above it injects only fuzzy-resolved matches + a small candidate list.
+# resolver: fuzzy (default) | semantic. `semantic` marks columns whose values
+#           are conceptual (industry / SIC, product / cover / business line,
+#           segment, attributes) where a query shares no STRING with the value
+#           ("manufacturing" vs "Manufacture of motor vehicles"). On those, when
+#           fuzzy resolves nothing the engine may escalate to an LLM resolver
+#           (fuzzy-first, LLM-rescue — behind CONTEXT_ENGINE_SEMANTIC).
 
 survey:
   label: Survey
@@ -45,11 +51,11 @@ survey:
   columns:
     SurveyCountry: {role: entity, card_cap: 30}
     Carrier: {role: entity, card_cap: 8, confidential: false}
-    SurveyPractice: {role: entity, card_cap: 30, aliases: [practice, line of business, lob, product]}
+    SurveyPractice: {role: entity, card_cap: 30, resolver: semantic, aliases: [practice, line of business, lob, product]}
     Region: {role: entity, card_cap: 30}
-    Sections: {role: entity, card_cap: 30}
-    Attributes: {role: entity, card_cap: 30}
-    SurveySegment: {role: entity, card_cap: 30, aliases: [segment]}
+    Sections: {role: entity, card_cap: 30, resolver: semantic}
+    Attributes: {role: entity, card_cap: 30, resolver: semantic}
+    SurveySegment: {role: entity, card_cap: 30, resolver: semantic, aliases: [segment]}
     Survey_Year: {role: temporal, card_cap: 30}
     Score: {role: measure}
     NPS Score: {role: measure, aliases: [nps, net promoter score]}
@@ -95,12 +101,12 @@ gpr:
     Region: {role: entity, card_cap: 30}
     Country: {role: entity, card_cap: 30}
     Carrier_Group: {role: entity, card_cap: 8, aliases: [carrier, group, insurer]}
-    Product_Line: {role: entity, card_cap: 30, aliases: [product, lob, line of business]}
-    Business_Line: {role: entity, card_cap: 30}
-    Cover_Line: {role: entity, card_cap: 30}
-    Client_Segment: {role: entity, card_cap: 30, aliases: [segment]}
-    SIC_Major_Class: {role: entity, card_cap: 8, aliases: [industry, sic]}
-    SIC_Minor_Class: {role: entity, card_cap: 8}
+    Product_Line: {role: entity, card_cap: 30, resolver: semantic, aliases: [product, lob, line of business]}
+    Business_Line: {role: entity, card_cap: 30, resolver: semantic}
+    Cover_Line: {role: entity, card_cap: 30, resolver: semantic}
+    Client_Segment: {role: entity, card_cap: 30, resolver: semantic, aliases: [segment]}
+    SIC_Major_Class: {role: entity, card_cap: 8, resolver: semantic, aliases: [industry, sic]}
+    SIC_Minor_Class: {role: entity, card_cap: 8, resolver: semantic}
     CLIENT_NAME: {role: entity, card_cap: 8, confidential: true, aliases: [client, insured]}
     Premium: {role: measure, aliases: [gross premium, revenue, book]}
     Billing_Date: {role: temporal}

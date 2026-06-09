@@ -29,6 +29,15 @@ COLUMN_ROLES = frozenset(
     {"entity", "measure", "temporal", "continuous", "filter"}
 )
 
+# Resolver strategy for a high-card entity column (decisions doc #4 hybrid).
+# `fuzzy` (default): deterministic rapidfuzz string match only — perfect for
+# named entities ("Swiss Re" -> SWISS RE). `semantic`: a query like
+# "manufacturing companies" carries no shared *string* with "Manufacture of
+# motor vehicles", so when fuzzy resolves nothing the engine may escalate to an
+# LLM resolver (fuzzy-first, LLM-rescue). Flagged columns: industry (SIC
+# major/minor), product/cover/business line, segment, attributes.
+RESOLVERS = frozenset({"fuzzy", "semantic"})
+
 DEFAULT_CARD_CAP = 30
 
 
@@ -69,6 +78,12 @@ class ColumnSpec:
     definition: str = ""
     confidential: bool = False
     aliases: Tuple[str, ...] = ()
+    resolver: str = "fuzzy"  # fuzzy | semantic — see RESOLVERS
+
+    @property
+    def is_semantic(self) -> bool:
+        """True when this column is eligible for the LLM-rescue resolver."""
+        return self.resolver == "semantic"
 
 
 @dataclass(frozen=True)
@@ -141,6 +156,14 @@ class FlowSpec:
 
     def columns_by_role(self, role: str) -> List[str]:
         return [c.name for c in self.columns.values() if c.role == role]
+
+    def semantic_columns(self) -> List[str]:
+        """Columns flagged for the hybrid LLM-rescue resolver (decision #4)."""
+        return [c.name for c in self.columns.values() if c.is_semantic]
+
+    def is_semantic_column(self, column: str) -> bool:
+        spec = self.columns.get(column)
+        return bool(spec and spec.is_semantic)
 
     def resolve_alias(self, term: str) -> Optional[str]:
         """Map a user term to a metric or column name via declared aliases.

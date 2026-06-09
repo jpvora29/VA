@@ -98,10 +98,10 @@ class PlannerSignature(dspy.Signature):
 
     [GROUNDING]
     Use `valid_values` to pin filter values to exact valid entries; never put a column or
-    value into the plan that is absent from `schema` / `valid_values`.
+    value into the plan that is absent from `table_schema` / `valid_values`.
     """
 
-    schema: Dict[str, Any] = dspy.InputField(
+    table_schema: Dict[str, Any] = dspy.InputField(
         desc="Schema for this flow as {table_name: [column metadata]}."
     )
     definitions: Dict[str, str] = dspy.InputField(
@@ -144,7 +144,7 @@ class SQLAgentSignature(dspy.Signature):
     `valid_year_quarter` to frame timeframe filters.
     """
 
-    schema: Dict[str, Any] = dspy.InputField(
+    table_schema: Dict[str, Any] = dspy.InputField(
         desc="Schema for this flow as {table_name: [column metadata]}."
     )
     rules: str = dspy.InputField(

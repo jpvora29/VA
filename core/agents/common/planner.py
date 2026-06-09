@@ -77,7 +77,7 @@ class BasePlannerNode(dspy.Module):
                 valid_values = self.valid_values
 
         result = self.planner(
-            schema=self.schema_tables,
+            table_schema=self.schema_tables,
             definitions=self.definitions,
             valid_values=valid_values,
             valid_year_quarter=valid_year_quarter or [],

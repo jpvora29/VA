@@ -64,14 +64,53 @@ def gate_valid_values(
 
 
 def _live_matcher(flow: str) -> Matcher:
-    """Wire the fuzzy resolver from the MCP tools layer (lazy import)."""
+    """Wire the hybrid resolver for the gate's high-card matching (lazy import).
+
+    Fuzzy-first, LLM-rescue (decision #4): the deterministic rapidfuzz matcher is
+    always tried first; for a registry `resolver: semantic` column, a fuzzy miss
+    escalates to the LLM resolver when `CONTEXT_ENGINE_SEMANTIC` is on. This makes
+    every gate call site (planner, SQL agent) hybrid-capable with no change there.
+    """
 
     def match(column: str, query: str) -> List[str]:
-        from core.mcp.tools import match_column_values  # lazy: pulls LLM layer
+        from core.context.retriever import build_resolver  # lazy: pulls LLM layer
 
-        return match_column_values(flow, column, query)
+        return build_resolver(flow).match(column, query)
 
     return match
+
+
+def assemble_valid_values(
+    full_values: Dict[str, Any],
+    query: str,
+    *,
+    card_caps: Dict[str, int],
+    resolver: "EntityResolver",
+    sample_size: int = HIGH_CARD_SAMPLE,
+):
+    """Gate values AND record per-column resolution provenance.
+
+    Like `gate_valid_values`, but uses an `EntityResolver` (fuzzy-first,
+    LLM-rescue) and returns `(gated, resolved)` where `resolved` maps each
+    high-card column to its `ResolvedValues` (values + source). The ContextEngine
+    uses `gated` for prompts and `resolved` for the solver view / observability.
+    """
+    from core.context.retriever import ResolvedValues  # local: avoid import cycle
+
+    gated: Dict[str, List[str]] = {}
+    resolved: Dict[str, ResolvedValues] = {}
+    for column, values in full_values.items():
+        if values is None:
+            continue
+        values_list = list(values)
+        cap = card_caps.get(column, DEFAULT_CARD_CAP)
+        if len(values_list) <= cap:
+            gated[column] = values_list
+            continue
+        rv = resolver.resolve(column, query)
+        resolved[column] = rv
+        gated[column] = rv.values if rv.values else values_list[:sample_size]
+    return gated, resolved
 
 
 def gated_valid_values(

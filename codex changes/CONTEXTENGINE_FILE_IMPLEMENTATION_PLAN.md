@@ -100,7 +100,17 @@ This harness gates every subsequent step.
   `CONTEXT_ENGINE_VALID_VALUES = off|shadow|on` (default off).
 - `core/agents/common/planner.py` — `forward()` gates `valid_values` by
   `user_query` when enabled; default off = byte-identical to legacy.
+- `core/agents/common/sql_agent.py` — `BaseSQLAgentNode.forward()` gates too
+  (same flag/pattern). The SQL agent re-sent the full dict every generation step;
+  both `GPRSQLAgentNode`/`SQLAgentNode` wrappers inherit the gating.
 - `tests/context/test_injection.py` + `tests/registry/test_values.py` — green.
+
+**Full-valid_values injection inventory (audit):**
+- Planner ✅ gated · SQL agent ✅ gated (both flows) · SQL fixer ❌ **left full
+  on purpose** (its job is normalising a bad value to the valid list — needs the
+  full candidates; rare error-recovery path) · analyst `schema_identifier`
+  (line 66) ❌ deferred to **step 5** (analyst `for_solver` view) ·
+  `show_valid_values` analyst tool = on-demand only (fine).
 
 **Deferred (needs LLM creds + real DB + the golden harness; cannot verify in a
 credential-less env):** flip the flag `on`, run the golden harness to prove zero
@@ -132,10 +142,55 @@ Done-when: `config/valid_values_config.py` is deleted, the golden harness shows
 
 ---
 
-## Step 4 — ContextEngine (deterministic, planner-first shadow → cutover)
+## Step 4 — ContextEngine (deterministic core + hybrid resolver) — 🟡 CORE BUILT (2026-06-09); live wiring DEFERRED
 
-ONE engine, 5 typed layers, **zero extra model calls** in v1. Produces a typed
-`ContextBundle` with per-audience views. Roll out behind a flag, planner-first.
+ONE engine, 5 typed layers, **zero extra model calls on the common path**.
+Produces a typed `ContextBundle` with per-audience views. Roll out behind a flag,
+planner-first.
+
+**Hybrid resolver added (decision #4 refinement, user-requested):** the retriever
+is fuzzy-first / LLM-rescue. A registry `resolver: semantic` flag marks the
+conceptual columns (SIC major/minor, industry, product/cover/business line,
+segment, attributes); on those, when deterministic rapidfuzz resolves nothing
+the engine escalates to an LLM resolver that maps the *concept* to the column's
+real distinct values ("manufacturing" → the SIC classes). Gated by
+`CONTEXT_ENGINE_SEMANTIC` (default off). Named entities + low-card columns never
+touch the LLM, so v1's cost profile holds. This makes the engine genuinely
+**hybrid**, not fully deterministic — escalation is per-column (registry flag),
+not per-query, and only as a rescue after fuzzy fails.
+
+**Done now (mechanism, behind default-off flags; all creds-free tests green):**
+- `core/registry/spec.py` — `ColumnSpec.resolver` (+`is_semantic`), `RESOLVERS`,
+  `FlowSpec.semantic_columns()` / `is_semantic_column()`. `loader.py` parses
+  `resolver` + `validate()` rejects unknown/non-entity-semantic. `flows.yaml`
+  flags the conceptual columns for survey + gpr.
+- `core/context/retriever.py` — `EntityResolver` (fuzzy-first, LLM-rescue, pure
+  given injected callables), `ResolvedValues`, `semantic_enabled()`,
+  `build_resolver(flow)`, stubbed `SemanticIndex`.
+- `core/context/semantic.py` — thin dspy `SemanticValueMatch` resolver; can only
+  select from supplied candidates (never invents a value); [] on any failure.
+- `core/context/{bundle,collector,reranker,compressor,engine}.py` — typed
+  `ContextBundle` + `for_routing/planner/sql/solver/response()` views; collector
+  with injectable providers; deterministic reranker + extractive compressor (with
+  `ModelReranker`/`LLMCompressor`/`SemanticIndex` stubbed per decision #12);
+  `ContextEngine.build(flow, query, ...) -> ContextBundle`.
+- `core/context/injection.py` — `_live_matcher` now wires the hybrid resolver
+  (so the step-3 gate call sites — planner + SQL agent — are hybrid-capable with
+  no change); `assemble_valid_values()` returns gated dict + per-column
+  provenance for the bundle.
+- Flags: `CONTEXT_ENGINE_SEMANTIC` (LLM rescue), `CONTEXT_ENGINE_PLANNER`
+  (engine/bundle shadow→on). Both default off.
+- Tests: `tests/context/test_retriever.py`, `tests/context/test_bundle_views.py`,
+  `tests/registry/test_resolver_flag.py` (+ step-3 suites still green).
+
+**DEFERRED (needs LLM creds + the golden harness, same gate as step 3):** wire
+`context_filler.py` (`bundle.for_routing()`) and `planner.py`
+(`bundle.for_planner()`) to consume the engine; construct the engine once per
+turn in `core/graph/main.py`; flip `CONTEXT_ENGINE_PLANNER=shadow`, run the
+golden harness for zero route/plan drift + token drop, then cut over. The
+**subgraph dedup refactor** (gpr/survey → `core/graph/shared/*`) is also deferred
+to that live-harness window — it's a behavior-preserving move that must be parity-
+verified, not done blind.
 
 | Action | File | Notes |
 |---|---|---|

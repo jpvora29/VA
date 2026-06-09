@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 import dspy
 
+from core.context.injection import gate_enabled, gated_valid_values
 from core.schemas.analytical import SQLAgentSignature, SQLFixerOutput
 from logger import get_logger
 
@@ -142,11 +143,24 @@ class BaseSQLAgentNode(dspy.Module):
         query_plan: str,
         valid_year_quarter: Optional[List[str]] = None,
     ) -> str:
+        # Cardinality gate (decisions #2): the SQL agent re-sends the full
+        # valid_values dict every generation step — the same prompt-bloat the
+        # planner had (GPR Carrier_Group ~550 values). When enabled, inject only
+        # the query-resolved subset for high-card columns. Default off = legacy.
+        valid_values = self.valid_values
+        if gate_enabled():
+            try:
+                valid_values = gated_valid_values(
+                    self.flow, user_query, full_values=self.valid_values
+                )
+            except Exception:  # noqa: BLE001 - never let gating break SQL generation
+                valid_values = self.valid_values
+
         result = self.predictor(
-            schema=self.schema_tables,
+            table_schema=self.schema_tables,
             rules=self.rules,
             few_shot=self.few_shot,
-            valid_values=self.valid_values,
+            valid_values=valid_values,
             valid_year_quarter=valid_year_quarter or [],
             query_plan=query_plan,
             user_query=user_query,

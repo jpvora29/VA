@@ -19,6 +19,7 @@ import yaml
 from core.registry.spec import (
     COLUMN_ROLES,
     DEFAULT_CARD_CAP,
+    RESOLVERS,
     ColumnSpec,
     FlowSpec,
     MetricSpec,
@@ -56,6 +57,7 @@ def _parse_column(name: str, raw: Dict[str, Any]) -> ColumnSpec:
         definition=str(raw.get("definition", "")),
         confidential=bool(raw.get("confidential", False)),
         aliases=_as_tuple(raw.get("aliases")),
+        resolver=str(raw.get("resolver", "fuzzy")),
     )
 
 
@@ -118,6 +120,16 @@ class FlowRegistry:
                 if col.role not in COLUMN_ROLES:
                     issues.append(
                         f"{name}: column {col.name!r} has unknown role {col.role!r}"
+                    )
+                if col.resolver not in RESOLVERS:
+                    issues.append(
+                        f"{name}: column {col.name!r} has unknown resolver "
+                        f"{col.resolver!r}"
+                    )
+                if col.is_semantic and col.role != "entity":
+                    issues.append(
+                        f"{name}: column {col.name!r} is resolver=semantic but "
+                        f"role={col.role!r} (semantic resolution is entity-only)"
                     )
             for role, col in flow.entity_columns.items():
                 if col not in known_cols:
