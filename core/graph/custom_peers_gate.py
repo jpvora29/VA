@@ -35,7 +35,8 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Tokens that signal the turn is actually a peer comparison. Mirrors the triggers
-# in core/skills/gpr_peer_average.md so the gate only fires when peers matter.
+# in core/skills/catalog/gpr/gpr-peer-average.skill.md so the gate only fires
+# when peers matter.
 _PEER_TOKENS = (
     "peer",
     "peers",

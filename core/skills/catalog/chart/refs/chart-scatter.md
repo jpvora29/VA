@@ -1,12 +1,3 @@
----
-name: chart-scatter
-description: Detailed guidance for scatter plots (correlation of two measures).
-flow: cross
-scope: [chart]
-always: true
-priority: 70
----
-
 [SCATTER PLOT — `chart_type='scatter'`]
 
 When: examining the RELATIONSHIP between TWO numeric measures, one on each axis —

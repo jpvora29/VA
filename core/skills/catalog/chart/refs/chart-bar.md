@@ -1,12 +1,3 @@
----
-name: chart-bar
-description: Detailed guidance for grouped and stacked bar charts.
-flow: cross
-scope: [chart]
-always: true
-priority: 70
----
-
 [BAR CHART — `chart_type='bar'`]
 
 When: comparing one or more numeric measures across discrete categories

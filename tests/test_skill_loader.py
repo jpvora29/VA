@@ -15,7 +15,12 @@ from core.skills.loader import SkillLoader, get_skill_loader
 
 
 def _write(dir_: Path, name: str, frontmatter: str, body: str = "rule body") -> None:
-    (dir_ / name).write_text(f"---\n{frontmatter}\n---\n\n{body}\n", encoding="utf-8")
+    # Catalog convention is `*.skill.md` (recursive discovery); coerce the short
+    # fixture names ("sow.md") so these unit tests exercise the real glob.
+    stem = name[:-3] if name.endswith(".md") else name
+    (dir_ / f"{stem}.skill.md").write_text(
+        f"---\n{frontmatter}\n---\n\n{body}\n", encoding="utf-8"
+    )
 
 
 # ── requires ────────────────────────────────────────────────────────────────

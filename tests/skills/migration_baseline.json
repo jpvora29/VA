@@ -1,0 +1,163 @@
+{
+  "applicable": {
+    "cross/chart": [
+      "chart-bar",
+      "chart-combo",
+      "chart-field-mapping",
+      "chart-line",
+      "chart-pie-donut",
+      "chart-scatter",
+      "chart-type-selection",
+      "chart-waterfall"
+    ],
+    "cross/pitch": [
+      "cross-response-confidentiality"
+    ],
+    "cross/response": [
+      "cross-response-confidentiality"
+    ],
+    "cross/sql": [
+      "cross-sql-readonly-safety"
+    ],
+    "gimmi/chart": [
+      "chart-bar",
+      "chart-combo",
+      "chart-field-mapping",
+      "chart-line",
+      "chart-pie-donut",
+      "chart-scatter",
+      "chart-type-selection",
+      "chart-waterfall"
+    ],
+    "gimmi/pitch": [
+      "cross-response-confidentiality"
+    ],
+    "gimmi/response": [
+      "cross-response-confidentiality",
+      "gimmi-market-rate",
+      "gimmi-response-formatting"
+    ],
+    "gimmi/sql": [
+      "cross-sql-readonly-safety",
+      "gimmi-market-rate",
+      "gimmi-sql-generation"
+    ],
+    "gpr/chart": [
+      "chart-bar",
+      "chart-combo",
+      "chart-field-mapping",
+      "chart-line",
+      "chart-pie-donut",
+      "chart-scatter",
+      "chart-type-selection",
+      "chart-waterfall",
+      "gpr-chart-fields"
+    ],
+    "gpr/pitch": [
+      "cross-response-confidentiality",
+      "gpr-share-of-portfolio"
+    ],
+    "gpr/planner": [
+      "gpr-marsh-market",
+      "gpr-peer-average",
+      "gpr-planner-base",
+      "gpr-planner-example",
+      "gpr-ranking",
+      "gpr-share-of-portfolio",
+      "gpr-share-of-wallet",
+      "gpr-timeframe"
+    ],
+    "gpr/response": [
+      "cross-response-confidentiality",
+      "gpr-marsh-market",
+      "gpr-peer-average",
+      "gpr-ranking",
+      "gpr-response-example",
+      "gpr-response-formatting",
+      "gpr-share-of-portfolio",
+      "gpr-share-of-wallet",
+      "gpr-timeframe"
+    ],
+    "gpr/sql": [
+      "cross-sql-readonly-safety",
+      "gpr-marsh-market",
+      "gpr-peer-average",
+      "gpr-ranking",
+      "gpr-share-of-portfolio",
+      "gpr-share-of-wallet",
+      "gpr-sql-generation",
+      "gpr-timeframe"
+    ],
+    "survey/chart": [
+      "chart-bar",
+      "chart-combo",
+      "chart-field-mapping",
+      "chart-line",
+      "chart-pie-donut",
+      "chart-scatter",
+      "chart-type-selection",
+      "chart-waterfall",
+      "survey-chart-fields"
+    ],
+    "survey/pitch": [
+      "cross-response-confidentiality"
+    ],
+    "survey/planner": [
+      "survey-confidentiality-aggregation",
+      "survey-market-geography",
+      "survey-multi-stage-ranking",
+      "survey-peer-average",
+      "survey-planner-example",
+      "survey-sql-safety",
+      "survey-timeframe"
+    ],
+    "survey/response": [
+      "cross-response-confidentiality",
+      "survey-response-analysis",
+      "survey-response-example"
+    ],
+    "survey/sql": [
+      "cross-sql-readonly-safety",
+      "survey-sql-generation"
+    ]
+  },
+  "body_sha256": {
+    "chart-bar": "49b67c1cb3b97b7e1eb2dfcb65fba4ceaf6a4b7c19ae226a91a512d39ef0b870",
+    "chart-combo": "467dec6f696d1e07c8f85c96053b2dd690be280d79c8659ec921a4b20fb3d461",
+    "chart-field-mapping": "6f184c58936c80b72c410eaeaee957e4159a94ba67799423565e672f21c5eeae",
+    "chart-line": "4a856af1a5695209f5f83a6d3a974e19fd63f49b15738f4433871dd0ec842e6b",
+    "chart-pie-donut": "94fce4ed56a5ec7fcbe41709d4490a0a21874afc7f1eaea245252d6d87890e21",
+    "chart-scatter": "d8516a94d3eb1f707da831ed7e32668d5a62313f022039a8e807006975e00e42",
+    "chart-type-selection": "4e99036469679a148a8236efe8a4f82da2ac7619c0180fc4785273b696495b0b",
+    "chart-waterfall": "ef9db45d3febd9f9ed9a224575f40c23e060165849a2d0de952eb94912fbebfd",
+    "cross-response-confidentiality": "23773767dd0de810e65d305c301b00f7a8bafb12a38297c268edc465055d5654",
+    "cross-sql-readonly-safety": "a69155e87659e2d09fab23b7dea4ca9167c63fbebb54f1f10c2b5acf422e968b",
+    "gimmi-market-rate": "b79ef0a45e0640b997e530fd8c0274b516dbf8d2a083237d052c3ecb1b26f889",
+    "gimmi-response-formatting": "63659c8b016b7511d6d9be671e1a2e78640f40ffe60268a0516f39375f40b870",
+    "gimmi-sql-generation": "b18849cae1f6c5ed8fce461e70078b64fd485a3aed064b56a01c2be5f37b8d21",
+    "gpr-chart-fields": "c461a9d198f93024acfb51afdf84a1f982650e7ff98517f6f8952b93c5bc2b67",
+    "gpr-marsh-market": "8f75710633c630b26ee4725081b606af38772a2d7562ab5a168424c00a1efcc2",
+    "gpr-peer-average": "59574c2e5a650c85c0ea67bbd1b71b366fc6a2630c41a6957393261f71bc095d",
+    "gpr-planner-base": "2aab887702da2081adc77a567d2d3becebb31b2e89c4f93a87d59678880f4da0",
+    "gpr-planner-example": "37c5d3b0b4b262e6b090b2b5d65d0f815d5af989674ceac2856d7a8156ac3762",
+    "gpr-ranking": "83f531965423a5fc740b2dbc3bcffa0703d9e52f277c71aa8e96e74c509ba974",
+    "gpr-response-example": "ad3467ad4174fae711c5e978600df51337fe955893736665434efad241c37110",
+    "gpr-response-formatting": "107b7d089ea69ef75e9814800f13b8991dadc719746b37d8b350f319364febe8",
+    "gpr-share-of-portfolio": "f471d6bc1e79a624d96470c87deb09bb647a0123deb4560cae960ce9ce1911ea",
+    "gpr-share-of-wallet": "103a61edfbaed680bfa552179da982a674fd3f7201804762f4af60ff77008206",
+    "gpr-sql-generation": "fbee38c651782e17747497397403407f336a55b5461b9968c364b37a2690fdfa",
+    "gpr-timeframe": "4382e0b2ac008dfc2d889d452cdea24e952385781243a808eaf50717874489df",
+    "survey-chart-fields": "a5f266238828dbc53868335ca3e68e08c88a844f0e92ba16e7cc9aa793a332fa",
+    "survey-confidentiality-aggregation": "67b43f5e4bf01bc5961b7f9edf99dd7ae25bd5f821cfdd6e4056433d1808dd4f",
+    "survey-market-geography": "842f4ca1d838beb1f92da45f860eac2699d35545ce49f9b744f0b3d7422d2074",
+    "survey-multi-stage-ranking": "71a967fa018ad626699b65964c748b2bfd3d83113c1b43e776052f9508a784e8",
+    "survey-peer-average": "3aa086a49d684805a143b1a99c3a83487223d9791f09de172877b623997432f4",
+    "survey-planner-example": "560aeb0326b809b791669a5665248e76080a9b9d623725bb5eb5ba9e3944fe8b",
+    "survey-response-analysis": "49e532bc927509821cb062b1fefb088d34abebcd216ebea2c26e15cd83570169",
+    "survey-response-example": "9217fddf75282824011edcdb7fc2edc6a9cd30ee5d95e21fe567db734ed8334f",
+    "survey-sql-generation": "d5eef53101f48322d64a40f02f35be2447de26ef47c924b9f2bb46417bdc82ad",
+    "survey-sql-safety": "4ef7b06c4f7a9c29911e23b6c3b3ebe4834b798b1cd738fe5631873e7729609d",
+    "survey-timeframe": "35ebf343c4d1d7e1ed92384df7de9719c26fc946767563506efd6d0eaea29e59"
+  },
+  "total": 36
+}

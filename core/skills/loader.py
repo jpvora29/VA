@@ -1,8 +1,9 @@
-"""Progressive skill loader (Phase 2).
+"""Progressive skill loader (Phase 2; folder-catalog migration — step 6).
 
-`SkillLoader` reads all `*.md` files under `core/skills/` once at construction
-time, parses their YAML frontmatter, and on each call returns ONLY the bodies
-of skills that:
+`SkillLoader` recursively reads every `*.skill.md` file under the catalog root
+(`core/skills/catalog/<flow>/`) once at construction time, parses their YAML
+frontmatter, resolves any `{{ref: refs/<file>.md#anchor}}` section includes in
+the body, and on each call returns ONLY the bodies of skills that:
 
   1. Match the requested flow (`survey`, `gpr`, `gimmi`, or `cross` for shared).
   2. Have the requested scope in their `scope:` list (`planner`, `sql`,
@@ -152,13 +153,116 @@ def _as_str_tuple(value: Any) -> tuple[str, ...]:
     return (str(value),)
 
 
+# ── section-anchor reference resolution ─────────────────────────────────────
+#
+# A skill body may externalise a section into a sibling `refs/<file>.md` and pull
+# it back inline with a directive on its own line:
+#
+#     {{ref: refs/sow-denominator.md#denominator-contract}}
+#
+# The directive is replaced by the body of the matching heading section (the
+# lines under that heading up to the next heading of the same-or-higher level).
+# Paths are resolved relative to the skill's own directory and guarded so a ref
+# can never escape the catalog root. Used for the few large skills (SoW,
+# peer-average) whose shared rules would otherwise be duplicated.
+
+_REF_DIRECTIVE = re.compile(
+    r"^[ \t]*\{\{\s*ref:\s*(?P<path>[^#}\s]+)#(?P<anchor>[^}\s]+?)\s*\}\}[ \t]*$",
+    re.MULTILINE,
+)
+
+
+class RefError(Exception):
+    """A `{{ref: ...}}` directive that could not be resolved (bad path/anchor)."""
+
+
+def _slugify(heading: str) -> str:
+    """GitHub-style anchor slug: lowercase, spaces/underscores → hyphens."""
+    text = heading.strip().lstrip("#").strip().lower()
+    text = re.sub(r"[\s_]+", "-", text)
+    return re.sub(r"[^a-z0-9\-]", "", text)
+
+
+# Chart `chart_type` enum → the per-type detail ref under `catalog/chart/refs/`.
+# `pie`/`donut` share one ref; `none` (and anything unknown) resolves to no detail
+# so the two-phase chart node injects nothing extra.
+_CHART_DETAIL_FILE = {
+    "bar": "chart-bar",
+    "line": "chart-line",
+    "pie": "chart-pie-donut",
+    "donut": "chart-pie-donut",
+    "scatter": "chart-scatter",
+    "waterfall": "chart-waterfall",
+    "combo": "chart-combo",
+}
+
+
+@lru_cache(maxsize=64)
+def _read_ref_file(resolved: str, mtime: float) -> str:
+    """Whole-file body of a ref (no frontmatter), cached per path + mtime."""
+    return Path(resolved).read_text(encoding="utf-8").strip("\n")
+
+
+@lru_cache(maxsize=256)
+def _ref_section(resolved: str, mtime: float, anchor: str) -> str:
+    """Body of one heading section in a ref file.
+
+    Cache key is (resolved path, file mtime, anchor) so an edited ref file is
+    re-read on the next construction; the mtime component invalidates the entry
+    when the file changes on disk.
+    """
+    lines = Path(resolved).read_text(encoding="utf-8").splitlines()
+    target = anchor.strip().lower()
+    captured: list[str] = []
+    level: Optional[int] = None
+    for line in lines:
+        m = re.match(r"^(#+)\s+(.*)$", line)
+        if level is None:
+            if m and _slugify(m.group(2)) == target:
+                level = len(m.group(1))
+            continue
+        # Inside the captured section — stop at the next same/higher heading.
+        if m and len(m.group(1)) <= level:
+            break
+        captured.append(line)
+    if level is None:
+        raise RefError(f"anchor #{anchor} not found in {Path(resolved).name}")
+    return "\n".join(captured).strip("\n")
+
+
+def _resolve_refs(body: str, skill_dir: Path, root: Path) -> str:
+    """Expand every `{{ref: ...}}` directive in ``body`` in place.
+
+    Raises ``RefError`` for a missing file, a path that escapes ``root``, or an
+    unknown anchor so authoring mistakes surface in ``validate()`` rather than
+    silently shipping an empty rule.
+    """
+    if "{{ref:" not in body:
+        return body
+    root_resolved = root.resolve()
+
+    def _sub(match: "re.Match[str]") -> str:
+        rel, anchor = match.group("path"), match.group("anchor")
+        resolved = (skill_dir / rel).resolve()
+        if root_resolved != resolved and root_resolved not in resolved.parents:
+            raise RefError(f"ref path {rel!r} escapes the catalog root")
+        if not resolved.is_file():
+            raise RefError(f"ref file {rel!r} does not exist")
+        return _ref_section(str(resolved), resolved.stat().st_mtime, anchor)
+
+    return _REF_DIRECTIVE.sub(_sub, body)
+
+
 @dataclass
 class SkillLoader:
-    """Reads `core/skills/*.md` once and serves them on demand."""
+    """Recursively reads the `core/skills/catalog/` tree and serves it on demand."""
 
-    skills_dir: Path = field(default_factory=lambda: Path(__file__).parent)
+    skills_dir: Path = field(
+        default_factory=lambda: Path(__file__).parent / "catalog"
+    )
     _skills: list[Skill] = field(default_factory=list, init=False)
     _by_name: dict[str, Skill] = field(default_factory=dict, init=False)
+    _ref_errors: list[str] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
         self._skills = self._discover()
@@ -166,16 +270,24 @@ class SkillLoader:
 
     def _discover(self) -> list[Skill]:
         skills: list[Skill] = []
-        for md_path in sorted(self.skills_dir.glob("*.md")):
-            if md_path.name.upper() == "README.MD":
+        root = self.skills_dir.resolve()
+        # `*.skill.md` is the catalog convention; recurse so each flow lives in
+        # its own subfolder. `refs/` bodies are pulled in via {{ref}} directives,
+        # never discovered as standalone skills.
+        for md_path in sorted(self.skills_dir.rglob("*.skill.md")):
+            if "refs" in md_path.relative_to(self.skills_dir).parts:
+                continue
+            resolved = md_path.resolve()
+            if root != resolved and root not in resolved.parents:
+                # Defence-in-depth: a symlink that points outside the catalog.
+                self._ref_errors.append(f"{md_path.name}: escapes catalog root")
                 continue
             skill = self._parse(md_path)
             if skill is not None:
                 skills.append(skill)
         return skills
 
-    @staticmethod
-    def _parse(path: Path) -> Optional[Skill]:
+    def _parse(self, path: Path) -> Optional[Skill]:
         text = path.read_text(encoding="utf-8")
         if not text.startswith("---"):
             return None
@@ -192,6 +304,11 @@ class SkillLoader:
             return None
         if isinstance(scope, str):
             scope = [scope]
+        body = body.strip("\n")
+        try:
+            body = _resolve_refs(body, path.parent, self.skills_dir)
+        except RefError as exc:
+            self._ref_errors.append(f"{path.name}: {exc}")
         return Skill(
             name=str(name),
             description=str(description),
@@ -200,7 +317,7 @@ class SkillLoader:
             triggers=_as_str_tuple(meta.get("triggers")),
             always=bool(meta.get("always", False)),
             priority=int(meta.get("priority", 0)),
-            body=body.strip("\n"),
+            body=body,
             source=path,
             negative_triggers=_as_str_tuple(meta.get("negative_triggers")),
             requires=_as_str_tuple(meta.get("requires")),
@@ -339,6 +456,25 @@ class SkillLoader:
     def pitch(self, flow: SkillFlow, query: str) -> Optional[str]:
         return self.load(flow, "pitch", query)
 
+    def chart_detail(self, chart_type: str) -> Optional[str]:
+        """Per-type chart guidance for a decided `chart_type`, or None.
+
+        Phase two of the two-phase chart node: once the type is chosen (from the
+        always-on `chart-type-selection` tree), only THAT type's detail body is
+        injected — instead of dumping all six per-type skills every call. Bodies
+        live under `catalog/chart/refs/` and are never discovered as skills.
+        """
+        stem = _CHART_DETAIL_FILE.get((chart_type or "").strip().lower())
+        if not stem:
+            return None
+        path = (self.skills_dir / "chart" / "refs" / f"{stem}.md").resolve()
+        root = self.skills_dir.resolve()
+        if root != path and root not in path.parents:
+            return None
+        if not path.is_file():
+            return None
+        return _read_ref_file(str(path), path.stat().st_mtime)
+
     # Progressive disclosure: fetch a skill body on demand and enumerate what is
     # available, so an agent can pull a rule whose trigger never fired.
     def body(self, name: str) -> Optional[str]:
@@ -364,7 +500,7 @@ class SkillLoader:
         frontmatter, duplicate names, and `requires`/`conflicts_with` pointing at
         skills that do not exist. Intended for a CI test, not the hot path.
         """
-        issues: list[str] = []
+        issues: list[str] = list(self._ref_errors)
         seen: set[str] = set()
         known = set(self._by_name)
         for skill in self._skills:
@@ -409,7 +545,7 @@ def _load_frontmatter(text: str) -> dict[str, Any]:
     """Load the small YAML subset used by skill frontmatter.
 
     Prefer PyYAML when available. The fallback intentionally supports only the
-    scalar and bracket-list forms used in `core/skills/*.md`.
+    scalar and bracket-list forms used in `core/skills/catalog/**/*.skill.md`.
     """
     if yaml is not None:
         return yaml.safe_load(text) or {}

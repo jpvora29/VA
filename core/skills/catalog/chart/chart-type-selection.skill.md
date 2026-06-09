@@ -7,7 +7,7 @@ always: true
 priority: 90
 ---
 
-[CHART TYPE SELECTION — decide `chart_type` first, then read the matching per-type skill]
+[CHART TYPE SELECTION — decide `chart_type` first; the matching per-type field-mapping guidance is then provided for that type only]
 
 Allowed `chart_type` enum values ONLY: `bar`, `line`, `pie`, `donut`, `scatter`,
 `waterfall`, `combo`, `none`.
@@ -47,9 +47,9 @@ Step 3 — Disambiguation of the common confusions:
   `secondary_y`. Never put an amount and a rate on the same axis.
 - > 6 categories for a share question → `bar`, not `pie`/`donut`.
 
-Step 4 — After picking the type, follow the dedicated per-type skill below for
-exact field mapping, and the flow-specific field-priority skill for which columns
-go on x / y / series.
+Step 4 — After picking the type, follow the dedicated per-type guidance provided
+for that type for exact field mapping, and the flow-specific field-priority skill
+for which columns go on x / y / series.
 
 Do NOT invent columns. Every field you set must be an EXACT column name from
 `sql_output` (see chart-field-mapping).

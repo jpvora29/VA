@@ -1,12 +1,3 @@
----
-name: chart-pie-donut
-description: Detailed guidance for pie and donut (part-to-whole) charts.
-flow: cross
-scope: [chart]
-always: true
-priority: 70
----
-
 [PIE / DONUT CHART — `chart_type='pie'` or `'donut'`]
 
 When: showing how a single total splits into components — a part-to-whole share.

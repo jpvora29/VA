@@ -15,8 +15,9 @@ nothing chartable.
 """
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Callable, Dict, List, Optional
 
+import dspy
 from pydantic import BaseModel
 
 
@@ -64,4 +65,109 @@ def stamp_intent(spec: Dict[str, Any], user_query: str) -> Dict[str, Any]:
     text = (user_query or "").strip()
     if text and not spec.get("intent"):
         spec["intent"] = text[:_MAX_INTENT_LEN]
+    return spec
+
+
+# ── two-phase chart generation (select → detail) ────────────────────────────
+#
+# The chart node used to receive ALL six per-type guidance blocks in one prompt
+# and let the model both pick a type and map fields in a single pass. We now split
+# it: a cheap phase-one predictor reads only the `chart-type-selection` decision
+# tree and emits the `chart_type`; phase two then injects ONLY that type's detail
+# (`SkillLoader.chart_detail`) for the field-mapping pass. Smaller prompts, and the
+# model can't be distracted by five irrelevant chart guides.
+
+# The chart_type enum the selector may emit (mirrors `ChartOutput.chart_type` and
+# the chart-type-selection skill). `none` short-circuits — nothing to chart.
+CHART_TYPES = frozenset(
+    {"bar", "line", "pie", "donut", "scatter", "waterfall", "combo"}
+)
+
+
+class ChartTypeSelectSignature(dspy.Signature):
+    """
+    [ROLE]
+    You are a data-visualization analyst. Decide ONLY the single best chart_type
+    for the user's intent and the shape of the SQL output, using the chart type
+    selection rules. Do not map fields or build a spec — return just the type.
+
+    [OUTPUT]
+    `chart_type` MUST be exactly one of: bar, line, pie, donut, scatter,
+    waterfall, combo, none. Use `none` when the result is a single scalar or has
+    no categorical/time column to put on an axis.
+    """
+
+    chart_type_rules: str = dspy.InputField(
+        desc="The chart-type-selection decision tree (how to choose the type)."
+    )
+    user_query: str = dspy.InputField(desc="User's natural language question.")
+    sql_output: List[Dict[str, Any]] = dspy.InputField(
+        desc="SQL result rows (list of dicts) to be visualized."
+    )
+    chart_type: str = dspy.OutputField(
+        desc="One of: bar, line, pie, donut, scatter, waterfall, combo, none."
+    )
+
+
+def sanitize_chart_type(value: Any) -> str:
+    """Coerce a phase-one result to a known type, ``'none'``, or ``''``.
+
+    Returns the lowercased enum value when valid, ``'none'`` when the model says
+    there is nothing to chart, and ``''`` for junk/empty — the caller treats the
+    empty case as "selector unusable" and falls back to a single-phase pass.
+    """
+    raw = getattr(value, "chart_type", value)
+    text = str(raw or "").strip().lower()
+    if text in CHART_TYPES:
+        return text
+    if text == "none":
+        return "none"
+    return ""
+
+
+def generate_chart_two_phase(
+    *,
+    base_rules: str,
+    user_query: str,
+    sql_output: List[Dict[str, Any]],
+    type_predictor: Callable[..., Any],
+    spec_predictor: Callable[..., Any],
+    detail_provider: Callable[[str], Optional[str]],
+) -> Dict[str, Any]:
+    """Run select→detail and return a single normalized chart spec dict.
+
+    ``type_predictor`` and ``spec_predictor`` are dspy predictors (or any callable
+    matching their signatures, so this is unit-testable with stubs). On a concrete
+    type, only that type's detail is appended to ``base_rules`` and the decided
+    type is stamped onto the result. ``none`` returns ``{}`` (skip). If phase one
+    is unusable (``''``), we fall back to a single-phase pass on ``base_rules``.
+    """
+    try:
+        decided = sanitize_chart_type(
+            type_predictor(
+                chart_type_rules=base_rules,
+                user_query=user_query,
+                sql_output=sql_output,
+            )
+        )
+    except Exception:  # noqa: BLE001 - selector must never crash charting
+        decided = ""
+
+    if decided == "none":
+        return {}
+
+    rules = base_rules
+    detail = detail_provider(decided) if decided else None
+    if detail:
+        rules = f"{base_rules}\n\n{detail}"
+
+    spec = normalize_chart_spec(
+        spec_predictor(
+            chart_creation_rules=rules,
+            user_query=user_query,
+            sql_output=sql_output,
+        ).chart_data
+    )
+    if spec and decided:
+        spec["chart_type"] = decided
     return spec

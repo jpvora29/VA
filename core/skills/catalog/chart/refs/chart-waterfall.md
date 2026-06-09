@@ -1,12 +1,3 @@
----
-name: chart-waterfall
-description: Detailed guidance for waterfall (bridge / movement) charts.
-flow: cross
-scope: [chart]
-always: true
-priority: 70
----
-
 [WATERFALL CHART — `chart_type='waterfall'`]
 
 When: decomposing a CHANGE into its drivers — a "bridge" from a starting value to

@@ -1,12 +1,3 @@
----
-name: chart-combo
-description: Detailed guidance for combo charts (bars + secondary-axis line).
-flow: cross
-scope: [chart]
-always: true
-priority: 70
----
-
 [COMBO CHART — `chart_type='combo'`]
 
 When: showing an ABSOLUTE amount and a RATE/PERCENTAGE for the same categories at

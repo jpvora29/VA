@@ -1,12 +1,3 @@
----
-name: chart-line
-description: Detailed guidance for line charts (time trends).
-flow: cross
-scope: [chart]
-always: true
-priority: 70
----
-
 [LINE CHART — `chart_type='line'`]
 
 When: showing a measure's progression over time. STRONGLY prefer line for
