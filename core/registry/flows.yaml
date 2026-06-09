@@ -1,0 +1,141 @@
+# Flow registry — declarative per-dataset metadata.
+#
+# Values come from the DB at runtime; SEMANTICS live here. This is the shared
+# foundation for dynamic valid_values (cardinality gate reads card_cap/role),
+# the ContextEngine, and the chart critic.
+#
+# Parity contract (step 1): `allowed_tables` must equal the old
+# `_SCHEMA_TABLES_BY_FLOW`, and `*_source` pointers must resolve to the exact
+# `GetValidData` dicts the old `get_valid_values` / `get_definitions` returned.
+#
+# Column roles: entity | measure | temporal | continuous | filter
+# card_cap: distinct-count threshold for the gate — <= cap injects in full,
+#           above it injects only fuzzy-resolved matches + a small candidate list.
+
+survey:
+  label: Survey
+  route_label: survey
+  pitch_eligible: true
+  tables:
+    primary: Carriers
+    supporting: [Peers]
+  allowed_tables: [Carriers, Peers]
+  date_columns:
+    year: Survey_Year
+  entity_columns:
+    country: SurveyCountry
+    carrier: Carrier
+    product: SurveyPractice
+  metrics:
+    score:
+      columns: [Score]
+      default_aggregation: AVG
+      aliases: [score, broker score, perception, satisfaction]
+    nps:
+      columns: [NPS Score]
+      default_aggregation: AVG
+      aliases: [nps, net promoter score]
+  valid_values_source: core.data.valid_values.GetValidData.valid_values
+  definitions_source: core.data.valid_values.GetValidData.definitions
+  chart_defaults:
+    measure_priority: [Score, NPS Score]
+    dimension_priority: [SurveyPractice, Section, Attribute, SurveySegment, SurveyCountry]
+  confidentiality:
+    peer_names_allowed: false
+  columns:
+    SurveyCountry: {role: entity, card_cap: 30}
+    Carrier: {role: entity, card_cap: 8, confidential: false}
+    SurveyPractice: {role: entity, card_cap: 30, aliases: [practice, line of business, lob, product]}
+    Region: {role: entity, card_cap: 30}
+    Sections: {role: entity, card_cap: 30}
+    Attributes: {role: entity, card_cap: 30}
+    SurveySegment: {role: entity, card_cap: 30, aliases: [segment]}
+    Survey_Year: {role: temporal, card_cap: 30}
+    Score: {role: measure}
+    NPS Score: {role: measure, aliases: [nps, net promoter score]}
+
+gpr:
+  label: Premium
+  route_label: premium
+  pitch_eligible: true
+  tables:
+    primary: GPR
+    supporting: [Peers]
+  allowed_tables: [GPR, Peers]
+  date_columns:
+    date: Billing_Date
+    year: Year
+    month: Month_Name
+  entity_columns:
+    country: Country
+    carrier: Carrier_Group
+    product: Product_Line
+    segment: Client_Segment
+  metrics:
+    premium:
+      columns: [Premium]
+      default_aggregation: SUM
+      aliases: [premium, gross premium, revenue, book]
+    share_of_wallet:
+      columns: [Premium]
+      derived: true
+      aliases: [sow, share of wallet, wallet share, share in marsh book]
+    share_of_portfolio:
+      columns: [Premium]
+      derived: true
+      aliases: [appetite, share of portfolio, portfolio share, product mix]
+  valid_values_source: core.data.valid_values.GetValidData.valid_values_gpr
+  definitions_source: core.data.valid_values.GetValidData.definitions_gpr
+  chart_defaults:
+    measure_priority: [Premium, SoW, Appetite, YoY Growth]
+    dimension_priority: [Product_Line, Business_Line, Client_Segment, Country, Carrier_Group]
+  confidentiality:
+    peer_names_allowed: false
+  columns:
+    Region: {role: entity, card_cap: 30}
+    Country: {role: entity, card_cap: 30}
+    Carrier_Group: {role: entity, card_cap: 8, aliases: [carrier, group, insurer]}
+    Product_Line: {role: entity, card_cap: 30, aliases: [product, lob, line of business]}
+    Business_Line: {role: entity, card_cap: 30}
+    Cover_Line: {role: entity, card_cap: 30}
+    Client_Segment: {role: entity, card_cap: 30, aliases: [segment]}
+    SIC_Major_Class: {role: entity, card_cap: 8, aliases: [industry, sic]}
+    SIC_Minor_Class: {role: entity, card_cap: 8}
+    CLIENT_NAME: {role: entity, card_cap: 8, confidential: true, aliases: [client, insured]}
+    Premium: {role: measure, aliases: [gross premium, revenue, book]}
+    Billing_Date: {role: temporal}
+    Year: {role: temporal, card_cap: 30}
+    Month_Name: {role: temporal, card_cap: 30}
+
+gimmi:
+  label: GIMMI
+  route_label: gimmi
+  pitch_eligible: false
+  tables:
+    primary: GIMMI
+    supporting: []
+  allowed_tables: [GIMMI]
+  date_columns:
+    year: Year
+    quarter: Quarter
+  entity_columns:
+    region: Region
+    product: Product
+  metrics:
+    market_composite_rate:
+      columns: [Market_Composite_Rate]
+      default_aggregation: AVG
+      aliases: [market rate, composite rate, rate change]
+  valid_values_source: core.data.valid_values.GetValidData.gimmi_valid_values
+  definitions_source: core.data.valid_values.GetValidData.gimmi_definitions
+  chart_defaults:
+    measure_priority: [Market_Composite_Rate]
+    dimension_priority: [Product, Region, Quarter]
+  confidentiality:
+    peer_names_allowed: true
+  columns:
+    Region: {role: entity, card_cap: 30}
+    Product: {role: entity, card_cap: 30, aliases: [line of business, lob]}
+    Year: {role: temporal, card_cap: 30}
+    Quarter: {role: temporal, card_cap: 30}
+    Market_Composite_Rate: {role: measure, aliases: [market rate, composite rate]}

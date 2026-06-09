@@ -172,6 +172,27 @@ _token_acc: contextvars.ContextVar[Optional[_TokenAccumulator]] = (
     contextvars.ContextVar("token_acc", default=None)
 )
 
+# ── Turn sink (diagnostic/test tap) ──────────────────────────────────────────
+#
+# An optional callable invoked once at each turn's close with the turn's rollup
+# ({trace_id, fields, token}). The golden-query harness registers one to read
+# per-turn / per-agent token totals directly instead of scraping log lines. No
+# behavior change when unset (the common case); a sink that raises is swallowed,
+# because a diagnostic tap must never break a turn.
+_turn_sink: contextvars.ContextVar[Optional[Any]] = contextvars.ContextVar(
+    "turn_sink", default=None
+)
+
+
+def set_turn_sink(sink: Any) -> contextvars.Token:
+    """Register a turn-close callback; returns a token for `reset_turn_sink`."""
+    return _turn_sink.set(sink)
+
+
+def reset_turn_sink(token: contextvars.Token) -> None:
+    _turn_sink.reset(token)
+
+
 _usage_logger = logging.getLogger(__name__)
 
 
@@ -245,6 +266,12 @@ def turn_context(trace_id: Optional[str] = None, **fields: Any) -> Iterator[str]
                 token_total=snap["total"],
                 by_agent=snap["by_agent"],
             )
+        sink = _turn_sink.get()
+        if sink is not None:
+            try:
+                sink({"trace_id": tid, "fields": dict(fields), "token": snap})
+            except Exception:  # noqa: BLE001 - a tap must never break a turn
+                pass
         _token_acc.reset(acc_token)
         _trace_ctx.reset(token)
 

@@ -1,0 +1,147 @@
+# Golden-query set for the ContextEngine shadow harness (decisions doc #9).
+#
+# ~15-25 queries spanning lookup / analytical / hybrid / peer / chart. For each,
+# the harness captures: route (table_family + analysis_depth), selected skills,
+# resolved entities, per-node token count, and the post-critic chart spec — then
+# diffs current-vs-candidate. This is what makes "shadow mode" real.
+#
+# Promoted/expanded from `codex changes/tests/golden_queries.yaml`.
+#
+# Fields:
+#   id               unique slug
+#   query            the user question
+#   history          optional prior user turns (for inheritance/topic-switch cases)
+#   category         lookup | analytical | hybrid | peer | chart
+#   expected_route   survey | gpr | gimmi | both | fallback   (table_family)
+#   expected_depth   lookup | analytical   (optional)
+#   expected_skills  skills that SHOULD fire (subset assertion; optional)
+#   notes            why this case exists
+
+golden_queries:
+  # ---- GPR lookups ------------------------------------------------------
+  - id: gpr_premium_lookup
+    query: "What was Zurich's total premium in Canada in 2025?"
+    category: lookup
+    expected_route: gpr
+    expected_depth: lookup
+    notes: Single-metric single-entity lookup — smallest planner prompt.
+
+  - id: gpr_sow_product
+    query: "What is Zurich share of wallet in Canada by product for 2025?"
+    category: analytical
+    expected_route: gpr
+    expected_depth: analytical
+    expected_skills: [gpr-share-of-wallet, gpr-marsh-market, cross-sql-readonly-safety]
+    notes: SoW needs the Marsh-market denominator rule (requires chain).
+
+  - id: gpr_share_of_portfolio
+    query: "Show Zurich appetite by product in Canada for 2025."
+    category: analytical
+    expected_route: gpr
+    expected_skills: [gpr-share-of-portfolio]
+    notes: "'appetite' must resolve to Share of Portfolio terminology."
+
+  - id: gpr_carrier_group_enforcement
+    query: "List AIG premium by business line in the US for 2024."
+    category: lookup
+    expected_route: gpr
+    notes: Must use Carrier_Group, never Carrier_Name (deterministic rewrite).
+
+  - id: gpr_industry_highcard
+    query: "Zurich premium by SIC major class in Canada 2025."
+    category: analytical
+    expected_route: gpr
+    notes: SIC_Major_Class is high-card — exercises the step-3 cardinality gate.
+
+  # ---- GPR follow-ups (inheritance) ------------------------------------
+  - id: gpr_followup_inherit_carrier
+    query: "And in Singapore?"
+    history: ["What was Zurich's premium in Canada in 2025?"]
+    category: lookup
+    expected_route: gpr
+    notes: Inherit carrier (Zurich) + year from prior turn; swap country.
+
+  - id: topic_switch_gpr_to_survey
+    query: "How does Zurich score there?"
+    history: ["What was Zurich's premium in Canada in 2025?"]
+    category: lookup
+    expected_route: survey
+    notes: Family switch GPR->Survey; keep carrier, drop GPR-only filters.
+
+  # ---- Survey lookups + analytical -------------------------------------
+  - id: survey_score_lookup
+    query: "What is Zurich's broker score in Singapore for 2025?"
+    category: lookup
+    expected_route: survey
+    expected_depth: lookup
+    notes: "'broker score' alias -> Score metric."
+
+  - id: survey_nps
+    query: "What is AIG's NPS in the US in 2025?"
+    category: lookup
+    expected_route: survey
+    notes: NPS metric alias resolution.
+
+  - id: survey_peer_score
+    query: "Compare Zurich score with peers in Singapore for 2025."
+    category: peer
+    expected_route: survey
+    expected_depth: analytical
+    expected_skills: [survey-peer-average, cross-peer-confidentiality]
+    notes: Peer average + peer-name confidentiality (no individual peers).
+
+  - id: survey_section_breakdown
+    query: "Break down Zurich's score by section in Singapore 2025."
+    category: analytical
+    expected_route: survey
+    notes: Section dimension breakdown.
+
+  # ---- GIMMI ------------------------------------------------------------
+  - id: gimmi_market_rate
+    query: "What is the market composite rate for Property in Asia in Q3 2025?"
+    category: lookup
+    expected_route: gimmi
+    expected_skills: [gimmi-market-rate]
+    notes: GIMMI market-rate lookup.
+
+  # ---- Hybrid (both families) ------------------------------------------
+  - id: hybrid_premium_and_score
+    query: "Show Zurich's premium and broker score in Canada for 2025."
+    category: hybrid
+    expected_route: both
+    expected_depth: analytical
+    notes: HYBRID is always analytical; both lenses, no forced metric.
+
+  - id: hybrid_peer_both
+    query: "How does Zurich compare to peers on premium and score in Singapore?"
+    category: hybrid
+    expected_route: both
+    notes: Peer + hybrid; confidentiality applies across both lenses.
+
+  # ---- Chart-shaped -----------------------------------------------------
+  - id: chart_premium_trend
+    query: "Plot Zurich's premium by year in Canada."
+    category: chart
+    expected_route: gpr
+    notes: Year x-axis must be categorical/integer, not implicitly a line.
+
+  - id: chart_score_by_practice
+    query: "Chart Zurich's score by practice in Singapore 2025."
+    category: chart
+    expected_route: survey
+    notes: Categorical bar over practices; single measure.
+
+  # ---- Pitch / whitespace ----------------------------------------------
+  - id: gpr_whitespace
+    query: "Where is Zurich whitespace in Canada?"
+    category: analytical
+    expected_route: gpr
+    expected_skills: [pitch-whitespace, gpr-marsh-market]
+    notes: Whitespace needs carrier + market/peer premium + slice label.
+
+  # ---- Fallback ---------------------------------------------------------
+  - id: fallback_greeting
+    query: "Hi, what can you help me with?"
+    category: lookup
+    expected_route: fallback
+    notes: Non-data query routes to fallback; no planner/SQL.

@@ -24,6 +24,7 @@ from core.agents.common import assert_read_only, dry_run_explain
 from core.data.general import GeneralFunctions
 from core.data.valid_values import GetValidData
 from core.initialization import Initialization
+from core.registry import get_flow_registry
 from core.observability import latency_timer, log_event, sql_metadata
 from core.schemas.mcp import ExecuteSQLResult
 from logger import get_logger
@@ -42,10 +43,12 @@ _ROUTE_BY_FLOW: Dict[str, str] = {
 
 # Flow -> the table-family slices each flow grounds against. The FIRST table is
 # the flow's primary fact table (used as the default source for distinct values).
+# Sourced from the central flow registry (`core/registry/flows.yaml`) so adding a
+# dataset means one registry entry, not editing this map. Equals the former
+# hardcoded {survey: [Carriers, Peers], gpr: [GPR, Peers], gimmi: [GIMMI]}.
 _SCHEMA_TABLES_BY_FLOW: Dict[str, List[str]] = {
-    "survey": ["Carriers", "Peers"],
-    "gpr": ["GPR", "Peers"],
-    "gimmi": ["GIMMI"],
+    name: list(get_flow_registry().get(name).allowed_tables)
+    for name in get_flow_registry().flows()
 }
 
 # Distinct-value cache for columns not covered by the precomputed valid_values
@@ -192,21 +195,21 @@ def get_schema(flow: Optional[str] = None) -> Dict[str, Any]:
 
 
 def get_valid_values(flow: str) -> Dict[str, Any]:
-    """Valid column values for grounding filters, per flow."""
-    if flow == "gpr":
-        return GetValidData.valid_values_gpr
-    if flow == "gimmi":
-        return GetValidData.gimmi_valid_values
-    return GetValidData.valid_values
+    """Valid column values for grounding filters, per flow.
+
+    Routed through the flow registry. Unknown flows fall back to survey — the
+    exact behavior of the former gpr/gimmi/else branch.
+    """
+    registry = get_flow_registry()
+    spec = registry.get(flow) or registry.get("survey")
+    return spec.valid_values()
 
 
 def get_definitions(flow: str) -> Dict[str, str]:
-    """Business definitions for columns, per flow."""
-    if flow == "gpr":
-        return GetValidData.definitions_gpr
-    if flow == "gimmi":
-        return GetValidData.gimmi_definitions
-    return GetValidData.definitions
+    """Business definitions for columns, per flow (via the flow registry)."""
+    registry = get_flow_registry()
+    spec = registry.get(flow) or registry.get("survey")
+    return spec.definitions()
 
 
 def match_entities(flow: str, user_query: str) -> Dict[str, Any]:

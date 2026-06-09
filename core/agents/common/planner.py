@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 import dspy
 from pydantic import BaseModel
 
+from core.context.injection import gate_enabled, gated_valid_values
 from core.schemas.analytical import PlannerSignature
 from core.schemas.routing import RoutingContext
 
@@ -62,10 +63,23 @@ class BasePlannerNode(dspy.Module):
                 table_family="fallback", intent_type="new_question"
             )
 
+        # Cardinality gate (decisions #2): the planner's worst prompt-bloat source
+        # is the full valid_values dict (e.g. GPR Carrier_Group ~550 values). When
+        # enabled, replace high-card columns with only the query-resolved subset.
+        # Default off -> identical to the legacy full-dict behavior.
+        valid_values = self.valid_values
+        if gate_enabled():
+            try:
+                valid_values = gated_valid_values(
+                    self.flow, user_query, full_values=self.valid_values
+                )
+            except Exception:  # noqa: BLE001 - never let gating break planning
+                valid_values = self.valid_values
+
         result = self.planner(
             schema=self.schema_tables,
             definitions=self.definitions,
-            valid_values=self.valid_values,
+            valid_values=valid_values,
             valid_year_quarter=valid_year_quarter or [],
             routing_context=routing_context,
             rules=self.rules,
