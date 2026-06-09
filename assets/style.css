@@ -3397,8 +3397,10 @@ th {
     display: flex;
     flex-direction: column;
     height: 100%;
-    padding: 24px 30px 0;
-    background: var(--surface-1);
+    padding: 24px 30px 22px;
+    background:
+        radial-gradient(1200px 480px at 20% -10%, #eef2fb, transparent),
+        var(--surface-2);
     overflow: hidden;
 }
 .decision-board-header {
@@ -3463,35 +3465,51 @@ th {
 }
 
 /* ── Kanban columns ─────────────────────────────────────────────────────── */
+/* The whiteboard: a framed dry-erase surface with a faint grid the columns
+   sit on top of. */
 .decision-board {
     display: flex;
-    gap: 16px;
+    gap: 18px;
     flex: 1 1 auto;
     overflow-x: auto;
     overflow-y: hidden;
-    padding-bottom: 24px;
     align-items: stretch;
+    padding: 20px;
+    border-radius: 20px;
+    background-color: #ffffff;
+    background-image:
+        linear-gradient(rgba(12, 25, 58, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(12, 25, 58, 0.045) 1px, transparent 1px);
+    background-size: 26px 26px;
+    background-position: -1px -1px;
+    border: 1px solid var(--border-mid);
+    box-shadow:
+        inset 0 1px 0 #ffffff,
+        inset 0 0 0 6px rgba(255, 255, 255, 0.6),
+        var(--shadow-md);
 }
 .decision-col {
-    flex: 1 0 260px;
-    min-width: 260px;
+    flex: 1 0 268px;
+    min-width: 268px;
     display: flex;
     flex-direction: column;
-    background: rgba(255,255,255,0.6);
-    border: 1px solid var(--border-soft);
     border-radius: 16px;
     max-height: 100%;
-    backdrop-filter: blur(4px);
+    overflow: hidden;
+    border: 1px solid var(--border-soft);
+    background: var(--surface-0);
+    box-shadow: 0 6px 18px rgba(10, 22, 54, 0.07);
 }
 .decision-col-header {
     display: flex;
     align-items: center;
     gap: 9px;
-    padding: 14px 16px;
-    font-weight: 700;
+    padding: 13px 16px;
+    font-weight: 800;
     font-size: 13px;
     letter-spacing: 0.01em;
     color: var(--ink-800);
+    border-bottom: 1px solid var(--border-soft);
 }
 .decision-col-title { text-transform: none; }
 .decision-col-count {
@@ -3520,12 +3538,18 @@ th {
 }
 .decision-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; box-shadow: 0 0 0 3px rgba(0,0,0,0.04); }
 
-/* Column accent header tints */
-.decision-col-green  .decision-col-header { color: #1b7a35; }
-.decision-col-yellow .decision-col-header { color: #9a7400; }
-.decision-col-red    .decision-col-header { color: #c92a2a; }
-.decision-col-blue   .decision-col-header { color: #1862b8; }
-.decision-col-grey   .decision-col-header { color: #5b6471; }
+/* Colour-coded columns: tinted body + a saturated header band per status. */
+.decision-col-blue   { background: #f4f9ff; border-color: rgba(28, 126, 214, 0.28); }
+.decision-col-yellow { background: #fffbf0; border-color: rgba(232, 168, 0, 0.30); }
+.decision-col-green  { background: #f3fcf6; border-color: rgba(47, 158, 68, 0.28); }
+.decision-col-grey   { background: #f6f7f9; border-color: rgba(134, 142, 150, 0.30); }
+
+.decision-col-blue   .decision-col-header { background: rgba(28, 126, 214, 0.12); color: #15538f; border-bottom-color: rgba(28, 126, 214, 0.22); }
+.decision-col-yellow .decision-col-header { background: rgba(232, 168, 0, 0.15);  color: #8a6700; border-bottom-color: rgba(232, 168, 0, 0.28); }
+.decision-col-green  .decision-col-header { background: rgba(47, 158, 68, 0.12);  color: #1b7a35; border-bottom-color: rgba(47, 158, 68, 0.22); }
+.decision-col-grey   .decision-col-header { background: rgba(134, 142, 150, 0.14); color: #515963; border-bottom-color: rgba(134, 142, 150, 0.26); }
+
+.decision-col .decision-col-count { background: rgba(255, 255, 255, 0.7); }
 
 /* ── Sticky cards ───────────────────────────────────────────────────────── */
 .decision-card {
@@ -3594,19 +3618,14 @@ th {
 /* Status colour accents (left bar + dot + card wash) */
 .decision-dot-green  { background: #2f9e44; }
 .decision-dot-yellow { background: #e8a800; }
-.decision-dot-red    { background: #e03131; }
 .decision-dot-blue   { background: #1c7ed6; }
 .decision-dot-grey   { background: #868e96; }
+/* Cards stay clean white so they read as notes pinned on the coloured column;
+   the status colour shows through the left accent bar. */
 .decision-card-green::before  { background: linear-gradient(180deg, #37b24d, #2f9e44); }
 .decision-card-yellow::before { background: linear-gradient(180deg, #f6b700, #e8a800); }
-.decision-card-red::before    { background: linear-gradient(180deg, #fa5252, #e03131); }
 .decision-card-blue::before   { background: linear-gradient(180deg, #339af0, #1c7ed6); }
 .decision-card-grey::before   { background: linear-gradient(180deg, #adb5bd, #868e96); }
-.decision-card-green  { background: linear-gradient(135deg, #f3fbf5, #ffffff 60%); }
-.decision-card-yellow { background: linear-gradient(135deg, #fffaef, #ffffff 60%); }
-.decision-card-red    { background: linear-gradient(135deg, #fff5f5, #ffffff 60%); }
-.decision-card-blue   { background: linear-gradient(135deg, #f2f8ff, #ffffff 60%); }
-.decision-card-grey   { background: linear-gradient(135deg, #f6f7f9, #ffffff 60%); }
 
 /* Priority chips */
 .decision-prio {
@@ -3755,3 +3774,219 @@ th {
 }
 
 
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   MODERN UI POLISH — login wow-factor, gradient sidebar/navbar, refined chrome
+   (appended overrides; cascade lets these win without touching structure)
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Animated aurora login ──────────────────────────────────────────────── */
+.login-screen {
+    position: relative;
+    overflow: hidden;
+    background:
+        radial-gradient(900px 620px at 16% 22%, rgba(11, 75, 255, 0.55), transparent 55%),
+        radial-gradient(820px 620px at 84% 28%, rgba(123, 97, 255, 0.50), transparent 55%),
+        radial-gradient(760px 640px at 50% 96%, rgba(0, 198, 255, 0.38), transparent 55%),
+        #070d24;
+    background-size: 180% 180%;
+    animation: auroraShift 20s ease-in-out infinite;
+}
+@keyframes auroraShift {
+    0%   { background-position: 0% 50%; }
+    50%  { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+/* Soft floating orbs for depth */
+.login-screen::before,
+.login-screen::after {
+    content: "";
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(46px);
+    opacity: 0.55;
+    pointer-events: none;
+}
+.login-screen::before {
+    width: 320px; height: 320px;
+    background: radial-gradient(circle, rgba(11, 75, 255, 0.7), transparent 70%);
+    top: -60px; left: -40px;
+    animation: orbFloatA 12s ease-in-out infinite;
+}
+.login-screen::after {
+    width: 380px; height: 380px;
+    background: radial-gradient(circle, rgba(0, 198, 255, 0.6), transparent 70%);
+    bottom: -90px; right: -60px;
+    animation: orbFloatB 14s ease-in-out infinite;
+}
+@keyframes orbFloatA { 0%,100% { transform: translate(0,0); } 50% { transform: translate(40px, 30px); } }
+@keyframes orbFloatB { 0%,100% { transform: translate(0,0); } 50% { transform: translate(-50px, -36px); } }
+
+.login-card {
+    position: relative;
+    z-index: 1;
+    width: min(440px, 92vw);
+    background: rgba(255, 255, 255, 0.93);
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.65);
+    border-radius: 24px;
+    box-shadow: 0 30px 80px rgba(2, 8, 40, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    padding: 46px 40px;
+    animation: loginIn 640ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes loginIn {
+    from { opacity: 0; transform: translateY(20px) scale(0.97); }
+    to   { opacity: 1; transform: none; }
+}
+.login-badge {
+    width: 62px; height: 62px;
+    border-radius: 20px;
+    background: linear-gradient(135deg, var(--marsh-blue-2), #6d8bff);
+    box-shadow: 0 16px 38px rgba(11, 75, 255, 0.5);
+    font-size: 27px;
+    animation: badgeFloat 4s ease-in-out infinite;
+}
+.login-title {
+    font-size: 27px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    background: linear-gradient(90deg, var(--marsh-blue), var(--marsh-blue-2) 70%, #6d8bff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.login-submit {
+    background: linear-gradient(135deg, var(--marsh-blue-2), #3f6dff) !important;
+    border: none !important;
+    box-shadow: 0 12px 28px rgba(11, 75, 255, 0.4) !important;
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast) !important;
+}
+.login-submit:hover { transform: translateY(-2px); box-shadow: 0 16px 36px rgba(11, 75, 255, 0.5) !important; }
+
+/* ── Gradient navbar ────────────────────────────────────────────────────── */
+.custom-navbar {
+    background: linear-gradient(115deg, #00103f 0%, #062a87 55%, #0b4bff 120%) !important;
+    box-shadow: 0 6px 22px rgba(0, 18, 64, 0.38);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+/* ── Gradient sidebar + glowing brand button ────────────────────────────── */
+.app-sidebar {
+    background: linear-gradient(180deg, #fbfcff 0%, #f3f6fd 100%);
+    border-right: 1px solid var(--border-soft);
+}
+.new-chat-btn {
+    background: linear-gradient(135deg, var(--marsh-blue-2), #3f6dff) !important;
+    color: #ffffff !important;
+    border: none !important;
+    box-shadow: 0 8px 20px rgba(11, 75, 255, 0.28) !important;
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast) !important;
+}
+.new-chat-btn:hover {
+    background: linear-gradient(135deg, #0a44ee, #3461ff) !important;
+    transform: translateY(-1px);
+    box-shadow: 0 12px 26px rgba(11, 75, 255, 0.36) !important;
+}
+.new-chat-btn .bi { color: #ffffff !important; }
+.sidebar-section-label { font-size: 10.5px; letter-spacing: 0.08em; }
+
+/* Footer avatar with gradient ring */
+.sidebar-footer { border-top: 1px solid var(--border-soft); }
+.user-avatar {
+    width: 34px; height: 34px;
+    background: linear-gradient(135deg, var(--marsh-blue-2), #6d8bff);
+    box-shadow: 0 0 0 3px rgba(11, 75, 255, 0.14), 0 4px 10px rgba(11, 75, 255, 0.25);
+}
+.conv-item-active {
+    background: linear-gradient(90deg, rgba(11, 75, 255, 0.10), rgba(11, 75, 255, 0.03));
+}
+.conv-item-active .conv-item-open { color: var(--marsh-blue-2); }
+
+/* ── Welcome hero glow + chip lift ──────────────────────────────────────── */
+.main-content { position: relative; }
+.welcome-hero::before {
+    content: "";
+    position: absolute;
+    top: 4%; left: 50%;
+    width: 520px; height: 320px;
+    transform: translateX(-50%);
+    background: radial-gradient(circle, rgba(11, 75, 255, 0.12), transparent 65%);
+    filter: blur(20px);
+    z-index: 0;
+    pointer-events: none;
+}
+.welcome-hero > * { position: relative; z-index: 1; }
+.suggestion-chip {
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(6px);
+}
+.suggestion-chip:hover {
+    border-color: rgba(11, 75, 255, 0.4);
+    box-shadow: 0 14px 30px rgba(11, 75, 255, 0.16);
+}
+
+/* ── Refined thin scrollbars across panes ───────────────────────────────── */
+.conversation-list::-webkit-scrollbar,
+.decision-col-body::-webkit-scrollbar,
+.decision-board::-webkit-scrollbar,
+.decision-detail-scroll::-webkit-scrollbar,
+.chat-bot-text-area::-webkit-scrollbar { width: 9px; height: 9px; }
+.conversation-list::-webkit-scrollbar-thumb,
+.decision-col-body::-webkit-scrollbar-thumb,
+.decision-board::-webkit-scrollbar-thumb,
+.decision-detail-scroll::-webkit-scrollbar-thumb,
+.chat-bot-text-area::-webkit-scrollbar-thumb {
+    background: rgba(12, 25, 58, 0.18);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+.conversation-list::-webkit-scrollbar-thumb:hover,
+.decision-col-body::-webkit-scrollbar-thumb:hover,
+.decision-board::-webkit-scrollbar-thumb:hover,
+.decision-detail-scroll::-webkit-scrollbar-thumb:hover,
+.chat-bot-text-area::-webkit-scrollbar-thumb:hover { background: rgba(12, 25, 58, 0.32); background-clip: content-box; }
+
+
+/* ── Chat area: bubbles + send to match the modern blue identity ─────────── */
+.user-message {
+    background: linear-gradient(135deg, var(--marsh-blue-2) 0%, #3f6dff 100%) !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 20px 20px 6px 20px !important;
+    box-shadow: 0 8px 20px rgba(11, 75, 255, 0.26) !important;
+    font-weight: 500;
+}
+.user-message a { color: #eaf0ff; text-decoration: underline; }
+
+.gpt-message {
+    border-radius: 20px 20px 20px 6px;
+    background: linear-gradient(180deg, #ffffff, #fbfcff);
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.05), 0 8px 22px rgba(10, 22, 54, 0.05);
+    transition: box-shadow var(--transition-med), transform var(--transition-med);
+}
+.gpt-message:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+
+/* Send button: gradient to match the brand buttons */
+.send-btn {
+    width: 34px !important;
+    height: 34px !important;
+    background: linear-gradient(135deg, var(--marsh-blue-2), #3f6dff) !important;
+    box-shadow: 0 6px 16px rgba(11, 75, 255, 0.34) !important;
+}
+.send-btn:hover { background: linear-gradient(135deg, #0a44ee, #3461ff) !important; }
+
+/* Composer: a touch more lift + rounder to sit with the glass card system */
+.composer { border-radius: 26px; }
+.composer:focus-within { box-shadow: 0 16px 40px rgba(11, 75, 255, 0.18); }
+.pitch-trigger-btn:hover { background: rgba(11, 75, 255, 0.10) !important; }
+
+/* Consulting-insight card: refresh its accent to the brand gradient */
+.insight-card { border-radius: 20px 20px 20px 6px; }
+.insight-card-badge {
+    background: linear-gradient(135deg, rgba(11, 75, 255, 0.12), rgba(123, 97, 255, 0.12));
+    color: var(--marsh-blue-2);
+}

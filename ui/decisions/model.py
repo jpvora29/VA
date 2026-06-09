@@ -25,7 +25,6 @@ STATUS_META: dict[str, StatusMeta] = {
     "planned": StatusMeta("planned", "Planned", "blue", "bi bi-calendar-event"),
     "under_review": StatusMeta("under_review", "Under review", "yellow", "bi bi-hourglass-split"),
     "approved": StatusMeta("approved", "Approved", "green", "bi bi-check-circle"),
-    "blocked": StatusMeta("blocked", "Blocked", "red", "bi bi-x-octagon"),
     "archived": StatusMeta("archived", "Archived", "grey", "bi bi-archive"),
 }
 

@@ -140,12 +140,19 @@ def pin_decision(_clicks, version, user_store):
 # ── Create / edit modal ─────────────────────────────────────────────────────
 
 
+# Value outputs for the statically-mounted form fields, in render.FORM_VALUE_ORDER.
+_FORM_VALUE_OUTPUTS = [
+    Output(f"decision-f-{f.replace('_', '-')}", "value") for f in render.FORM_VALUE_ORDER
+]
+_N_OPEN_OUTPUTS = 4 + len(_FORM_VALUE_OUTPUTS)  # 4 control outputs + field values
+
+
 @callback(
     Output("decision-edit-modal", "is_open"),
-    Output("decision-edit-form", "children"),
     Output("decision-edit-title", "children"),
     Output("decision-edit-target", "data"),
     Output("decision-detail", "is_open", allow_duplicate=True),
+    *_FORM_VALUE_OUTPUTS,
     Input("decision-new-btn", "n_clicks"),
     Input("decision-detail-edit", "n_clicks"),
     State("decision-detail-target", "data"),
@@ -153,15 +160,18 @@ def pin_decision(_clicks, version, user_store):
     prevent_initial_call=True,
 )
 def open_editor(_new, _edit, target, user_store):
-    """Open the editor for a new decision (New button) or an existing one (Edit)."""
+    """Open the editor and push values into the (static) form fields.
+
+    New button → blank defaults; Edit → the selected decision's values.
+    """
     if not _clicked():
-        return (no_update,) * 5
+        return (no_update,) * _N_OPEN_OUTPUTS
     if ctx.triggered_id == "decision-new-btn":
-        return True, render.edit_form(None), "New decision", _NEW, no_update
+        return (True, "New decision", _NEW, no_update, *render.form_values(None))
     d = store.get_decision(_uid(user_store), target)
     if d is None:
-        return (no_update,) * 5
-    return True, render.edit_form(d), "Edit decision", target, False
+        return (no_update,) * _N_OPEN_OUTPUTS
+    return (True, "Edit decision", target, False, *render.form_values(d))
 
 
 @callback(

@@ -25,7 +25,6 @@ STATUSES: tuple[str, ...] = (
     "planned",
     "under_review",
     "approved",
-    "blocked",
     "archived",
 )
 PRIORITIES: tuple[str, ...] = ("high", "med", "low")

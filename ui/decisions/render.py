@@ -214,8 +214,8 @@ def detail_body(d: dict[str, Any], revisions: list[dict[str, Any]]) -> html.Div:
 
 
 def reopen_disabled(status: str) -> bool:
-    """The Reopen action only applies to terminal-ish statuses."""
-    return status not in ("blocked", "archived")
+    """The Reopen action only applies to archived (terminal) decisions."""
+    return status != "archived"
 
 
 def _field(label: str, value: str | None) -> html.Div:
@@ -352,7 +352,10 @@ def decision_modals() -> html.Div:
             dbc.Modal(
                 [
                     dbc.ModalHeader(dbc.ModalTitle(id="decision-edit-title")),
-                    dbc.ModalBody(id="decision-edit-form"),
+                    # Form fields are mounted statically (always in the DOM) so
+                    # the save callback's State references never point at a
+                    # non-existent object. Opening just pushes values into them.
+                    dbc.ModalBody(edit_form(None), id="decision-edit-form"),
                     dbc.ModalFooter(
                         [
                             dbc.Button("Cancel", id="decision-edit-cancel", className="decision-cancel-btn"),
@@ -366,6 +369,31 @@ def decision_modals() -> html.Div:
                 backdrop="static",
             ),
         ]
+    )
+
+
+# Field value order pushed into the (statically-mounted) form when the editor
+# opens. MUST stay in sync with the value Outputs of ``open_editor``.
+FORM_VALUE_ORDER = (
+    "title", "statement", "rationale", "discussion", "owner",
+    "stakeholders", "status", "priority", "decision_date", "due_date",
+)
+
+
+def form_values(d: dict[str, Any] | None) -> tuple[Any, ...]:
+    """Ordered field values for ``open_editor`` — defaults when ``d`` is None."""
+    d = d or {}
+    return (
+        d.get("title", ""),
+        d.get("statement", ""),
+        d.get("rationale", ""),
+        d.get("discussion", ""),
+        d.get("owner", ""),
+        ", ".join(d.get("stakeholders") or []),
+        d.get("status", "planned"),
+        d.get("priority", "med"),
+        d.get("decision_date", ""),
+        d.get("due_date", ""),
     )
 
 
