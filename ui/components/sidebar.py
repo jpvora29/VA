@@ -96,6 +96,23 @@ def app_sidebar(
                 ],
                 className="sidebar-top",
             ),
+            html.Div(
+                [
+                    html.Button(
+                        [html.I(className="bi bi-chat-left-text"), html.Span("Chats")],
+                        id="nav-chat-view",
+                        n_clicks=0,
+                        className="sidebar-nav-item",
+                    ),
+                    html.Button(
+                        [html.I(className="bi bi-pin-angle"), html.Span("Decision Board")],
+                        id="nav-decision-board",
+                        n_clicks=0,
+                        className="sidebar-nav-item",
+                    ),
+                ],
+                className="sidebar-nav",
+            ),
             html.Div("Recent", className="sidebar-section-label"),
             html.Div(
                 (

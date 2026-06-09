@@ -96,6 +96,61 @@ profile = Table(
 )
 
 
+# ── Decision Board ────────────────────────────────────────────────────────────
+# Manually-authored business decisions, rendered as colour-coded sticky cards on
+# a Kanban board. Deliberately separate from `episodes` (agent memory): a
+# decision is an auditable application record and must never silently become
+# factual agent memory. JSON-shaped columns (stakeholders, evidence, links) are
+# stored as Text blobs, mirroring `conversations.data`.
+decisions = Table(
+    "decisions",
+    metadata,
+    Column("id", String, primary_key=True),  # uuid4 hex
+    Column("user_id", Integer, ForeignKey("users.id"), nullable=False, index=True),
+    Column("title", String, nullable=False, default=""),
+    Column("statement", Text, nullable=False, default=""),
+    Column("rationale", Text, nullable=True),
+    Column("discussion", Text, nullable=True),
+    Column("owner", String, nullable=True),
+    Column("stakeholders", Text, nullable=False, default="[]"),  # JSON list[str]
+    # 'approved' | 'under_review' | 'blocked' | 'planned' | 'archived'
+    Column("status", String, nullable=False, default="planned", index=True),
+    Column("priority", String, nullable=False, default="med"),  # high|med|low
+    Column("decision_date", String, nullable=True),  # ISO date string
+    Column("due_date", String, nullable=True),  # ISO date string
+    Column("pinned", Integer, nullable=False, default=0),  # 0/1 boolean
+    Column("sort_order", Integer, nullable=False, default=0),  # order within column
+    Column("evidence", Text, nullable=False, default="[]"),  # JSON list[dict]
+    Column("links", Text, nullable=False, default="{}"),  # JSON {chats:[], ...}
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+)
+
+
+# Append-only audit trail for every decision mutation. "Reopen" is just a row
+# with action='reopened'; nothing is ever updated or deleted here.
+decision_revisions = Table(
+    "decision_revisions",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column(
+        "decision_id",
+        String,
+        ForeignKey("decisions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    ),
+    Column("user_id", Integer, ForeignKey("users.id"), nullable=False),
+    # 'created' | 'updated' | 'status_changed' | 'reopened'
+    Column("action", String, nullable=False),
+    Column("field", String, nullable=True),  # which field changed, when applicable
+    Column("old_value", Text, nullable=True),
+    Column("new_value", Text, nullable=True),
+    Column("note", Text, nullable=True),  # free-text note (e.g. reopen reason)
+    Column("created_at", DateTime, server_default=func.now(), index=True),
+)
+
+
 def init_db() -> None:
     """Create all app-state tables if they don't yet exist (idempotent)."""
     metadata.create_all(app_engine)

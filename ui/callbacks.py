@@ -51,6 +51,11 @@ from ui.boardroom.render import render_document as render_boardroom_document
 from ui.boardroom.builder import build_document_from_digest as build_boardroom_document
 from ui.boardroom.editor import all_modals as boardroom_modals
 from ui.boardroom import callbacks as boardroom_callbacks  # noqa: F401  (registers callbacks)
+
+# Decision Board package. Importing `decision_callbacks` registers its CRUD +
+# view-router callbacks (side effect). Separate from chat/agent memory by design.
+from ui.decisions.render import decision_board_view, decision_modals
+from ui.decisions import callbacks as decision_callbacks  # noqa: F401  (registers callbacks)
 from ui.components.navbar import build_navbar
 from ui.components.sidebar import (
     login_screen,
@@ -984,7 +989,21 @@ def _app_shell(user_id: int, username: str) -> Component:
                     app_sidebar(conversations, username, collapsed=False),
                     html.Div(
                         html.Div(
-                            chatbot_page(username, starters),
+                            [
+                                # Two panes share main-content; the view-router
+                                # callback toggles visibility (chat keeps its DOM
+                                # + stores instead of being torn down on switch).
+                                html.Div(
+                                    chatbot_page(username, starters),
+                                    id="view-chat",
+                                    className="view-pane",
+                                ),
+                                html.Div(
+                                    decision_board_view(),
+                                    id="view-board",
+                                    className="view-pane view-hidden",
+                                ),
+                            ],
                             id="main-content",
                             className="main-content",
                         ),
@@ -996,6 +1015,7 @@ def _app_shell(user_id: int, username: str) -> Component:
             pitch_builder_drawer(),
             custom_peers_modal(),
             boardroom_modals(),
+            decision_modals(),
         ],
         className="app-shell",
     )
