@@ -3373,17 +3373,17 @@ th {
 .sidebar-nav-item:hover { background: var(--surface-1); color: var(--ink-900); }
 .sidebar-nav-item:hover .bi { color: var(--ink-600); }
 .sidebar-nav-active {
-    background: linear-gradient(90deg, rgba(11,75,255,0.10), rgba(11,75,255,0.04));
-    color: var(--marsh-blue-2) !important;
+    background: rgba(0, 15, 71, 0.07);
+    color: var(--marsh-blue) !important;
 }
-.sidebar-nav-active .bi { color: var(--marsh-blue-2) !important; }
+.sidebar-nav-active .bi { color: var(--marsh-blue) !important; }
 .sidebar-nav-active::before {
     content: "";
     position: absolute;
     left: 0; top: 18%; bottom: 18%;
     width: 3px;
     border-radius: 0 3px 3px 0;
-    background: var(--marsh-blue-2);
+    background: var(--marsh-blue);
 }
 .app-sidebar-collapsed .sidebar-nav-item span { display: none; }
 .app-sidebar-collapsed .sidebar-nav { padding: 4px; }
@@ -3399,7 +3399,7 @@ th {
     height: 100%;
     padding: 24px 30px 22px;
     background:
-        radial-gradient(1200px 480px at 20% -10%, #eef2fb, transparent),
+        radial-gradient(1200px 480px at 20% -10%, rgba(0, 15, 71, 0.05), transparent),
         var(--surface-2);
     overflow: hidden;
 }
@@ -3413,26 +3413,26 @@ th {
 .decision-board-heading .bi {
     color: #fff;
     font-size: 17px;
-    background: linear-gradient(135deg, var(--marsh-blue-2), #4d7cff);
+    background: var(--marsh-blue);
     width: 38px; height: 38px;
     display: inline-flex; align-items: center; justify-content: center;
     border-radius: 11px;
-    box-shadow: 0 6px 16px rgba(11,75,255,0.28);
+    box-shadow: 0 6px 16px rgba(0, 15, 71, 0.30);
 }
 .decision-board-title { margin: 0; font-size: 23px; font-weight: 800; letter-spacing: -0.01em; color: var(--ink-900); }
 .decision-new-btn {
     display: inline-flex;
     align-items: center;
-    background: linear-gradient(135deg, var(--marsh-blue-2), #3f6dff) !important;
+    background: var(--marsh-blue) !important;
     border: none !important;
     border-radius: 12px !important;
     font-weight: 600;
     font-size: 14px;
     padding: 10px 18px !important;
-    box-shadow: 0 6px 18px rgba(11,75,255,0.26);
+    box-shadow: 0 6px 18px rgba(0, 15, 71, 0.28);
     transition: transform var(--transition-fast), box-shadow var(--transition-fast);
 }
-.decision-new-btn:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgba(11,75,255,0.34); }
+.decision-new-btn:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgba(0, 15, 71, 0.36); }
 
 /* ── Toolbar ────────────────────────────────────────────────────────────── */
 .decision-toolbar {
@@ -3622,10 +3622,10 @@ th {
 .decision-dot-grey   { background: #868e96; }
 /* Cards stay clean white so they read as notes pinned on the coloured column;
    the status colour shows through the left accent bar. */
-.decision-card-green::before  { background: linear-gradient(180deg, #37b24d, #2f9e44); }
-.decision-card-yellow::before { background: linear-gradient(180deg, #f6b700, #e8a800); }
-.decision-card-blue::before   { background: linear-gradient(180deg, #339af0, #1c7ed6); }
-.decision-card-grey::before   { background: linear-gradient(180deg, #adb5bd, #868e96); }
+.decision-card-green::before  { background: #2f9e44; }
+.decision-card-yellow::before { background: #e8a800; }
+.decision-card-blue::before   { background: #1c7ed6; }
+.decision-card-grey::before   { background: #868e96; }
 
 /* Priority chips */
 .decision-prio {
@@ -3758,12 +3758,12 @@ th {
 #decision-edit-modal .modal-body { padding: 22px; }
 #decision-edit-modal .modal-footer { border-top: 1px solid var(--border-soft); padding: 14px 22px; }
 .decision-save-btn {
-    background: linear-gradient(135deg, var(--marsh-blue-2), #3f6dff) !important;
+    background: var(--marsh-blue) !important;
     border: none !important;
     border-radius: 11px !important;
     font-weight: 600;
     padding: 9px 20px !important;
-    box-shadow: 0 6px 16px rgba(11,75,255,0.26);
+    box-shadow: 0 6px 16px rgba(0, 15, 71, 0.28);
 }
 .decision-cancel-btn {
     background: var(--surface-1) !important;
@@ -3786,10 +3786,10 @@ th {
     position: relative;
     overflow: hidden;
     background:
-        radial-gradient(900px 620px at 16% 22%, rgba(11, 75, 255, 0.55), transparent 55%),
-        radial-gradient(820px 620px at 84% 28%, rgba(123, 97, 255, 0.50), transparent 55%),
-        radial-gradient(760px 640px at 50% 96%, rgba(0, 198, 255, 0.38), transparent 55%),
-        #070d24;
+        radial-gradient(900px 620px at 16% 22%, rgba(13, 36, 110, 0.75), transparent 55%),
+        radial-gradient(820px 620px at 84% 28%, rgba(0, 15, 71, 0.85), transparent 55%),
+        radial-gradient(760px 640px at 50% 96%, rgba(24, 52, 130, 0.65), transparent 55%),
+        #03061a;
     background-size: 180% 180%;
     animation: auroraShift 20s ease-in-out infinite;
 }
@@ -3810,13 +3810,13 @@ th {
 }
 .login-screen::before {
     width: 320px; height: 320px;
-    background: radial-gradient(circle, rgba(11, 75, 255, 0.7), transparent 70%);
+    background: radial-gradient(circle, rgba(24, 52, 140, 0.75), transparent 70%);
     top: -60px; left: -40px;
     animation: orbFloatA 12s ease-in-out infinite;
 }
 .login-screen::after {
     width: 380px; height: 380px;
-    background: radial-gradient(circle, rgba(0, 198, 255, 0.6), transparent 70%);
+    background: radial-gradient(circle, rgba(0, 15, 71, 0.8), transparent 70%);
     bottom: -90px; right: -60px;
     animation: orbFloatB 14s ease-in-out infinite;
 }
@@ -3843,8 +3843,8 @@ th {
 .login-badge {
     width: 62px; height: 62px;
     border-radius: 20px;
-    background: linear-gradient(135deg, var(--marsh-blue-2), #6d8bff);
-    box-shadow: 0 16px 38px rgba(11, 75, 255, 0.5);
+    background: var(--marsh-blue);
+    box-shadow: 0 16px 38px rgba(0, 15, 71, 0.55);
     font-size: 27px;
     animation: badgeFloat 4s ease-in-out infinite;
 }
@@ -3852,57 +3852,54 @@ th {
     font-size: 27px;
     font-weight: 800;
     letter-spacing: -0.02em;
-    background: linear-gradient(90deg, var(--marsh-blue), var(--marsh-blue-2) 70%, #6d8bff);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: var(--marsh-blue);
 }
 .login-submit {
-    background: linear-gradient(135deg, var(--marsh-blue-2), #3f6dff) !important;
+    background: var(--marsh-blue) !important;
     border: none !important;
-    box-shadow: 0 12px 28px rgba(11, 75, 255, 0.4) !important;
+    box-shadow: 0 12px 28px rgba(0, 15, 71, 0.45) !important;
     transition: transform var(--transition-fast), box-shadow var(--transition-fast) !important;
 }
-.login-submit:hover { transform: translateY(-2px); box-shadow: 0 16px 36px rgba(11, 75, 255, 0.5) !important; }
+.login-submit:hover { transform: translateY(-2px); background: #0a2270 !important; box-shadow: 0 16px 36px rgba(0, 15, 71, 0.55) !important; }
 
-/* ── Gradient navbar ────────────────────────────────────────────────────── */
+/* ── Navbar (solid Marsh Navy) ──────────────────────────────────────────── */
 .custom-navbar {
-    background: linear-gradient(115deg, #00103f 0%, #062a87 55%, #0b4bff 120%) !important;
+    background: var(--marsh-blue) !important;
     box-shadow: 0 6px 22px rgba(0, 18, 64, 0.38);
     border-bottom: 1px solid rgba(255, 255, 255, 0.10);
 }
 
-/* ── Gradient sidebar + glowing brand button ────────────────────────────── */
+/* ── Sidebar + glowing brand button ─────────────────────────────────────── */
 .app-sidebar {
-    background: linear-gradient(180deg, #fbfcff 0%, #f3f6fd 100%);
+    background: var(--surface-0);
     border-right: 1px solid var(--border-soft);
 }
 .new-chat-btn {
-    background: linear-gradient(135deg, var(--marsh-blue-2), #3f6dff) !important;
+    background: var(--marsh-blue) !important;
     color: #ffffff !important;
     border: none !important;
-    box-shadow: 0 8px 20px rgba(11, 75, 255, 0.28) !important;
+    box-shadow: 0 8px 20px rgba(0, 15, 71, 0.28) !important;
     transition: transform var(--transition-fast), box-shadow var(--transition-fast) !important;
 }
 .new-chat-btn:hover {
-    background: linear-gradient(135deg, #0a44ee, #3461ff) !important;
+    background: #0a2270 !important;
     transform: translateY(-1px);
-    box-shadow: 0 12px 26px rgba(11, 75, 255, 0.36) !important;
+    box-shadow: 0 12px 26px rgba(0, 15, 71, 0.36) !important;
 }
 .new-chat-btn .bi { color: #ffffff !important; }
 .sidebar-section-label { font-size: 10.5px; letter-spacing: 0.08em; }
 
-/* Footer avatar with gradient ring */
+/* Footer avatar with navy glow ring */
 .sidebar-footer { border-top: 1px solid var(--border-soft); }
 .user-avatar {
     width: 34px; height: 34px;
-    background: linear-gradient(135deg, var(--marsh-blue-2), #6d8bff);
-    box-shadow: 0 0 0 3px rgba(11, 75, 255, 0.14), 0 4px 10px rgba(11, 75, 255, 0.25);
+    background: var(--marsh-blue);
+    box-shadow: 0 0 0 3px rgba(0, 15, 71, 0.14), 0 4px 10px rgba(0, 15, 71, 0.28);
 }
 .conv-item-active {
-    background: linear-gradient(90deg, rgba(11, 75, 255, 0.10), rgba(11, 75, 255, 0.03));
+    background: rgba(0, 15, 71, 0.07);
 }
-.conv-item-active .conv-item-open { color: var(--marsh-blue-2); }
+.conv-item-active .conv-item-open { color: var(--marsh-blue); }
 
 /* ── Welcome hero glow + chip lift ──────────────────────────────────────── */
 .main-content { position: relative; }
@@ -3912,7 +3909,7 @@ th {
     top: 4%; left: 50%;
     width: 520px; height: 320px;
     transform: translateX(-50%);
-    background: radial-gradient(circle, rgba(11, 75, 255, 0.12), transparent 65%);
+    background: radial-gradient(circle, rgba(0, 15, 71, 0.12), transparent 65%);
     filter: blur(20px);
     z-index: 0;
     pointer-events: none;
@@ -3924,8 +3921,8 @@ th {
     backdrop-filter: blur(6px);
 }
 .suggestion-chip:hover {
-    border-color: rgba(11, 75, 255, 0.4);
-    box-shadow: 0 14px 30px rgba(11, 75, 255, 0.16);
+    border-color: rgba(0, 15, 71, 0.35);
+    box-shadow: 0 14px 30px rgba(0, 15, 71, 0.16);
 }
 
 /* ── Refined thin scrollbars across panes ───────────────────────────────── */
@@ -3953,40 +3950,196 @@ th {
 
 /* ── Chat area: bubbles + send to match the modern blue identity ─────────── */
 .user-message {
-    background: linear-gradient(135deg, var(--marsh-blue-2) 0%, #3f6dff 100%) !important;
+    background: var(--marsh-blue) !important;
     color: #ffffff !important;
     border: none !important;
     border-radius: 20px 20px 6px 20px !important;
-    box-shadow: 0 8px 20px rgba(11, 75, 255, 0.26) !important;
+    box-shadow: 0 8px 20px rgba(0, 15, 71, 0.28) !important;
     font-weight: 500;
 }
-.user-message a { color: #eaf0ff; text-decoration: underline; }
+.user-message a { color: #cfe0ff; text-decoration: underline; }
 
 .gpt-message {
     border-radius: 20px 20px 20px 6px;
-    background: linear-gradient(180deg, #ffffff, #fbfcff);
+    background: #ffffff;
     box-shadow: 0 1px 2px rgba(10, 22, 54, 0.05), 0 8px 22px rgba(10, 22, 54, 0.05);
     transition: box-shadow var(--transition-med), transform var(--transition-med);
 }
 .gpt-message:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
 
-/* Send button: gradient to match the brand buttons */
+/* Send button: solid Marsh Navy with glow */
 .send-btn {
     width: 34px !important;
     height: 34px !important;
-    background: linear-gradient(135deg, var(--marsh-blue-2), #3f6dff) !important;
-    box-shadow: 0 6px 16px rgba(11, 75, 255, 0.34) !important;
+    background: var(--marsh-blue) !important;
+    box-shadow: 0 6px 16px rgba(0, 15, 71, 0.36) !important;
 }
-.send-btn:hover { background: linear-gradient(135deg, #0a44ee, #3461ff) !important; }
+.send-btn:hover { background: #0a2270 !important; box-shadow: 0 8px 18px rgba(0, 15, 71, 0.4) !important; }
 
 /* Composer: a touch more lift + rounder to sit with the glass card system */
 .composer { border-radius: 26px; }
-.composer:focus-within { box-shadow: 0 16px 40px rgba(11, 75, 255, 0.18); }
-.pitch-trigger-btn:hover { background: rgba(11, 75, 255, 0.10) !important; }
+.composer:focus-within { box-shadow: 0 16px 40px rgba(0, 15, 71, 0.20); }
 
 /* Consulting-insight card: refresh its accent to the brand gradient */
 .insight-card { border-radius: 20px 20px 20px 6px; }
 .insight-card-badge {
-    background: linear-gradient(135deg, rgba(11, 75, 255, 0.12), rgba(123, 97, 255, 0.12));
-    color: var(--marsh-blue-2);
+    background: rgba(0, 15, 71, 0.10);
+    color: var(--marsh-blue);
 }
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   BOARDROOM DASHBOARD POLISH — frame the inline digest as a real BI dashboard:
+   navy top-bar + light canvas + elevated metric tiles/panels (CSS only)
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* The whole digest becomes a self-contained, framed dashboard panel. */
+.message.boardroom-card {
+    padding: 0;
+    background: var(--surface-2);
+    border: 1px solid var(--border-mid);
+    border-radius: 20px;
+    box-shadow: 0 24px 60px rgba(10, 22, 54, 0.14), 0 2px 6px rgba(10, 22, 54, 0.06);
+    overflow: hidden;
+}
+
+/* ── Header → a Marsh-Navy dashboard top bar ────────────────────────────── */
+.boardroom-card .bm-header {
+    margin: 0;
+    padding: 20px 24px;
+    background:
+        radial-gradient(140% 180% at 100% 0%, rgba(255, 255, 255, 0.10), transparent 55%),
+        var(--marsh-blue);
+    color: #ffffff;
+    border-bottom: 3px solid rgba(0, 0, 0, 0.15);
+}
+.boardroom-card .bm-eyebrow {
+    color: rgba(255, 255, 255, 0.78);
+    background: rgba(255, 255, 255, 0.12);
+    padding: 3px 10px;
+    border-radius: 999px;
+    backdrop-filter: blur(4px);
+}
+.boardroom-card .bm-title { color: #ffffff; margin-top: 9px; letter-spacing: -0.01em; }
+.boardroom-card .bm-subtitle { color: rgba(255, 255, 255, 0.74); }
+
+/* Header action buttons → glassy on the dark bar */
+.boardroom-card .bm-export-btn {
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    color: #ffffff;
+    border-radius: 11px;
+    backdrop-filter: blur(6px);
+    transition: background var(--transition-fast), transform var(--transition-fast);
+}
+.boardroom-card .bm-export-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.22);
+    color: #ffffff;
+    transform: translateY(-1px);
+}
+.boardroom-card .bm-export-btn.active {
+    background: #ffffff;
+    color: var(--marsh-blue);
+    border-color: #ffffff;
+}
+
+/* ── Body becomes the dashboard canvas ──────────────────────────────────── */
+.boardroom-card .bm-pages { padding: 22px 24px 6px; }
+.boardroom-card .bm-page { gap: 18px; }
+.boardroom-card .bm-pager {
+    margin: 0;
+    padding: 14px 24px 20px;
+    border-top: 1px solid var(--border-soft);
+    background: rgba(255, 255, 255, 0.5);
+}
+
+/* Section eyebrow inside the canvas */
+.boardroom-card .bm-section-title { color: var(--marsh-blue); }
+
+/* ── KPI metric tiles — elevated, with a tone accent + entrance stagger ──── */
+.boardroom-card .bm-kpi-grid { gap: 14px; }
+.boardroom-card .bm-kpi-card {
+    position: relative;
+    border: 1px solid var(--border-soft);
+    border-radius: 16px;
+    padding: 16px 16px 16px 18px;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.05), 0 10px 24px rgba(10, 22, 54, 0.06);
+    overflow: hidden;
+    transition: box-shadow var(--transition-med), transform var(--transition-med);
+    animation: bmTileIn 480ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.boardroom-card .bm-kpi-card::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+    background: var(--marsh-blue);
+    opacity: 0.85;
+}
+.boardroom-card .bm-kpi-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 18px 38px rgba(10, 22, 54, 0.13);
+}
+.boardroom-card .bm-kpi-value {
+    font-size: 27px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+}
+.boardroom-card .bm-kpi-label {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--ink-300);
+}
+.boardroom-card .bm-kpi-icon { box-shadow: inset 0 0 0 1px rgba(10, 22, 54, 0.04); }
+
+@keyframes bmTileIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: none; }
+}
+.boardroom-card .bm-kpi-card:nth-child(1) { animation-delay: 40ms; }
+.boardroom-card .bm-kpi-card:nth-child(2) { animation-delay: 100ms; }
+.boardroom-card .bm-kpi-card:nth-child(3) { animation-delay: 160ms; }
+.boardroom-card .bm-kpi-card:nth-child(4) { animation-delay: 220ms; }
+.boardroom-card .bm-kpi-card:nth-child(5) { animation-delay: 280ms; }
+.boardroom-card .bm-kpi-card:nth-child(6) { animation-delay: 340ms; }
+
+/* ── Elevate every widget panel so they read as dashboard cards ──────────── */
+.boardroom-card .bm-comparison,
+.boardroom-card .bm-battlecard,
+.boardroom-card .bm-insight-card,
+.boardroom-card .bm-opp-item,
+.boardroom-card .bm-timeline,
+.boardroom-card .bm-charts-grid .bm-chart-panel,
+.boardroom-card .bm-commentary-widget .bm-rail-editable {
+    border-color: var(--border-soft);
+    border-radius: 16px;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.04), 0 8px 22px rgba(10, 22, 54, 0.05);
+    transition: box-shadow var(--transition-med), transform var(--transition-med);
+}
+.boardroom-card .bm-comparison:hover,
+.boardroom-card .bm-battlecard:hover,
+.boardroom-card .bm-insight-card:hover,
+.boardroom-card .bm-opp-item:hover,
+.boardroom-card .bm-charts-grid .bm-chart-panel:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 16px 34px rgba(10, 22, 54, 0.10);
+}
+
+/* Chart panel: give the plot a clean framed surface */
+.boardroom-card .bm-chart-panel {
+    background: #ffffff;
+    border: 1px solid var(--border-soft);
+    border-radius: 16px;
+    padding: 12px 12px 6px;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.04), 0 8px 22px rgba(10, 22, 54, 0.05);
+}
+
+/* Page-changer slider track in the brand navy */
+.boardroom-card .bm-slider .rc-slider-track { background: var(--marsh-blue); }
+.boardroom-card .bm-slider .rc-slider-handle { border-color: var(--marsh-blue); box-shadow: 0 2px 8px rgba(0, 15, 71, 0.35); }
+.boardroom-card .bm-slider .rc-slider-dot-active { border-color: var(--marsh-blue); }
