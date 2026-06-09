@@ -20,6 +20,8 @@ import dspy
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
+from core.context.bundle import schema_outline
+from core.context.engine import engine_enabled
 from core.data.general import GeneralFunctions
 from core.initialization import Initialization
 from core.observability import log_event
@@ -165,8 +167,17 @@ class ContextFillingAgent:
             last_user_query = ""
             conversation_history = []
 
+        # ContextEngine routing view (step 4): routing only needs to know which
+        # columns live in which table to pick a table_family — not the full
+        # per-column metadata. When the engine is enabled, send the compact
+        # name-only outline (across all flows, since the flow isn't chosen yet).
+        # Default off -> the legacy full-metadata dump, byte-identical.
+        if engine_enabled():
+            schema_repr = json.dumps(schema_outline(schema), sort_keys=True)
+        else:
+            schema_repr = json.dumps(schema, sort_keys=True, default=str)
         static_context = (
-            f"Schemas:\n{json.dumps(schema, sort_keys=True, default=str)}\n\n"
+            f"Schemas:\n{schema_repr}\n\n"
             f"Routing + Inheritance Rules:\n{ContextFillingAgent.history_policy_rules}\n"
         )
 

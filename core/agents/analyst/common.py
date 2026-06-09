@@ -17,6 +17,8 @@ from langchain_core.messages import HumanMessage
 from langgraph.errors import GraphRecursionError
 
 from core.agents.analyst.middleware import build_solver_middleware
+from core.context.bundle import schema_outline
+from core.context.engine import engine_enabled
 from core.initialization import Initialization
 from core.agents.common.peers import custom_peer_directive
 from core.analysis import get_lens_library
@@ -26,7 +28,6 @@ from core.mcp.tools import (
     get_distinct_values,
     get_schema,
     get_valid_values,
-    match_column_values,
 )
 from core.observability import log_event
 from core.rules.gpr import GPRRules
@@ -149,13 +150,21 @@ def build_tools(
 
     @tool
     def resolve_value(flow: str, column: str, term: str) -> str:
-        """Fuzzy-match a loose term to the exact valid values of a column.
+        """Match a loose term to the exact valid values of a column.
 
         Use BEFORE filtering on dimensions like SIC_Major_Class (industry),
         SIC_Minor_Class, Product_Line, Business_Line, Cover_Line, Client_Segment,
         Region, or survey Sections / Attributes. Returns a JSON list of matches.
+
+        Resolution is hybrid (decision #4): deterministic fuzzy first; for a
+        registry `resolver: semantic` column (industry/SIC, product/cover/business
+        line, segment, attributes) a fuzzy miss escalates to an LLM resolver that
+        maps the *concept* to real values ("manufacturing" -> the SIC classes) —
+        only when CONTEXT_ENGINE_SEMANTIC is on. Default off -> pure fuzzy.
         """
-        return json.dumps(match_column_values(flow, column, term), default=str)
+        from core.context.retriever import build_resolver  # lazy
+
+        return json.dumps(build_resolver(flow).match(column, term), default=str)
 
     @tool
     def consult_skill(name: str) -> str:
@@ -270,7 +279,20 @@ def _solver_prompt(
     trigger_text = f"{question} {sub_question}"
     rules = domain_rules(route, flow, trigger_text)
     catalog = skill_catalog(route, flow, trigger_text)
-    schema = json.dumps(get_schema(flow), default=str)
+
+    # ContextEngine solver view (step 5): the grounded `schema_slice` above is the
+    # primary schema signal; the FULL per-column metadata dump that historically
+    # followed it was redundant and the single biggest line in this prompt. When
+    # the engine is on, replace it with the compact name-only outline (columns
+    # the slice didn't surface stay discoverable, without the metadata bulk).
+    # Default off -> the legacy full dump, byte-identical.
+    use_outline = engine_enabled()
+
+    def _schema_repr(target_flow: str) -> str:
+        raw = get_schema(target_flow)
+        return json.dumps(schema_outline(raw) if use_outline else raw, default=str)
+
+    schema = _schema_repr(flow)
 
     # For a "both" route the perception lens may need the survey tables too, so
     # surface that schema as a secondary source (the GPR/premium flow stays primary).
@@ -279,7 +301,7 @@ def _solver_prompt(
         secondary_block = (
             '\n[SECONDARY SCHEMA for flow="survey" — query this flow only for a '
             "perception/score sub-question]\n"
-            f"{json.dumps(get_schema('survey'), default=str)}\n"
+            f"{_schema_repr('survey')}\n"
         )
 
     prior_block = (
@@ -313,7 +335,7 @@ table IS Marsh's book of business (the market proxy).
 [GROUNDED SCHEMA SLICE — the schema-identifier already resolved this for you]
 {schema_slice.as_prompt()}
 
-[FULL SCHEMA for flow="{flow}"]
+[SCHEMA for flow="{flow}" — columns available beyond the grounded slice]
 {schema}
 {secondary_block}
 [DOMAIN RULES — the same business + SQL-construction rules the deterministic

@@ -183,14 +183,27 @@ not per-query, and only as a rescue after fuzzy fails.
 - Tests: `tests/context/test_retriever.py`, `tests/context/test_bundle_views.py`,
   `tests/registry/test_resolver_flag.py` (+ step-3 suites still green).
 
-**DEFERRED (needs LLM creds + the golden harness, same gate as step 3):** wire
-`context_filler.py` (`bundle.for_routing()`) and `planner.py`
-(`bundle.for_planner()`) to consume the engine; construct the engine once per
-turn in `core/graph/main.py`; flip `CONTEXT_ENGINE_PLANNER=shadow`, run the
-golden harness for zero route/plan drift + token drop, then cut over. The
-**subgraph dedup refactor** (gpr/survey → `core/graph/shared/*`) is also deferred
-to that live-harness window — it's a behavior-preserving move that must be parity-
-verified, not done blind.
+**Live wiring DONE (2026-06-09, behind `CONTEXT_ENGINE_PLANNER`, default off):**
+- `core/agents/context_filler.py` — the worst offender. When `engine_enabled()`,
+  the routing prompt's schema goes through `schema_outline()` (compact name-only
+  outline across all flows, since the flow isn't chosen yet) instead of the full
+  per-column metadata JSON dump (was lines 168-171). Default off = byte-identical.
+- **Planner / SQL agent** consume the engine's value-resolution *already*: the
+  step-3 gate's `_live_matcher` now wires the hybrid `EntityResolver`, so the
+  planner + SQL agent receive engine-resolved (fuzzy-first / LLM-rescue)
+  valid_values via `gated_valid_values`. Wrapping them in a typed `for_planner()`
+  view on top is behavior-neutral and was intentionally skipped (no payoff, only
+  churn) — the typed views exist and are tested; the planner just doesn't need to
+  re-route through them to get the engine's resolution.
+
+**Still DEFERRED (needs LLM creds + the golden harness):** construct the engine
+once per turn and thread the bundle via `AgentState` in `core/graph/main.py` (the
+bundle is flow-scoped — flow is only known post-router — so today each flow node
+builds the cheap cached bundle where needed instead); flip
+`CONTEXT_ENGINE_PLANNER=shadow`, run the golden harness for zero route/plan drift
++ token drop, then leave `on`. The **subgraph dedup refactor** (gpr/survey →
+`core/graph/shared/*`) is also deferred to that live-harness window — a
+behavior-preserving move that must be parity-verified, not done blind.
 
 | Action | File | Notes |
 |---|---|---|
@@ -215,11 +228,28 @@ parity tests.
 
 ---
 
-## Step 5 — Solver `for_solver` view (drop redundant full schema)
+## Step 5 — Solver `for_solver` view (drop redundant full schema) — 🟡 WIRED (2026-06-09, flag-gated); harness verify DEFERRED
 
 Route analyst solvers through `bundle.for_solver()`. Smaller prompts re-sent each
 ReAct step. **No lens/recursion tuning** (deferred — it changes which analyses
 run).
+
+**Done (behind `CONTEXT_ENGINE_PLANNER`, default off):**
+- `core/agents/analyst/common.py` `_solver_prompt` — the `[FULL SCHEMA]` block
+  (was lines 316-318, JSON-dumped on TOP of the already-grounded `schema_slice`)
+  now goes through `schema_outline()` when `engine_enabled()`: compact name-only
+  outline, primary signal stays the grounded slice. Secondary "both"-route survey
+  schema compressed the same way. Default off = legacy full dump.
+- `resolve_value` tool now routes through the hybrid `EntityResolver`
+  (`build_resolver(flow).match`) instead of raw fuzzy `match_column_values`, so a
+  solver resolving SIC/industry/segment/attribute terms gets the LLM rescue when
+  `CONTEXT_ENGINE_SEMANTIC` is on. Default off = pure fuzzy, identical to before.
+- The grounded `schema_slice` was already threaded to every solver by
+  `schema_identifier_node` → `_payload`, so no subgraph change was needed.
+
+**DEFERRED (needs creds + golden harness):** flip the flag, confirm analyst
+answers unchanged on the golden set while per-step solver tokens drop (record the
+delta). Lens/recursion tuning stays out of scope.
 
 | Action | File | Notes |
 |---|---|---|

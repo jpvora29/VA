@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import fields
 
-from core.context.bundle import ContextBundle
+from core.context.bundle import ContextBundle, schema_outline
 from core.context.engine import ContextEngine
 from core.context.retriever import EntityResolver
 
@@ -37,6 +37,18 @@ def _bundle(**over):
     )
     base.update(over)
     return ContextBundle(**base)
+
+
+def test_schema_outline_strips_metadata_to_names():
+    # The shared helper behind the context_filler routing fix (step 4) and the
+    # analyst solver schema-drop (step 5): full metadata in, names-only out.
+    outline = schema_outline(_SCHEMA)
+    assert outline == {"GPR": ["Premium", "Carrier_Group", "SIC_Major_Class"]}
+    # Robust to junk: empty / non-dict entries don't crash.
+    assert schema_outline({"T": [None, {"no_name": 1}, {"Column Name": "X"}]}) == {
+        "T": ["X"]
+    }
+    assert schema_outline({}) == {}
 
 
 def test_routing_view_has_no_values_or_definitions():

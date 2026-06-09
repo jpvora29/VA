@@ -22,8 +22,14 @@ from core.context.retriever import ResolvedValues
 _COLUMN_NAME_KEY = "Column Name"
 
 
-def _schema_outline(schema_tables: Dict[str, Any]) -> Dict[str, List[str]]:
-    """table -> [column names] — structure only, no metadata, no values."""
+def schema_outline(schema_tables: Dict[str, Any]) -> Dict[str, List[str]]:
+    """table -> [column names] — structure only, no metadata, no values.
+
+    The token-cheap form of a schema dump: a node that only needs to know which
+    columns exist (routing, a solver that already has a grounded slice) takes
+    this instead of the full per-column metadata JSON. Works on any
+    `{table: [col-meta]}` map — a single flow's slice or the whole DB schema.
+    """
     outline: Dict[str, List[str]] = {}
     for table, cols in (schema_tables or {}).items():
         names = []
@@ -34,6 +40,10 @@ def _schema_outline(schema_tables: Dict[str, Any]) -> Dict[str, List[str]]:
                     names.append(name)
         outline[table] = names
     return outline
+
+
+# Back-compat alias for internal callers that used the private name.
+_schema_outline = schema_outline
 
 
 # --------------------------------------------------------------------------- #
