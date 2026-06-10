@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 from dash import dcc, html
 
 from ui.boardroom import catalog, widgets_generated, widgets_library
-from ui.boardroom.model import SIZE_SPAN, SIZES
+from ui.boardroom.model import GRID_COLUMNS, SIZE_SPAN, SIZES, widget_height, widget_span
 from ui.boardroom.themes import theme
 
 _SIZE_LABELS = {"sm": "S", "md": "M", "lg": "L", "full": "Full"}
@@ -78,6 +78,14 @@ def _widget_chrome(widget, card_idx, page_id, i, n):
     hidden = not meta.get("visible_board", True)
 
     left = [
+        # Drag handle — assets/boardroom_dnd.js listens on .bm-grip and reports
+        # drops into the bm-dnd store (handled in ui.boardroom.callbacks).
+        html.Span(
+            html.I(className="bi bi-grip-vertical"),
+            className="bm-grip",
+            draggable="true",
+            title="Drag to reorder",
+        ),
         html.Span(catalog.meta_of(widget["kind"]).get("label", widget["kind"]), className="bm-w-kind"),
     ]
     if widget.get("title"):
@@ -91,18 +99,48 @@ def _widget_chrome(widget, card_idx, page_id, i, n):
 
     # Inline width control = direct positioning on the governed grid.
     size_now = meta.get("size", "md")
+    span_now = widget_span(widget)
+    height_now = widget_height(widget)
     size_group = html.Div(
         [
             html.Button(
                 _SIZE_LABELS[s],
                 id=_id("bm-w-size", card_idx, wid=wid, size=s),
                 n_clicks=0,
-                className="bm-size-btn" + (" active" if s == size_now else ""),
+                className="bm-size-btn" + (" active" if s == size_now and meta.get("span") in (None, SIZE_SPAN[s]) else ""),
                 title=f"Set width: {_SIZE_LABELS[s]}",
             )
             for s in SIZES
         ],
         className="bm-size-group",
+    )
+    # Fine-grained restructuring: ±1 column width, ±height, back-to-auto.
+    fine_group = html.Div(
+        [
+            html.Button(html.I(className="bi bi-chevron-bar-left"),
+                        id=_id("bm-w-span", card_idx, wid=wid, delta=-1), n_clicks=0,
+                        className="bm-size-btn", title="Narrower (−1 column)",
+                        disabled=span_now <= 1),
+            html.Span(f"{span_now}/{GRID_COLUMNS}", className="bm-span-readout",
+                      title="Current width (grid columns)"),
+            html.Button(html.I(className="bi bi-chevron-bar-right"),
+                        id=_id("bm-w-span", card_idx, wid=wid, delta=1), n_clicks=0,
+                        className="bm-size-btn", title="Wider (+1 column)",
+                        disabled=span_now >= GRID_COLUMNS),
+            html.Button(html.I(className="bi bi-arrows-collapse"),
+                        id=_id("bm-w-height", card_idx, wid=wid, delta=-1), n_clicks=0,
+                        className="bm-size-btn", title="Shorter (−40 px)"),
+            html.Span(f"{height_now}px" if height_now else "auto",
+                      className="bm-span-readout", title="Current height"),
+            html.Button(html.I(className="bi bi-arrows-expand"),
+                        id=_id("bm-w-height", card_idx, wid=wid, delta=1), n_clicks=0,
+                        className="bm-size-btn", title="Taller (+40 px)"),
+            html.Button(html.I(className="bi bi-magic"),
+                        id=_id("bm-w-hauto", card_idx, wid=wid), n_clicks=0,
+                        className="bm-size-btn", title="Auto height (fit content)",
+                        disabled=height_now is None),
+        ],
+        className="bm-size-group bm-fine-group",
     )
 
     buttons = [
@@ -126,7 +164,8 @@ def _widget_chrome(widget, card_idx, page_id, i, n):
         [
             html.Div(left, className="bm-w-meta"),
             html.Div(
-                [size_group, html.Div([b for b in buttons if b is not None], className="bm-w-actions")],
+                [size_group, fine_group,
+                 html.Div([b for b in buttons if b is not None], className="bm-w-actions")],
                 className="bm-w-controls",
             ),
         ],
@@ -140,19 +179,23 @@ def _render_widget(widget, figures, edit_mode, card_idx, page_id, i, n):
     if hidden and not edit_mode:
         return None  # view mode drops hidden widgets entirely
 
-    size = meta.get("size", "md")
-    span = SIZE_SPAN.get(size, 6)
+    span = widget_span(widget)
+    height_px = widget_height(widget)
     theme_key = meta.get("theme") or "default"
     th = theme(theme_key)
 
     inner = [_widget_chrome(widget, card_idx, page_id, i, n)] if edit_mode else []
-    inner.append(html.Div(_widget_body(widget, figures), className="bm-gw-body"))
+    body_style = {"height": f"{height_px}px", "overflowY": "auto"} if height_px else {}
+    inner.append(html.Div(_widget_body(widget, figures), className="bm-gw-body", style=body_style))
 
     cls = (
         "bm-gw"
         + (" is-hidden" if hidden else "")
         + (" is-edit" if edit_mode else "")
         + (" is-themed" if theme_key != "default" else "")
+    )
+    dnd_attrs = (
+        {"data-wid": widget["id"], "data-card": str(card_idx)} if edit_mode else {}
     )
     return html.Div(
         inner,
@@ -163,6 +206,7 @@ def _render_widget(widget, figures, edit_mode, card_idx, page_id, i, n):
             "--bm-soft": th["soft"],
             "--bm-ink": th["ink"],
         },
+        **dnd_attrs,
     )
 
 
@@ -268,8 +312,7 @@ def _header(doc, edit_mode, card_idx):
             id={"type": "boardroom-export", "idx": card_idx},
             n_clicks=0,
             className="bm-export-btn",
-            disabled=True,
-            title="PowerPoint export is coming soon",
+            title="Download this board as an editable PowerPoint deck",
         ),
     ]
     return html.Div([title_block, html.Div(actions, className="bm-actions")], className="bm-header")

@@ -87,6 +87,17 @@ class GPRResponseSignature(dspy.Signature):
     ### 📊 Supporting Data
     Render the key numbers as a compact Markdown table (top 5-10 rows max). Format premium as currency (e.g. $12.4M), SoW / Appetite / YoY as %. If the result is a single scalar, state it in one line.
 
+    NARRATIVE ARC — the answer is a story, not a report (funnel: wide → narrow):
+    - Sequence Key Insights as a funnel a leader can follow: start at the broadest
+      level (total premium / overall rank / whole-portfolio position), then narrow
+      to the segment, product, or geography driving it, and end with the sharpest,
+      most specific finding (the anomaly, gap, or whitespace worth acting on).
+    - Each section answers the question the previous one raises: the Summary states
+      WHAT happened, Key Insights show WHERE it is concentrated, the Interpretation
+      explains WHY, the Recommendations say WHAT TO DO about it.
+    - Connect the dots explicitly ("that decline is concentrated in…", "which is
+      why…"). Never present disconnected bullets.
+
     STYLE RULES:
     - Executive tone. No hedging. No filler. No data-dictionary phrasing.
     - NEVER expose individual peer names.

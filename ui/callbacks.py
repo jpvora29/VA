@@ -47,6 +47,7 @@ from ui.components.chatbot import (
 # Editable Boardroom builder package. Importing `boardroom_callbacks` registers all
 # edit-mode callbacks (side effect). `render_boardroom_document` replaces the old
 # read-only card; `build_boardroom_document` turns a digest into an editable doc.
+from ui.boardroom.figures import figures_for_specs as boardroom_figures_for_specs
 from ui.boardroom.render import render_document as render_boardroom_document
 from ui.boardroom.builder import build_document_from_digest as build_boardroom_document
 from ui.boardroom.editor import all_modals as boardroom_modals
@@ -1885,40 +1886,10 @@ def render_chat(
                 doc = msg.get("doc") or build_boardroom_document(
                     msg.get("digest") or {}, len(specs)
                 )
-                # Per-chart-widget chart_type overrides (from edits) -> {spec_index: type}.
-                overrides: dict[int, str] = {}
-                for page in doc.get("pages", []):
-                    for w in page.get("widgets", []):
-                        if w.get("kind") == "charts":
-                            si = (w.get("data") or {}).get("spec_index")
-                            ct = (w.get("meta") or {}).get("chart_type")
-                            if isinstance(si, int) and ct:
-                                overrides[si] = ct
                 # Figures kept index-aligned with specs (None where unbuildable) so a
-                # chart widget's spec_index always maps to the right figure.
-                figures: list[Any] = []
-                for i, spec in enumerate(specs):
-                    chart_data = spec.get("chart_data")
-                    rows = spec.get("rows")
-                    if not chart_data or not rows:
-                        figures.append(None)
-                        continue
-                    try:
-                        if i in overrides and isinstance(chart_data, dict):
-                            chart_data = {**chart_data, "chart_type": overrides[i]}
-                        fig, _ = generate_chart(df=pd.DataFrame(rows), chart_outputs=chart_data)
-                        if fig is not None:
-                            fig.update_layout(
-                                height=260,
-                                margin=dict(l=8, r=8, t=36, b=8),
-                                font=dict(size=11),
-                                title=dict(font=dict(size=13)),
-                                legend=dict(font=dict(size=10)),
-                            )
-                        figures.append(fig)
-                    except Exception:
-                        logger.exception("Boardroom: failed to build a chart figure")
-                        figures.append(None)
+                # chart widget's spec_index always maps to the right figure. Shared
+                # with the PPT export so both views draw identical charts.
+                figures = boardroom_figures_for_specs(specs, doc, compact=True)
                 active_page = int((active_pages or {}).get(str(msg_idx), 0) or 0)
                 chat_items.append(
                     render_boardroom_document(

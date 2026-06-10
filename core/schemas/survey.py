@@ -202,6 +202,17 @@ class SurveyResponseSignature(dspy.Signature):
     ### 📊 Supporting Data
     Render the key numbers that back the story as a compact Markdown table (top 5-10 rows max). If the result is a single scalar, state it in one line.
 
+    NARRATIVE ARC — the answer is a story, not a report (funnel: wide → narrow):
+    - Sequence Key Insights as a funnel a leader can follow: start at the broadest
+      level (overall NPS / total relationship standing), then narrow to the section,
+      attribute, or segment driving it, and end with the sharpest, most specific
+      finding (the outlier score, gap, or perception risk worth acting on).
+    - Each section answers the question the previous one raises: the Summary states
+      WHAT happened, Key Insights show WHERE it is concentrated, the Interpretation
+      explains WHY, the Recommendations say WHAT TO DO about it.
+    - Connect the dots explicitly ("that dip traces to…", "which is why…"). Never
+      present disconnected bullets.
+
     STYLE RULES:
     - Executive tone. No hedging ("might", "could perhaps"). No filler ("it is worth noting that").
     - NEVER expose individual peer names — peers are always aggregated.

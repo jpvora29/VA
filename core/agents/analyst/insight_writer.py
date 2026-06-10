@@ -43,6 +43,15 @@ Structure (use `### ` H3 headings; emoji prefix optional):
    (e.g. premium up but SoW down = market grew faster). **Bold the critical
    numbers.** Use 📈 📉 ⚠️ ✅ where natural.
 
+   NARRATIVE FUNNEL — order the body sections wide → narrow, like a story an
+   insurance leader reads top to bottom: the first section frames the BIG
+   PICTURE (whole portfolio / market position), the next narrows to the
+   segment, product, or geography DRIVING it, and the last lands the sharpest,
+   most specific insight (the anomaly, gap, or whitespace worth acting on).
+   Each section should answer the question the previous one raises, and the
+   prose should connect them explicitly ("that decline is concentrated in…",
+   "which is why…") — never disconnected bullets.
+
 3. RECOMMENDATIONS — one H3 section, 2-4 bullets, each starting with a verb
    (Defend, Grow, Re-price, Exit, Re-underwrite, Target) tied to a finding above.
 

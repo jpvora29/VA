@@ -44,6 +44,8 @@ app.layout = html.Div(
         dcc.Store(id="boardroom-add-target", data=None),
         # Remembers each boardroom card's current page so edits don't jump to page 0.
         dcc.Store(id="boardroom-active-page", data={}),
+        # Drag-and-drop drop events from assets/boardroom_dnd.js (set_props).
+        dcc.Store(id="bm-dnd", data=None),
         dcc.Store(id="custom-peers-open", data=False),
         # Decision Board: which content pane is showing (chat | board), plus the
         # currently-open detail / editor target and a counter bumped after any
@@ -53,6 +55,7 @@ app.layout = html.Div(
         dcc.Store(id="decision-edit-target", data=None),
         dcc.Store(id="decisions-version", data=0),
         dcc.Download(id="download-pitch-report"),
+        dcc.Download(id="boardroom-download"),
         # Either the login screen or the full app shell (navbar + sidebar +
         # chat + pitch drawer), chosen by `render_app_root` off `user-store`.
         html.Div(id="app-root"),

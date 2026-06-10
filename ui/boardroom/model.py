@@ -21,10 +21,57 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-# ── Governed grid: the only allowed widget spans (no free-form pixel sizing) ──
+# ── Governed grid with fine-grained control ──
+# Presets (sm/md/lg/full) remain the quick widths, but a widget may carry an
+# explicit ``span`` (1-12 columns) and ``height_px`` (None = auto) in its meta
+# for pixel-level restructuring. ``widget_span``/``widget_height`` are the only
+# readers — rendering and PPT export both go through them so the on-screen
+# layout and the exported deck always agree.
 SIZES = ("sm", "md", "lg", "full")
 SIZE_SPAN = {"sm": 3, "md": 6, "lg": 9, "full": 12}  # out of a 12-col grid
 GRID_COLUMNS = 12
+
+MIN_HEIGHT_PX = 120
+MAX_HEIGHT_PX = 1000
+HEIGHT_STEP_PX = 40
+
+
+def widget_span(widget: Dict[str, Any]) -> int:
+    """Effective column span: explicit ``span`` wins, else the size preset."""
+    meta = widget.get("meta") or {}
+    span = meta.get("span")
+    if isinstance(span, int) and 1 <= span <= GRID_COLUMNS:
+        return span
+    return SIZE_SPAN.get(meta.get("size", "md"), 6)
+
+
+def widget_height(widget: Dict[str, Any]) -> Optional[int]:
+    """Explicit pixel height, or None for content-driven (auto) height."""
+    h = (widget.get("meta") or {}).get("height_px")
+    return h if isinstance(h, int) and h > 0 else None
+
+
+def set_widget_span(widget: Dict[str, Any], span: int) -> None:
+    """Set an explicit span (clamped 1-12) and sync ``size`` to the nearest
+    preset so the S/M/L/Full buttons highlight sensibly."""
+    span = max(1, min(GRID_COLUMNS, int(span)))
+    meta = widget.setdefault("meta", {})
+    meta["span"] = span
+    meta["size"] = min(SIZE_SPAN, key=lambda s: abs(SIZE_SPAN[s] - span))
+
+
+def nudge_widget_height(widget: Dict[str, Any], delta_px: int) -> None:
+    """Grow/shrink a widget's fixed height by ``delta_px`` (clamped). Starting
+    from auto, the first nudge anchors at a sensible base height."""
+    meta = widget.setdefault("meta", {})
+    current = meta.get("height_px")
+    base = current if isinstance(current, int) and current > 0 else 280
+    meta["height_px"] = max(MIN_HEIGHT_PX, min(MAX_HEIGHT_PX, base + delta_px))
+
+
+def clear_widget_height(widget: Dict[str, Any]) -> None:
+    """Back to content-driven (auto) height."""
+    widget.setdefault("meta", {})["height_px"] = None
 
 
 def _uid(prefix: str) -> str:
@@ -60,6 +107,8 @@ def make_widget(
         "meta": {
             "theme": "default",
             "size": size if size in SIZES else "md",
+            "span": None,       # explicit 1-12 column span; None = follow size preset
+            "height_px": None,  # fixed pixel height; None = auto (content-driven)
             "chart_type": chart_type,
             "sort": None,
             "visible_board": True,
@@ -170,6 +219,21 @@ def move_widget(doc: Dict[str, Any], widget_id: str, delta: int) -> bool:
     if i == j:
         return False
     ws.insert(j, ws.pop(i))
+    return True
+
+
+def move_widget_before(
+    doc: Dict[str, Any], src_wid: str, dst_wid: str, before: bool = True
+) -> bool:
+    """Drag-and-drop reorder: place ``src`` before/after ``dst``. Works across
+    pages (the widget moves to the destination's page). Returns True on change."""
+    p1, w1 = find_widget(doc, src_wid)
+    p2, w2 = find_widget(doc, dst_wid)
+    if not p1 or not p2 or w1 is None or w2 is None or w1 is w2:
+        return False
+    p1["widgets"].remove(w1)
+    j = p2["widgets"].index(w2) + (0 if before else 1)
+    p2["widgets"].insert(j, w1)
     return True
 
 

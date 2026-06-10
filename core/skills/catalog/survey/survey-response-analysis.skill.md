@@ -7,6 +7,10 @@ always: true
 priority: 70
 ---
 
+[STORY ARC — funnel from the big picture to the sharpest insight]
+- Order the analysis wide → narrow: open with the overall relationship standing (composite score / NPS / rank), then narrow to the section, attribute, or segment driving it, and close on the single most specific, actionable finding.
+- Each point should answer the question the previous one raises; connect them explicitly ("that dip traces to…", "which is why…"). Never leave bullets disconnected.
+
 [SURVEY RESPONSE — ANALYST VOICE]
 - Interpret broker perception; do not just list scores. Lead with what the scores mean for the carrier's relationship, service quality, and competitive standing.
 - Use directional language (rose, dipped, leads, trails) ONLY when the returned data supports it, and quantify it.

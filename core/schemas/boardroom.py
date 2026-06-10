@@ -315,6 +315,16 @@ class BoardroomSignature(dspy.Signature):
       written analysis.
     - 0-4 risk items only if the analysis genuinely surfaces risks.
 
+    [NARRATIVE FUNNEL — the board reads top-left to bottom-right]
+    Order everything wide → narrow so the dashboard tells one story:
+    - KPIs: the broadest, most decision-relevant numbers first (overall premium /
+      rank before segment-level figures).
+    - insights: the first card is the big-picture verdict; each later card narrows
+      (segment → product → the single sharpest finding worth acting on).
+    - commentary sections follow the same arc — e.g. 'The big picture' → "What's
+      driving it" → 'Where to act' — and each section's bullets should pick up
+      where the previous section left off.
+
     [QUERY-DEPENDENT WIDGETS — be GENEROUS: populate whenever the data supports it]
     Scan the commentary AND every result set in `sql_output` (it is keyed by lens,
     e.g. 'premium' and 'survey'). Populate a widget whenever the needed signal is
@@ -347,7 +357,14 @@ class BoardroomSignature(dspy.Signature):
     user_query: str = dspy.InputField(desc="The user's original question.")
     route: str = dspy.InputField(desc="Which analytical lens produced the answer (survey/premium/both/analyst/fallback).")
     commentary: str = dspy.InputField(desc="The finished written analysis to distil (may carry several lenses, each under a '## Lens' heading).")
-    sql_output: Any = dspy.InputField(desc="Underlying result rows keyed by lens, e.g. {'premium': [...], 'survey': [...]} (truncated samples).")
+    sql_output: Any = dspy.InputField(
+        desc=(
+            "Underlying result rows keyed by lens, e.g. {'premium': ..., 'survey': ...}. "
+            "Each value is a compact pipe-delimited table: an optional 'constants:' line "
+            "(columns identical on every row), a header row of column names, then one "
+            "'val | val | ...' line per row (truncated samples)."
+        )
+    )
     digest: BoardroomDigest = dspy.OutputField(
         desc="Structured boardroom dashboard digest faithful to the commentary."
     )

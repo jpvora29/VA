@@ -48,6 +48,16 @@ class CombinedInsightSignature(dspy.Signature):
       **Premium View** — top 5 rows of the premium slice.
     If a slice is empty, write "— no data returned —" under its subheading.
 
+    NARRATIVE ARC — the answer is a story, not a report (funnel: wide → narrow):
+    - Sequence Key Insights as a funnel: open at the broadest level (the combined
+      perception + performance position), narrow to the segment/product/geography
+      where the two lenses align or diverge, and end with the sharpest, most
+      specific finding (the disconnect or whitespace worth acting on).
+    - Each section answers the question the previous one raises: the Summary states
+      WHAT happened, Key Insights show WHERE it is concentrated, the Interpretation
+      explains WHY, the Recommendations say WHAT TO DO about it.
+    - Connect the dots explicitly ("that gap is widest in…", "which is why…").
+
     STYLE RULES:
     - Executive tone. No hedging. No filler.
     - Never repeat the same fact across sections.

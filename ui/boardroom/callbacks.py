@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional
 from dash import ALL, Input, Output, State, callback, ctx, dcc, html, no_update
 
 from ui.boardroom import builder, editor, model
+from ui.boardroom.figures import figures_for_specs
 
 
 # ───────────────────────── helpers ─────────────────────────
@@ -112,7 +113,57 @@ def set_widget_size(_clicks, chat_history):
     if not w:
         return no_update
     w["meta"]["size"] = tid.get("size")
+    w["meta"]["span"] = None  # presets win: drop any fine-grained span override
     return chat_history
+
+
+@callback(
+    Output("chat-store", "data", allow_duplicate=True),
+    Input({"type": "bm-w-span", "idx": ALL, "wid": ALL, "delta": ALL}, "n_clicks"),
+    Input({"type": "bm-w-height", "idx": ALL, "wid": ALL, "delta": ALL}, "n_clicks"),
+    Input({"type": "bm-w-hauto", "idx": ALL, "wid": ALL}, "n_clicks"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def fine_resize(_span, _height, _auto, chat_history):
+    """Pixel-level restructuring: ±1 grid column, ±40 px height, auto height."""
+    tid = ctx.triggered_id
+    if not isinstance(tid, dict) or not _triggered_value():
+        return no_update
+    doc = _doc_at(chat_history, tid.get("idx"))
+    _, w = model.find_widget(doc, tid.get("wid")) if doc else (None, None)
+    if not w:
+        return no_update
+    typ = tid.get("type")
+    if typ == "bm-w-span":
+        model.set_widget_span(w, model.widget_span(w) + int(tid.get("delta") or 0))
+    elif typ == "bm-w-height":
+        model.nudge_widget_height(w, model.HEIGHT_STEP_PX * int(tid.get("delta") or 0))
+    elif typ == "bm-w-hauto":
+        model.clear_widget_height(w)
+    else:
+        return no_update
+    return chat_history
+
+
+@callback(
+    Output("chat-store", "data", allow_duplicate=True),
+    Input("bm-dnd", "data"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def dnd_reorder(evt, chat_history):
+    """Apply a drag-and-drop drop event from assets/boardroom_dnd.js: place the
+    dragged widget before/after the drop target."""
+    if not isinstance(evt, dict) or not evt.get("src") or not evt.get("dst"):
+        return no_update
+    doc = _doc_at(chat_history, evt.get("card"))
+    if doc is None:
+        return no_update
+    moved = model.move_widget_before(
+        doc, evt["src"], evt["dst"], before=bool(evt.get("before", True))
+    )
+    return chat_history if moved else no_update
 
 
 @callback(
@@ -367,6 +418,39 @@ def page_text(titles, notes, chat_history):
         return no_update  # no real change -> avoid a render loop
     p[field] = val or ""
     return chat_history
+
+
+# ───────────────────────── PowerPoint export ─────────────────────────
+
+
+@callback(
+    Output("boardroom-download", "data"),
+    Input({"type": "boardroom-export", "idx": ALL}, "n_clicks"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def export_to_ppt(_clicks, chat_history):
+    """Build an editable .pptx of the board (exact grid layout, native charts)
+    and stream it to the browser."""
+    tid = ctx.triggered_id
+    if not isinstance(tid, dict) or not _triggered_value():
+        return no_update
+    idx = tid.get("idx")
+    msgs = (chat_history or {}).get("messages") or []
+    if not (isinstance(idx, int) and 0 <= idx < len(msgs) and msgs[idx].get("type") == "Boardroom"):
+        return no_update
+    msg = msgs[idx]
+    specs = msg.get("charts") or []
+    doc = msg.get("doc")
+    if doc is None:  # legacy message stored before the editable builder existed
+        doc = builder.build_document_from_digest(msg.get("digest") or {}, len(specs))
+
+    # Lazy import: python-pptx only loads when an export actually happens.
+    from ui.boardroom import ppt_export
+
+    figures = figures_for_specs(specs, doc)
+    data = ppt_export.export_pptx(doc, figures)
+    return dcc.send_bytes(lambda f: f.write(data), ppt_export.export_filename(doc))
 
 
 # ───────────────────────── source / history info ─────────────────────────

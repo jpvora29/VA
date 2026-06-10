@@ -27,6 +27,16 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from ui.color_pallet import ColorPalette
+from core.charts.critic import (
+    ChartSpecCritic,
+    RATE_HINTS as _RATE_HINTS,  # noqa: N811 - canonical home is core.charts.critic
+    TREND_TERMS as _TREND_TERMS,  # noqa: N811
+    is_time_like_name as _is_time_like_name,
+    is_year_like_name as _is_year_like_name,
+    is_year_values as _is_year_axis,
+    looks_like_rate as _looks_like_rate,
+    wants_trend as _wants_trend,
+)
 from core.observability import log_event
 from logger import get_logger
 
@@ -39,23 +49,10 @@ MAX_TITLE_LEN = 64       # one-line title budget before truncation
 MAX_TICK_LEN = 16        # category label length before we slant the axis
 _AGGS = {"sum", "mean", "count", "median", "min", "max"}
 
-# Deterministic chart-guard vocabulary (see _normalize_axes_and_type). The guard
-# corrects bad LLM specs that the prompt alone can't reliably prevent.
-_TREND_TERMS = {
-    "trend", "over time", "movement", "moved", "changed", "change", "yoy",
-    "year over year", "year-over-year", "month over month", "month-on-month",
-    "mom", "qoq", "quarter over quarter", "rolling", "trajectory", "evolution",
-    "growth over", "increase", "increasing", "decrease", "decreasing", "decline",
-    "declining", "progression", "historical",
-}
-# Column-name families. A *rate* measure (bounded ratio/percentage/score) must
-# never share a primary axis with an *amount* (premium/revenue counts) — that is
-# the "Premium in millions vs SoW on one axis" bug. Rates go on a combo line.
-_RATE_HINTS = (
-    "sow", "share of wallet", "wallet share", "appetite", "share of portfolio",
-    "portfolio share", "growth", "yoy", "%", "pct", "percent", "rate", "ratio",
-    "margin", "score", "nps", "share", "penetration", "win rate",
-)
+# The chart-guard vocabulary (_TREND_TERMS / _RATE_HINTS) and the year/rate/trend
+# heuristics now live in core.charts.critic — the pre-render critic and this
+# render-time safety net must judge columns identically, so there is one source.
+_CRITIC = ChartSpecCritic()
 
 # ── Registry ──────────────────────────────────────────────────────────────────
 _TRACE_REGISTRY: Dict[str, Callable] = {}
@@ -195,8 +192,9 @@ def _sanitize_spec(
     df = df.copy()
     numeric_cols = [c for c in df.columns if _is_numeric(df, c)]
     if not y:
-        # Fall back to every numeric column the LLM didn't name.
-        y = [c for c in numeric_cols]
+        # Fall back to the numeric columns the LLM didn't name — but never a
+        # year-like column (2023 is an axis label, not a measure).
+        y = [c for c in numeric_cols if not _is_year_axis(df[c], c)] or list(numeric_cols)
     cleaned_y: List[str] = []
     for col in y:
         if not _is_numeric(df, col):
@@ -298,52 +296,11 @@ def _prepare_frame(df: pd.DataFrame, spec: _Spec) -> pd.DataFrame:
 # The LLM picks chart_type and axes, but it is wrong often enough that a prompt
 # fix alone is not reliable: it over-prefers `line` whenever a year column is
 # present, lets numeric years render as a continuous axis (2024.2 ticks), and
-# packs an amount and a rate onto the same axis. `_normalize_axes_and_type` is the
-# deterministic safety net that runs after column reconciliation and corrects
-# these before rendering. Every correction is reported so the override is visible.
-
-
-def _is_year_like_name(col: str) -> bool:
-    n = str(col).strip().lower()
-    return n == "year" or n.endswith("_year") or n.endswith(" year")
-
-
-def _is_time_like_name(col: str) -> bool:
-    n = str(col).strip().lower()
-    return _is_year_like_name(col) or any(
-        t in n for t in ("date", "month", "quarter", "period", "week")
-    )
-
-
-def _is_year_axis(series: pd.Series, name: str) -> bool:
-    """True when a column should be treated as discrete year ticks."""
-    if _is_year_like_name(name):
-        return True
-    values = pd.to_numeric(series.dropna(), errors="coerce")
-    return (
-        len(values) > 0
-        and values.notna().all()
-        and values.between(1900, 2100).all()
-        and (values % 1 == 0).all()
-    )
-
-
-def _wants_trend(intent: str, title: str) -> bool:
-    text = f"{intent} {title}".lower()
-    return any(term in text for term in _TREND_TERMS)
-
-
-def _looks_like_rate(df: pd.DataFrame, col: str) -> bool:
-    """A bounded ratio/percentage/score measure — belongs on a combo line, never
-    on the same axis as an absolute amount."""
-    if any(h in _norm_key(col) for h in _RATE_HINTS):
-        return True
-    s = pd.to_numeric(df[col], errors="coerce").dropna()
-    if s.empty:
-        return False
-    hi = s.abs().max()
-    # Fractions (0–1) and percentage-scale values (0–100) read as rates.
-    return hi <= 1.0 or (s.between(-100, 100).all() and hi <= 100.0)
+# packs an amount and a rate onto the same axis. The `ChartSpecCritic` repairs
+# the raw spec pre-sanitize (field roles, legend/x orientation, junk fields);
+# `_normalize_axes_and_type` is the render-time safety net that runs after
+# column reconciliation. Every correction is reported so the override is visible.
+# (The shared year/rate/trend heuristics live in core.charts.critic.)
 
 
 def _normalize_axes_and_type(
@@ -632,7 +589,7 @@ _AXIS_LINE = "#D1E0EC"
 
 
 def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
-    """Apply the shared, Claude-like visual style to any figure."""
+    """Apply the shared, BI-dashboard visual style to any figure."""
     is_polar = spec.chart_type in ("pie", "donut")
     multi = (
         spec.is_legend
@@ -640,23 +597,38 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
         and (bool(spec.series) or len(spec.y) + len(spec.secondary_y) > 1)
     )
 
+    # Title and legend both live in the top margin. The old fixed t=72 made them
+    # collide whenever the legend wrapped; reserve the margin from the ACTUAL
+    # legend entry count instead (≈4 entries per row), and let the title manage
+    # its own band with automargin.
+    n_legend = (
+        sum(1 for t in fig.data if t.type != "pie" and getattr(t, "showlegend", None) is not False)
+        if multi
+        else 0
+    )
+    legend_rows = min(3, -(-n_legend // 4)) if n_legend else 0
+    top_margin = 56 + 22 * legend_rows
+
     fig.update_layout(
         template="plotly_white",
         title=dict(
             text=_clean_title(spec),
-            x=0.02, xanchor="left", y=0.96,
-            font=dict(size=17, color=_TITLE_INK, family=_FONT_FAMILY),
+            x=0.02, xanchor="left",
+            y=1.0, yanchor="top", yref="container",
+            pad=dict(t=12),
+            automargin=True,
+            font=dict(size=15, color=_TITLE_INK, family=_FONT_FAMILY),
         ),
         font=dict(family=_FONT_FAMILY, size=13, color=_INK),
         paper_bgcolor="white",
         plot_bgcolor="white",
-        margin=dict(l=64, r=48 if spec.chart_type == "combo" else 32, t=72, b=64),
+        margin=dict(l=64, r=48 if spec.chart_type == "combo" else 32, t=top_margin, b=64),
         colorway=ColorPalette.get_colors(),
         bargap=0.28,
         bargroupgap=0.08,
         showlegend=multi,
         legend=dict(
-            orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+            orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0,
             font=dict(size=11), title=None,
         ),
         hoverlabel=dict(bgcolor="white", font_size=12, font_family=_FONT_FAMILY,
@@ -690,6 +662,32 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
             showgrid=True, gridcolor=_GRID, gridwidth=1, zeroline=False,
             showline=False, tickfont=dict(size=11), automargin=True,
         )
+        # Large amounts get SI-abbreviated ticks (1.2M, 60K) like any BI tool —
+        # never six-digit tick labels.
+        try:
+            max_y = max(
+                (pd.to_numeric(df[c], errors="coerce").abs().max() or 0)
+                for c in spec.y
+                if c in df.columns
+            )
+        except ValueError:
+            max_y = 0
+        if max_y and max_y >= 10_000:
+            fig.update_yaxes(tickformat="~s")
+
+        # Direct value labels on small single-series bars (the Tableau look).
+        if (
+            spec.chart_type == "bar"
+            and len(fig.data) == 1
+            and spec.x in df.columns
+            and df[spec.x].nunique(dropna=True) <= 8
+        ):
+            bar = fig.data[0]
+            bar.text = [_format_number(v) for v in bar.y]
+            bar.textposition = "outside"
+            bar.cliponaxis = False
+            bar.textfont = dict(size=10.5, color=_INK)
+
         if spec.chart_type not in ("scatter",):
             fig.update_layout(hovermode="x unified")
 
@@ -713,6 +711,17 @@ def generate_chart(
 
         if not isinstance(df, pd.DataFrame):
             df = pd.DataFrame(df or [])
+
+        # Pre-render critic: repair field roles / orientation / type against the
+        # FULL result frame (the sanitizer below drops unreferenced columns).
+        raw, repairs = _CRITIC.review(raw, df)
+        if repairs:
+            log_event(
+                logger,
+                "chart_critic_repairs",
+                node="chart_renderer",
+                reasons=repairs,
+            )
 
         spec, prepared, message = _sanitize_spec(df, raw)
         if spec is None:

@@ -26,7 +26,9 @@ _SCOPES = ("planner", "sql", "response", "chart", "pitch")
 # changed so the parity tests stay meaningful instead of being silenced.
 #   - the six per-type chart skills became `catalog/chart/refs/*.md` bodies,
 #     fetched on demand by the two-phase chart node (no longer always-loaded);
-#   - three bodies gained new operative rules (chart two-phase note + timeframe).
+#   - three bodies gained new operative rules (chart two-phase note + timeframe);
+#   - the gpr/survey response skills gained the [STORY ARC] narrative-funnel block
+#     (2026-06: executive storytelling across all routes).
 _REMOVED_SKILLS = frozenset(
     {
         "chart-bar",
@@ -38,7 +40,13 @@ _REMOVED_SKILLS = frozenset(
     }
 )
 _EDITED_BODIES = frozenset(
-    {"chart-type-selection", "gpr-timeframe", "survey-timeframe"}
+    {
+        "chart-type-selection",
+        "gpr-timeframe",
+        "survey-timeframe",
+        "gpr-response-formatting",
+        "survey-response-analysis",
+    }
 )
 
 

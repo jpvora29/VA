@@ -70,10 +70,54 @@ def _gather_commentary(state: AgentState) -> str:
     return "\n\n".join(parts)
 
 
-def _gather_rows(state: AgentState) -> Dict[str, Any]:
-    """All available result sets, keyed by lens, so the model can build timelines,
-    country/product maps, and premium-vs-perception positioning from real rows."""
-    data: Dict[str, Any] = {}
+def _fmt_cell(v: Any) -> str:
+    if isinstance(v, float):
+        return f"{v:.6g}"
+    return "" if v is None else str(v)
+
+
+def _compact_rows(rows: List[Dict[str, Any]], max_rows: int = _MAX_DIGEST_ROWS) -> str:
+    """Serialize result rows as a compact pipe table instead of a list of dicts.
+
+    A list of dicts repeats every column name on every row — at 60 rows × 4
+    lenses that's most of the digest prompt. The pipe table states each column
+    once, and columns that are constant across all rows (carrier, country,
+    year filters echoed back by SQL) are factored out into a single
+    ``constants:`` line. Same information, a fraction of the tokens.
+    """
+    total = len(rows)
+    rows = [r if isinstance(r, dict) else {"value": r} for r in list(rows)[:max_rows]]
+    if not rows:
+        return ""
+    cols: List[str] = []
+    for r in rows:
+        for k in r:
+            if k not in cols:
+                cols.append(k)
+    consts: Dict[str, str] = {}
+    if len(rows) > 1:
+        for c in cols:
+            vals = {_fmt_cell(r.get(c)) for r in rows}
+            if len(vals) == 1:
+                consts[c] = next(iter(vals))
+    var_cols = [c for c in cols if c not in consts] or cols[:1]
+
+    lines: List[str] = []
+    if consts:
+        lines.append("constants: " + ", ".join(f"{k}={v}" for k, v in consts.items()))
+    if total > max_rows:
+        lines.append(f"(showing first {max_rows} of {total} rows)")
+    lines.append(" | ".join(var_cols))
+    for r in rows:
+        lines.append(" | ".join(_fmt_cell(r.get(c)) for c in var_cols))
+    return "\n".join(lines)
+
+
+def _gather_rows(state: AgentState) -> Dict[str, str]:
+    """All available result sets, keyed by lens and serialized compactly, so the
+    model can build timelines, country/product maps, and premium-vs-perception
+    positioning from real rows without paying dict-per-row token overhead."""
+    data: Dict[str, str] = {}
     for label, key in (
         ("premium", "gpr_query_result"),
         ("survey", "survey_query_result"),
@@ -82,7 +126,9 @@ def _gather_rows(state: AgentState) -> Dict[str, Any]:
     ):
         rows = state.get(key)
         if rows:
-            data[label] = list(rows)[:_MAX_DIGEST_ROWS]
+            table = _compact_rows(list(rows))
+            if table:
+                data[label] = table
     return data
 
 
@@ -106,20 +152,24 @@ def boardroom_node(state: AgentState) -> Dict[str, Any]:
     route = state.get("current_route") or "analyst"
     rows = _gather_rows(state)
 
-    try:
-        digest = _BOARDROOM_MODULE(
-            user_query=user_query,
-            route=route,
-            commentary=commentary,
-            sql_output=rows,
-        )
-        return {"boardroom": digest.model_dump()}
-    except Exception as exc:  # noqa: BLE001 - never break the turn over a presentation step
-        log_event(
-            logger,
-            "boardroom_digest_error",
-            logging.ERROR,
-            route=route,
-            error=str(exc),
-        )
-        return {"boardroom": None}
+    # One bounded retry: a transient API/parse failure shouldn't cost the user
+    # their dashboard when the underlying answer succeeded.
+    for attempt in (1, 2):
+        try:
+            digest = _BOARDROOM_MODULE(
+                user_query=user_query,
+                route=route,
+                commentary=commentary,
+                sql_output=rows,
+            )
+            return {"boardroom": digest.model_dump()}
+        except Exception as exc:  # noqa: BLE001 - never break the turn over a presentation step
+            log_event(
+                logger,
+                "boardroom_digest_error",
+                logging.WARNING if attempt == 1 else logging.ERROR,
+                route=route,
+                attempt=attempt,
+                error=str(exc),
+            )
+    return {"boardroom": None}
