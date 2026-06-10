@@ -34,6 +34,7 @@ from dash.development.base_component import Component
 from ui.components.chatbot import (
     chatbot_page,
     clarify_card,
+    clarify_questions_of,
     followup_suggestions,
     ai_message,
     chart_block,
@@ -1589,6 +1590,7 @@ def launch_new_job(
         # turn's value — which `_update_chat_history` then re-appends, surfacing a
         # stale chart on a turn that produced none. Seeding them empty overwrites.
         analyst_charts=[],
+        analyst_evidence=[],
         survey_chart={},
         gpr_chart={},
         combined_chart={},
@@ -2075,35 +2077,48 @@ def ask_suggested_question(
     Output("trigger-resume", "data", allow_duplicate=True),
     Output("is-thinking", "data", allow_duplicate=True),
     Output("custom-peers-open", "data", allow_duplicate=True),
-    Input({"type": "clarify-option", "value": ALL}, "n_clicks"),
-    Input("clarify-free-submit", "n_clicks"),
-    State("clarify-free-text", "value"),
+    Input({"type": "clarify-option", "qid": ALL, "value": ALL}, "n_clicks"),
+    Input({"type": "clarify-free-submit", "qid": ALL}, "n_clicks"),
+    State({"type": "clarify-free-text", "qid": ALL}, "value"),
     State("chat-store", "data"),
     prevent_initial_call=True,
 )
 def submit_clarification(
     option_clicks: list[int | None],
-    free_clicks: int | None,
-    free_text: str | None,
+    free_clicks: list[int | None],
+    free_texts: list[str | None],
     chat_history: dict[str, Any],
 ) -> tuple[Any, Any, Any, Any]:
-    """Record the user's MCQ answer, drop the card, and trigger the resume worker.
+    """Record one question's answer; resume once EVERY question is answered.
 
-    Kept deliberately fast (no LLM call) so the thinking indicator paints
-    immediately; `launch_resume_job` streams the actual graph resume.
+    The clarify card may carry several questions (unresolved-entity "did you
+    mean" MCQs + the LLM ambiguity question). Each click answers ONE question
+    (keyed by qid); partial answers re-render the card with the selection
+    locked, and the resume worker fires only when the last open question is
+    answered — with `{question_id: answer}` for the multi-question gate, or the
+    bare string the single-question custom-peer gate expects. Kept deliberately
+    fast (no LLM call) so the thinking indicator paints immediately.
     """
 
     triggered = ctx.triggered_id
     triggered_value = ctx.triggered[0]["value"] if ctx.triggered else None
 
-    # Guard the spurious fire when the card first mounts (n_clicks 0/None).
-    if not triggered_value:
+    # Guard the spurious fire when the card (re)mounts (n_clicks 0/None).
+    if not triggered_value or not isinstance(triggered, dict):
         return no_update, no_update, no_update, no_update
 
-    if isinstance(triggered, dict) and triggered.get("type") == "clarify-option":
+    qid = str(triggered.get("qid") or "q0")
+    if triggered.get("type") == "clarify-option":
         answer = (triggered.get("value") or "").strip()
-    elif triggered == "clarify-free-submit":
-        answer = (free_text or "").strip()
+    elif triggered.get("type") == "clarify-free-submit":
+        # Map this question's typed value out of the aligned pattern states.
+        answer = ""
+        states = ctx.states_list[0] if ctx.states_list else []
+        for entry in states:
+            entry_id = entry.get("id") or {}
+            if str(entry_id.get("qid")) == qid:
+                answer = (entry.get("value") or "").strip()
+                break
     else:
         return no_update, no_update, no_update, no_update
 
@@ -2114,9 +2129,6 @@ def submit_clarification(
     if not chat_history.get("awaiting_clarification"):
         return no_update, no_update, no_update, no_update
 
-    # "Pick new peers" on the carrier-mismatch card opens the Custom Peers dialog
-    # instead of resuming; the thread stays paused until apply_custom_peers resumes
-    # it with the freshly chosen set. Leave the card + awaiting flag intact.
     pending_card = next(
         (
             m
@@ -2125,23 +2137,52 @@ def submit_clarification(
         ),
         None,
     )
-    if (
-        pending_card
-        and (pending_card.get("payload") or {}).get("kind") == "custom_peer_mismatch"
-        and answer == "Pick new peers"
-    ):
+    if pending_card is None:
+        return no_update, no_update, no_update, no_update
+    payload = dict(pending_card.get("payload") or {})
+
+    # "Pick new peers" on the carrier-mismatch card opens the Custom Peers dialog
+    # instead of resuming; the thread stays paused until apply_custom_peers resumes
+    # it with the freshly chosen set. Leave the card + awaiting flag intact.
+    if payload.get("kind") == "custom_peer_mismatch" and answer == "Pick new peers":
         return no_update, no_update, no_update, True
 
-    # Drop the clarify card; record the answer in the transcript as a user turn.
+    questions = clarify_questions_of(payload)
+    answers = dict(payload.get("answers") or {})
+    answers[qid] = answer
+    open_qids = [
+        q_id
+        for q in questions
+        if (q_id := str(q.get("id") or "q0")) not in answers
+    ]
+
+    if open_qids:
+        # Partial: lock this question's selection and keep the card up.
+        payload["answers"] = answers
+        pending_card["payload"] = payload
+        return chat_history, no_update, no_update, no_update
+
+    # Complete: drop the card; record the answers as one readable user turn.
+    summary = "; ".join(
+        answers[q_id]
+        for q in questions
+        if (q_id := str(q.get("id") or "q0")) in answers
+    )
     chat_history["messages"] = [
         m for m in chat_history.get("messages", []) if m.get("type") != "ClarifyCard"
     ]
     chat_history["messages"].append(
-        {"type": "HumanMessage", "content": answer, "rephrased_content": None}
+        {"type": "HumanMessage", "content": summary, "rephrased_content": None}
     )
-    # Hand the answer to the resume worker; keep awaiting_clarification True until
-    # the resume actually completes so a stray click can't double-resume.
-    chat_history["pending_clarification_answer"] = answer
+    # Resume value: the clarify gate takes {qid: answer}; the single-question
+    # custom-peer gate (flat legacy payload, no "questions" key) takes a string.
+    if "questions" in payload:
+        resume_value: Any = answers
+    else:
+        resume_value = answer
+    # Hand the answers to the resume worker; keep awaiting_clarification True
+    # until the resume actually completes so a stray click can't double-resume.
+    chat_history["pending_clarification_answer"] = resume_value
     chat_history["followups"] = []
 
     return chat_history, True, True, no_update

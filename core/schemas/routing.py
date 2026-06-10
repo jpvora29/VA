@@ -24,6 +24,86 @@ class RouteQuery(BaseModel):
     )
 
 
+class OutputDirectives(BaseModel):
+    """Per-turn presentation preferences stated inline in the user's query.
+
+    The first slice of the query contract: chart-producing nodes check
+    `charts` instead of running unconditionally, so "don't generate a chart"
+    is honored as plumbing, not prompt hope. Defaults mean "no preference
+    stated" — never invent a directive the user didn't give.
+    """
+
+    charts: Literal["auto", "none", "required"] = Field(
+        default="auto",
+        description=(
+            "'none' ONLY when the user explicitly asks for no charts/graphs/"
+            "visuals or text/table-only output. 'required' ONLY when the user "
+            "explicitly asks to see a chart/graph/visualization. 'auto' (the "
+            "default) whenever the query states no chart preference."
+        ),
+    )
+    source: str = Field(
+        default="",
+        description=(
+            "Where the directive came from: 'deterministic' (phrase detector) "
+            "or 'llm'. Leave empty for the 'auto' default."
+        ),
+    )
+
+
+class QueryEntities(BaseModel):
+    """Entity MENTIONS in the current turn, verbatim as the user wrote them.
+
+    Slice 2 of the query contract. The context filler extracts these once
+    (including inherited ones already materialised in inherited_*); the node
+    then resolves them deterministically against each flow's valid values into
+    `RoutingContext.resolved_filters`, so every downstream consumer — the
+    rephraser, the analyst's schema identifier, the solvers — works from the
+    SAME canonical values instead of re-deriving them per node.
+    """
+
+    carriers: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Carrier names mentioned, verbatim (e.g. ['Zurich', 'Chubb']). "
+            "NEVER include Marsh — it is the broker, not a carrier. Empty when "
+            "no carrier is named or inherited."
+        ),
+    )
+    countries: List[str] = Field(
+        default_factory=list,
+        description="Countries/markets mentioned, verbatim (e.g. ['UK', 'Canada']).",
+    )
+    products: List[str] = Field(
+        default_factory=list,
+        description="Product / line-of-business mentions, verbatim (e.g. ['cyber']).",
+    )
+    industries: List[str] = Field(
+        default_factory=list,
+        description="Industry / sector mentions, verbatim (e.g. ['manufacturing']).",
+    )
+    segments: List[str] = Field(
+        default_factory=list,
+        description="Client-segment mentions, verbatim (e.g. ['large corporate']).",
+    )
+    years: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Explicit years/periods mentioned, as text (e.g. ['2024']). Leave "
+            "empty for relative terms — those belong in timeframe_hint."
+        ),
+    )
+
+
+class UnresolvedTerm(BaseModel):
+    """An entity mention that failed to resolve to any stored value."""
+
+    kind: str = Field(default="", description="Entity kind: carrier/country/product/industry/segment.")
+    term: str = Field(default="", description="The user's wording that failed to match.")
+    column: str = Field(default="", description="The column it was checked against.")
+    flow: str = Field(default="", description="The flow whose values were checked.")
+
+
 class RoutingContext(BaseModel):
     """Structured routing + inheritance context produced by the context filler.
 
@@ -109,6 +189,32 @@ class RoutingContext(BaseModel):
             "confidence is low."
         ),
     )
+    output_directives: OutputDirectives = Field(
+        default_factory=OutputDirectives,
+        description=(
+            "Presentation preferences stated inline in the current query "
+            "(chart suppression/request). Set charts='none' or 'required' ONLY "
+            "on an explicit user statement; otherwise keep the 'auto' default."
+        ),
+    )
+    entities: QueryEntities = Field(
+        default_factory=QueryEntities,
+        description=(
+            "Entity mentions in the current turn, verbatim — including filters "
+            "you inherited (also set inherited_*). Extract, never invent."
+        ),
+    )
+    resolved_filters: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description=(
+            "LEAVE EMPTY. Filled deterministically downstream: exact stored "
+            "values per column (e.g. {'Country': ['United Kingdom']})."
+        ),
+    )
+    unresolved_terms: List[UnresolvedTerm] = Field(
+        default_factory=list,
+        description="LEAVE EMPTY. Filled downstream with mentions that matched no stored value.",
+    )
 
 
 class ContextFillerSignature(dspy.Signature):
@@ -178,6 +284,30 @@ class ContextFillerSignature(dspy.Signature):
       "topic_switch".
     - SELF-REFERENCE: "my", "I", "me", "our" -> inherit Carrier from most
       recent turn.
+
+    [ENTITY EXTRACTION — entities]
+    List every entity MENTION in the current turn, verbatim as the user wrote
+    it (after applying inheritance: an inherited carrier appears in BOTH
+    inherited_carrier and entities.carriers):
+      - carriers ('Zurich', 'AXA' — NEVER Marsh, it is the broker),
+      - countries/markets ('UK', 'Singapore'),
+      - products/lines ('cyber', 'property'), industries ('manufacturing'),
+        client segments, explicit years ('2024').
+    Do NOT normalise or expand the wording — downstream code resolves each
+    mention against the stored valid values deterministically. Leave
+    resolved_filters and unresolved_terms EMPTY; they are filled downstream.
+
+    [OUTPUT DIRECTIVES — output_directives.charts]
+    Read the CURRENT query for an explicit presentation preference:
+      - 'none'      — the user asks for no charts/graphs/visuals, or text/table/
+                      numbers-only output ("no chart", "without a graph",
+                      "just the numbers", "table only").
+      - 'required'  — the user explicitly asks to SEE a chart/graph/plot
+                      ("show me a chart of...", "visualize", "as a graph").
+      - 'auto'      — the default; the query states no preference. NEVER guess.
+    When you set 'none' or 'required', set output_directives.source = 'llm'.
+    A negated phrase ("don't generate a chart") is ALWAYS 'none', never
+    'required'. Directives are per-turn: do not inherit them from history.
 
     [HARD RULES]
     - Never invent a metric, carrier, country, or year not present in the
@@ -317,6 +447,10 @@ class RephaserNodeSignature(dspy.Signature):
     - If RoutingContext.inherited_carrier is set, weave it into the rephrased
       sentence (e.g., current "what about 2025?" + inherited Zurich/Score ->
       "What is Zurich's Score in 2025?").
+    - If RoutingContext.resolved_filters holds the exact stored value(s) for an
+      entity the user named loosely, write the EXACT stored value ("UK" ->
+      "United Kingdom", "Zurich" -> "ZURICH GROUP"). Mentions listed in
+      RoutingContext.unresolved_terms stay verbatim — never substitute a guess.
     - If RoutingContext.timeframe_hint is set, materialise it (e.g., "last
       year" -> "2024").
     - If intent_type == "topic_switch", DROP inherited filters not valid in

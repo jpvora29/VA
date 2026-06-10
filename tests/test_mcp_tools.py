@@ -21,7 +21,7 @@ def in_memory_db(monkeypatch):
     engine = create_engine("sqlite:///:memory:")
     with engine.begin() as conn:
         conn.execute(text("CREATE TABLE t (id INTEGER, name TEXT)"))
-        conn.executemany(
+        conn.execute(
             text("INSERT INTO t (id, name) VALUES (:id, :name)"),
             [{"id": i, "name": f"row{i}"} for i in range(1, 51)],  # 50 rows
         )
@@ -84,7 +84,7 @@ def gpr_db(monkeypatch):
                 '"Carrier_Group" TEXT, "SIC_Major_Class" TEXT, "Premium" REAL)'
             )
         )
-        conn.executemany(
+        conn.execute(
             text(
                 'INSERT INTO "GPR" ("Carrier_Group","SIC_Major_Class","Premium") '
                 "VALUES (:cg, :sic, :p)"
@@ -117,3 +117,75 @@ def test_get_distinct_values_unknown_column_is_safe(gpr_db):
 def test_match_column_values_fuzzy(gpr_db):
     matches = mcp_tools.match_column_values("gpr", "SIC_Major_Class", "manufactring")
     assert matches and matches[0] == "Manufacturing"
+
+
+# ── audit_sql_filters (zero-row guard) ───────────────────────────────────────
+
+
+@pytest.fixture
+def fake_candidates(monkeypatch):
+    """Replace the candidate-value lookup with a fixed in-memory dictionary."""
+    values = {
+        "Country": ["United Kingdom", "United States", "Canada"],
+        "Carrier_Group": ["ZURICH GROUP", "CHUBB LIMITED", "AXA"],
+    }
+    monkeypatch.setattr(
+        mcp_tools, "_candidate_values", lambda flow, column: values.get(column, [])
+    )
+    yield
+
+
+def test_audit_flags_missing_equality_value(fake_candidates):
+    suspects = mcp_tools.audit_sql_filters(
+        "gpr", "SELECT SUM(Premium) FROM GPR WHERE Country = 'UK'"
+    )
+    assert len(suspects) == 1
+    assert suspects[0]["column"] == "Country"
+    assert suspects[0]["value"] == "UK"
+
+
+def test_audit_accepts_valid_value_case_insensitively(fake_candidates):
+    sql = "SELECT * FROM GPR WHERE Country = 'united kingdom'"
+    assert mcp_tools.audit_sql_filters("gpr", sql) == []
+
+
+def test_audit_skips_numeric_and_unknown_columns(fake_candidates):
+    sql = "SELECT * FROM GPR WHERE Year = '2024' AND Unknown_Col = 'whatever'"
+    assert mcp_tools.audit_sql_filters("gpr", sql) == []
+
+
+def test_audit_flags_only_the_bad_value_in_an_in_list(fake_candidates):
+    sql = "SELECT * FROM GPR WHERE Country IN ('UK', 'Canada')"
+    suspects = mcp_tools.audit_sql_filters("gpr", sql)
+    assert [s["value"] for s in suspects] == ["UK"]
+
+
+def test_audit_like_checks_wildcard_stripped_containment(fake_candidates):
+    ok = "SELECT * FROM GPR WHERE Country LIKE '%Kingdom%'"
+    assert mcp_tools.audit_sql_filters("gpr", ok) == []
+    bad = "SELECT * FROM GPR WHERE Country LIKE '%Atlantis%'"
+    suspects = mcp_tools.audit_sql_filters("gpr", bad)
+    assert [s["value"] for s in suspects] == ["%Atlantis%"]
+
+
+def test_audit_sees_through_upper_lower_wrapping(fake_candidates):
+    sql = "SELECT * FROM GPR WHERE UPPER(Country) = 'UK'"
+    suspects = mcp_tools.audit_sql_filters("gpr", sql)
+    assert len(suspects) == 1 and suspects[0]["column"] == "Country"
+
+
+def test_audit_suggests_close_valid_values(fake_candidates):
+    sql = "SELECT * FROM GPR WHERE Carrier_Group = 'Zurich'"
+    suspects = mcp_tools.audit_sql_filters("gpr", sql)
+    assert len(suspects) == 1
+    assert "ZURICH GROUP" in suspects[0]["suggestions"]
+
+
+def test_audit_skips_unbounded_candidate_lists(monkeypatch):
+    monkeypatch.setattr(
+        mcp_tools,
+        "_candidate_values",
+        lambda flow, column: [f"v{i}" for i in range(3000)],
+    )
+    sql = "SELECT * FROM GPR WHERE Billing_Date = 'nope'"
+    assert mcp_tools.audit_sql_filters("gpr", sql) == []

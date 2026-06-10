@@ -20,6 +20,8 @@ import dspy
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
+from core.agents.common.contract import resolve_entities
+from core.agents.common.directives import detect_chart_directive
 from core.context.bundle import schema_outline
 from core.context.engine import engine_enabled
 from core.data.general import GeneralFunctions
@@ -204,6 +206,26 @@ class ContextFillingAgent:
                     intent_type=routing_context.intent_type,
                 )
 
+        # Deterministic directive overlay: the phrase detector runs on the RAW
+        # current query (the rephraser may strip "without a chart" later) and
+        # overrides whatever the LLM read — common phrasings must never depend
+        # on a model call to be honored.
+        detected = detect_chart_directive(question)
+        if detected:
+            routing_context.output_directives.charts = detected
+            routing_context.output_directives.source = "deterministic"
+
+        # Contract resolution: turn the extracted entity MENTIONS into exact
+        # stored values, once, deterministically (rapidfuzz — no LLM call).
+        # Downstream the rephraser materialises these canonical names into the
+        # rephrased sentence and the analyst's schema identifier seeds its
+        # grounded slice with them, so every path filters on the SAME values.
+        # Overwritten unconditionally — the LLM is told to leave these empty,
+        # but a hallucinated value must never survive into the contract.
+        routing_context.resolved_filters, routing_context.unresolved_terms = (
+            resolve_entities(routing_context.entities, routing_context.table_family)
+        )
+
         log_event(
             logger,
             "context_filled",
@@ -214,6 +236,12 @@ class ContextFillingAgent:
             inherited_carrier=routing_context.inherited_carrier,
             inherited_country=routing_context.inherited_country,
             inherited_year=routing_context.inherited_year,
+            charts_directive=routing_context.output_directives.charts,
+            charts_directive_source=routing_context.output_directives.source,
+            resolved_filter_columns=list(routing_context.resolved_filters),
+            unresolved_terms=[
+                f"{u.kind}:{u.term}" for u in routing_context.unresolved_terms
+            ],
         )
 
         return {"routing_context": routing_context}

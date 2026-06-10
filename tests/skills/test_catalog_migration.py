@@ -28,7 +28,11 @@ _SCOPES = ("planner", "sql", "response", "chart", "pitch")
 #     fetched on demand by the two-phase chart node (no longer always-loaded);
 #   - three bodies gained new operative rules (chart two-phase note + timeframe);
 #   - the gpr/survey response skills gained the [STORY ARC] narrative-funnel block
-#     (2026-06: executive storytelling across all routes).
+#     (2026-06: executive storytelling across all routes);
+#   - the default-timeframe rule was extracted from the trigger-gated timeframe
+#     skills into two tiny ALWAYS-ON skills (2026-06): a query naming no year
+#     never fired the time-word triggers, so the "default to latest year" rule
+#     was missing exactly in its own target case.
 _REMOVED_SKILLS = frozenset(
     {
         "chart-bar",
@@ -39,6 +43,11 @@ _REMOVED_SKILLS = frozenset(
         "chart-waterfall",
     }
 )
+# name -> the flow/scope slots the post-baseline skill applies to.
+_ADDED_SKILLS: dict[str, tuple[str, ...]] = {
+    "gpr-default-timeframe": ("gpr/planner", "gpr/sql"),
+    "survey-default-timeframe": ("survey/planner", "survey/sql"),
+}
 _EDITED_BODIES = frozenset(
     {
         "chart-type-selection",
@@ -61,12 +70,15 @@ def _applicable_snapshot(loader: SkillLoader) -> dict[str, list[str]]:
 
 
 def _expected_applicable() -> dict[str, list[str]]:
-    """Baseline applicable set with the removed chart skills filtered out."""
+    """Baseline applicable set minus removed chart skills, plus later additions."""
     expected: dict[str, list[str]] = {}
     for key, names in _BASELINE["applicable"].items():
         kept = [n for n in names if n not in _REMOVED_SKILLS]
         if kept:
             expected[key] = sorted(kept)
+    for name, slots in _ADDED_SKILLS.items():
+        for slot in slots:
+            expected[slot] = sorted(expected.get(slot, []) + [name])
     return expected
 
 
@@ -76,8 +88,14 @@ def _expected_applicable() -> dict[str, list[str]]:
 def test_skill_set_is_baseline_minus_extracted_chart_skills():
     loader = get_skill_loader()
     names = {s.name for s in loader._skills}
-    assert names == set(_BASELINE["body_sha256"]) - _REMOVED_SKILLS
-    assert len(loader._skills) == _BASELINE["total"] - len(_REMOVED_SKILLS) == 30
+    assert names == (set(_BASELINE["body_sha256"]) - _REMOVED_SKILLS) | set(
+        _ADDED_SKILLS
+    )
+    assert (
+        len(loader._skills)
+        == _BASELINE["total"] - len(_REMOVED_SKILLS) + len(_ADDED_SKILLS)
+        == 32
+    )
     # Every skill came from a `*.skill.md` file under the catalog root, and each
     # flow lives in its own subfolder (recursive discovery, not a flat glob).
     root = (Path(__file__).resolve().parents[2] / "core" / "skills" / "catalog")
@@ -99,7 +117,7 @@ def test_unedited_skill_bodies_byte_identical_to_pre_migration():
     proves the migration and the chart/timeframe edits changed nothing else."""
     loader = get_skill_loader()
     for s in loader._skills:
-        if s.name in _EDITED_BODIES:
+        if s.name in _EDITED_BODIES or s.name in _ADDED_SKILLS:
             continue
         digest = hashlib.sha256(s.body.encode("utf-8")).hexdigest()
         assert digest == _BASELINE["body_sha256"][s.name], f"{s.name} body drifted"

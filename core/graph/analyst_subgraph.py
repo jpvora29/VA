@@ -27,6 +27,8 @@ from langgraph.types import Send
 from typing_extensions import Annotated, TypedDict
 
 from core.agents.analyst.chart_picker import pick_charts
+from core.agents.common.contract import resolved_filters_of
+from core.agents.common.directives import charts_suppressed
 from core.agents.analyst.generic_solver import solve_generic
 from core.agents.analyst.insight_writer import write_insight
 from core.agents.analyst.peer_solver import solve_peer
@@ -93,6 +95,9 @@ def schema_identifier_node(state: AnalystState) -> dict:
         question=state["question"],
         sub_questions=sub_questions or [state["question"]],
         flow=state["flow"],
+        # Contract seed: the context filler already resolved this turn's entity
+        # mentions to exact stored values — the slice must carry the same ones.
+        pre_resolved=resolved_filters_of(state.get("routing_context")),
     )
     return {"schema_slice": schema_slice}
 
@@ -214,6 +219,15 @@ def writer_node(state: AnalystState) -> dict:
 
 def chart_picker_node(state: AnalystState) -> dict:
     """Pick and build up to 3 charts from the gathered evidence (best-effort)."""
+    # Query-contract gate: "don't generate a chart" means exactly that.
+    if charts_suppressed(state.get("routing_context")):
+        log_event(
+            logger,
+            "charts_suppressed_by_directive",
+            node="analyst_chart_picker",
+            route=state["route"],
+        )
+        return {"charts": []}
     charts = pick_charts(state["question"], list(state.get("evidence", [])))
     log_event(
         logger,

@@ -35,10 +35,12 @@ class AgentState(TypedDict):
     # dispatch). Optional so first-turn / fallback paths still type-check.
     routing_context: Optional[RoutingContext]
 
-    # HITL clarification (workflow path). `clarify_decide` sets a pending MCQ
-    # payload (dict) when the turn is genuinely ambiguous; `clarify_gate`
-    # interrupts on it and stores the user's answer in `clarification`.
-    clarify_question: Optional[Dict]
+    # HITL clarification (workflow path). `clarify_decide` sets a pending LIST of
+    # MCQ payloads (unresolved-entity "did you mean" questions + the LLM
+    # ambiguity question) when the turn genuinely needs them; `clarify_gate`
+    # interrupts once with the whole list and stores the folded answers in
+    # `clarification`.
+    clarify_questions: Optional[List[Dict]]
     clarification: str
 
     survey_reasoning: str
@@ -66,6 +68,12 @@ class AgentState(TypedDict):
     # {"title", "rows", "chart_data"}. The deterministic rails use the per-flow
     # *_chart fields above; the analyst path carries its own multi-chart list.
     analyst_charts: List
+
+    # ALL evidence the analyst subgraph gathered, each {"flow", "sql", "rows",
+    # "lens"}. The per-flow *_query_result fields above carry only the FIRST
+    # result set per flow (the UI table); the boardroom digest needs every lens's
+    # rows (multi-year, multi-country, peer sets) to populate its widgets.
+    analyst_evidence: List
 
     current_route: Literal["survey", "premium", "both", "fallback"]
     out_of_scope_answer: str

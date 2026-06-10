@@ -50,9 +50,19 @@ Be minimal and precise. Never invent columns or tables not in the schema."""
 
 
 def identify_schema(
-    *, question: str, sub_questions: List[str], flow: str
+    *,
+    question: str,
+    sub_questions: List[str],
+    flow: str,
+    pre_resolved: dict | None = None,
 ) -> SchemaSlice:
-    """Run the identifier and return a grounded `SchemaSlice` for the solvers."""
+    """Run the identifier and return a grounded `SchemaSlice` for the solvers.
+
+    `pre_resolved` is the query contract's `resolved_filters` ({column: [exact
+    stored values]}), resolved once in the context filler. Seeding the slice
+    with it guarantees the solvers filter on the SAME canonical values as every
+    other path, even when this identifier's own LLM pass misses a mention.
+    """
     schema = get_schema(flow)
     valid_values = get_valid_values(flow)
 
@@ -80,11 +90,19 @@ def identify_schema(
             flow=flow,
             error=str(exc),
         )
-        # Fall back to the flow's default table family so solvers still have a slice.
-        return SchemaSlice(tables=list(schema.keys()))
+        # Fall back to the flow's default table family so solvers still have a
+        # slice — the contract's resolved values survive an identifier failure.
+        return SchemaSlice(
+            tables=list(schema.keys()),
+            resolved_values={c: list(v) for c, v in (pre_resolved or {}).items()},
+        )
 
-    # Resolve the flagged terms deterministically into exact valid values.
-    resolved: dict[str, List[str]] = {}
+    # Resolve the flagged terms deterministically into exact valid values,
+    # seeded with the contract's already-resolved filters (contract first, so
+    # its canonical values lead each column's list).
+    resolved: dict[str, List[str]] = {
+        col: list(vals) for col, vals in (pre_resolved or {}).items()
+    }
     for item in identification.values_to_resolve:
         if not item.column or not item.term:
             continue

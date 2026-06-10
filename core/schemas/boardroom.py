@@ -290,27 +290,80 @@ class BoardroomDigest(BaseModel):
     )
 
 
-class BoardroomSignature(dspy.Signature):
+# ─────────── Staged digest generation ───────────
+#
+# One giant generation reliably under-fills a ~12-section optional schema — the
+# model satisfices on the first fields and leaves the widget tail null even when
+# the data supports it. The digest is therefore generated in stages:
+#   1. `BoardroomCoreSignature`  -> the always-on heart (title/headline/KPIs/
+#      insights/commentary/risks) — one focused call.
+#   2. Deterministic signal detection over the RAW rows decides which widgets
+#      the data actually supports (>=2 periods -> timeline, >=2 countries or
+#      products -> opportunity map, ...).
+#   3. One SMALL per-widget signature per selected widget — each call has one
+#      job and one output, so it cannot under-fill its schema.
+# `core.agents.boardroom` assembles the parts into the same `BoardroomDigest`
+# the UI and PPT export already render.
+
+_SQL_OUTPUT_DESC = (
+    "Underlying result rows keyed by lens — either per-flow ('premium', "
+    "'survey') or, on analyst turns, one entry per executed analytical lens "
+    "('gpr:temporal_trend', 'gpr:peer_benchmark', 'survey:...'). Scan EVERY "
+    "entry. Each value is a compact pipe-delimited table: an optional "
+    "'constants:' line (columns identical on every row), a header row of "
+    "column names, then one 'val | val | ...' line per row (truncated samples)."
+)
+
+
+class BoardroomCore(BaseModel):
+    """The always-on heart of the dashboard (stage 1 of the staged digest)."""
+
+    title: str = Field(description="Dashboard title — usually the carrier or subject, e.g. 'Zurich — Canada'.")
+    subtitle: str = Field(
+        default="",
+        description="One-line context, e.g. '2024 premium performance vs peer set'.",
+    )
+    headline: str = Field(
+        default="",
+        description="A single punchy sentence stating the bottom line of the answer.",
+    )
+    kpis: List[KpiCard] = Field(
+        default_factory=list,
+        description="3-5 KPI cards covering the most decision-relevant numbers in the answer.",
+    )
+    insights: List[InsightCard] = Field(
+        default_factory=list,
+        description=(
+            "2-4 polished executive insight cards — punchy, narrative takeaways (NOT bare "
+            "metric tiles). Distil the most board-worthy conclusions."
+        ),
+    )
+    commentary: List[CommentarySection] = Field(
+        default_factory=list,
+        description="1-3 commentary sections distilled from the written analysis.",
+    )
+    risks: List[RiskItem] = Field(
+        default_factory=list,
+        description="0-4 risk/watch items if the analysis surfaces any; otherwise empty.",
+    )
+
+
+class BoardroomCoreSignature(dspy.Signature):
     """
     [ROLE]
     You are an executive briefing designer. You receive an analyst's finished
     written answer (commentary) and the underlying result rows for an insurance
-    carrier question, and you reshape them into a boardroom dashboard digest.
+    carrier question, and you produce the CORE of a boardroom dashboard.
 
     [OBJECTIVE]
-    Produce a `BoardroomDigest` that a C-suite reader could absorb in seconds:
+    Produce a `BoardroomCore` a C-suite reader could absorb in seconds:
     - 3-5 KPI cards with the most decision-relevant numbers, each formatted for
       display and tagged with the correct sentiment tone from the carrier's
       perspective (a premium decline is 'danger', a rank improvement is 'good').
     - A single-sentence `headline` stating the bottom line.
     - 2-4 `insights`: polished executive callouts — punchy narrative takeaways
-      (e.g. 'Rank dropped 4 places', 'Property drives 62% of premium', 'Cyber
-      whitespace exists'), each with a one-line so-what. These are conclusions,
-      not bare metrics.
-    - `battlecards`: one competitive profile per carrier the analysis discusses
-      (subject carrier + key peers when covered), with strengths, weaknesses,
-      product gaps / whitespace, and broker perception — every line grounded in
-      the commentary or rows. Leave a dimension empty rather than inventing.
+      (e.g. 'Rank dropped 4 places', 'Property drives 62% of premium'), each
+      with a one-line so-what. These are conclusions, not bare metrics.
     - 1-3 commentary sections (heading + 2-4 crisp bullets) distilled from the
       written analysis.
     - 0-4 risk items only if the analysis genuinely surfaces risks.
@@ -322,49 +375,136 @@ class BoardroomSignature(dspy.Signature):
     - insights: the first card is the big-picture verdict; each later card narrows
       (segment → product → the single sharpest finding worth acting on).
     - commentary sections follow the same arc — e.g. 'The big picture' → "What's
-      driving it" → 'Where to act' — and each section's bullets should pick up
-      where the previous section left off.
-
-    [QUERY-DEPENDENT WIDGETS — be GENEROUS: populate whenever the data supports it]
-    Scan the commentary AND every result set in `sql_output` (it is keyed by lens,
-    e.g. 'premium' and 'survey'). Populate a widget whenever the needed signal is
-    present in ANY lens — do not require it to be the primary lens:
-    - timeline: if two or more periods/years appear anywhere, list the major
-      movements (premium, rank, score, product) in chronological order.
-    - opportunity_map: if two or more countries OR two or more products appear,
-      build a country×product whitespace/growth heatmap (sparse cells are fine).
-    - opportunities: if any area shows carrier premium low while Marsh/peer activity
-      is higher, list those gaps with a gap_score and a recommended move.
-    - positioning: if premium figures AND broker/survey perception or score values
-      both appear (even across different lenses/rows), place the carriers on the
-      2x2 matrix (premium strength x, broker perception y).
-    Only leave a widget empty/null when its signal is genuinely absent. Never
-    fabricate periods, countries, products, premiums, or perception scores — derive
-    every value from the commentary or rows.
-    - A `comparison` block WHEN AND ONLY WHEN the answer compares two or more
-      entities (carrier vs peer set, several carriers, or one metric across
-      subjects). Align every metric's values to the subject order so the UI can
-      render a clean side-by-side. For single-subject answers, leave it null.
+      driving it" → 'Where to act'.
 
     [HARD CONSTRAINTS]
     - Use ONLY numbers and facts present in the commentary or rows. Never invent,
       extrapolate, or round in a way that changes meaning. If a comparison is not
       stated, leave `delta` empty.
     - Keep every string short and board-ready. No markdown, no citations.
-    - The digest must be faithful to the commentary; it reformats, never reanalyses.
+    - Faithful to the commentary; reformat, never reanalyse.
+    - Peers stay aggregated — never name an individual peer carrier (Marsh and
+      the subject carrier are fine).
     """
 
     user_query: str = dspy.InputField(desc="The user's original question.")
     route: str = dspy.InputField(desc="Which analytical lens produced the answer (survey/premium/both/analyst/fallback).")
     commentary: str = dspy.InputField(desc="The finished written analysis to distil (may carry several lenses, each under a '## Lens' heading).")
-    sql_output: Any = dspy.InputField(
-        desc=(
-            "Underlying result rows keyed by lens, e.g. {'premium': ..., 'survey': ...}. "
-            "Each value is a compact pipe-delimited table: an optional 'constants:' line "
-            "(columns identical on every row), a header row of column names, then one "
-            "'val | val | ...' line per row (truncated samples)."
-        )
+    sql_output: Any = dspy.InputField(desc=_SQL_OUTPUT_DESC)
+    core: BoardroomCore = dspy.OutputField(
+        desc="The core dashboard content, faithful to the commentary."
     )
-    digest: BoardroomDigest = dspy.OutputField(
-        desc="Structured boardroom dashboard digest faithful to the commentary."
+
+
+class BoardroomTimelineSignature(dspy.Signature):
+    """
+    Build the Insight Timeline for a boardroom dashboard: the carrier's major
+    movements across periods (premium growth, rank moves, score shifts, product
+    changes), in chronological order. The data ALREADY shows two or more
+    periods — extract every notable movement between them. Use ONLY periods and
+    values present in the commentary or rows; never fabricate. Each event gets
+    a short title, an optional one-line detail, the right category, and a tone
+    from the carrier's perspective. Peers stay aggregated (never name one).
+    """
+
+    user_query: str = dspy.InputField(desc="The user's original question.")
+    commentary: str = dspy.InputField(desc="The finished written analysis.")
+    sql_output: Any = dspy.InputField(desc=_SQL_OUTPUT_DESC)
+    timeline: List[TimelineEvent] = dspy.OutputField(
+        desc="Chronological movements; empty only if the periods carry no movement worth showing."
+    )
+
+
+class BoardroomOpportunityMapSignature(dspy.Signature):
+    """
+    Build the Market Opportunity Map for a boardroom dashboard: a
+    country×product whitespace/growth-priority heatmap. The data ALREADY spans
+    two or more countries and/or products — build the grid from them (sparse
+    cells are fine; only populate cells the commentary or rows support).
+    Intensity 0-100 = whitespace/growth priority (carrier low + market high =
+    high). Use ONLY countries, products, and figures present in the commentary
+    or rows; never fabricate. Peers stay aggregated.
+    """
+
+    user_query: str = dspy.InputField(desc="The user's original question.")
+    commentary: str = dspy.InputField(desc="The finished written analysis.")
+    sql_output: Any = dspy.InputField(desc=_SQL_OUTPUT_DESC)
+    opportunity_map: OpportunityMap = dspy.OutputField(
+        desc="The heatmap; leave rows/cols/cells empty only if no grid can be grounded."
+    )
+
+
+class BoardroomOpportunitiesSignature(dspy.Signature):
+    """
+    Build the Opportunity Radar for a boardroom dashboard: concrete whitespace
+    where the carrier's premium/presence is LOW while Marsh-book or peer
+    activity is HIGH. Scan every result set and the commentary for such gaps;
+    score each 0-100 (carrier low + market high = high) and give a one-line
+    recommended move. Use ONLY areas and figures present in the commentary or
+    rows; an empty list is correct when no genuine gap shows. Peers stay
+    aggregated (never name one).
+    """
+
+    user_query: str = dspy.InputField(desc="The user's original question.")
+    commentary: str = dspy.InputField(desc="The finished written analysis.")
+    sql_output: Any = dspy.InputField(desc=_SQL_OUTPUT_DESC)
+    opportunities: List[Opportunity] = dspy.OutputField(
+        desc="Detected whitespace gaps; empty when none is grounded in the data."
+    )
+
+
+class BoardroomPositioningSignature(dspy.Signature):
+    """
+    Build the Peer Positioning Matrix (2x2: premium strength on x, broker
+    perception on y, both 0-100) for a boardroom dashboard. The data ALREADY
+    carries both premium and perception/score signals — place the subject
+    carrier (is_subject=true) and the aggregated peer set on the matrix.
+    Normalise honestly from the figures present (e.g. highest premium in the
+    data ≈ 90, peer average mid-scale); never fabricate a signal that is not
+    there. Individual peers stay aggregated — plot 'Peer avg' as ONE point,
+    never one point per named peer.
+    """
+
+    user_query: str = dspy.InputField(desc="The user's original question.")
+    commentary: str = dspy.InputField(desc="The finished written analysis.")
+    sql_output: Any = dspy.InputField(desc=_SQL_OUTPUT_DESC)
+    positioning: PositioningMatrix = dspy.OutputField(
+        desc="The 2x2 matrix; leave points empty only if a signal is genuinely missing."
+    )
+
+
+class BoardroomComparisonSignature(dspy.Signature):
+    """
+    Build the side-by-side Comparison view for a boardroom dashboard. The
+    answer compares two or more entities (carrier vs peer set, several
+    carriers, or one metric across subjects) — align every metric row's values
+    to the SAME subject order, formatted for display, with optional tones from
+    the subject's perspective. `highlight` = index of the carrier in focus.
+    Individual peers stay aggregated: a 'Peer avg' subject is fine, named peer
+    carriers are not. Use ONLY values present in the commentary or rows.
+    """
+
+    user_query: str = dspy.InputField(desc="The user's original question.")
+    commentary: str = dspy.InputField(desc="The finished written analysis.")
+    sql_output: Any = dspy.InputField(desc=_SQL_OUTPUT_DESC)
+    comparison: ComparisonView = dspy.OutputField(
+        desc="The aligned comparison; leave subjects empty only if nothing is comparable."
+    )
+
+
+class BoardroomBattlecardsSignature(dspy.Signature):
+    """
+    Build competitive Battlecards for a boardroom dashboard: one profile for
+    the subject carrier (and the aggregated peer set ONLY if the analysis
+    genuinely covers it as a unit — never a named individual peer). Populate
+    strengths / weaknesses / product gaps / broker perception ONLY from facts
+    in the commentary or rows; leave a dimension empty rather than inventing.
+    Empty list for non-carrier answers.
+    """
+
+    user_query: str = dspy.InputField(desc="The user's original question.")
+    commentary: str = dspy.InputField(desc="The finished written analysis.")
+    sql_output: Any = dspy.InputField(desc=_SQL_OUTPUT_DESC)
+    battlecards: List[Battlecard] = dspy.OutputField(
+        desc="Grounded competitive profiles; empty when no carrier is discussed."
     )

@@ -14,10 +14,8 @@ priority: 75
 - For renewal/expiry questions, use `Cover_Expiry_Date` instead of `Billing_Date`.
 - In the response, always state the timeframe used.
 
-Default timeframe (no period given):
-- When the query names NO year/quarter/date, default to the latest available
-  year, `Year = MAX(Year)`. Do not aggregate across all years by default.
-- Still state the year you defaulted to in the response.
+Default timeframe (no period given): see the always-on `gpr-default-timeframe`
+rule — latest available year, never an all-years aggregate.
 
 YoY when years are not specified:
 - Default a YoY comparison to the latest year vs the immediately prior year:

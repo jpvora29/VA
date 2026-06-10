@@ -193,3 +193,19 @@ def test_migrated_domain_skills_carry_rich_schema_and_operative_rules():
     assert "peer_group AS" in loader._by_name["gpr-peer-average"].body
     assert "multiplying the decimal by 100" in loader._by_name["gimmi-market-rate"].body
     assert "VACUUM" in loader._by_name["cross-sql-readonly-safety"].body
+
+
+def test_default_timeframe_skills_fire_without_any_time_words():
+    """A query naming NO year must still receive the latest-year default rule.
+
+    The rule used to live only in the trigger-gated `*-timeframe` skills, whose
+    triggers are time words — so the no-year case (its own target case) never
+    loaded it. The extracted always-on skills close that gap.
+    """
+    loader = get_skill_loader()
+    query = "What is Zurich's premium in Canada?"  # no time reference at all
+    for flow, scope in (("gpr", "planner"), ("gpr", "sql"), ("survey", "planner"), ("survey", "sql")):
+        names = [s.name for s in loader.matching(flow, scope, query)]
+        assert f"{flow}-default-timeframe" in names, (flow, scope, names)
+        # The trigger-gated detail skill must NOT fire — no time words present.
+        assert f"{flow}-timeframe" not in names, (flow, scope, names)

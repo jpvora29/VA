@@ -104,11 +104,18 @@ def analyst_agent_node(state: AgentState) -> AgentState:
                 return item["rows"]
         return []
 
+    # The full evidence list (every lens's rows, not just the first per flow)
+    # rides along for the boardroom digest, whose advanced widgets need the
+    # multi-period / multi-country / peer result sets the *_query_result
+    # single-table fields drop.
+    non_empty_evidence = [e for e in evidence if e.get("rows")]
+
     if route == "survey":
         return {
             "survey_response": answer,
             "survey_query_result": _rows_for("survey"),
             "analyst_charts": charts,
+            "analyst_evidence": non_empty_evidence,
         }
     if route == "both":
         return {
@@ -116,10 +123,12 @@ def analyst_agent_node(state: AgentState) -> AgentState:
             "survey_query_result": _rows_for("survey"),
             "gpr_query_result": _rows_for("gpr"),
             "analyst_charts": charts,
+            "analyst_evidence": non_empty_evidence,
         }
     # premium (and any default)
     return {
         "gpr_response": answer,
         "gpr_query_result": _rows_for("gpr"),
         "analyst_charts": charts,
+        "analyst_evidence": non_empty_evidence,
     }

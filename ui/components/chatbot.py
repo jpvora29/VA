@@ -40,17 +40,28 @@ def suggestion_chip(question: str, icon: str | None = None, idx: int = 0):
     )
 
 
-def clarify_card(payload: dict):
-    """Inline Claude-style MCQ clarification card.
+def clarify_questions_of(payload: dict) -> list[dict]:
+    """Normalise an interrupt payload to a list of question dicts.
 
-    `payload` is a ClarifyQuestion dict (question, header, options, allow_free_text).
-    Option buttons carry their answer value in the id so one pattern-matching
-    callback handles any option; a free-text box + send button is the fallback.
+    The clarify gate sends `{"kind": "clarify", "questions": [...]}`; the
+    custom-peer gate (and any legacy caller) sends one flat ClarifyQuestion
+    dict — wrapped here as a single-question list with a stable id.
     """
     payload = payload or {}
-    question = payload.get("question") or "Could you clarify what you mean?"
-    header = payload.get("header") or "Quick check"
-    options = payload.get("options") or []
+    questions = payload.get("questions")
+    if isinstance(questions, list) and questions:
+        return [dict(q) for q in questions if isinstance(q, dict)]
+    flat = dict(payload)
+    flat.setdefault("id", "q0")
+    return [flat]
+
+
+def _clarify_question_block(question: dict, answered: str | None) -> "html.Div":
+    """One question's badge + prompt + options + free-text row."""
+    qid = str(question.get("id") or "q0")
+    prompt = question.get("question") or "Could you clarify what you mean?"
+    header = question.get("header") or "Quick check"
+    options = question.get("options") or []
 
     option_buttons = [
         html.Button(
@@ -62,9 +73,14 @@ def clarify_card(payload: dict):
                     else None
                 ),
             ],
-            id={"type": "clarify-option", "value": opt.get("label", "")},
+            id={"type": "clarify-option", "qid": qid, "value": opt.get("label", "")},
             n_clicks=0,
-            className="clarify-option",
+            className=(
+                "clarify-option selected"
+                if answered and opt.get("label") == answered
+                else "clarify-option"
+            ),
+            disabled=bool(answered),
         )
         for opt in options
         if opt.get("label")
@@ -73,32 +89,41 @@ def clarify_card(payload: dict):
     children = [
         html.Div(
             [
-                html.I(className="bi bi-question-circle clarify-card-icon"),
+                html.I(
+                    className=(
+                        "bi bi-check-circle-fill clarify-card-icon answered"
+                        if answered
+                        else "bi bi-question-circle clarify-card-icon"
+                    )
+                ),
                 html.Span(header, className="clarify-card-header"),
             ],
             className="clarify-card-badge",
         ),
-        html.Div(question, className="clarify-card-question"),
+        html.Div(prompt, className="clarify-card-question"),
     ]
     if option_buttons:
         children.append(html.Div(option_buttons, className="clarify-option-grid"))
-        if payload.get("allow_free_text", True):
+    # A free-text answer was typed (not one of the options) — show it back.
+    if answered and not any(o.get("label") == answered for o in options):
+        children.append(html.Div(f"You answered: {answered}", className="clarify-hint"))
+    if question.get("allow_free_text", True) and not answered:
+        if option_buttons:
             children.append(
                 html.Div("Pick one, or type your own answer below.", className="clarify-hint")
             )
-    if payload.get("allow_free_text", True):
         children.append(
             dbc.InputGroup(
                 [
                     dbc.Input(
-                        id="clarify-free-text",
+                        id={"type": "clarify-free-text", "qid": qid},
                         placeholder="Or type your answer…",
                         debounce=True,
                         className="clarify-free-input",
                     ),
                     dbc.Button(
                         html.I(className="bi bi-arrow-return-left"),
-                        id="clarify-free-submit",
+                        id={"type": "clarify-free-submit", "qid": qid},
                         n_clicks=0,
                         className="clarify-free-submit",
                     ),
@@ -106,7 +131,36 @@ def clarify_card(payload: dict):
                 className="clarify-free-group",
             )
         )
+    return html.Div(children, className="clarify-question-block")
 
+
+def clarify_card(payload: dict):
+    """Inline Claude-style clarification card — one or SEVERAL questions.
+
+    `payload` is the interrupt value: either `{"kind": "clarify", "questions":
+    [...], "answers": {...}}` from the clarify gate, or one flat ClarifyQuestion
+    dict (custom-peer gate). Each question renders its own option grid +
+    free-text row; pattern-matching ids carry the question id so one callback
+    handles every question. Answered questions show their selection and lock;
+    the turn resumes once every question is answered.
+    """
+    payload = payload or {}
+    questions = clarify_questions_of(payload)
+    answers = payload.get("answers") or {}
+
+    blocks = [
+        _clarify_question_block(q, answers.get(str(q.get("id") or "q0")))
+        for q in questions
+    ]
+    children: list = []
+    if len(questions) > 1:
+        children.append(
+            html.Div(
+                f"A couple of quick checks ({len(answers)}/{len(questions)} answered)",
+                className="clarify-card-progress",
+            )
+        )
+    children.extend(blocks)
     return html.Div(children, className="message clarify-card")
 
 

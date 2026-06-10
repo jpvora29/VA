@@ -17,6 +17,7 @@ from core.agents.common import (
     recalled_sql_examples,
     record_recovered_sql_fix,
 )
+from core.agents.common.directives import charts_suppressed
 from core.agents.common.peers import custom_peer_directive
 from core.mcp.tools import execute_sql
 from core.agents.survey.chart import SurveyChartNode
@@ -454,6 +455,16 @@ class SurveySubGraph:
     def survey_chart_data_creation(state: AgentState) -> AgentState:
         survey_query_output = state.get("survey_query_result")
         question = state["messages"][-1].content
+
+        # Query-contract gate: an explicit "no chart" directive wins outright.
+        if charts_suppressed(state.get("routing_context")):
+            log_event(
+                logger,
+                "charts_suppressed_by_directive",
+                route="survey",
+                node="survey_chart",
+            )
+            return {}
 
         # Guard: only chart a genuine, non-empty result set. On a SQL error the
         # result is a list-wrapped error string; on overflow / no rows skip

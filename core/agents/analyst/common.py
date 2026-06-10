@@ -23,6 +23,7 @@ from core.initialization import Initialization
 from core.agents.common.peers import custom_peer_directive
 from core.analysis import get_lens_library
 from core.mcp.tools import (
+    audit_sql_filters,
     execute_sql,
     fix_sql,
     get_distinct_values,
@@ -119,6 +120,40 @@ def build_tools(
         for attempt in range(1, _SQL_MAX_ATTEMPTS + 1):
             result = execute_sql(flow, attempt_sql)
             if not result.error:
+                # Zero-row guard: 0 rows is only evidence of "no data" when the
+                # filter values are real. WHERE Country='UK' succeeds with 0 rows
+                # because the stored value is 'United Kingdom' — without this
+                # check the turn confidently reports a false "no premium in UK".
+                if result.row_count == 0:
+                    suspects = audit_sql_filters(flow, attempt_sql)
+                    if suspects:
+                        log_event(
+                            logger,
+                            "run_sql_zero_row_suspect_filter",
+                            logging.WARNING,
+                            node="analyst_solver",
+                            flow=flow,
+                            suspects=suspects,
+                        )
+                        # Not appended as evidence: an empty result from a wrong
+                        # filter value must never reach the insight-writer as a
+                        # "no data" fact.
+                        return json.dumps(
+                            {
+                                "row_count": 0,
+                                "rows": [],
+                                "warning": (
+                                    "0 rows, but these filter values do NOT exist "
+                                    "in their columns — this is a WRONG FILTER "
+                                    "VALUE, not missing data. Do NOT conclude "
+                                    "'no data'. Re-run with an exact valid value "
+                                    "(use the suggestions, or resolve_value / "
+                                    "list_values)."
+                                ),
+                                "suspect_filters": suspects,
+                            },
+                            default=str,
+                        )
                 evidence.append(
                     {"flow": flow, "sql": attempt_sql, "rows": result.rows, "lens": lens}
                 )

@@ -162,6 +162,7 @@ def capture_trace(case: Dict[str, Any], *, workflow: Any = None) -> GoldenTrace:
             custom_peers_active=False,
             boardroom_mode=False,
             analyst_charts=[],
+            analyst_evidence=[],
             survey_chart={},
             gpr_chart={},
             combined_chart={},

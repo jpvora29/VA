@@ -12,9 +12,8 @@ priority: 60
   are correctly interpreted using the Survey_Year column before generating the reasoning plan.
   Example:- If the user query mentions "last year", interpret it as:
             Survey_Year = (MAX(Survey_Year) - 1)
-- Default timeframe: when the query names NO year, default to the latest available
-  survey year, `Survey_Year = MAX(Survey_Year)` — do not average across all years.
-  Still state the year used in the response.
+- Default timeframe (no year named): see the always-on `survey-default-timeframe`
+  rule — latest survey year, never an all-years average.
 - YoY without explicit years: compare the latest year vs the immediately prior
   year, `Survey_Year = MAX(Survey_Year)` against `Survey_Year = MAX(Survey_Year) - 1`,
   and return both periods.

@@ -62,6 +62,12 @@ class QueryRephraseAgent:
           last_user_query: "Carrier A score in Singapore for the year 2025."
           current_user_query: "Its peers."
           rephrased_query: "Carrier A and its peers' score in Singapore for the year 2025."
+    - CANONICAL NAMES: when RoutingContext.resolved_filters provides the exact
+      stored value(s) for an entity the user named loosely, use the EXACT
+      stored value in the rephrased sentence — e.g. "UK" -> "United Kingdom",
+      "Zurich" -> "ZURICH GROUP". If a mention appears in
+      RoutingContext.unresolved_terms (it matched NO stored value), keep the
+      user's wording unchanged — never substitute a guess.
     - If RoutingContext.timeframe_hint is set, materialise it ("last year"
       -> "2024" if the hint says so).
     - **If the user query contains phrases like across, by, keep that phrase

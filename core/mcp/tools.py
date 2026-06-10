@@ -376,6 +376,93 @@ def match_column_values(
     return result
 
 
+# String-literal filter shapes an LLM emits: bare/quoted/bracketed identifiers,
+# optionally wrapped in UPPER()/LOWER(), compared via =, IN (...), or LIKE.
+_IDENT = r"(?:UPPER|LOWER)?\(?\s*[\"\[]?(\w+)[\"\]]?\s*\)?"
+_EQ_FILTER = re.compile(rf"{_IDENT}\s*=\s*'([^']+)'", re.IGNORECASE)
+_LIKE_FILTER = re.compile(rf"{_IDENT}\s+LIKE\s+'([^']+)'", re.IGNORECASE)
+_IN_FILTER = re.compile(rf"{_IDENT}\s+IN\s*\(([^)]*)\)", re.IGNORECASE)
+_IN_ITEM = re.compile(r"'([^']*)'")
+
+
+_DATE_LITERAL = re.compile(r"^\d{4}[-/]\d{1,2}([-/]\d{1,2})?$")
+
+
+def _is_numeric_literal(value: str) -> bool:
+    """Numbers and dates are not name-like filters — absence of rows for a
+    year/date is genuine absence, never a spelling problem."""
+    if _DATE_LITERAL.match(value):
+        return True
+    try:
+        float(value)
+        return True
+    except ValueError:
+        return False
+
+
+def audit_sql_filters(flow: str, sql: str) -> List[Dict[str, Any]]:
+    """Find string-literal filters in `sql` whose value doesn't exist in its column.
+
+    The zero-row guard: a SELECT that *succeeds* with 0 rows is only evidence of
+    "no data" when its filter values are real. A query like
+    ``WHERE Country = 'UK'`` succeeds with 0 rows because the stored value is
+    'United Kingdom' — and downstream prose then asserts a false negative.
+
+    For each ``col = 'val'`` / ``col IN (...)`` / ``col LIKE '...'`` filter whose
+    column has known valid values, this checks the literal against them
+    (case-insensitive; LIKE checks wildcard-stripped containment) and returns one
+    ``{"column", "value", "suggestions"}`` entry per miss, with up to 5 fuzzy
+    suggestions. Empty list == every checkable filter value is real. Columns with
+    no known value list (numerics, dates, unknown columns) are skipped — this
+    audit can flag only what it can verify.
+    """
+    suspects: List[Dict[str, Any]] = []
+    seen: set = set()
+
+    def _check(column: str, value: str, *, like: bool = False) -> None:
+        value = (value or "").strip()
+        if not value or _is_numeric_literal(value):
+            return
+        key = (column.lower(), value.lower(), like)
+        if key in seen:
+            return
+        seen.add(key)
+        candidates = _candidate_values(flow, column)
+        # Unverifiable (no value list) or unbounded (date/id-like) columns are
+        # skipped — this audit can flag only what it can reliably verify.
+        if not candidates or len(candidates) > 2000:
+            return
+        if like:
+            fragment = value.replace("%", "").replace("_", " ").strip().lower()
+            if not fragment:
+                return
+            if any(fragment in c.lower() for c in candidates):
+                return
+            term = fragment
+        else:
+            if any(c.lower() == value.lower() for c in candidates):
+                return
+            term = value
+        suspects.append(
+            {
+                "column": column,
+                "value": value,
+                "suggestions": match_column_values(
+                    flow, column, term, top_n=5, score_cutoff=60
+                ),
+            }
+        )
+
+    for column, value in _EQ_FILTER.findall(sql):
+        _check(column, value)
+    for column, value in _LIKE_FILTER.findall(sql):
+        _check(column, value, like=True)
+    for column, items in _IN_FILTER.findall(sql):
+        for value in _IN_ITEM.findall(items):
+            _check(column, value)
+    return suspects
+
+
 def fix_sql(
     flow: str,
     *,
