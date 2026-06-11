@@ -1759,6 +1759,24 @@ body {
     50.01%, 100% { opacity: 0; }
 }
 
+/* Boardroom Mode: while the digest streams we hide the raw tokens and show a
+   tidy "building" placeholder — the polished card replaces it on completion. */
+.bm-building-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--marsh-blue-2, #2b54c7);
+    font-weight: 500;
+}
+
+.bm-building-card .thinking-dot {
+    flex: 0 0 auto;
+}
+
+.bm-building-label {
+    letter-spacing: 0.01em;
+}
+
 .gpt-chart-flag {
     align-self: flex-start;
     font-family: 'Inter', sans-serif;

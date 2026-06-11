@@ -72,6 +72,18 @@ def test_marsh_is_never_carrier_resolved():
     assert unresolved == []  # the broker is skipped, not flagged
 
 
+def test_measure_words_bucketed_as_entities_are_skipped_not_clarified():
+    # The context filler sometimes mis-buckets a measure ('appetite' == share
+    # of portfolio, 'sow' == share of wallet) into an entity bucket. A measure
+    # is not a filter value: it must NOT be flagged unresolved (which would
+    # raise a spurious "did you mean product 'appetite'?" clarify card).
+    for term in ("appetite", "sow", "share of wallet", "premium"):
+        entities = QueryEntities(products=[term], segments=[term])
+        resolved, unresolved = resolve_entities(entities, "premium", matcher=_matcher)
+        assert resolved == {}, term
+        assert unresolved == [], term
+
+
 def test_years_and_fallback_family_resolve_nothing():
     entities = QueryEntities(years=["2024"], carriers=["Zurich"])
     assert resolve_entities(entities, "fallback", matcher=_matcher) == ({}, [])

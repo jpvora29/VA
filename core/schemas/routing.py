@@ -330,6 +330,11 @@ class ContextFillerSignature(dspy.Signature):
       - countries/markets ('UK', 'Singapore'),
       - products/lines ('cyber', 'property'), industries ('manufacturing'),
         client segments, explicit years ('2024').
+    Entities are FILTER VALUES (who/where/which slice), never MEASURES. Do NOT
+    put a metric/measure word in any entity bucket — 'premium', 'GPR',
+    'revenue', 'share of wallet', 'SoW', 'appetite', 'share of portfolio',
+    'product mix', 'NPS', 'score', 'growth', 'rank' are measures, not
+    products/segments/industries. Leave those out of entities entirely.
     Do NOT normalise or expand the wording — downstream code resolves each
     mention against the stored valid values deterministically. Leave
     resolved_filters and unresolved_terms EMPTY; they are filled downstream.

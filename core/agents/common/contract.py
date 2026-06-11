@@ -54,6 +54,27 @@ _MAX_MATCHES_PER_TERM = 5
 _BROKER = "marsh"
 
 
+def _is_measure_term(spec: Any, term: str) -> bool:
+    """True when the term is a metric/measure the registry knows by name or alias.
+
+    The context filler occasionally mis-buckets a measure word ("premium",
+    "SoW", "appetite", "share of portfolio") into an ENTITY bucket
+    (products/segments). Such a term is a MEASURE, not a filter value — it has
+    no stored value to match, so left alone it lands in `unresolved_terms` and
+    becomes a spurious "I couldn't find product 'appetite' — did you mean…?"
+    clarify card. Skip it here, the same way the broker is skipped above.
+    """
+    needle = (term or "").strip().lower()
+    if not needle:
+        return False
+    for metric in (getattr(spec, "metrics", None) or {}).values():
+        if needle == metric.name.lower() or needle in {
+            a.lower() for a in getattr(metric, "aliases", ())
+        }:
+            return True
+    return False
+
+
 def _column_for(spec: Any, kind: str) -> Optional[str]:
     """Registry column for an entity kind: declared mapping first, alias scan second."""
     column = (getattr(spec, "entity_columns", None) or {}).get(kind)
@@ -101,6 +122,9 @@ def resolve_entities(
                 continue
             for term in terms:
                 if kind == "carrier" and term.lower() == _BROKER:
+                    continue
+                # A measure word mis-bucketed as an entity is not a filter value.
+                if _is_measure_term(spec, term):
                     continue
                 matches = matcher(flow, column, term) or []
                 if matches:

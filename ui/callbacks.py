@@ -140,16 +140,40 @@ clientside_callback(
         if (editMode) {
             return window.dash_clientside.no_update;
         }
-        setTimeout(() => {
-            // Keep the streaming draft in view as it grows; fall back to pinning
-            // the chat box to the bottom on a committed-message repaint.
-            const draftEl = document.getElementById('live-draft');
-            if (draftEl && draftEl.textContent && draftEl.scrollIntoView) {
-                draftEl.scrollIntoView({block: 'end'});
-            }
-            const el = document.getElementById('chat-box');
-            if (el) { el.scrollTop = el.scrollHeight; }
-        }, 30);
+        const el = document.getElementById('chat-box');
+        if (!el) {
+            return window.dash_clientside.no_update;
+        }
+        // One-time: track whether the user is pinned to the bottom. Once they
+        // scroll up we stop auto-following the live stream so they can read
+        // earlier messages while the answer keeps generating; returning near the
+        // bottom re-pins. Without this, every ~350ms streaming tick re-snapped to
+        // the bottom and the chat felt "stuck" / un-scrollable mid-answer.
+        if (!el.__stickWired) {
+            el.__stickWired = true;
+            el.__stick = true;
+            el.addEventListener('scroll', function () {
+                const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+                el.__stick = dist < 140;
+            }, {passive: true});
+        }
+        const ctx = window.dash_clientside.callback_context;
+        const trig = (ctx && ctx.triggered.length) ? ctx.triggered[0].prop_id : '';
+        // A freshly committed message (chat-box children change) always snaps to
+        // the bottom; a streaming tick (live-draft) only follows when the user
+        // hasn't scrolled away.
+        if (trig.indexOf('chat-box') !== -1) {
+            el.__stick = true;
+        }
+        if (el.__stick) {
+            setTimeout(() => {
+                const draftEl = document.getElementById('live-draft');
+                if (draftEl && draftEl.textContent && draftEl.scrollIntoView) {
+                    draftEl.scrollIntoView({block: 'end'});
+                }
+                el.scrollTop = el.scrollHeight;
+            }, 30);
+        }
         return window.dash_clientside.no_update;
     }
     """,
@@ -1178,20 +1202,30 @@ def delete_conversation_cb(
 
 
 # 2. -------------------------- SIDEBAR COLLAPSE (clientside) ---------------------------------------
+# Split into two callbacks so the *store* is the single source of truth:
+#   (a) the button click only flips the persisted collapsed flag;
+#   (b) the flag is then reflected onto the sidebar class — on first load *and*
+#       on every toggle. This keeps the rendered width and the class in lock-step
+#       (the old single-callback version desynced: the server always rendered the
+#       rail expanded while the persisted flag said collapsed, so the first click
+#       looked dead and the fixed composer slid under a still-wide sidebar).
 
 clientside_callback(
-    """
-    function(n_clicks, collapsed) {
-        const next = !collapsed;
-        const base = 'app-sidebar';
-        return [next ? base + ' app-sidebar-collapsed' : base, next];
-    }
-    """,
-    Output("app-sidebar", "className"),
+    "function(n_clicks, collapsed) { return !collapsed; }",
     Output("sidebar-collapsed", "data"),
     Input("sidebar-collapse-btn", "n_clicks"),
     State("sidebar-collapsed", "data"),
     prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(collapsed) {
+        return collapsed ? 'app-sidebar app-sidebar-collapsed' : 'app-sidebar';
+    }
+    """,
+    Output("app-sidebar", "className"),
+    Input("sidebar-collapsed", "data"),
 )
 
 
@@ -1648,15 +1682,31 @@ def launch_resume_job(
     return False, False, "Resuming…"
 
 
-def _live_draft(text: str):
+def _live_draft(text: str, boardroom_mode: bool = False):
     """The transient assistant bubble shown while the final answer streams in.
 
     Returns an empty list (no bubble) until the first token arrives, so an
     idle/lookup turn never flashes an empty box.
+
+    In Boardroom Mode the streamed tokens are the raw digest narration, not a
+    chat answer — surfacing them token-by-token is noisy and clashes with the
+    polished card that lands at the end. So we show a tidy "building" placeholder
+    instead; poll_job swaps in the committed Boardroom card on completion.
     """
     text = (text or "").strip()
     if not text:
         return []
+    if boardroom_mode:
+        return html.Div(
+            [
+                html.Span(className="thinking-dot"),
+                html.Span(
+                    "Composing your boardroom view…",
+                    className="bm-building-label",
+                ),
+            ],
+            className="message gpt-message bm-building-card",
+        )
     return html.Div(
         dcc.Markdown(text),
         className="message gpt-message streaming-draft",
@@ -1683,10 +1733,14 @@ def _fmt_elapsed(seconds: int) -> str:
     Input("job-poll", "n_intervals"),
     State("chat-store", "data"),
     State("user-store", "data"),
+    State("boardroom-mode-store", "data"),
     prevent_initial_call=True,
 )
 def poll_job(
-    n_intervals: int, chat_history: dict[str, Any], user_store: dict[str, Any]
+    n_intervals: int,
+    chat_history: dict[str, Any],
+    user_store: dict[str, Any],
+    boardroom_mode: bool,
 ) -> tuple[Any, Any, Any, Any, Any, Any]:
     """Poll the running job each tick; on completion, commit and stop polling."""
     chat_history = chat_history or {}
@@ -1707,7 +1761,7 @@ def poll_job(
             no_update,
             _node_label(job.current_node),
             elapsed,
-            _live_draft(job.get_partial()),
+            _live_draft(job.get_partial(), bool(boardroom_mode)),
         )
 
     # Finished: tear the job down and finalize the turn. Clear the draft — the
