@@ -27,7 +27,7 @@ from langgraph.types import Send
 from typing_extensions import Annotated, TypedDict
 
 from core.agents.analyst.chart_picker import pick_charts
-from core.agents.common.contract import resolved_filters_of
+from core.agents.common.contract import resolved_filters_of, unresolved_terms_of
 from core.agents.common.directives import (
     charts_suppressed,
     presentation_mode,
@@ -102,6 +102,12 @@ def schema_identifier_node(state: AnalystState) -> dict:
         # Contract seed: the context filler already resolved this turn's entity
         # mentions to exact stored values — the slice must carry the same ones.
         pre_resolved=resolved_filters_of(state.get("routing_context")),
+    )
+    # Gate the solver's zero-row guard: only arm it when the user named an entity
+    # the contract could NOT resolve. With everything cleanly resolved, a 0-row
+    # result is real "no data" — not a filter typo to chase with a re-run.
+    schema_slice.guard_zero_rows = bool(
+        unresolved_terms_of(state.get("routing_context"))
     )
     return {"schema_slice": schema_slice}
 

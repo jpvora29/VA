@@ -46,9 +46,18 @@ _FLOWS_BY_FAMILY = {
     "both": ("gpr", "survey"),
 }
 
-# Max stored values kept per mention. Exact matches return one; concept terms
-# ("manufacturing") legitimately fan out to several SIC classes.
-_MAX_MATCHES_PER_TERM = 5
+# Max stored values kept per mention. Exact matches return one; a concept term
+# ("manufacturing") can fan out to a couple of SIC classes — but we keep this
+# tight: an over-broad IN-list is how a turn silently widens its own filter and
+# then answers a different question than the one asked.
+_MAX_MATCHES_PER_TERM = 2
+
+# Fuzzy cutoff for contract resolution — stricter than the matcher's default (80).
+# Exact (case-insensitive) hits short-circuit above this, so raising it only drops
+# LOOSE fuzzy matches. A borderline term is better surfaced as an unresolved term
+# (-> "did you mean…?" / the zero-row guard) than silently injected as a wrong
+# canonical filter value the solver then trusts.
+_CONTRACT_SCORE_CUTOFF = 88
 
 # The broker. Carrier-resolved nowhere, named freely everywhere.
 _BROKER = "marsh"
@@ -100,7 +109,12 @@ def resolve_entities(
     if matcher is None:
         from core.mcp.tools import match_column_values  # lazy: avoids LLM-layer import
 
-        matcher = match_column_values
+        def matcher(flow: str, column: str, term: str) -> List[str]:
+            # Bind the stricter contract cutoff; the injectable test matcher keeps
+            # the plain (flow, column, term) shape.
+            return match_column_values(
+                flow, column, term, score_cutoff=_CONTRACT_SCORE_CUTOFF
+            )
 
     resolved: Dict[str, List[str]] = {}
     unresolved: List[UnresolvedTerm] = []
@@ -149,6 +163,23 @@ def resolved_filters_of(routing_context: Any) -> Dict[str, List[str]]:
         else getattr(routing_context, "resolved_filters", None)
     )
     return dict(filters) if filters else {}
+
+
+def unresolved_terms_of(routing_context: Any) -> List[Any]:
+    """The contract's unresolved terms off a RoutingContext model, dict, or None.
+
+    A non-empty list means the user named an entity the contract could not match
+    to any stored value — the signal that a 0-row solver result this turn is
+    worth one re-check for a wrong filter value (see the analyst zero-row guard).
+    """
+    if routing_context is None:
+        return []
+    terms = (
+        routing_context.get("unresolved_terms")
+        if isinstance(routing_context, dict)
+        else getattr(routing_context, "unresolved_terms", None)
+    )
+    return list(terms) if terms else []
 
 
 def merge_resolved_values(

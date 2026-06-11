@@ -4346,11 +4346,20 @@ html, body,
 .clarify-option-desc { font-size: 11.5px; line-height: 1.4; }
 .clarify-card-badge { font-size: 10.5px; }
 
-/* ── Composer + chat scroll: keep the conversation fully visible ──────────── */
-/* The fixed composer used to blur (and visually swallow) the messages beneath
-   it. Drop the strip-wide blur — only the composer card itself stays frosted —
-   and fade to an opaque base so the newest turn reads cleanly above it. */
+/* ── Composer: anchor to the CHAT COLUMN, never the viewport ──────────────── */
+/* The composer used to be position:fixed with a hard-coded left offset equal to
+   the sidebar width (264px / 60px). Any time the real sidebar width differed —
+   collapsed/expanded race, a resized rail, a cached class — the offset no longer
+   matched and the bar slid under the sidebar. Anchoring it absolutely inside the
+   chat column makes it span exactly that column, whatever the sidebar is doing,
+   so it can never overlap the rail again. */
+.chatbot-area { position: relative; }
 .input-area {
+    position: absolute !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: auto !important;
     background: linear-gradient(180deg,
         rgba(245, 247, 251, 0) 0%,
         rgba(245, 247, 251, 0.92) 42%,
@@ -4422,6 +4431,28 @@ html, body,
 .app-sidebar-collapsed .user-avatar { margin: 0 auto; }
 /* The collapse glyph flips to signal it will expand the rail again. */
 .app-sidebar-collapsed .sidebar-collapse-btn .bi { transform: scaleX(-1); }
+
+/* Uniform icon buttons in the collapsed rail — the New-chat (edit) glyph used to
+   render smaller than the nav icons; normalise every glyph to one size and give
+   each control the same square footprint so they read as a tidy icon column. */
+.app-sidebar-collapsed .new-chat-btn,
+.app-sidebar-collapsed .sidebar-collapse-btn,
+.app-sidebar-collapsed .sidebar-nav-item {
+    width: 42px !important;
+    height: 42px !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px !important;
+}
+.app-sidebar-collapsed .new-chat-btn .bi,
+.app-sidebar-collapsed .sidebar-collapse-btn .bi,
+.app-sidebar-collapsed .sidebar-nav-item .bi {
+    font-size: 18px !important;
+    line-height: 1;
+}
 
 /* ── Responsiveness ──────────────────────────────────────────────────────── */
 @media (max-width: 1024px) {

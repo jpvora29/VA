@@ -1753,15 +1753,22 @@ def poll_job(
     elapsed = _fmt_elapsed(job.elapsed_seconds())
 
     # Still running — update the live status line + streamed draft, leave the
-    # committed transcript alone until the turn finishes.
+    # committed transcript alone until the turn finishes. Re-render the markdown
+    # only when new tokens actually arrived since the last tick: at this poll
+    # cadence an unchanged re-parse is wasted work and a source of caret flicker.
     if not job.done:
+        partial = job.get_partial()
+        draft = no_update
+        if len(partial) != job.rendered_len:
+            job.rendered_len = len(partial)
+            draft = _live_draft(partial, bool(boardroom_mode))
         return (
             no_update,
             no_update,
             no_update,
             _node_label(job.current_node),
             elapsed,
-            _live_draft(job.get_partial(), bool(boardroom_mode)),
+            draft,
         )
 
     # Finished: tear the job down and finalize the turn. Clear the draft — the

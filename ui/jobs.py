@@ -38,6 +38,10 @@ class Job:
     # Final-answer text streamed token-by-token by the graph's TokenStreamHandler.
     # The worker thread appends; the Dash poll thread reads — hence the lock.
     partial_text: str = ""
+    # Length of `partial_text` the poll callback last rendered. Lets a fast poll
+    # skip re-rendering (re-parsing) the live markdown on ticks where no new token
+    # arrived — only the poll thread touches it, so no lock needed.
+    rendered_len: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def elapsed_seconds(self) -> int:

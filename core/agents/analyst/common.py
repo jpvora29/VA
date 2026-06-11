@@ -95,14 +95,24 @@ def build_tools(
     lens: str,
     *,
     peer_only: bool = False,
+    guard_zero_rows: bool = False,
 ):
     """Read-only LangChain tools for a solver; `evidence` collects executed rows.
 
     `peer_only` trims the toolset to the two tools the peer-comparison path
     actually needs (run_sql + resolve_value), so that specialist's context isn't
     cluttered with list/show-values tools it never calls.
+
+    `guard_zero_rows` arms the zero-row guard (a 0-row result whose filter value
+    looks wrong is returned as a "re-run with an exact value" warning instead of
+    "no data"). It fires AT MOST ONCE per solver — a second 0-row is taken at
+    face value — so a bad filter can't drive the solver into a re-run loop.
     """
     from langchain_core.tools import tool
+
+    # One-shot latch for the zero-row guard (see `guard_zero_rows`). Mutable so
+    # the `run_sql` closure can flip it after the single re-check it's allowed.
+    guard = {"tripped": False}
 
     @tool
     def run_sql(flow: str, sql: str) -> str:
@@ -124,9 +134,15 @@ def build_tools(
                 # filter values are real. WHERE Country='UK' succeeds with 0 rows
                 # because the stored value is 'United Kingdom' — without this
                 # check the turn confidently reports a false "no premium in UK".
-                if result.row_count == 0:
+                #
+                # Gated + one-shot: it arms only when this turn left a user entity
+                # unresolved (`guard_zero_rows`), and trips at most once. After the
+                # first re-check the next 0-row is accepted as genuine "no data",
+                # so a stubborn-but-valid empty result never loops the solver.
+                if result.row_count == 0 and guard_zero_rows and not guard["tripped"]:
                     suspects = audit_sql_filters(flow, attempt_sql)
                     if suspects:
+                        guard["tripped"] = True
                         log_event(
                             logger,
                             "run_sql_zero_row_suspect_filter",
@@ -418,7 +434,13 @@ def run_solver(
     executed rows matter.
     """
     evidence: List[Evidence] = []
-    tools = build_tools(evidence, question, lens, peer_only=peer_only)
+    tools = build_tools(
+        evidence,
+        question,
+        lens,
+        peer_only=peer_only,
+        guard_zero_rows=schema_slice.guard_zero_rows,
+    )
     system_prompt = _solver_prompt(
         role=role,
         question=question,

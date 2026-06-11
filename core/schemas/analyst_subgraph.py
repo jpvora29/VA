@@ -64,6 +64,12 @@ class SchemaSlice(BaseModel):
         description="column -> exact valid values matched for the user's terms.",
     )
     notes: str = Field(default="")
+    guard_zero_rows: bool = Field(
+        default=False,
+        description="True when this turn left a user-named entity unresolved, so a "
+        "solver's 0-row result is worth ONE re-check for a wrong filter value. A "
+        "clean turn's 0-row is taken as genuine 'no data' — no re-run loop.",
+    )
 
     def as_prompt(self) -> str:
         """Render the slice for injection into a solver's system prompt."""

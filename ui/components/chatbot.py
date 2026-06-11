@@ -413,9 +413,12 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
             dcc.Store(id="overflow_data", data={}),
             dcc.Store(id="feedback-sink", data={}),  # write-only sink for thumb clicks
             dcc.Store(id="persist-sink", data={}),  # write-only sink for edit persistence
-            # Polls the in-process streaming job each second for live status +
-            # completion; enabled by launch_new_job / launch_resume_job.
-            dcc.Interval(id="job-poll", interval=350, n_intervals=0, disabled=True),
+            # Polls the in-process streaming job for live status + completion;
+            # enabled by launch_new_job / launch_resume_job. A short cadence makes
+            # the answer flow in small increments (Claude-like) instead of landing
+            # in chunky ~third-second bursts — the read is in-memory, so the cost
+            # of polling more often is negligible.
+            dcc.Interval(id="job-poll", interval=120, n_intervals=0, disabled=True),
             dbc.Container(
                 [
                     dbc.Row(
