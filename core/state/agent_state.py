@@ -24,6 +24,12 @@ class AgentState(TypedDict):
     # (tests, MCP) still type-check.
     user_id: Optional[str]
 
+    # Conversation id (== LangGraph thread_id). Threaded in from the UI so a
+    # transcript-aware node (the conversation meta-intent handler) can load the
+    # full saved transcript — both sides — from the conversations store, which
+    # the in-graph `messages` channel does not carry (it holds user turns only).
+    thread_id: Optional[str]
+
     # Verified SQL error→fix breadcrumbs for this turn. Each fixer node appends a
     # {failed_sql, error, route} entry; on a successful retry the execute node
     # persists the pair to episodic memory. `add` so entries accumulate across the

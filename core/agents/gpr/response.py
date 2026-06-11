@@ -8,6 +8,7 @@ import logging
 import dspy
 
 from config.valid_values_config import *  # noqa: F401,F403 - preserves legacy globals (valid_year_quarter_gpr)
+from core.agents.common.directives import prose_suppressed
 from core.initialization import Initialization
 from core.observability import log_event
 from core.rules.gpr import GPRRules
@@ -54,6 +55,12 @@ _GPR_RESPONSE_NODE = GPRResponseNode()
 
 
 def gpr_insight(state: AgentState) -> AgentState:
+    # Contract: a chart_only / table_only turn renders the artifact alone — skip
+    # the written premium analysis (and its LLM call) entirely.
+    if prose_suppressed(state.get("routing_context")):
+        log_event(logger, "insight_skipped_by_directive", route="premium", node="gpr_insight")
+        return {"gpr_response": ""}
+
     question = state["messages"][-1].content
     reasoning_plan = state["gpr_reasoning"]
     query_output = state["gpr_query_result"]

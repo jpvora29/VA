@@ -319,6 +319,22 @@ def ai_message(content: str, is_insight: bool, idx: int = 0):
     )
 
 
+def user_message(content: str):
+    """Render a user turn with a hover-reveal copy action.
+
+    Mirrors `ai_message`'s native `dcc.Clipboard` copy so the human side of the
+    conversation gets the same affordance. The bubble is position:relative so the
+    copy chip can sit at its corner.
+    """
+    return html.Div(
+        [
+            html.Span(content, className="user-message-text"),
+            dcc.Clipboard(content=content, title="Copy", className="msg-copy"),
+        ],
+        className="message user-message",
+    )
+
+
 def chart_block(figure, columns: list[str], records: list[dict], idx: int):
     """A chart with a Chart/Data switch that flips to the underlying rows.
 
@@ -399,7 +415,7 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
             dcc.Store(id="persist-sink", data={}),  # write-only sink for edit persistence
             # Polls the in-process streaming job each second for live status +
             # completion; enabled by launch_new_job / launch_resume_job.
-            dcc.Interval(id="job-poll", interval=1000, n_intervals=0, disabled=True),
+            dcc.Interval(id="job-poll", interval=350, n_intervals=0, disabled=True),
             dbc.Container(
                 [
                     dbc.Row(
@@ -411,6 +427,10 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                         className="chat-bot-text-area",
                                         children=[welcome_hero(username, starters)],
                                     ),
+                                    # The final answer streams here token-by-token
+                                    # while the turn runs; poll_job clears it once
+                                    # the committed answer lands in chat-box.
+                                    html.Div(id="live-draft", className="live-draft"),
                                     dcc.Download(id="download-excel"),
                                 ],
                                 lg=12,

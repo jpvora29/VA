@@ -12,7 +12,9 @@ from langgraph.types import Command
 
 from core.agents.analyst_agent import analyst_agent_node
 from core.agents.boardroom import boardroom_node
+from core.agents.common.meta_intent import is_meta_intent
 from core.agents.context_filler import ContextFillingAgent
+from core.agents.conversation import conversation_node
 from core.graph.hitl import clarify_decide, clarify_gate
 from core.graph.custom_peers_gate import custom_peer_gate
 from core.agents.fallback import Fallback
@@ -39,6 +41,15 @@ from core.state.agent_state import AgentState
 from logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _after_context_filler(state: AgentState) -> str:
+    """A conversation meta-request ("summarize our chat") skips the whole
+    analytical pipeline — clarify, rephrase, route, SQL — for the transcript
+    handler. Every other turn proceeds to the normal clarify gate."""
+    if is_meta_intent(state.get("routing_context")):
+        return "conversation_node"
+    return "clarify_decide"
 
 
 class LangGraph:
@@ -77,6 +88,7 @@ class LangGraph:
         self.gimmi_insight = gimmi_insight
         self.followup_node = followup_node
         self.boardroom_node = boardroom_node
+        self.conversation_node = conversation_node
 
     def create_workflow(self):
         workflow = StateGraph(self.state_schema)
@@ -102,11 +114,25 @@ class LangGraph:
         workflow.add_node("gimmi_insight", self.gimmi_insight)
         workflow.add_node("followup_node", self.followup_node)
         workflow.add_node("boardroom_node", self.boardroom_node)
+        workflow.add_node("conversation_node", self.conversation_node)
 
         workflow.add_edge(START, "context_filler")
+        # Conversation meta-requests ("summarize our discussion") branch off here
+        # to the transcript handler, skipping clarify/rephrase/route/SQL entirely.
+        # Every other turn proceeds down the normal analytical pipeline.
+        workflow.add_conditional_edges(
+            "context_filler",
+            _after_context_filler,
+            {
+                "conversation_node": "conversation_node",
+                "clarify_decide": "clarify_decide",
+            },
+        )
+        # The transcript handler writes a prose answer and ends the turn — no
+        # follow-ups, no boardroom digest (a recap is neither).
+        workflow.add_edge("conversation_node", END)
         # HITL clarify hook: decide (LLM, conservative) -> gate (interrupts only
         # when a genuine MCQ is pending) -> rephraser. Pass-through otherwise.
-        workflow.add_edge("context_filler", "clarify_decide")
         workflow.add_edge("clarify_decide", "clarify_gate")
         workflow.add_edge("clarify_gate", "rephraser_agent")
         # Custom-peer mismatch HITL: pauses only when a pinned peer set is active
@@ -220,6 +246,7 @@ class LangGraph:
         *,
         thread_id: str | None = None,
         cancel: Any | None = None,
+        callbacks: list | None = None,
     ):
         """Stream a turn node-by-node so the UI can show live progress.
 
@@ -245,6 +272,12 @@ class LangGraph:
             self._compiled_app = self.create_workflow()
         tid = thread_id or self.default_thread_id
         config = checkpoint_config(tid)
+        # Attach the per-turn callbacks (token streaming + cancel) to the run
+        # config so LangChain propagates them into every nested LLM call — most
+        # importantly the analyst subgraph's writer, invoked without its own
+        # config and so dependent on this propagation for live tokens.
+        if callbacks:
+            config = {**config, "callbacks": callbacks}
         with turn_context(thread_id=tid):
             log_event(logger, "workflow_stream_start", node="main_workflow")
             for mode, chunk in self._compiled_app.stream(

@@ -21,7 +21,12 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 from core.agents.common.contract import resolve_entities
-from core.agents.common.directives import detect_chart_directive
+from core.agents.common.directives import (
+    detect_chart_directive,
+    detect_depth_directive,
+    detect_presentation_directive,
+)
+from core.agents.common.meta_intent import detect_conversation_intent
 from core.context.bundle import schema_outline
 from core.context.engine import engine_enabled
 from core.data.general import GeneralFunctions
@@ -215,6 +220,33 @@ class ContextFillingAgent:
             routing_context.output_directives.charts = detected
             routing_context.output_directives.source = "deterministic"
 
+        # Body-shape + depth overlay, same deterministic-first contract. A
+        # presentation hit also pins `charts` so the chart node and the
+        # prose-suppression helpers agree: chart_only needs the chart, table_only
+        # forbids it.
+        presentation = detect_presentation_directive(question)
+        if presentation:
+            routing_context.output_directives.presentation = presentation
+            routing_context.output_directives.source = "deterministic"
+            if presentation == "chart_only":
+                routing_context.output_directives.charts = "required"
+            elif presentation == "table_only":
+                routing_context.output_directives.charts = "none"
+        depth = detect_depth_directive(question)
+        if depth:
+            routing_context.output_directives.depth = depth
+            routing_context.output_directives.source = "deterministic"
+
+        # Conversation meta-intent overlay: "summarize our discussion", "what did
+        # you recommend earlier?". Only when there IS prior conversation to talk
+        # about — a first-turn meta phrase has nothing to recap, so it falls
+        # through to normal routing. A hit short-circuits past SQL/analyst to the
+        # transcript handler (see the conditional edge in core.graph.main).
+        if len(user_messages) > 1:
+            meta = detect_conversation_intent(question)
+            if meta:
+                routing_context.conversation_intent = meta
+
         # Contract resolution: turn the extracted entity MENTIONS into exact
         # stored values, once, deterministically (rapidfuzz — no LLM call).
         # Downstream the rephraser materialises these canonical names into the
@@ -237,6 +269,9 @@ class ContextFillingAgent:
             inherited_country=routing_context.inherited_country,
             inherited_year=routing_context.inherited_year,
             charts_directive=routing_context.output_directives.charts,
+            presentation_directive=routing_context.output_directives.presentation,
+            depth_directive=routing_context.output_directives.depth,
+            conversation_intent=routing_context.conversation_intent,
             charts_directive_source=routing_context.output_directives.source,
             resolved_filter_columns=list(routing_context.resolved_filters),
             unresolved_terms=[

@@ -1725,6 +1725,40 @@ body {
     max-width: 86%;
 }
 
+/* ---------- Live streaming draft (the answer typing itself in) ----------
+   poll_job re-renders this container each ~350ms tick as tokens arrive. The
+   bubble element keeps the same type + class across ticks, so React reconciles
+   in place: the entrance animation fires once and the caret keeps blinking
+   smoothly while the text grows. Collapses to nothing between turns. */
+.live-draft {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    /* Match .chat-bot-text-area's horizontal padding so the draft bubble lines
+       up exactly with the committed messages above it. */
+    padding: 0 clamp(12px, 4vw, 48px);
+}
+
+.live-draft:empty {
+    display: none;
+}
+
+/* Blinking caret trailing the last streamed line, so it reads as "live". */
+.streaming-draft p:last-of-type::after,
+.streaming-draft li:last-of-type::after {
+    content: '▋';
+    display: inline-block;
+    margin-left: 2px;
+    color: var(--marsh-blue-2);
+    transform: translateY(1px);
+    animation: streamCaret 1.05s steps(1, end) infinite;
+}
+
+@keyframes streamCaret {
+    0%, 50% { opacity: 1; }
+    50.01%, 100% { opacity: 0; }
+}
+
 .gpt-chart-flag {
     align-self: flex-start;
     font-family: 'Inter', sans-serif;
@@ -4238,4 +4272,165 @@ th {
     .boardroom-card .bm-timeline,
     .boardroom-card .bm-chart-panel,
     .boardroom-card .bm-commentary-widget .bm-rail-editable { background: #ffffff !important; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   STUNNING REFINEMENT PASS (final cascade overrides)
+   Typography (Georgia titles · Arial body), composer legibility + scroll,
+   richer chat surfaces, Claude-style collapsible sidebar, responsive boardroom.
+   ════════════════════════════════════════════════════════════════════════ */
+
+:root {
+    --font-sans: Arial, 'Helvetica Neue', Helvetica, "Segoe UI", sans-serif;
+    --font-serif: Georgia, 'Times New Roman', Cambria, serif;
+}
+
+/* ── Typography: everything Arial by default ─────────────────────────────── */
+html, body,
+.chatbot-area,
+.message, .gpt-message, .user-message, .user-message-text,
+.insight-card-body, .insight-card-body p, .insight-card-body li,
+.composer, .composer-input, .composer textarea,
+.gpt-message p, .gpt-message li, .gpt-message td, .gpt-message th,
+.clarify-card, .clarify-card-question, .clarify-option-label, .clarify-option-desc,
+.conv-item-title, .sidebar-nav-item, .new-chat-btn, .user-name,
+.welcome-subtitle, .suggestion-chip-text,
+.bm-subtitle, .bm-commentary-list li, .bm-insight-detail, .bm-cmp-cell,
+.bm-kpi-value, .bm-kpi-label, .pitch-question-input, .pitch-dropdown {
+    font-family: var(--font-sans) !important;
+}
+
+/* ── Typography: all titles in Georgia ───────────────────────────────────── */
+.navbar-title,
+.welcome-title, .welcome-accent,
+.login-title,
+.bm-title, .bm-bc-name, .bm-headline, .bm-insight-headline, .bm-tl-title,
+.pitch-builder-title, .pitch-drawer-title,
+.insight-card-badge-text,
+.clarify-card-question,
+.sidebar-section-label,
+.gpt-message h1, .gpt-message h2, .gpt-message h3, .gpt-message h4,
+.insight-card-body h1, .insight-card-body h2, .insight-card-body h3, .insight-card-body h4 {
+    font-family: var(--font-serif) !important;
+}
+/* Georgia reads larger at the same px — gently dial weights/sizes back so
+   markdown headings inside answers no longer feel oversized. */
+.gpt-message h1, .insight-card-body h1 { font-size: 1.45em; font-weight: 700; letter-spacing: -0.01em; }
+.gpt-message h2, .insight-card-body h2 { font-size: 1.25em; font-weight: 700; }
+.gpt-message h3, .insight-card-body h3 { font-size: 1.1em;  font-weight: 700; }
+.gpt-message h4, .insight-card-body h4 { font-size: 1em;    font-weight: 700; }
+.welcome-title { font-size: clamp(24px, 3vw, 34px); font-weight: 700; }
+
+/* ── HITL clarify card: calmer, tighter typographic scale ────────────────── */
+.clarify-card { padding: 16px 20px 14px; }
+.clarify-card-question { font-size: 14.5px; line-height: 1.45; }
+.clarify-option-label { font-size: 12.5px; }
+.clarify-option-desc { font-size: 11.5px; line-height: 1.4; }
+.clarify-card-badge { font-size: 10.5px; }
+
+/* ── Composer + chat scroll: keep the conversation fully visible ──────────── */
+/* The fixed composer used to blur (and visually swallow) the messages beneath
+   it. Drop the strip-wide blur — only the composer card itself stays frosted —
+   and fade to an opaque base so the newest turn reads cleanly above it. */
+.input-area {
+    background: linear-gradient(180deg,
+        rgba(245, 247, 251, 0) 0%,
+        rgba(245, 247, 251, 0.92) 42%,
+        var(--surface-1) 100%) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    padding-top: 1.4rem;
+}
+/* Leave generous room so the last message (and a sent prompt) always clears
+   the composer instead of hiding under it. */
+.chat-bot-text-area { padding-bottom: 11.5rem; scroll-padding-bottom: 11.5rem; }
+.composer {
+    background: rgba(255, 255, 255, 0.96) !important;
+    backdrop-filter: blur(10px) saturate(150%);
+    -webkit-backdrop-filter: blur(10px) saturate(150%);
+}
+
+/* ── Chat surfaces: a more refined, "stunning" finish ────────────────────── */
+.gpt-message {
+    background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%) !important;
+    border: 1px solid var(--border-soft) !important;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.04), 0 10px 28px rgba(10, 22, 54, 0.06) !important;
+    line-height: 1.6;
+}
+.user-message {
+    background: linear-gradient(135deg, #0a2270 0%, var(--marsh-blue) 100%) !important;
+    box-shadow: 0 10px 24px rgba(0, 15, 71, 0.30) !important;
+    position: relative;
+}
+.user-message-text { white-space: pre-wrap; word-break: break-word; }
+
+/* Copy chip on the user bubble (mirrors the assistant turn) */
+.user-message .msg-copy {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    color: rgba(255, 255, 255, 0.65);
+    opacity: 0;
+    transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+.user-message:hover .msg-copy { opacity: 1; }
+.user-message .msg-copy:hover { color: #ffffff; }
+
+/* ── Live elapsed timer: tabular so M:SS doesn't jitter ──────────────────── */
+.thinking-elapsed { font-variant-numeric: tabular-nums; letter-spacing: 0.2px; }
+
+/* ── Claude-style collapsible sidebar ────────────────────────────────────── */
+.app-sidebar {
+    background: linear-gradient(180deg, #ffffff 0%, #f7f9fd 100%);
+    box-shadow: inset -1px 0 0 var(--border-soft);
+}
+.sidebar-collapse-btn {
+    transition: background var(--transition-fast), color var(--transition-fast),
+        transform var(--transition-fast);
+}
+.sidebar-collapse-btn:hover { transform: scale(1.06); }
+
+/* Collapsed rail: center the controls, show icons only, keep a usable toggle. */
+.app-sidebar-collapsed { align-items: stretch; }
+.app-sidebar-collapsed .sidebar-top { gap: 10px; padding: 14px 8px; }
+.app-sidebar-collapsed .new-chat-btn {
+    justify-content: center;
+    padding: 9px 0 !important;
+}
+.app-sidebar-collapsed .sidebar-collapse-btn { width: 100%; }
+.app-sidebar-collapsed .sidebar-nav { padding: 4px 6px; }
+.app-sidebar-collapsed .sidebar-nav-item { justify-content: center; padding: 9px 0; }
+.app-sidebar-collapsed .sidebar-footer { justify-content: center; padding: 12px 6px; }
+.app-sidebar-collapsed .user-avatar { margin: 0 auto; }
+/* The collapse glyph flips to signal it will expand the rail again. */
+.app-sidebar-collapsed .sidebar-collapse-btn .bi { transform: scaleX(-1); }
+
+/* ── Responsiveness ──────────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+    .message { max-width: 92%; }
+    .user-message { max-width: 86%; }
+    .gpt-message { max-width: 94%; }
+    .bm-body { grid-template-columns: 1fr; }
+}
+@media (max-width: 768px) {
+    /* Sidebar overlays instead of squeezing the chat on small screens. */
+    .app-sidebar {
+        position: fixed;
+        z-index: 1200;
+        height: 100%;
+        flex-basis: 248px;
+    }
+    .app-sidebar-collapsed { flex-basis: 0; width: 0; border: none; }
+    .chat-bot-text-area { padding-left: 14px; padding-right: 14px; }
+    .message { max-width: 96%; }
+    .user-message, .gpt-message { max-width: 92%; }
+    .bm-header { flex-direction: column; }
+    .bm-export-btn { align-self: flex-start; }
+    .bm-kpi-grid { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+    .bm-charts-grid, .bm-insight-grid, .bm-bc-grid { grid-template-columns: 1fr; }
+    .welcome-title { font-size: clamp(22px, 6vw, 28px); }
+}
+@media (max-width: 480px) {
+    .bm-kpi-grid { grid-template-columns: 1fr 1fr; }
+    .composer-disclaimer { font-size: 10px; }
 }

@@ -70,25 +70,61 @@ repeat the same fact across sections.
   aggregate ("peer average", "the peer set"). It is fine to name Marsh."""
 
 
+_DIRECT_CONTRACT = """[OUTPUT CONTRACT — the user asked for a DIRECT, short answer.]
+
+Reply with the answer ONLY: one or two sentences of plain prose that state the
+headline number and the direct conclusion. **Bold the critical number.**
+
+- NO headings, NO bullet sections, NO recommendations block, NO supporting-data
+  table, NO follow-up questions.
+- Lead with the answer; add at most one clause of essential context.
+- If a comparison is part of the answer, state it inline ("…, about 8% below the
+  peer average.").
+
+[CONFIDENTIALITY — non-negotiable]
+- Peers are ALWAYS aggregated. NEVER name an individual peer/carrier (Marsh is
+  fine)."""
+
+
 def write_insight(
     *,
     question: str,
     route: str,
     synthesis_focus: str,
     evidence: List[Evidence],
+    presentation: str = "prose",
+    depth: str = "analyst",
 ) -> str:
     """Synthesize the final Markdown answer from all gathered evidence.
 
     Returns "" if there is no evidence to write from or the call fails, so the
     caller can fall back to a graceful message.
+
+    The per-turn response contract shapes the call: `presentation` of
+    'chart_only'/'table_only' skips synthesis entirely (the UI renders the
+    chart/table alone, and we never spend the LLM call), while `depth` of
+    'direct' swaps the full analyst template for a one-to-two-sentence answer.
     """
     if not evidence:
+        return ""
+
+    # Contract: a chart_only / table_only turn wants no prose at all — return
+    # early so the writer's LLM call is never made.
+    if presentation in ("chart_only", "table_only"):
+        log_event(
+            logger,
+            "insight_skipped_by_directive",
+            node="insight_writer",
+            route=route,
+            presentation=presentation,
+        )
         return ""
 
     library = get_lens_library()
     focus = synthesis_focus or "Answer the question, then add the context a good analyst would."
     digest = digest_evidence(evidence)
 
+    contract = _DIRECT_CONTRACT if depth == "direct" else _OUTPUT_CONTRACT
     system_prompt = f"""You are a proactive insurance strategy analyst. Using ONLY
 the evidence gathered below, write the final answer — answering the user's
 question and proactively adding the context a good analyst would bring.
@@ -98,7 +134,7 @@ question and proactively adding the context a good analyst would bring.
 
 Synthesis focus: {focus}
 
-{_OUTPUT_CONTRACT}"""
+{contract}"""
 
     messages = [
         SystemMessage(content=system_prompt),
@@ -112,8 +148,17 @@ Synthesis focus: {focus}
         ),
     ]
     try:
-        response = Initialization.llm_creative.invoke(messages)
-        answer = (getattr(response, "content", "") or "").strip()
+        # Stream so the UI can render the answer token-by-token (the turn's
+        # TokenStreamHandler, attached to the run config, forwards every chunk
+        # tagged `final_answer`). Accumulate here for the committed state value.
+        # A Stop raises out of `.stream()` mid-token; the broad except below turns
+        # that into a graceful empty answer while the UI keeps the partial it saw.
+        parts: List[str] = []
+        for chunk in Initialization.llm_creative.with_config(
+            tags=["final_answer"]
+        ).stream(messages):
+            parts.append(getattr(chunk, "content", "") or "")
+        answer = "".join(parts).strip()
     except Exception as exc:  # noqa: BLE001 - synthesis is best-effort
         log_event(
             logger,

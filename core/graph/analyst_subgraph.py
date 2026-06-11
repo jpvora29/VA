@@ -28,7 +28,11 @@ from typing_extensions import Annotated, TypedDict
 
 from core.agents.analyst.chart_picker import pick_charts
 from core.agents.common.contract import resolved_filters_of
-from core.agents.common.directives import charts_suppressed
+from core.agents.common.directives import (
+    charts_suppressed,
+    presentation_mode,
+    response_depth,
+)
 from core.agents.analyst.generic_solver import solve_generic
 from core.agents.analyst.insight_writer import write_insight
 from core.agents.analyst.peer_solver import solve_peer
@@ -208,11 +212,14 @@ def join_node(state: AnalystState) -> dict:
 def writer_node(state: AnalystState) -> dict:
     """Synthesize the final Markdown answer from all gathered evidence."""
     plan: AnalysisPlan = state.get("plan") or AnalysisPlan()
+    rc = state.get("routing_context")
     answer = write_insight(
         question=state["question"],
         route=state["route"],
         synthesis_focus=plan.synthesis_focus,
         evidence=list(state.get("evidence", [])),
+        presentation=presentation_mode(rc),
+        depth=response_depth(rc),
     )
     return {"answer": answer}
 

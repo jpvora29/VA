@@ -42,6 +42,28 @@ class OutputDirectives(BaseModel):
             "default) whenever the query states no chart preference."
         ),
     )
+    presentation: Literal["prose", "chart_only", "table_only"] = Field(
+        default="prose",
+        description=(
+            "What the answer body should be. 'prose' (default) — the normal "
+            "written answer (plus a chart unless `charts`=='none'). 'chart_only' "
+            "— ONLY the chart, no written analysis or follow-ups ('just show me "
+            "the visual'). 'table_only' — ONLY the data table, no written "
+            "analysis, no chart ('just the table', 'just the numbers'). Set ONLY "
+            "on an explicit user request; never guess. The deterministic phrase "
+            "detector keeps `charts` coherent (chart_only -> 'required', "
+            "table_only -> 'none')."
+        ),
+    )
+    depth: Literal["analyst", "direct"] = Field(
+        default="analyst",
+        description=(
+            "How long the written answer should be. 'analyst' (default) — the "
+            "full structured analysis. 'direct' — a one-to-two-sentence answer "
+            "with no headings, recommendations table, or follow-ups, when the "
+            "user asks for a short/one-line answer. Per-turn; never inherited."
+        ),
+    )
     source: str = Field(
         default="",
         description=(
@@ -180,6 +202,21 @@ class RoutingContext(BaseModel):
             "'drilldown': narrows the prior result by one dimension. "
             "'topic_switch': changes table_family vs prior turn — drop incompatible filters."
         )
+    )
+    conversation_intent: Literal[
+        "analyze", "summarize_chat", "recall_previous"
+    ] = Field(
+        default="analyze",
+        description=(
+            "Whether the turn is a META request about the conversation itself "
+            "rather than a new data question. 'analyze' (default): a normal "
+            "analytical/lookup turn — route to SQL/analyst as usual. "
+            "'summarize_chat': the user asked to summarize/recap the discussion. "
+            "'recall_previous': the user asked what was recommended/concluded/"
+            "decided earlier. Meta turns are answered from the persisted "
+            "transcript with NO new database query. LEAVE as 'analyze'; a "
+            "deterministic detector sets the meta values downstream."
+        ),
     )
     rationale: str = Field(
         default="",

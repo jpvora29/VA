@@ -5,6 +5,7 @@ import logging
 
 import dspy
 
+from core.agents.common.directives import prose_suppressed
 from core.initialization import Initialization
 from core.observability import log_event
 from core.schemas.combined import CombinedInsightSignature
@@ -37,6 +38,12 @@ class CombinedInsightNode(dspy.Module):
 
 
 def combined_insight(state: AgentState) -> AgentState:
+    # Contract: chart_only / table_only renders the artifact alone — skip the
+    # fused written analysis and its LLM call.
+    if prose_suppressed(state.get("routing_context")):
+        log_event(logger, "insight_skipped_by_directive", route="both", node="combined_insight")
+        return {"combined_response": ""}
+
     question = state["messages"][-1].content
     survey_output = state.get("survey_query_result") or []
     gpr_output = state.get("gpr_query_result") or []

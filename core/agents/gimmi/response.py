@@ -6,6 +6,7 @@ import re
 
 import dspy
 
+from core.agents.common.directives import prose_suppressed
 from core.observability import log_event
 from core.rules.gimmi import GIMMIRules
 from core.schemas.gimmi import GIMMIResponseSignature
@@ -35,6 +36,12 @@ _GIMMI_RESPONSE_NODE = GIMMIResponseNode()
 
 
 def gimmi_insight(state: AgentState) -> AgentState:
+    # Contract: chart_only / table_only renders the artifact alone — skip the
+    # written market-rate commentary (the premium answer also drops its prose).
+    if prose_suppressed(state.get("routing_context")):
+        log_event(logger, "insight_skipped_by_directive", route="premium", node="gimmi_insight")
+        return {"gimmi_response": ""}
+
     question = state["messages"][-1].content
     query_result = state["gimmi_query_result"]
     skill_rules = get_skill_loader().response("gimmi", question)

@@ -37,6 +37,7 @@ from ui.components.chatbot import (
     clarify_questions_of,
     followup_suggestions,
     ai_message,
+    user_message,
     chart_block,
     welcome_hero,
     pitch_builder_drawer,
@@ -117,6 +118,7 @@ from ui.helper import (
 
 from document_builder.models import ReportConfig
 from ui.jobs import Job, start_job, get_job, cancel_job, clear_job
+from core.streaming import TokenStreamHandler, JobCancelled
 
 #  ── Logger ────────────────────────────────────────────────────────────────────────────────────────
 
@@ -132,21 +134,28 @@ pitch_workflow = PitchBuilderWorkflow()
 
 clientside_callback(
     """
-    function(children, editMode) {
+    function(children, draft, editMode) {
         // While the user is editing a Boardroom card, the chat repaints on every
         // tweak — don't yank the viewport to the bottom mid-edit.
         if (editMode) {
             return window.dash_clientside.no_update;
         }
-        const el = document.getElementById('chat-box');
-        if (el) {
-            setTimeout(() => {el.scrollTop = el.scrollHeight;}, 30);
-        }
+        setTimeout(() => {
+            // Keep the streaming draft in view as it grows; fall back to pinning
+            // the chat box to the bottom on a committed-message repaint.
+            const draftEl = document.getElementById('live-draft');
+            if (draftEl && draftEl.textContent && draftEl.scrollIntoView) {
+                draftEl.scrollIntoView({block: 'end'});
+            }
+            const el = document.getElementById('chat-box');
+            if (el) { el.scrollTop = el.scrollHeight; }
+        }, 30);
         return window.dash_clientside.no_update;
     }
     """,
     Output("chat-box", "data-scroll-anchor"),
     Input("chat-box", "children"),
+    Input("live-draft", "children"),
     State("boardroom-edit-mode", "data"),
     prevent_initial_call=True,
 )
@@ -1497,6 +1506,7 @@ NODE_LABELS = {
     "gimmi_insight": "Writing the GIMMI insight",
     "followup_node": "Suggesting follow-ups",
     "boardroom_node": "Building the boardroom view",
+    "conversation_node": "Reviewing the conversation",
 }
 
 
@@ -1531,13 +1541,21 @@ def _launch_job(thread_id: str, input_obj: Any) -> None:
     """Start a streaming graph run for `thread_id` in a background thread."""
 
     def worker(job: Job) -> None:
-        for ev in langgraph.stream_workflow(
-            input_obj, thread_id=thread_id, cancel=job.cancel
-        ):
-            if "interrupt" in ev:
-                job.interrupt = ev["interrupt"] or {}
-            elif "node" in ev:
-                job.current_node = ev["node"]
+        # Streams final-answer tokens into job.partial_text and aborts the
+        # in-flight call when the user hits Stop (raising JobCancelled).
+        handler = TokenStreamHandler(job.cancel, job.append_partial)
+        try:
+            for ev in langgraph.stream_workflow(
+                input_obj, thread_id=thread_id, cancel=job.cancel, callbacks=[handler]
+            ):
+                if "interrupt" in ev:
+                    job.interrupt = ev["interrupt"] or {}
+                elif "node" in ev:
+                    job.current_node = ev["node"]
+        except JobCancelled:
+            # Stop aborted a mid-flight call before the next node boundary.
+            job.cancelled = True
+            return
         if job.cancel.is_set():
             job.cancelled = True
         else:
@@ -1578,6 +1596,9 @@ def launch_new_job(
     state_obj = AgentState(
         messages=[HumanMessage(content=user_input)],
         user_id=str(user_id) if user_id is not None else None,
+        # Threaded through so the conversation meta-intent handler can load the
+        # full saved transcript (both sides) for "summarize our discussion".
+        thread_id=thread_id,
         survey_attempts=0,
         gpr_attempts=0,
         gimmi_attempts=0,
@@ -1627,12 +1648,38 @@ def launch_resume_job(
     return False, False, "Resuming…"
 
 
+def _live_draft(text: str):
+    """The transient assistant bubble shown while the final answer streams in.
+
+    Returns an empty list (no bubble) until the first token arrives, so an
+    idle/lookup turn never flashes an empty box.
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+    return html.Div(
+        dcc.Markdown(text),
+        className="message gpt-message streaming-draft",
+    )
+
+
+def _fmt_elapsed(seconds: int) -> str:
+    """Format elapsed time as a running clock — seconds under a minute, then
+    ``M:SS`` (Claude-style) once a turn crosses the first minute."""
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, secs = divmod(seconds, 60)
+    return f"{minutes}:{secs:02d}"
+
+
 @callback(
     Output("chat-store", "data", allow_duplicate=True),
     Output("is-thinking", "data", allow_duplicate=True),
     Output("job-poll", "disabled", allow_duplicate=True),
     Output("thinking-agent", "children", allow_duplicate=True),
     Output("thinking-elapsed", "children", allow_duplicate=True),
+    Output("live-draft", "children", allow_duplicate=True),
     Input("job-poll", "n_intervals"),
     State("chat-store", "data"),
     State("user-store", "data"),
@@ -1640,32 +1687,45 @@ def launch_resume_job(
 )
 def poll_job(
     n_intervals: int, chat_history: dict[str, Any], user_store: dict[str, Any]
-) -> tuple[Any, Any, Any, Any, Any]:
+) -> tuple[Any, Any, Any, Any, Any, Any]:
     """Poll the running job each tick; on completion, commit and stop polling."""
     chat_history = chat_history or {}
     thread_id = chat_history.get("thread_id")
     job = get_job(thread_id)
 
     if job is None:
-        return no_update, no_update, True, no_update, no_update
+        return no_update, no_update, True, no_update, no_update, []
 
-    elapsed = f"{job.elapsed_seconds()}s"
+    elapsed = _fmt_elapsed(job.elapsed_seconds())
 
-    # Still running — update the live status line, leave the transcript alone.
+    # Still running — update the live status line + streamed draft, leave the
+    # committed transcript alone until the turn finishes.
     if not job.done:
-        return no_update, no_update, no_update, _node_label(job.current_node), elapsed
+        return (
+            no_update,
+            no_update,
+            no_update,
+            _node_label(job.current_node),
+            elapsed,
+            _live_draft(job.get_partial()),
+        )
 
-    # Finished: tear the job down and finalize the turn.
+    # Finished: tear the job down and finalize the turn. Clear the draft — the
+    # committed answer (or the stop/error message) renders in the transcript now.
+    partial = (job.get_partial() or "").strip()
     clear_job(thread_id)
     chat_history.pop("pending_clarification_answer", None)
     chat_history["awaiting_clarification"] = False
 
     if job.cancelled:
+        # Keep whatever streamed before the Stop so the work isn't lost, marked
+        # as interrupted. Nothing streamed yet -> the plain stopped notice.
+        content = f"{partial}\n\n_Stopped._" if partial else "_Stopped._"
         chat_history.setdefault("messages", []).append(
-            {"type": "AIMessage", "content": "_Stopped._", "has_data_overflow": False}
+            {"type": "AIMessage", "content": content, "has_data_overflow": False}
         )
         chat_history["followups"] = []
-        return chat_history, False, True, "", ""
+        return chat_history, False, True, "", "", []
 
     if job.error:
         logger.error("Chat job failed: %s", job.error)
@@ -1677,7 +1737,7 @@ def poll_job(
             }
         )
         chat_history["followups"] = []
-        return chat_history, False, True, "", ""
+        return chat_history, False, True, "", "", []
 
     if job.interrupt is not None:
         chat_history.setdefault("messages", []).append(
@@ -1685,11 +1745,11 @@ def poll_job(
         )
         chat_history["awaiting_clarification"] = True
         chat_history["followups"] = []
-        return chat_history, False, True, "", ""
+        return chat_history, False, True, "", "", []
 
     chat_history = _commit_turn(chat_history, job.state)
     _persist_turn(user_store, chat_history, job.state)
-    return chat_history, False, True, "", ""
+    return chat_history, False, True, "", "", []
 
 
 def _generate_conversation_title(question: str) -> str:
@@ -1944,9 +2004,7 @@ def render_chat(
                     logger.exception("Exception in Output")
 
             elif msg["type"] == "HumanMessage":
-                chat_items.append(
-                    html.Div(msg["content"], className="message user-message")
-                )
+                chat_items.append(user_message(msg["content"]))
 
             elif msg["type"] == "AIMessage":
                 content = msg.get("content") or ""

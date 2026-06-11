@@ -13,6 +13,7 @@ from typing import Any, List, Tuple
 
 import dspy
 
+from core.agents.common.directives import followups_suppressed
 from core.initialization import Initialization
 from core.observability import log_event
 from core.schemas.followup import FollowupSignature
@@ -112,6 +113,18 @@ _FOLLOWUP_NODE = FollowupNode()
 def followup_node(state: AgentState) -> AgentState:
     """Generate up to three grounded follow-up questions for the current turn."""
     route = state.get("current_route") or "fallback"
+
+    # Contract: a minimal response (chart_only / table_only / a 'direct' one-line
+    # answer) gets no follow-up chips — and no LLM call to generate them.
+    if followups_suppressed(state.get("routing_context")):
+        log_event(
+            logger,
+            "followups_suppressed_by_directive",
+            node="followup_node",
+            route=route,
+        )
+        return {"followup_questions": []}
+
     messages = state.get("messages") or []
     question = messages[-1].content if messages else ""
     answer, evidence = _route_context(state, route)

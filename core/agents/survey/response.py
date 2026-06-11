@@ -6,6 +6,7 @@ from typing import Any, Dict
 
 import dspy
 
+from core.agents.common.directives import prose_suppressed
 from core.initialization import Initialization
 from core.observability import log_event
 from core.rules.survey import SurveyRules
@@ -60,6 +61,12 @@ def survey_data_overflow_route(state: AgentState):
 
 
 def survey_insight(state: AgentState) -> AgentState:
+    # Contract: chart_only / table_only renders the artifact alone — skip the
+    # written survey analysis and its LLM call.
+    if prose_suppressed(state.get("routing_context")):
+        log_event(logger, "insight_skipped_by_directive", route="survey", node="survey_insight")
+        return {"survey_response": ""}
+
     question = state["messages"][-1].content
     query_output = state["survey_query_result"]
     reasoning_plan = state["survey_reasoning"]

@@ -35,9 +35,24 @@ class Job:
     error: Optional[str] = None
     state: Dict[str, Any] = field(default_factory=dict)
     interrupt: Optional[dict] = None
+    # Final-answer text streamed token-by-token by the graph's TokenStreamHandler.
+    # The worker thread appends; the Dash poll thread reads — hence the lock.
+    partial_text: str = ""
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def elapsed_seconds(self) -> int:
         return int(time.time() - self.started_at)
+
+    def append_partial(self, text: str) -> None:
+        """Thread-safe token sink for the streaming callback handler."""
+        if not text:
+            return
+        with self._lock:
+            self.partial_text += text
+
+    def get_partial(self) -> str:
+        with self._lock:
+            return self.partial_text
 
 
 _JOBS: Dict[str, Job] = {}

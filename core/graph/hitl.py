@@ -143,6 +143,7 @@ def _unresolved_entity_questions(routing_context: Any) -> List[Dict]:
             {
                 "id": f"entity:{kind}:{term.lower()}",
                 "kind": "unresolved_entity",
+                "entity_kind": kind,
                 "header": kind.title()[:12],
                 "question": (
                     f"I couldn't find {kind} '{term}' in the data. "
@@ -261,7 +262,9 @@ def clarify_gate(state: "AgentState") -> "AgentState":
         if not answer:
             continue
         if q.get("kind") == "unresolved_entity":
-            notes.append(f"{q.get('kind', 'entity')} '{q.get('term')}' means '{answer}'")
+            notes.append(
+                f"{q.get('entity_kind', 'entity')} '{q.get('term')}' means '{answer}'"
+            )
             column = q.get("column")
             if routing_context is not None and column:
                 filters = dict(getattr(routing_context, "resolved_filters", {}) or {})
