@@ -16,15 +16,16 @@ from core.registry.values import DistinctValueRegistry
 def engine():
     eng = create_engine("sqlite:///:memory:")
     with eng.begin() as conn:
-        # 'Carriers' is one of survey's allowed_tables in the registry.
-        conn.execute(text("CREATE TABLE Carriers (Carrier TEXT, Score INTEGER)"))
+        # 'Carriers' is one of survey's allowed_tables in the registry;
+        # Survey_Year is survey's declared year column (date_columns.year).
+        conn.execute(text("CREATE TABLE Carriers (Carrier TEXT, Score INTEGER, Survey_Year INTEGER)"))
         conn.execute(
-            text("INSERT INTO Carriers (Carrier, Score) VALUES (:c, :s)"),
+            text("INSERT INTO Carriers (Carrier, Score, Survey_Year) VALUES (:c, :s, :y)"),
             [
-                {"c": "Zurich", "s": 7},
-                {"c": "AIG", "s": 8},
-                {"c": "Zurich", "s": 6},   # duplicate carrier
-                {"c": None, "s": 5},        # null carrier
+                {"c": "Zurich", "s": 7, "y": 2024},
+                {"c": "AIG", "s": 8, "y": 2023},
+                {"c": "Zurich", "s": 6, "y": 2024},   # duplicate carrier + year
+                {"c": None, "s": 5, "y": 2025},         # null carrier
             ],
         )
     return eng
@@ -61,3 +62,14 @@ def test_for_flow_column_searches_allowed_tables(engine):
     # survey allowed_tables = [Carriers, Peers]; Carrier lives in Carriers.
     assert reg.for_flow_column("survey", "Carrier") == ["AIG", "Zurich"]
     assert reg.for_flow_column("survey", "Nope") == []
+
+
+def test_valid_years_sourced_from_data_ascending(engine):
+    reg = DistinctValueRegistry(engine_provider=lambda: engine)
+    # Reads survey's date_columns.year (Survey_Year), distinct, latest LAST.
+    assert reg.valid_years("survey") == ["2023", "2024", "2025"]
+
+
+def test_valid_years_unknown_flow_is_empty(engine):
+    reg = DistinctValueRegistry(engine_provider=lambda: engine)
+    assert reg.valid_years("nope") == []

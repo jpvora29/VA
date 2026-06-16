@@ -79,11 +79,32 @@ class ColumnSpec:
     confidential: bool = False
     aliases: Tuple[str, ...] = ()
     resolver: str = "fuzzy"  # fuzzy | semantic — see RESOLVERS
+    # Value-level synonyms: (canonical_value, (synonym, ...)). Acronyms and
+    # short forms that string-distance can't bridge ("UK" -> "United Kingdom").
+    # Kept as a tuple of pairs (not a dict) so the spec stays hashable/frozen.
+    value_aliases: Tuple[Tuple[str, Tuple[str, ...]], ...] = ()
 
     @property
     def is_semantic(self) -> bool:
         """True when this column is eligible for the LLM-rescue resolver."""
         return self.resolver == "semantic"
+
+    def canonical_for(self, term: str) -> Optional[str]:
+        """Map a value-level synonym/acronym to its canonical value, or None.
+
+        Deterministic resolution for the cases fuzzy can't reach: an acronym
+        shares almost no characters with its expansion ("UK" vs "United
+        Kingdom"), so it never clears the fuzzy cutoff. The returned canonical is
+        re-matched against the real stored values by the caller, so the YAML
+        casing need not match the DB exactly.
+        """
+        needle = (term or "").strip().lower()
+        if not needle:
+            return None
+        for canonical, synonyms in self.value_aliases:
+            if needle == canonical.lower() or needle in {s.lower() for s in synonyms}:
+                return canonical
+        return None
 
 
 @dataclass(frozen=True)
@@ -110,6 +131,7 @@ class FlowSpec:
     allowed_tables: Tuple[str, ...]
     date_columns: Dict[str, str]
     entity_columns: Dict[str, str]
+    peer_columns: Dict[str, str]
     metrics: Dict[str, MetricSpec]
     columns: Dict[str, ColumnSpec]
     chart_measure_priority: Tuple[str, ...]
@@ -149,6 +171,11 @@ class FlowSpec:
 
     def column(self, name: str) -> Optional[ColumnSpec]:
         return self.columns.get(name)
+
+    def canonical_value(self, column: str, term: str) -> Optional[str]:
+        """Canonical stored value for a column's declared synonym, or None."""
+        spec = self.columns.get(column)
+        return spec.canonical_for(term) if spec else None
 
     def card_cap(self, column: str) -> int:
         spec = self.columns.get(column)

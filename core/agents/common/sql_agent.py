@@ -11,7 +11,8 @@ from typing import Any, Dict, List, Optional
 
 import dspy
 
-from core.context.injection import gate_enabled, gated_valid_values
+from core.agents.common.node_hooks import NodeHooks, with_node_hooks, _DEFAULT_NODE_HOOKS
+from core.context.gate import gate_enabled, gated_valid_values
 from core.schemas.analytical import SQLAgentSignature, SQLFixerOutput
 from logger import get_logger
 
@@ -128,6 +129,7 @@ class BaseSQLAgentNode(dspy.Module):
         rules: str,
         valid_values: Dict[str, Any],
         few_shot: Optional[List[Any]] = None,
+        hooks: NodeHooks = _DEFAULT_NODE_HOOKS,
     ) -> None:
         super().__init__()
         self.flow = flow
@@ -136,6 +138,19 @@ class BaseSQLAgentNode(dspy.Module):
         self.valid_values = valid_values
         self.few_shot = few_shot or []
         self.predictor = dspy.ChainOfThought(SQLAgentSignature)
+        # Balanced tier: SQL generation wants accuracy without the latency of the
+        # full reasoning effort the planner/writer use. Lazy import preserves this
+        # module's import-time independence from the LLM layer (see fixer below);
+        # use_tier is a no-op until MODEL_TIERS=on (keeps the global dspy LM).
+        from core.initialization import Initialization
+
+        Initialization.use_tier(self.predictor, "balanced")
+        # Phase 4 hook parity: the rails run the SAME before/after-model contract
+        # as the analyst middleware. after_model traces the step + advisory-checks
+        # the SQL is read-only (validate_sql wraps assert_read_only); generation
+        # itself is unchanged — the execute node's EXPLAIN + fixer loop stays
+        # authoritative.
+        self._hooks = hooks
 
     def forward(
         self,
@@ -156,7 +171,10 @@ class BaseSQLAgentNode(dspy.Module):
             except Exception:  # noqa: BLE001 - never let gating break SQL generation
                 valid_values = self.valid_values
 
-        result = self.predictor(
+        generate = with_node_hooks(
+            self.predictor, hooks=self._hooks, node=f"{self.flow}_sql_agent", kind="sql"
+        )
+        result = generate(
             table_schema=self.schema_tables,
             rules=self.rules,
             few_shot=self.few_shot,
@@ -243,7 +261,9 @@ class BaseSQLFixerNode:
             HumanMessage(content=human_message),
         ]
 
-        structured_llm = Initialization.llm.with_structured_output(SQLFixerOutput)
+        # Fast tier: the fixer is mechanical and runs inside the retry loop, so it
+        # wants minimal latency. Aliases llm until MODEL_TIERS=on.
+        structured_llm = Initialization.llm_fast.with_structured_output(SQLFixerOutput)
         corrected = structured_llm.invoke(messages)
         Initialization.log_prompt_cache_usage(
             response=corrected, label=f"{self.flow}_sql_fixer_agent"

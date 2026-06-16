@@ -49,6 +49,14 @@ def _parse_metric(name: str, raw: Dict[str, Any]) -> MetricSpec:
     )
 
 
+def _parse_value_aliases(raw: Any) -> tuple:
+    """Parse a `{canonical: [synonym, ...]}` block into hashable pairs."""
+    mapping = raw or {}
+    return tuple(
+        (str(canonical), _as_tuple(synonyms)) for canonical, synonyms in mapping.items()
+    )
+
+
 def _parse_column(name: str, raw: Dict[str, Any]) -> ColumnSpec:
     return ColumnSpec(
         name=name,
@@ -58,6 +66,7 @@ def _parse_column(name: str, raw: Dict[str, Any]) -> ColumnSpec:
         confidential=bool(raw.get("confidential", False)),
         aliases=_as_tuple(raw.get("aliases")),
         resolver=str(raw.get("resolver", "fuzzy")),
+        value_aliases=_parse_value_aliases(raw.get("value_aliases")),
     )
 
 
@@ -75,6 +84,7 @@ def _parse_flow(name: str, raw: Dict[str, Any]) -> FlowSpec:
         allowed_tables=_as_tuple(raw.get("allowed_tables")),
         date_columns=dict(raw.get("date_columns", {}) or {}),
         entity_columns=dict(raw.get("entity_columns", {}) or {}),
+        peer_columns=dict(raw.get("peer_columns", {}) or {}),
         metrics={
             m_name: _parse_metric(m_name, m_raw or {})
             for m_name, m_raw in (raw.get("metrics", {}) or {}).items()

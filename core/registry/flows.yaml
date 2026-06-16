@@ -32,6 +32,11 @@ survey:
     country: SurveyCountry
     carrier: Carrier
     product: SurveyPractice
+  peer_columns:
+    table: Peers
+    key: Carrier
+    members: Peers
+    country: Country
   metrics:
     score:
       columns: [Score]
@@ -49,7 +54,13 @@ survey:
   confidentiality:
     peer_names_allowed: false
   columns:
-    SurveyCountry: {role: entity, card_cap: 30}
+    SurveyCountry:
+      role: entity
+      card_cap: 30
+      value_aliases:
+        United Kingdom: [UK, U.K., Britain, Great Britain, GB]
+        United States: [US, U.S., USA, U.S.A., America]
+        United Arab Emirates: [UAE]
     Carrier: {role: entity, card_cap: 8, confidential: false}
     SurveyPractice: {role: entity, card_cap: 30, resolver: semantic, aliases: [practice, line of business, lob, product]}
     Region: {role: entity, card_cap: 30}
@@ -77,6 +88,10 @@ gpr:
     carrier: Carrier_Group
     product: Product_Line
     segment: Client_Segment
+  peer_columns:
+    table: Peers
+    key: Carrier_Group
+    members: Overall_Peer_Group
   metrics:
     premium:
       columns: [Premium]
@@ -99,7 +114,13 @@ gpr:
     peer_names_allowed: false
   columns:
     Region: {role: entity, card_cap: 30}
-    Country: {role: entity, card_cap: 30}
+    Country:
+      role: entity
+      card_cap: 30
+      value_aliases:
+        United Kingdom: [UK, U.K., Britain, Great Britain, GB]
+        United States: [US, U.S., USA, U.S.A., America]
+        United Arab Emirates: [UAE]
     Carrier_Group: {role: entity, card_cap: 8, aliases: [carrier, group, insurer]}
     Product_Line: {role: entity, card_cap: 30, resolver: semantic, aliases: [product, lob, line of business]}
     Business_Line: {role: entity, card_cap: 30, resolver: semantic}

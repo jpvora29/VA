@@ -14,6 +14,7 @@ from core.agents.analyst_agent import analyst_agent_node
 from core.agents.boardroom import boardroom_node
 from core.agents.common.meta_intent import is_meta_intent
 from core.agents.context_filler import ContextFillingAgent
+from core.agents.intent_classifier import IntentClassifier
 from core.agents.conversation import conversation_node
 from core.graph.hitl import clarify_decide, clarify_gate
 from core.graph.custom_peers_gate import custom_peer_gate
@@ -43,10 +44,11 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 
-def _after_context_filler(state: AgentState) -> str:
+def _after_intent_classifier(state: AgentState) -> str:
     """A conversation meta-request ("summarize our chat") skips the whole
     analytical pipeline — clarify, rephrase, route, SQL — for the transcript
-    handler. Every other turn proceeds to the normal clarify gate."""
+    handler. The IntentClassifier (Layer 2) sets `conversation_intent`; every
+    other turn proceeds to the normal clarify gate."""
     if is_meta_intent(state.get("routing_context")):
         return "conversation_node"
     return "clarify_decide"
@@ -68,6 +70,7 @@ class LangGraph:
         self._compiled_app = None
 
         self.context_filler = ContextFillingAgent().context_filler_agent
+        self.intent_classifier = IntentClassifier().classify_intent
         self.clarify_decide = clarify_decide
         self.clarify_gate = clarify_gate
         self.custom_peer_gate = custom_peer_gate
@@ -94,6 +97,7 @@ class LangGraph:
         workflow = StateGraph(self.state_schema)
 
         workflow.add_node("context_filler", self.context_filler)
+        workflow.add_node("intent_classifier", self.intent_classifier)
         workflow.add_node("clarify_decide", self.clarify_decide)
         workflow.add_node("clarify_gate", self.clarify_gate)
         workflow.add_node("custom_peer_gate", self.custom_peer_gate)
@@ -117,12 +121,14 @@ class LangGraph:
         workflow.add_node("conversation_node", self.conversation_node)
 
         workflow.add_edge(START, "context_filler")
+        # Layer 1 (filter extraction) -> Layer 2 (intent: depth/directives/meta).
+        workflow.add_edge("context_filler", "intent_classifier")
         # Conversation meta-requests ("summarize our discussion") branch off here
         # to the transcript handler, skipping clarify/rephrase/route/SQL entirely.
         # Every other turn proceeds down the normal analytical pipeline.
         workflow.add_conditional_edges(
-            "context_filler",
-            _after_context_filler,
+            "intent_classifier",
+            _after_intent_classifier,
             {
                 "conversation_node": "conversation_node",
                 "clarify_decide": "clarify_decide",

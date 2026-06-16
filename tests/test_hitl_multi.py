@@ -16,12 +16,18 @@ from core.schemas.hitl import ClarifyDecision, ClarifyOption, ClarifyQuestion
 from core.schemas.routing import RoutingContext, UnresolvedTerm
 
 
+# A premium turn whose mandatory filters (Carrier + Country) are both already
+# resolved — so the mandatory-filter source stays silent and these tests can
+# focus on the entity / LLM sources. Pass `resolved=` to override explicitly.
+_SATISFIED = {"Carrier_Group": ["ZURICH GROUP"], "Country": ["United Kingdom"]}
+
+
 def _ctx(unresolved=(), resolved=None) -> RoutingContext:
     return RoutingContext(
         table_family="premium",
         intent_type="new_question",
         unresolved_terms=list(unresolved),
-        resolved_filters=dict(resolved or {}),
+        resolved_filters=dict(_SATISFIED if resolved is None else resolved),
     )
 
 
@@ -137,6 +143,102 @@ def test_fallback_and_clean_turns_ask_nothing(monkeypatch):
         "routing_context": _ctx(),
     }
     assert hitl.clarify_decide(clean_state)["clarify_questions"] is None
+
+
+# ── mandatory-filter source (Carrier + Country) ──────────────────────────────
+
+
+def test_missing_carrier_and_country_both_asked(monkeypatch):
+    monkeypatch.setattr(hitl, "_CLARIFY_DECIDER", _StubDecider(_NO_ASK))
+    # A premium turn with neither carrier nor country resolved/inherited.
+    state = {
+        "messages": [HumanMessage(content="show me the premium", id="m1")],
+        "routing_context": _ctx(resolved={}),
+    }
+    questions = hitl.clarify_decide(state)["clarify_questions"]
+    assert [q["id"] for q in questions] == ["mandatory:carrier", "mandatory:country"]
+    assert all(q["kind"] == "mandatory_filter" for q in questions)
+    assert all(q["allow_free_text"] for q in questions)
+
+
+def test_missing_country_only_when_carrier_resolved(monkeypatch):
+    monkeypatch.setattr(hitl, "_CLARIFY_DECIDER", _StubDecider(_NO_ASK))
+    state = {
+        "messages": [HumanMessage(content="Zurich premium", id="m1")],
+        "routing_context": _ctx(resolved={"Carrier_Group": ["ZURICH GROUP"]}),
+    }
+    questions = hitl.clarify_decide(state)["clarify_questions"]
+    assert [q["id"] for q in questions] == ["mandatory:country"]
+    assert questions[0]["column"] == "Country"
+
+
+def test_inherited_carrier_satisfies_mandatory(monkeypatch):
+    monkeypatch.setattr(hitl, "_CLARIFY_DECIDER", _StubDecider(_NO_ASK))
+    rc = _ctx(resolved={"Country": ["United Kingdom"]})
+    rc.inherited_carrier = "Zurich"  # a follow-up inherits the carrier
+    state = {"messages": [HumanMessage(content="and the premium?", id="m1")], "routing_context": rc}
+    assert hitl.clarify_decide(state)["clarify_questions"] is None
+
+
+def test_named_but_unresolved_carrier_defers_to_did_you_mean(monkeypatch):
+    # User named a carrier that didn't resolve -> the grounded "did you mean"
+    # source owns it; the mandatory source must NOT also ask for a carrier.
+    _suggestions(monkeypatch, {"zurrich": ["ZURICH GROUP"]})
+    monkeypatch.setattr(hitl, "_CLARIFY_DECIDER", _StubDecider(_NO_ASK))
+    state = {
+        "messages": [HumanMessage(content="Zurrich premium", id="m1")],
+        "routing_context": _ctx(
+            resolved={"Country": ["United Kingdom"]},
+            unresolved=[UnresolvedTerm(kind="carrier", term="Zurrich", column="Carrier_Group", flow="gpr")],
+        ),
+    }
+    questions = hitl.clarify_decide(state)["clarify_questions"]
+    assert [q["kind"] for q in questions] == ["unresolved_entity"]
+
+
+def test_mandatory_options_capped_to_free_text_for_long_lists(monkeypatch):
+    monkeypatch.setattr(hitl, "_CLARIFY_DECIDER", _StubDecider(_NO_ASK))
+    # A long valid-value list is not dumped as options — free-text only.
+    monkeypatch.setattr(
+        hitl, "_valid_values_for",
+        lambda flow, column: [f"C{i}" for i in range(20)],
+    )
+    # The default source captured the old function; rebuild with a fresh one.
+    source = hitl.MandatoryFilterSource(value_loader=hitl._valid_values_for)
+    state = {
+        "messages": [HumanMessage(content="premium please", id="m1")],
+        "routing_context": _ctx(resolved={}),
+    }
+    questions = hitl.clarify_decide(
+        state,
+        sources=(source, hitl.UnresolvedEntitySource(), hitl.AmbiguityClassifierSource()),
+    )["clarify_questions"]
+    assert questions[0]["options"] == []  # too many to list
+
+
+def test_mandatory_answer_becomes_resolved_filter(monkeypatch):
+    question = {
+        "id": "mandatory:country",
+        "kind": "mandatory_filter",
+        "entity_kind": "country",
+        "question": "Which market/country should I focus on?",
+        "term": "",
+        "column": "Country",
+        "flow": "gpr",
+    }
+    monkeypatch.setattr(hitl, "interrupt", lambda payload: {"mandatory:country": "United Kingdom"})
+    ctx = _ctx(resolved={"Carrier_Group": ["ZURICH GROUP"]})
+    state = {
+        "messages": [HumanMessage(content="Zurich premium", id="m1")],
+        "clarify_questions": [question],
+        "routing_context": ctx,
+    }
+    out = hitl.clarify_gate(state)
+    assert out["routing_context"].resolved_filters == {
+        "Carrier_Group": ["ZURICH GROUP"],
+        "Country": ["United Kingdom"],
+    }
+    assert "Country: United Kingdom" in out["clarification"]
 
 
 # ── answer normalization + gate folding ──────────────────────────────────────

@@ -73,6 +73,14 @@ _WIDGET_PREDICTORS: Dict[str, Tuple[Any, str]] = {
     "battlecards": (dspy.Predict(BoardroomBattlecardsSignature), "battlecards"),
 }
 
+# Tier assignment: the core call synthesises the headline/insights/commentary, so
+# it takes the reason tier; the per-widget fills are focused extractions, so they
+# take the fast tier. use_tier is a no-op until MODEL_TIERS=on (keeps the global
+# dspy LM, so dspy.context overrides in tests still apply).
+Initialization.use_tier(_CORE_PREDICTOR, "reason")
+for _predictor, _ in _WIDGET_PREDICTORS.values():
+    Initialization.use_tier(_predictor, "fast")
+
 
 def _gather_commentary(state: AgentState) -> str:
     """Collect EVERY answer text the turn produced, labelled by lens.

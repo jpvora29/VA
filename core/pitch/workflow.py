@@ -271,7 +271,9 @@ class PitchBuilderWorkflow:
             """.strip()
 
             try:
-                structured_llm = Initialization.llm.with_structured_output(
+                # Fast tier: per-question evidence extraction is a focused,
+                # schema-bound pass. Aliases llm until MODEL_TIERS=on.
+                structured_llm = Initialization.llm_fast.with_structured_output(
                     PitchExtractedInsight
                 )
                 response = structured_llm.invoke(
@@ -675,7 +677,9 @@ class PitchBuilderWorkflow:
 
         arc: dict[str, Any] = {}
         try:
-            structured_llm = Initialization.llm_creative.with_structured_output(
+            # Reason tier: the narrative spine is the report's core reasoning step
+            # — everything downstream expands it. Aliases llm_creative until ON.
+            structured_llm = Initialization.llm_reason.with_structured_output(
                 PitchNarrativeArc
             )
             response = structured_llm.invoke(
@@ -740,7 +744,9 @@ class PitchBuilderWorkflow:
         state["pitch_report_prompt"] = prompt
 
         try:
-            response = Initialization.llm_creative.invoke(
+            # Reason tier: writing the executive report is the heaviest synthesis
+            # in the pitch flow. Aliases llm_creative until MODEL_TIERS=on.
+            response = Initialization.llm_reason.invoke(
                 [
                     SystemMessage(
                         content=(
@@ -873,7 +879,9 @@ class PitchBuilderWorkflow:
 
         top_kpis: dict[str, Any] = {}
         try:
-            structured_llm = Initialization.llm.with_structured_output(PitchTopKPIs)
+            # Fast tier: headline KPI extraction is a constrained lookup over
+            # already-labelled metrics. Aliases llm until MODEL_TIERS=on.
+            structured_llm = Initialization.llm_fast.with_structured_output(PitchTopKPIs)
             response = structured_llm.invoke(
                 [
                     SystemMessage(

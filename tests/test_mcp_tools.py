@@ -119,6 +119,40 @@ def test_match_column_values_fuzzy(gpr_db):
     assert matches and matches[0] == "Manufacturing"
 
 
+def test_match_expands_country_acronym(fake_candidates):
+    # "UK" shares no string with "United Kingdom"; the value-synonym map bridges
+    # it deterministically, then the exact pass returns the real stored value.
+    assert mcp_tools.match_column_values("gpr", "Country", "UK") == ["United Kingdom"]
+    assert mcp_tools.match_column_values("gpr", "Country", "usa") == ["United States"]
+
+
+def test_match_rejects_discriminating_sibling(monkeypatch):
+    monkeypatch.setattr(
+        mcp_tools,
+        "_candidate_values",
+        lambda flow, column: {
+            "Business_Line": ["Accident & Health", "Marine", "Property"],
+            "Product_Line": ["Accident & Travel", "Motor"],
+        }.get(column, []),
+    )
+    # A shared token ("accident") must not let the sibling business line absorb a
+    # product term — "travel" vs "health" is a discriminating mismatch.
+    assert mcp_tools.match_column_values("gpr", "Business_Line", "Accident & Travel") == []
+    # The real product value still resolves (exact).
+    assert mcp_tools.match_column_values(
+        "gpr", "Product_Line", "Accident & Travel"
+    ) == ["Accident & Travel"]
+
+
+def test_match_keeps_shorter_subset(monkeypatch):
+    monkeypatch.setattr(
+        mcp_tools, "_candidate_values", lambda flow, column: ["SWISS RE", "SWISS LIFE"]
+    )
+    # "Swiss" is fully carried by the candidate (one-sided, not mutual), so the
+    # subset still resolves — the guard only rejects mutual mismatches.
+    assert "SWISS RE" in mcp_tools.match_column_values("gpr", "Carrier_Group", "Swiss")
+
+
 # ── audit_sql_filters (zero-row guard) ───────────────────────────────────────
 
 

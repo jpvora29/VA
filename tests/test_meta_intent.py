@@ -94,13 +94,13 @@ def test_conversation_intent_of_and_is_meta():
 # ── graph router short-circuit ───────────────────────────────────────────────
 
 
-def test_after_context_filler_routes_meta_to_conversation_node():
-    from core.graph.main import _after_context_filler
+def test_after_intent_classifier_routes_meta_to_conversation_node():
+    from core.graph.main import _after_intent_classifier
 
-    assert _after_context_filler({"routing_context": _ctx("summarize_chat")}) == "conversation_node"
-    assert _after_context_filler({"routing_context": _ctx("recall_previous")}) == "conversation_node"
-    assert _after_context_filler({"routing_context": _ctx("analyze")}) == "clarify_decide"
-    assert _after_context_filler({}) == "clarify_decide"
+    assert _after_intent_classifier({"routing_context": _ctx("summarize_chat")}) == "conversation_node"
+    assert _after_intent_classifier({"routing_context": _ctx("recall_previous")}) == "conversation_node"
+    assert _after_intent_classifier({"routing_context": _ctx("analyze")}) == "clarify_decide"
+    assert _after_intent_classifier({}) == "clarify_decide"
 
 
 # ── transcript formatting (pure) ─────────────────────────────────────────────

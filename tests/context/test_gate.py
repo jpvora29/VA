@@ -8,7 +8,7 @@ Run:  pytest tests/context -q
 """
 from __future__ import annotations
 
-from core.context.injection import HIGH_CARD_SAMPLE, gate_enabled, gate_valid_values
+from core.context.gate import HIGH_CARD_SAMPLE, gate_enabled, gate_valid_values
 
 
 def _no_match(_col, _query):

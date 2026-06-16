@@ -12,12 +12,14 @@ from __future__ import annotations
 
 from core.context.bundle import ContextBundle
 from core.context.engine import ContextEngine, engine_enabled, shadow_mode
-from core.context.injection import gate_enabled, gated_valid_values
+from core.context.gate import gate_enabled, gated_valid_values
+from core.context.injector import ContextInjector
 from core.context.retriever import EntityResolver, ResolvedValues, semantic_enabled
 
 __all__ = [
     "ContextBundle",
     "ContextEngine",
+    "ContextInjector",
     "EntityResolver",
     "ResolvedValues",
     "engine_enabled",

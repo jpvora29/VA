@@ -24,7 +24,8 @@ same matcher the MCP tools and schema identifier already use.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Tuple
+import re
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from core.registry import get_flow_registry
 from core.schemas.routing import QueryEntities, UnresolvedTerm
@@ -100,11 +101,19 @@ def resolve_entities(
     table_family: str,
     *,
     matcher: Optional[Callable[[str, str, str], List[str]]] = None,
+    group_by_columns: Iterable[str] = (),
+    dimension_terms: Iterable[str] = (),
 ) -> Tuple[Dict[str, List[str]], List[UnresolvedTerm]]:
     """Resolve entity mentions to exact stored values for the routed family.
 
     `matcher(flow, column, term) -> [values]` defaults to the shared
     `match_column_values`; injectable for tests. Pure lookup — zero LLM calls.
+
+    Role-aware: `group_by_columns` + `dimension_terms` come from the dimensions
+    detector. A bare grouping noun ("industries") on a group-by column is an
+    AXIS, not a filter value — it is neither resolved nor surfaced as unresolved.
+    A specific value on the same column ("manufacturing") still resolves, so a
+    mixed "across industries, focus on manufacturing" keeps both roles.
     """
     if matcher is None:
         from core.mcp.tools import match_column_values  # lazy: avoids LLM-layer import
@@ -121,6 +130,9 @@ def resolve_entities(
     flows = _FLOWS_BY_FAMILY.get((table_family or "").lower(), ())
     if not flows or entities is None:
         return resolved, unresolved
+
+    gb_columns = set(group_by_columns or ())
+    dim_terms = {t.strip().lower() for t in (dimension_terms or ()) if t}
 
     registry = get_flow_registry()
     for flow in flows:
@@ -139,6 +151,10 @@ def resolve_entities(
                     continue
                 # A measure word mis-bucketed as an entity is not a filter value.
                 if _is_measure_term(spec, term):
+                    continue
+                # A bare grouping noun on a group-by column is an AXIS, not a
+                # filter — skip it (and don't surface it as unresolved).
+                if column in gb_columns and term.strip().lower() in dim_terms:
                     continue
                 matches = matcher(flow, column, term) or []
                 if matches:
@@ -180,6 +196,53 @@ def unresolved_terms_of(routing_context: Any) -> List[Any]:
         else getattr(routing_context, "unresolved_terms", None)
     )
     return list(terms) if terms else []
+
+
+def detect_metrics(query: str, table_family: str) -> List[str]:
+    """Registry metric names whose name or alias appears in the query.
+
+    Deterministic, zero model calls — the metrics half of `QueryIntent`. A
+    word-boundary scan over the routed family's metric names + aliases (e.g.
+    'share of wallet' -> 'share_of_wallet'). Order follows first match.
+    """
+    text = (query or "").lower()
+    if not text:
+        return []
+    found: List[str] = []
+    registry = get_flow_registry()
+    for flow in _FLOWS_BY_FAMILY.get((table_family or "").lower(), ()):
+        spec = registry.get(flow)
+        if spec is None:
+            continue
+        for metric in (getattr(spec, "metrics", None) or {}).values():
+            if metric.name in found:
+                continue
+            needles = {metric.name.lower().replace("_", " ")}
+            needles.update(a.lower() for a in getattr(metric, "aliases", ()))
+            if any(
+                n and re.search(rf"\b{re.escape(n)}\b", text) for n in needles
+            ):
+                found.append(metric.name)
+    return found
+
+
+def group_by_of(routing_context: Any) -> List[str]:
+    """The contract's group-by columns off a RoutingContext model, dict, or None."""
+    if routing_context is None:
+        return []
+    intent = (
+        routing_context.get("query_intent")
+        if isinstance(routing_context, dict)
+        else getattr(routing_context, "query_intent", None)
+    )
+    if intent is None:
+        return []
+    columns = (
+        intent.get("group_by")
+        if isinstance(intent, dict)
+        else getattr(intent, "group_by", None)
+    )
+    return list(columns or [])
 
 
 def merge_resolved_values(

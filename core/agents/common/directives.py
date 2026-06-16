@@ -18,7 +18,7 @@ like "don't generate a chart" can never be misread as a chart request.
 from __future__ import annotations
 
 import re
-from typing import Any, Optional
+from typing import Any, Optional, Protocol, Tuple
 
 # The chart-ish nouns a directive can target.
 _CHART_NOUN = r"(?:charts?|graphs?|plots?|visuals?|visuali[sz]ations?)"
@@ -145,6 +145,69 @@ def detect_depth_directive(query: str) -> Optional[str]:
     if any(p.search(text) for p in _DIRECT_PATTERNS):
         return "direct"
     return None
+
+
+# ── deterministic overlay: fold the detectors over one query ─────────────────
+
+
+class DirectiveDetector(Protocol):
+    """Detects ONE inline presentation directive on the raw query and writes the
+    result onto `directives` (an `OutputDirectives`). Returns True when it fired,
+    so the caller can stamp source='deterministic' once for the whole turn."""
+
+    def __call__(self, query: str, directives: Any) -> bool: ...
+
+
+def _apply_chart_directive(query: str, directives: Any) -> bool:
+    charts = detect_chart_directive(query)
+    if not charts:
+        return False
+    directives.charts = charts
+    return True
+
+
+def _apply_presentation_directive(query: str, directives: Any) -> bool:
+    presentation = detect_presentation_directive(query)
+    if not presentation:
+        return False
+    directives.presentation = presentation
+    # Pin `charts` so the chart node and the prose-suppression helpers agree:
+    # chart_only needs the chart, table_only forbids it.
+    directives.charts = "required" if presentation == "chart_only" else "none"
+    return True
+
+
+def _apply_depth_directive(query: str, directives: Any) -> bool:
+    depth = detect_depth_directive(query)
+    if not depth:
+        return False
+    directives.depth = depth
+    return True
+
+
+# Ordered fold (OCP — add a directive by adding a row, not a new if-block):
+# chart suppression/request first, then body-shape (which may override `charts`),
+# then answer length.
+_DIRECTIVE_DETECTORS: Tuple[DirectiveDetector, ...] = (
+    _apply_chart_directive,
+    _apply_presentation_directive,
+    _apply_depth_directive,
+)
+
+
+def apply_directives(query: str, directives: Any) -> bool:
+    """Fold every deterministic directive detector over the RAW query, writing
+    each hit onto `directives`. Runs on the original query (the rephraser may
+    later strip "without a chart") and overrides whatever the LLM read. Stamps
+    source='deterministic' when any detector fired; returns True in that case.
+    """
+    fired = False
+    for detect_and_apply in _DIRECTIVE_DETECTORS:
+        if detect_and_apply(query, directives):
+            fired = True
+    if fired:
+        directives.source = "deterministic"
+    return fired
 
 
 def _directives_of(routing_context: Any) -> Any:

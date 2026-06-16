@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from core.agents.common.directives import (
+    apply_directives,
     charts_suppressed,
     detect_chart_directive,
     detect_depth_directive,
@@ -259,6 +260,27 @@ def test_table_only_suppresses_charts():
 
 
 # ── end-to-end: context filler overlay keeps charts coherent ─────────────────
+
+
+def test_apply_directives_folds_all_detectors():
+    # One call folds chart + presentation + depth detectors over the raw query.
+    rc = RoutingContext(table_family="premium", intent_type="new_question")
+    fired = apply_directives("just the table, briefly", rc.output_directives)
+    assert fired is True
+    assert rc.output_directives.presentation == "table_only"
+    assert rc.output_directives.charts == "none"  # table_only pins charts off
+    assert rc.output_directives.depth == "direct"
+    assert rc.output_directives.source == "deterministic"
+
+
+def test_apply_directives_no_hit_leaves_defaults():
+    rc = RoutingContext(table_family="premium", intent_type="new_question")
+    fired = apply_directives("What is Zurich's premium in Canada in 2024?", rc.output_directives)
+    assert fired is False
+    assert rc.output_directives.charts == "auto"
+    assert rc.output_directives.presentation == "prose"
+    assert rc.output_directives.depth == "analyst"
+    assert rc.output_directives.source == ""
 
 
 def test_overlay_pins_charts_for_presentation():

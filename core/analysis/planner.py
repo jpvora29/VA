@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import dspy
 
@@ -43,12 +43,29 @@ _PRINCIPLES_FILE = Path(__file__).parent / "analyst_principles.md"
 
 
 @dataclass(frozen=True)
+class LensPrimitive:
+    """A deterministic primitive a lens contributes to the evidence bundle.
+
+    `call` is a library primitive name (e.g. 'find_whitespace'); `group_by` are the
+    cut columns; `filters` are usually empty (inherited from the turn's scope) but
+    may pin a call-specific filter. The frontmatter block that declares these is
+    OPTIONAL — a lens without it stays prompt-only, exactly as today.
+    """
+
+    call: str
+    metric: str = ""
+    group_by: Tuple[str, ...] = ()
+    filters: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class Lens:
     name: str
     description: str
     applies_when: str
     body: str
     source: Path
+    primitives: Tuple[LensPrimitive, ...] = ()
 
 
 @dataclass
@@ -89,6 +106,7 @@ class LensLibrary:
             applies_when=str(meta.get("applies_when", "")),
             body=body.strip("\n"),
             source=path,
+            primitives=_parse_lens_primitives(meta.get("primitives")),
         )
 
     def catalog(self) -> str:
@@ -112,6 +130,33 @@ class LensLibrary:
 
     def names(self) -> list[str]:
         return list(self._lenses.keys())
+
+    def lens(self, name: str) -> Optional[Lens]:
+        return self._lenses.get(name)
+
+    def primitive_calls(self, names: Sequence[str]) -> List[Dict[str, Any]]:
+        """Orchestrator-ready call dicts for every primitive the named lenses declare.
+
+        The bridge between lens selection and the analytics orchestrator: a selected
+        lens with a `primitives:` block expands into its calls; lenses without one
+        contribute nothing here (they stay prompt-only). Order follows `names`, then
+        the order within each lens.
+        """
+        calls: List[Dict[str, Any]] = []
+        for name in names:
+            lens = self._lenses.get(name)
+            if lens is None:
+                continue
+            for primitive in lens.primitives:
+                calls.append(
+                    {
+                        "name": primitive.call,
+                        "metric": primitive.metric,
+                        "group_by": list(primitive.group_by),
+                        "filters": dict(primitive.filters),
+                    }
+                )
+        return calls
 
 
 _default_library: Optional[LensLibrary] = None
@@ -153,6 +198,32 @@ def plan_analysis(
     valid = set(library.names())
     plan.derived = [d for d in plan.derived if d.lens in valid]
     return plan
+
+
+def _parse_lens_primitives(raw: Any) -> Tuple[LensPrimitive, ...]:
+    """Parse the optional `primitives:` frontmatter block into typed specs.
+
+    Each item is ``{call, group_by, [metric], [filters]}``. Malformed/absent
+    entries are skipped so a lens degrades to prompt-only rather than erroring.
+    (Requires the YAML frontmatter parser; the line-based fallback can't represent
+    nested lists, in which case a lens simply contributes no primitives.)
+    """
+    out: List[LensPrimitive] = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not call:
+            continue
+        out.append(
+            LensPrimitive(
+                call=str(call),
+                metric=str(item.get("metric", "")),
+                group_by=tuple(item.get("group_by") or ()),
+                filters=dict(item.get("filters") or {}),
+            )
+        )
+    return tuple(out)
 
 
 def _load_frontmatter(text: str) -> dict[str, Any]:

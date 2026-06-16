@@ -1,5 +1,13 @@
 """LangChain agent middleware for the analyst solver.
 
+This is the **LangChain implementation of the shared NodeHooks contract**
+(`core.agents.common.node_hooks`, architecture doc §1 Layer 4): the solver runs
+the same before/after-model concerns the DSPy rails get through
+`with_node_hooks`, but expressed as `AgentMiddleware` because the solver is a
+`create_agent` agent. `SolverObservabilityMiddleware.after_model` is the
+after-model hook (token accounting + tracing); the rails' equivalent traces and
+validates via `StandardNodeHooks.after_model`.
+
 The solver is the only `create_agent` path in the app, so this is the one place
 LangChain middleware attaches (the deterministic GPR/Survey/GIMMI rails are DSPy +
 LangGraph and are unaffected). Two concerns live here:

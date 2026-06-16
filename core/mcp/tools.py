@@ -311,6 +311,32 @@ def _clean_for_match(value: str) -> str:
     return " ".join(tokens) if tokens else lowered.strip()
 
 
+# A salient token is "carried" by the other side when some token there is a near
+# string match. Below this, the token is genuinely absent — a discriminating
+# difference, not noise.
+_TOKEN_COVERAGE_CUTOFF = 85
+
+
+def _token_absent(token: str, ref_tokens: List[str]) -> bool:
+    """True when no token in `ref_tokens` is a near match for `token`."""
+    return all(fuzz.ratio(token, ref) < _TOKEN_COVERAGE_CUTOFF for ref in ref_tokens)
+
+
+def _mutually_distinct(term_tokens: List[str], candidate_tokens: List[str]) -> bool:
+    """True when each side has a salient token the other lacks.
+
+    This is the discriminating-token guard: a high `token_set_ratio` / `WRatio`
+    can clear the cutoff on a *shared* token alone ("accident travel" vs
+    "accident health" both keep "accident"), masking that "travel" and "health"
+    are different. We reject only when the mismatch is mutual — the term has a
+    token absent from the candidate AND the candidate has one absent from the
+    term — so a user's shorter subset ("Swiss" -> "SWISS RE") still resolves.
+    """
+    term_has_extra = any(_token_absent(t, candidate_tokens) for t in term_tokens)
+    candidate_has_extra = any(_token_absent(c, term_tokens) for c in candidate_tokens)
+    return term_has_extra and candidate_has_extra
+
+
 def match_column_values(
     flow: str,
     column: str,
@@ -326,13 +352,19 @@ def match_column_values(
     `Client_Segment`, `Region`, survey `Sections` / `Attributes`, etc.
 
     Resolution order, most-specific first:
+      0. Value-synonym expansion -> the term is rewritten to its canonical value
+         when the registry declares it (e.g. "UK" -> "United Kingdom"), so the
+         acronym cases string-distance can't bridge resolve deterministically.
       1. Exact case-insensitive match -> returned alone (no fuzzy noise).
       2. Composite fuzzy score over *generic-token-stripped* strings:
          `max(token_set_ratio, WRatio)`. token_set handles word reordering and
          common-word collisions (the failure mode of plain partial_ratio);
          WRatio rescues abbreviations/typos. Plain `ratio` breaks ties so the
          tightest full match (e.g. "SWISS RE" for "Swiss Reinsurance") ranks
-         above looser ones ("SWISS LIFE").
+         above looser ones ("SWISS LIFE"). A discriminating-token guard then
+         drops candidates that clear the cutoff only on a shared token while
+         differing on a salient one ("Accident & Travel" must NOT match the
+         sibling "Accident & Health").
 
     Returns the best matches in descending score order, deduplicated, empty when
     the column is unknown or nothing clears the cutoff.
@@ -345,6 +377,13 @@ def match_column_values(
     if not term_norm:
         return []
 
+    # 0) Expand a declared value-synonym/acronym to its canonical value, then let
+    #    the exact + fuzzy passes re-match it against the real stored values.
+    spec = get_flow_registry().get(flow)
+    canonical = spec.canonical_value(column, term_norm) if spec else None
+    if canonical:
+        term_norm = canonical
+
     # 1) Exact case-insensitive hit wins outright.
     for candidate in candidates:
         if candidate.lower() == term_norm.lower():
@@ -353,6 +392,7 @@ def match_column_values(
     cleaned_term = _clean_for_match(term_norm)
     if not cleaned_term:
         return []
+    term_tokens = cleaned_term.split()
 
     scored: List[tuple[str, float, float]] = []
     for candidate in candidates:
@@ -361,9 +401,12 @@ def match_column_values(
             fuzz.token_set_ratio(cleaned_term, cleaned_candidate),
             fuzz.WRatio(cleaned_term, cleaned_candidate),
         )
-        if score >= score_cutoff:
-            tiebreak = fuzz.ratio(cleaned_term, cleaned_candidate)
-            scored.append((candidate, score, tiebreak))
+        if score < score_cutoff:
+            continue
+        if _mutually_distinct(term_tokens, cleaned_candidate.split()):
+            continue
+        tiebreak = fuzz.ratio(cleaned_term, cleaned_candidate)
+        scored.append((candidate, score, tiebreak))
 
     scored.sort(key=lambda item: (item[1], item[2]), reverse=True)
 

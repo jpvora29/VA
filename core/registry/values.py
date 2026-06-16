@@ -25,6 +25,21 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 
+def _sorted_years(values: List[str]) -> List[str]:
+    """Sort year-ish values ascending: numerically when possible, else lexically.
+
+    Year columns are typically stored as integers, but degrade gracefully if a
+    flow's year column ever holds non-numeric periods.
+    """
+    def key(value: str) -> Tuple[int, Any]:
+        try:
+            return (0, int(value))
+        except (TypeError, ValueError):
+            return (1, str(value))
+
+    return sorted(values, key=key)
+
+
 @dataclass
 class DistinctValueRegistry:
     """Cached distinct-value lookups, keyed by (table, column)."""
@@ -89,6 +104,25 @@ class DistinctValueRegistry:
             if values:
                 return values
         return []
+
+    def valid_years(self, flow: str) -> List[str]:
+        """Distinct years for `flow`, ascending so the latest is the LAST element.
+
+        The runtime, data-sourced replacement for the hardcoded
+        ``valid_year_quarter_* / valid_years_*`` lists in
+        ``config/valid_values_config.py``: it reads the flow's declared year
+        column (registry ``date_columns['year']`` — ``Year`` for GPR, ``Survey_Year``
+        for survey) and returns its distinct values sorted numerically. The
+        ascending order matches the contract the planner's ``valid_year_quarter``
+        input documents ("the most recent period is the last element").
+        """
+        spec = get_flow_registry().get(flow)
+        if spec is None:
+            return []
+        year_column = spec.date_columns.get("year")
+        if not year_column:
+            return []
+        return _sorted_years(self.for_flow_column(flow, year_column))
 
     def refresh(self) -> None:
         """Drop the cache (e.g. after the warehouse data changes)."""

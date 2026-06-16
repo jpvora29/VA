@@ -3,6 +3,11 @@ name: whitespace
 description: Find slices where the Marsh book is strong/growing but the carrier is absent or materially thin.
 applies_when: a carrier's product/industry/segment footprint is discussed and gaps versus the market are useful (portfolio gaps, growth headroom).
 requires: [GPR]
+primitives:
+  - call: find_whitespace
+    group_by: [Product_Line, SIC_Major_Class]
+  - call: compute_market_presence
+    group_by: [SIC_Major_Class]
 ---
 
 Whitespace = the carrier has **zero, null, or materially insignificant** premium

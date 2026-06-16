@@ -9,11 +9,14 @@ Run:  pytest tests/test_contract_resolution.py -q -o pythonpath=.
 from __future__ import annotations
 
 from core.agents.common.contract import (
+    detect_metrics,
+    group_by_of,
     merge_resolved_values,
     resolve_entities,
     resolved_filters_of,
 )
-from core.schemas.routing import QueryEntities, RoutingContext
+from core.agents.common.dimensions import detect_group_by
+from core.schemas.routing import QueryEntities, QueryIntent, RoutingContext
 
 # (flow, column, lowercased term) -> stored values. Anything absent is a miss.
 _MATCHES = {
@@ -98,6 +101,82 @@ def test_merge_resolved_values_unions_in_order():
         "Country": ["United Kingdom", "Canada"],
         "Carrier_Group": ["AXA"],
     }
+
+
+# ── slice 3: grouping vs filtering (QueryIntent roles) ───────────────────────
+
+
+def test_detect_group_by_maps_dimension_phrases_to_columns():
+    gb = detect_group_by("How does SoW vary across industries in the UK?", "premium")
+    assert gb.columns == ["SIC_Major_Class"]
+    assert "industries" in gb.dimension_terms
+
+    assert detect_group_by("premium by product for Zurich", "premium").columns == [
+        "Product_Line"
+    ]
+    assert detect_group_by("score per region", "survey").columns == ["Region"]
+
+
+def test_synonyms_and_for_each_group_but_bare_for_does_not():
+    assert detect_group_by("SoW across sectors", "premium").columns == [
+        "SIC_Major_Class"
+    ]
+    assert detect_group_by("premium for each segment", "premium").columns == [
+        "Client_Segment"
+    ]
+    # Bare "for <value>" is a FILTER, not a grouping axis.
+    assert detect_group_by("SoW for manufacturing", "premium").columns == []
+    # "in the UK" is a filter context, never a group-by.
+    assert detect_group_by("Zurich's premium in the UK", "premium").columns == []
+
+
+def test_grouping_noun_is_not_resolved_as_a_filter():
+    # The LLM may bucket the bare grouping word; it must NOT become a filter,
+    # nor be surfaced as an unresolved "did you mean…?" term.
+    entities = QueryEntities(industries=["industries"])
+    resolved, unresolved = resolve_entities(
+        entities,
+        "premium",
+        matcher=_matcher,
+        group_by_columns=["SIC_Major_Class"],
+        dimension_terms={"industry", "industries"},
+    )
+    assert resolved == {}
+    assert unresolved == []
+
+
+def test_specific_value_still_filters_on_a_group_by_column():
+    # "across industries, focus on manufacturing": SIC is both a group-by axis
+    # AND carries a filter value — the value must still resolve.
+    entities = QueryEntities(industries=["manufacturing"])
+    resolved, unresolved = resolve_entities(
+        entities,
+        "premium",
+        matcher=_matcher,
+        group_by_columns=["SIC_Major_Class"],
+        dimension_terms={"industry", "industries"},
+    )
+    assert resolved == {"SIC_Major_Class": ["Mfg - Heavy", "Mfg - Light"]}
+    assert unresolved == []
+
+
+def test_detect_metrics_reads_registry_aliases():
+    assert detect_metrics("Zurich's share of wallet across industries", "premium") == [
+        "share_of_wallet"
+    ]
+    assert detect_metrics("how is sentiment trending", "survey") == []
+
+
+def test_group_by_of_handles_model_dict_and_none():
+    ctx = RoutingContext(
+        table_family="premium",
+        intent_type="new_question",
+        query_intent=QueryIntent(group_by=["SIC_Major_Class"]),
+    )
+    assert group_by_of(ctx) == ["SIC_Major_Class"]
+    assert group_by_of(ctx.model_dump()) == ["SIC_Major_Class"]
+    assert group_by_of(None) == []
+    assert group_by_of({}) == []
 
 
 def test_resolved_filters_of_handles_model_dict_and_none():

@@ -13,6 +13,7 @@ from langgraph.graph import END, START, StateGraph
 
 from core.agents.analyst_agent import analyst_agent_node
 from core.agents.context_filler import ContextFillingAgent
+from core.agents.intent_classifier import IntentClassifier
 from core.agents.fallback import Fallback
 from core.agents.gimmi.response import check_if_gimmi_required, gimmi_insight
 from core.agents.gimmi.sql_agent import (
@@ -54,6 +55,7 @@ class PitchQuestionGraph:
         self._compiled_app = None
 
         self.context_filler = ContextFillingAgent().context_filler_agent
+        self.intent_classifier = IntentClassifier().classify_intent
         self.rephraser_agent = QueryRephraseAgent().rephraser_agent
         self.router = RouterNode().router_node
         self.survey_agent = SurveySubGraph().SurveyAgent
@@ -74,6 +76,7 @@ class PitchQuestionGraph:
         workflow = StateGraph(PitchAgentState)
 
         workflow.add_node("context_filler", self.context_filler)
+        workflow.add_node("intent_classifier", self.intent_classifier)
         workflow.add_node("rephraser_agent", self.rephraser_agent)
         workflow.add_node("router", self.router)
         workflow.add_node("survey_agent", self.survey_agent)
@@ -91,7 +94,11 @@ class PitchQuestionGraph:
         workflow.add_node("gimmi_insight", self.gimmi_insight)
 
         workflow.add_edge(START, "context_filler")
-        workflow.add_edge("context_filler", "rephraser_agent")
+        # Layer 1 (filter extraction) -> Layer 2 (intent: depth/directives) ->
+        # rephraser. The pitch path has no meta-intent branch, so intent_classifier
+        # simply finalizes depth + directives before routing.
+        workflow.add_edge("context_filler", "intent_classifier")
+        workflow.add_edge("intent_classifier", "rephraser_agent")
         workflow.add_edge("rephraser_agent", "router")
 
         workflow.add_conditional_edges(

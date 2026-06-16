@@ -154,7 +154,9 @@ Synthesis focus: {focus}
         # A Stop raises out of `.stream()` mid-token; the broad except below turns
         # that into a graceful empty answer while the UI keeps the partial it saw.
         parts: List[str] = []
-        for chunk in Initialization.llm_creative.with_config(
+        # Reason tier: the final synthesis is the turn's highest-value reasoning.
+        # Aliases llm_creative until MODEL_TIERS=on (zero change by default).
+        for chunk in Initialization.llm_reason.with_config(
             tags=["final_answer"]
         ).stream(messages):
             parts.append(getattr(chunk, "content", "") or "")

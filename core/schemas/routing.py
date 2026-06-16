@@ -117,6 +117,40 @@ class QueryEntities(BaseModel):
     )
 
 
+class QueryIntent(BaseModel):
+    """The structured ROLES of the current turn — what to filter on, what to
+    group across, and which metrics to compute.
+
+    Slice 3 of the query contract. Historically every entity mention was treated
+    as a FILTER, so a grouping axis ("across industries") could be matched to a
+    stored value and injected as a spurious WHERE clause — and with semantic
+    resolution on, a concept word like "industries" maps straight onto SIC
+    classes. Separating ROLE makes grouping structural: `group_by` columns are
+    NEVER value-resolved as filters. A column may legitimately appear in BOTH
+    `group_by` and `filters` ("across industries, focus on manufacturing").
+
+    Filled deterministically downstream (dimensions detector + contract
+    resolver). `filters` mirrors `RoutingContext.resolved_filters` (which stays
+    the live filter map HITL writes into); the context-filler LLM leaves it empty.
+    """
+
+    filters: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="Column -> exact stored values to filter on (mirrors resolved_filters).",
+    )
+    group_by: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Columns the query groups ACROSS — the GROUP BY axes, e.g. "
+            "['SIC_Major_Class'] for 'share of wallet across industries'."
+        ),
+    )
+    metrics: List[str] = Field(
+        default_factory=list,
+        description="Registry metric names the query asks for, e.g. ['share_of_wallet'].",
+    )
+
+
 class UnresolvedTerm(BaseModel):
     """An entity mention that failed to resolve to any stored value."""
 
@@ -251,6 +285,14 @@ class RoutingContext(BaseModel):
     unresolved_terms: List[UnresolvedTerm] = Field(
         default_factory=list,
         description="LEAVE EMPTY. Filled downstream with mentions that matched no stored value.",
+    )
+    query_intent: QueryIntent = Field(
+        default_factory=QueryIntent,
+        description=(
+            "LEAVE EMPTY. Structured turn roles (filters / group_by / metrics) "
+            "filled deterministically downstream. `group_by` carries the GROUP BY "
+            "axes so a grouping word is never mistaken for a filter value."
+        ),
     )
 
 

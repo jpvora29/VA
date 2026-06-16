@@ -24,6 +24,32 @@ from pydantic import BaseModel, Field
 from core.schemas.routing import RoutingContext
 
 
+class PrimitiveCall(BaseModel):
+    """One deterministic analytics primitive the planner wants computed.
+
+    The planner emits these for metrics the primitive library covers (rank, SoP,
+    SoW, YoY, peer average, whitespace, …) instead of describing SQL; the analytics
+    orchestrator runs them deterministically. Filters/group_by are grounded the
+    same way as the rest of the plan.
+    """
+
+    name: str = Field(
+        description="Registered primitive name, e.g. 'compute_rank', 'find_whitespace'."
+    )
+    metric: str = Field(
+        default="",
+        description="Measure to compute over, e.g. 'premium' or 'score'.",
+    )
+    group_by: List[str] = Field(
+        default_factory=list,
+        description="Dimension cut column(s), e.g. ['Product_Line'].",
+    )
+    filters: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Call-specific filters (merged over the turn's shared scope).",
+    )
+
+
 class AnalyticalPlan(BaseModel):
     """Structured, flow-agnostic analytical plan emitted by the planner.
 
@@ -64,6 +90,16 @@ class AnalyticalPlan(BaseModel):
     )
     notes: Optional[str] = Field(
         default="", description="Additional notes or considerations"
+    )
+    primitives: List[PrimitiveCall] = Field(
+        default_factory=list,
+        description=(
+            "Deterministic primitive calls for metrics the analytics library covers "
+            "(rank, share of portfolio/wallet, YoY, peer average, whitespace, …). "
+            "Empty when the query needs ad-hoc SQL instead — the orchestrator then "
+            "falls back to the SQL agent. Additive: leaving this empty preserves the "
+            "existing SQL path exactly."
+        ),
     )
 
 

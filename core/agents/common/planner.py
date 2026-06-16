@@ -14,7 +14,11 @@ from typing import Any, Dict, List, Optional
 import dspy
 from pydantic import BaseModel
 
-from core.context.injection import gate_enabled, gated_valid_values
+from core.analytics.timeframe import (
+    resolve_default_timeframe,
+    timeframe_resolution_enabled,
+)
+from core.context.gate import gate_enabled, gated_valid_values
 from core.schemas.analytical import PlannerSignature
 from core.schemas.routing import RoutingContext
 
@@ -47,6 +51,12 @@ class BasePlannerNode(dspy.Module):
         self.valid_values = valid_values
         self.rules = rules
         self.planner = dspy.ChainOfThought(PlannerSignature)
+        # Reason tier: planning is the hardest reasoning on the analytical path.
+        # Lazy import keeps this module free of the LLM/init layer at import time;
+        # use_tier is a no-op until MODEL_TIERS=on (keeps the global dspy LM).
+        from core.initialization import Initialization
+
+        Initialization.use_tier(self.planner, "reason")
         if demos:
             self.planner.demos = demos
 
@@ -86,6 +96,25 @@ class BasePlannerNode(dspy.Module):
             user_query=user_query,
         )
 
-        if isinstance(result.plan, BaseModel):
-            return result.plan.model_dump_json(indent=2)
-        return result.plan
+        plan = result.plan
+        # Deterministic timeframe backstop (Phase 1): when the plan leaves the
+        # timeframe empty and the query carries no time reference, fill the latest
+        # available year instead of letting an unfiltered all-years aggregate
+        # slip through. Only fills a BLANK timeframe — explicit/relative choices
+        # are never overridden. Flag-gated; default off = identical to today.
+        if timeframe_resolution_enabled() and isinstance(plan, BaseModel):
+            if not (getattr(plan, "timeframe", "") or "").strip():
+                resolved = resolve_default_timeframe(
+                    valid_year_quarter or [],
+                    user_query,
+                    timeframe_hint=getattr(routing_context, "timeframe_hint", "") or "",
+                )
+                if resolved:
+                    try:
+                        plan.timeframe = resolved
+                    except Exception:  # noqa: BLE001 - presentation backstop, never fatal
+                        pass
+
+        if isinstance(plan, BaseModel):
+            return plan.model_dump_json(indent=2)
+        return plan

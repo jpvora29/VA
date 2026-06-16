@@ -1,32 +1,29 @@
-"""Context Filler node.
+"""Context Filler node — Layer 1 (Filter Extraction).
 
-First LLM call in the graph. Produces a `RoutingContext` from the user's
-current query + recent conversation history. Downstream:
-- `RephraserAgentNode` uses it to rewrite the sentence with inherited filters.
+First LLM call in the graph. Produces a `RoutingContext` from the user's current
+query + recent conversation history: the SQL `table_family`, inherited filters,
+the raw turn `intent_type`, and the entity mentions resolved into exact stored
+values (`resolved_filters`, `query_intent`). Downstream:
+- The `IntentClassifier` (Layer 2) finalizes depth/directives/meta-intent.
+- `RephraserAgentNode` rewrites the sentence with inherited filters.
 - `RouterNode` reads `routing_context.table_family` to dispatch deterministically
   (no second LLM call needed).
 
-This split — extracted from the original monolithic rephraser — exists so
-each LLM has one cognitive job (CoT works better) and so the routing
-decision becomes a structured artifact instead of an implicit signal hidden
-in the rephrased text.
+This split — extracted from the original monolithic rephraser — exists so each
+LLM has one cognitive job (CoT works better) and so the routing decision becomes
+a structured artifact instead of an implicit signal hidden in the rephrased text.
 """
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import List
 
 import dspy
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
-from core.agents.common.contract import resolve_entities
-from core.agents.common.directives import (
-    detect_chart_directive,
-    detect_depth_directive,
-    detect_presentation_directive,
-)
-from core.agents.common.meta_intent import detect_conversation_intent
+from core.agents.common.contract import detect_metrics, resolve_entities
+from core.agents.common.dimensions import detect_group_by
 from core.context.bundle import schema_outline
 from core.context.engine import engine_enabled
 from core.data.general import GeneralFunctions
@@ -34,7 +31,7 @@ from core.initialization import Initialization
 from core.observability import log_event
 from core.schemas.routing import (
     ContextFillerSignature,
-    DepthClassifierSignature,
+    QueryIntent,
     RoutingContext,
 )
 from core.state.agent_state import AgentState
@@ -78,44 +75,10 @@ class ContextFillerNode(dspy.Module):
         )
 
 
-class DepthClassifierNode(dspy.Module):
-    """Dedicated lookup-vs-analytical classifier.
-
-    Split out of the monolithic context-filler call so depth gets its own
-    chain-of-thought step. The combined signature reliably anchored on the
-    `analysis_depth` default ("lookup"); a focused predictor with crisp
-    contrasts classifies far more accurately. Its output overwrites whatever the
-    context filler guessed.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.predictor = dspy.ChainOfThought(DepthClassifierSignature)
-
-    def forward(
-        self, current_user_query: str, table_family: str, intent_type: str
-    ) -> str:
-        # HYBRID is always analytical — a narrow deterministic floor (not a broad
-        # keyword regex) so we never waste an LLM call to (re)confirm it.
-        if table_family == "both":
-            return "analytical"
-        result = self.predictor(
-            current_user_query=current_user_query,
-            table_family=table_family,
-            intent_type=intent_type,
-        )
-        decision = result.depth_decision
-        depth = getattr(decision, "analysis_depth", None)
-        if depth not in ("lookup", "analytical"):
-            # Defensive: on any odd shape prefer the safer (richer) path.
-            return "analytical"
-        return depth
-
-
-# Stateless modules/predictors — instantiate once and reuse across turns. Routing
-# context stays deterministic (default LM).
+# Stateless module — instantiate once and reuse across turns (default LM).
+# Depth/directive/meta-intent finalization now lives in the IntentClassifier
+# (Layer 2); this node owns Layer 1 filter extraction only.
 _CONTEXT_FILLER_NODE = ContextFillerNode()
-_DEPTH_CLASSIFIER_NODE = DepthClassifierNode()
 
 
 class ContextFillingAgent:
@@ -196,56 +159,16 @@ class ContextFillingAgent:
                 conversation_history=conversation_history,
             )
 
-        # Re-decide analysis_depth with a dedicated classifier. The combined
-        # context-filler call reliably anchored on the "lookup" default, so the
-        # analytical agent path almost never fired. This focused step overwrites
-        # the guess. (`fallback` queries keep whatever value — they never route
-        # to the analyst agent anyway.)
-        if routing_context.table_family != "fallback":
-            with Initialization.dspy_usage(
-                "depth_classifier", node="context_filler"
-            ):
-                routing_context.analysis_depth = _DEPTH_CLASSIFIER_NODE(
-                    current_user_query=question,
-                    table_family=routing_context.table_family,
-                    intent_type=routing_context.intent_type,
-                )
+        # NOTE: analysis_depth, output_directives, and conversation_intent are
+        # finalized downstream by the IntentClassifier (Layer 2) — this node owns
+        # Layer 1 filter extraction only. The LLM's first-pass values for those
+        # fields stay on routing_context until the classifier overwrites them.
 
-        # Deterministic directive overlay: the phrase detector runs on the RAW
-        # current query (the rephraser may strip "without a chart" later) and
-        # overrides whatever the LLM read — common phrasings must never depend
-        # on a model call to be honored.
-        detected = detect_chart_directive(question)
-        if detected:
-            routing_context.output_directives.charts = detected
-            routing_context.output_directives.source = "deterministic"
-
-        # Body-shape + depth overlay, same deterministic-first contract. A
-        # presentation hit also pins `charts` so the chart node and the
-        # prose-suppression helpers agree: chart_only needs the chart, table_only
-        # forbids it.
-        presentation = detect_presentation_directive(question)
-        if presentation:
-            routing_context.output_directives.presentation = presentation
-            routing_context.output_directives.source = "deterministic"
-            if presentation == "chart_only":
-                routing_context.output_directives.charts = "required"
-            elif presentation == "table_only":
-                routing_context.output_directives.charts = "none"
-        depth = detect_depth_directive(question)
-        if depth:
-            routing_context.output_directives.depth = depth
-            routing_context.output_directives.source = "deterministic"
-
-        # Conversation meta-intent overlay: "summarize our discussion", "what did
-        # you recommend earlier?". Only when there IS prior conversation to talk
-        # about — a first-turn meta phrase has nothing to recap, so it falls
-        # through to normal routing. A hit short-circuits past SQL/analyst to the
-        # transcript handler (see the conditional edge in core.graph.main).
-        if len(user_messages) > 1:
-            meta = detect_conversation_intent(question)
-            if meta:
-                routing_context.conversation_intent = meta
+        # Role detection (slice 3): grouping axes ("across industries", "by
+        # product") are NOT filters. Detect them deterministically first so the
+        # resolver can skip a grouping noun instead of mis-matching it to a
+        # stored value (or, with semantic on, mapping "industries" onto SIC).
+        group_by = detect_group_by(question, routing_context.table_family)
 
         # Contract resolution: turn the extracted entity MENTIONS into exact
         # stored values, once, deterministically (rapidfuzz — no LLM call).
@@ -255,7 +178,17 @@ class ContextFillingAgent:
         # Overwritten unconditionally — the LLM is told to leave these empty,
         # but a hallucinated value must never survive into the contract.
         routing_context.resolved_filters, routing_context.unresolved_terms = (
-            resolve_entities(routing_context.entities, routing_context.table_family)
+            resolve_entities(
+                routing_context.entities,
+                routing_context.table_family,
+                group_by_columns=group_by.columns,
+                dimension_terms=group_by.dimension_terms,
+            )
+        )
+        routing_context.query_intent = QueryIntent(
+            filters=routing_context.resolved_filters,
+            group_by=group_by.columns,
+            metrics=detect_metrics(question, routing_context.table_family),
         )
 
         log_event(
@@ -264,16 +197,12 @@ class ContextFillingAgent:
             node="context_filler",
             table_family=routing_context.table_family,
             intent=routing_context.intent_type,
-            analysis_depth=routing_context.analysis_depth,
             inherited_carrier=routing_context.inherited_carrier,
             inherited_country=routing_context.inherited_country,
             inherited_year=routing_context.inherited_year,
-            charts_directive=routing_context.output_directives.charts,
-            presentation_directive=routing_context.output_directives.presentation,
-            depth_directive=routing_context.output_directives.depth,
-            conversation_intent=routing_context.conversation_intent,
-            charts_directive_source=routing_context.output_directives.source,
             resolved_filter_columns=list(routing_context.resolved_filters),
+            group_by=routing_context.query_intent.group_by,
+            metrics=routing_context.query_intent.metrics,
             unresolved_terms=[
                 f"{u.kind}:{u.term}" for u in routing_context.unresolved_terms
             ],
