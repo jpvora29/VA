@@ -22,3 +22,6 @@ generated_reports/
 # App-state DB (users, saved chats, episodic/semantic memory, graph checkpoints)
 app_state.db
 app_state.db-*
+
+# Studio dev seed DB (generated)
+studio/_seed/

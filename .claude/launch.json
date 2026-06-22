@@ -6,6 +6,12 @@
       "runtimeExecutable": ".venv/Scripts/python.exe",
       "runtimeArgs": ["app.py"],
       "port": 8080
+    },
+    {
+      "name": "studio-demo",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "studio.demo_app"],
+      "port": 8099
     }
   ]
 }

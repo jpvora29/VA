@@ -1,0 +1,36 @@
+# Studio decision-tree rules — declarative thresholds (single source of truth).
+#
+# Parsed by studio/rules/engine.py, which has hardcoded fallbacks equal to every
+# value here, so a parse miss is a no-op (never breaks a page). Tune these without
+# code changes. Values marked NEEDS-SIGNOFF are defaults pending stakeholders
+# (see studio/DESIGN.md §6).
+
+truncation:
+  trigger_rows: 20      # tables with <= this many rows show in full
+  top_n: 10             # else show this many highest ...
+  bottom_n: 10          # ... and this many lowest, by the page's sort metric
+
+yoy:
+  high_growth_pct: 100.0           # only surface YoY growth above this %
+  significant_premium_floor: 1000000   # ...and only when current-year premium >= this  (NEEDS-SIGNOFF: $1M)
+  always_show_both_years: true     # always render prior + current premium side by side
+
+rank:
+  window: 5             # compare carrier rank R against [R-window, R+window] excluding R  (NEEDS-SIGNOFF: 5)
+
+whitespace:
+  material_market_gwp: 5000000   # market (Marsh) GWP must exceed this to count as whitespace ($5M)
+  carrier_ceiling: 0.0           # carrier GWP must be <= this to count as a gap  (NEEDS-SIGNOFF: ~0)
+  top_n: 5                       # keep the N biggest gaps by market GWP
+
+peer:
+  aggregate_only: true   # confidentiality: peer comparisons are AVERAGES only, never named peers
+
+# SWOT quadrant selectors — fact-driven (DESIGN.md §1). Each quadrant lists the
+# signals that route a fact into it. v1 placeholders; thresholds reuse the blocks
+# above. Expanded when the Country/SWOT page is built.
+swot:
+  strengths:   [high_share_of_wallet, strong_rank, above_peer_score]
+  weaknesses:  [below_peer_score, negative_yoy_significant]
+  opportunities: [whitespace, high_growth_significant]
+  threats:     [peer_outgrowing, declining_rank, eroding_share_of_wallet]
