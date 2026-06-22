@@ -269,25 +269,29 @@ def compute_peer_average(args: PrimitiveArgs, *, engine: Optional[Any] = None) -
     country_col = peer.get("country")
     country_val = args.filters.get(spec.entity_columns.get("country"))
     if country_col and country_val:
-        params["pcountry"] = country_val
-        peer_where.append(f'LOWER("{country_col}") = LOWER(:pcountry)')
+        # Honour a multi-select country filter (IN) as well as a single value.
+        cvals = list(country_val) if isinstance(country_val, (list, tuple, set)) else [country_val]
+        cvals = [v for v in cvals if v not in (None, "", "all", "All")]
+        if cvals:
+            ph = []
+            for j, v in enumerate(cvals):
+                k = f"pc{j}"
+                params[k] = v
+                ph.append(f"LOWER(:{k})")
+            peer_where.append(f'LOWER("{country_col}") IN ({", ".join(ph)})')
     peer_sub = (
         f'SELECT DISTINCT "{peer["members"]}" FROM "{peer["table"]}" '
         f'WHERE {" AND ".join(peer_where)}'
     )
 
     # All other filters apply to the measure table; the subject carrier filter is
-    # excluded (we want the peers, not the subject).
+    # excluded (we want the peers, not the subject). Reuse the shared `where_clause`
+    # so multi-select (IN) filters are honoured exactly as in every other primitive.
+    non_carrier = {k: v for k, v in args.filters.items() if k != carrier_col}
+    extra = where_clause(spec, non_carrier, params)  # " WHERE …" or ""
     clauses = [f'"{carrier_col}" IN ({peer_sub})']
-    for i, (col, val) in enumerate(
-        (k, v) for k, v in args.filters.items() if k != carrier_col
-    ):
-        c = safe_column(spec, col)
-        key = f"f{i}"
-        clauses.append(
-            f'LOWER("{c}") = LOWER(:{key})' if isinstance(val, str) else f'"{c}" = :{key}'
-        )
-        params[key] = val
+    if extra:
+        clauses.append(extra.replace(" WHERE ", "", 1))
 
     cut_sel = ", ".join(f'"{c}"' for c in cuts)
     select = (cut_sel + ", " if cut_sel else "") + f'{agg}("{column}") AS value'
