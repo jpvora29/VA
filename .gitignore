@@ -25,3 +25,6 @@ app_state.db-*
 
 # Studio dev seed DB (generated)
 studio/_seed/
+
+# Studio filter-option cache (generated per DB; speeds app launch)
+studio/_cache/

@@ -8,8 +8,11 @@ reflects the real data — no dependency on the legacy ``config`` package.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List
 
 from sqlalchemy import create_engine, text
@@ -18,6 +21,10 @@ from core.registry import get_flow_registry
 from logger import get_logger
 
 logger = get_logger(__name__)
+
+# Persisted across launches so the expensive first-launch DISTINCT scans run once
+# per DB, not on every start. Auto-invalidates when the DB file changes.
+_CACHE_DIR = Path(__file__).resolve().parent / "_cache"
 
 
 @lru_cache(maxsize=1)
@@ -122,6 +129,40 @@ def dependent_options(
     return [{"label": str(v), "value": v} for v in values]
 
 
+def peer_members(flow: str, carrier: str, *, country=None) -> List[str]:
+    """The carrier's existing peers from the flow's Peers table (empty if none).
+
+    Powers the custom-peers dialog: an empty list means "no peers exist for this
+    carrier — pick custom peers instead"."""
+    spec = get_flow_registry().get(flow)
+    peer = getattr(spec, "peer_columns", None) if spec else None
+    if not spec or not peer or not carrier:
+        return []
+    params: Dict[str, Any] = {"subject": carrier}
+    where = [f'LOWER("{peer["key"]}") = LOWER(:subject)']
+    ccol = peer.get("country")
+    if ccol and country:
+        cvals = list(country) if isinstance(country, (list, tuple, set)) else [country]
+        cvals = [v for v in cvals if v not in (None, "", "all", "All")]
+        if cvals:
+            ph = []
+            for j, v in enumerate(cvals):
+                k = f"c{j}"
+                params[k] = v
+                ph.append(f"LOWER(:{k})")
+            where.append(f'LOWER("{ccol}") IN ({", ".join(ph)})')
+    sql = (
+        f'SELECT DISTINCT "{peer["members"]}" AS m FROM "{peer["table"]}" '
+        f'WHERE {" AND ".join(where)} ORDER BY m'
+    )
+    try:
+        with get_engine().connect() as conn:
+            return [r.m for r in conn.execute(text(sql), params).fetchall() if r.m]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("peer_members(%s) failed: %s", carrier, exc)
+        return []
+
+
 def filter_options(flow: str, *, engine=None) -> Dict[str, List[Dict[str, Any]]]:
     """`{column: [{label, value}]}` for every entity/temporal column of the flow.
 
@@ -141,7 +182,95 @@ def filter_options(flow: str, *, engine=None) -> Dict[str, List[Dict[str, Any]]]
     return options
 
 
-@lru_cache(maxsize=4)
+# ── persisted filter-option cache (fast app launch) ──────────────────────────
+
+
+def _db_signature() -> str:
+    """Fingerprint the active DB (path + size + mtime) so the on-disk cache is
+    reused across launches but invalidated automatically when the data changes."""
+    db = get_engine().url.database or "memory"
+    try:
+        st = os.stat(db)
+        return f"{db}|{st.st_size}|{int(st.st_mtime)}"
+    except OSError:
+        return str(db)
+
+
+def _cache_file(flow: str) -> Path:
+    sig = hashlib.blake2s(f"{flow}|{_db_signature()}".encode("utf-8"), digest_size=8).hexdigest()
+    return _CACHE_DIR / f"filters_{flow}_{sig}.json"
+
+
+def _read_disk_cache(path: Path):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def _write_disk_cache(path: Path, data: Dict[str, Any]) -> None:
+    try:
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        tmp.replace(path)  # atomic swap
+    except OSError as exc:  # noqa: BLE001 - cache is best-effort
+        logger.debug("filter cache write failed: %s", exc)
+
+
+_MEM_CACHE: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+
+
 def cached_filter_options(flow: str) -> Dict[str, List[Dict[str, Any]]]:
-    """Memoised `filter_options` for the lazy boot callback — built at most once."""
-    return filter_options(flow)
+    """Filter options with a three-tier cache: in-memory → on-disk → DB scan.
+
+    The disk tier is the launch-speed win — after the first build for a given DB,
+    every app start reads a tiny JSON instead of re-scanning a huge table."""
+    path = _cache_file(flow)
+    key = str(path)
+    if key in _MEM_CACHE:
+        return _MEM_CACHE[key]
+    disk = _read_disk_cache(path)
+    if disk is not None:
+        logger.info("studio: filter options from disk cache (%s)", path.name)
+        _MEM_CACHE[key] = disk
+        return disk
+    logger.info("studio: building filter options (first launch for this DB)…")
+    opts = filter_options(flow)
+    _MEM_CACHE[key] = opts
+    _write_disk_cache(path, opts)
+    return opts
+
+
+def warm_filter_cache(flow: str = "gpr") -> str:
+    """Build the on-disk filter cache now so the next app launch is instant.
+
+    Run offline once (see ``python -m studio.warm_cache``)."""
+    cached_filter_options(flow)
+    return str(_cache_file(flow))
+
+
+def ensure_filter_indexes(flow: str = "gpr") -> List[str]:
+    """Create a single-column index on each filter column (one-time).
+
+    OPT-IN: this WRITES to the DB and, on a huge table, can take minutes and grow
+    the file — so it is never run automatically. It makes the first DISTINCT build
+    (and any cache rebuild after a data refresh) dramatically faster."""
+    spec = get_flow_registry().get(flow)
+    if spec is None:
+        return []
+    cols = [c.name for c in spec.columns.values() if c.role in {"entity", "temporal"}]
+    made: List[str] = []
+    with get_engine().begin() as conn:
+        for col in cols:
+            idx = f"ix_studio_{spec.primary_table}_{col}"
+            try:
+                conn.execute(
+                    text(f'CREATE INDEX IF NOT EXISTS "{idx}" ON "{spec.primary_table}" ("{col}")')
+                )
+                made.append(idx)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("studio: index %s failed: %s", idx, exc)
+    return made

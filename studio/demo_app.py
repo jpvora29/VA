@@ -18,7 +18,7 @@ import dash_bootstrap_components as dbc
 from dash import ALL, Input, Output, State, dcc, html
 
 from studio.compute import FILTER_COLUMN, compute_overall
-from studio.data import cached_filter_options, dependent_options, get_engine
+from studio.data import cached_filter_options, dependent_options, get_engine, peer_members
 from studio.deck import build_deck
 from studio.export import export_deck
 from studio.page.layout import studio_shell
@@ -57,11 +57,26 @@ def _filters_from_states(ids, values) -> dict:
     return fv
 
 
-def _compute_and_deck(filter_values: dict, breakdowns, report: str):
+def _cuts_from_states(ids, values) -> list:
+    """Selected ANALYSES checkbox names (Rank/Peer/Country/…)."""
+    return [i["name"] for i, v in zip(ids or [], values or []) if v]
+
+
+def _peers_for(cut_names, peer_mode, custom_peers):
+    """The peer set to pin: custom list when Peer comparison + Custom mode, else
+    None (the engine resolves the peer group from the Peers table)."""
+    if "peer_average" not in (cut_names or []):
+        return None
+    if peer_mode == "custom":
+        return [p for p in (custom_peers or []) if p]
+    return None
+
+
+def _compute_and_deck(filter_values: dict, breakdowns, report: str, *, cuts=(), peers=None):
     """Recompute from the LIVE engine for the current selection, then build the deck."""
     fv = filter_values or {}
     result = compute_overall(
-        filters=fv, breakdowns=(breakdowns or _BREAKDOWNS), engine=engine
+        filters=fv, breakdowns=(breakdowns or _BREAKDOWNS), engine=engine, peers=peers
     )
     return build_deck(
         result,
@@ -69,6 +84,7 @@ def _compute_and_deck(filter_values: dict, breakdowns, report: str):
         country=fv.get("country"),
         year=fv.get("year"),
         report=report or "qbr",
+        cuts=cuts,
     )
 
 
@@ -146,21 +162,50 @@ def _load_filters(_n, region, country, ids):
 
 
 @app.callback(
+    Output("studio-peer-custom", "options"),
+    Output("studio-peer-msg", "children"),
+    Input({"type": "studio-filter", "col": "carrier"}, "value"),
+    Input({"type": "studio-filter", "col": "country"}, "value"),
+    Input("studio-peer-mode", "value"),
+    prevent_initial_call=True,
+)
+def _peer_panel(carrier, country, mode):
+    """Populate custom-peer options and the existing-peers / no-peers message."""
+    opts = dependent_options(_FLOW, "Carrier_Group", {"Country": country} if country else None)
+    if mode == "custom":
+        return opts, "Pick the peers to benchmark against (output shows the aggregate only)."
+    if not carrier:
+        return opts, "Select a carrier to see its existing peers."
+    members = peer_members(_FLOW, carrier, country=country)
+    if members:
+        shown = ", ".join(members[:8]) + ("…" if len(members) > 8 else "")
+        return opts, f"Existing peers ({len(members)}): {shown}"
+    return opts, "No peers exist for this carrier — please select Custom peers."
+
+
+@app.callback(
     Output("studio-canvas", "children"),
     Input("studio-generate", "n_clicks"),
     Input("studio-report-type", "value"),
     State({"type": "studio-filter", "col": ALL}, "value"),
     State({"type": "studio-filter", "col": ALL}, "id"),
     State("studio-breakdown", "value"),
+    State({"type": "studio-cut", "name": ALL}, "value"),
+    State({"type": "studio-cut", "name": ALL}, "id"),
+    State("studio-peer-mode", "value"),
+    State("studio-peer-custom", "value"),
     prevent_initial_call=True,
 )
-def _regenerate(n_clicks, report, filter_values, filter_ids, breakdowns):
-    """Recompute and re-render the deck for the current filter selection.
+def _regenerate(n_clicks, report, filter_values, filter_ids, breakdowns,
+                cut_values, cut_ids, peer_mode, custom_peers):
+    """Recompute and re-render the deck for the current selection.
 
-    Fires on "Generate analysis" and on a report-type switch; both read the live
-    filter dropdowns so DB selections actually drive the analysis."""
+    Reads the filter dropdowns, the ANALYSES checkboxes (which drive the Rank/Peer
+    pages), and the peer-set choice — so checking a box actually adds its page."""
     fv = _filters_from_states(filter_ids, filter_values)
-    return render_deck(_compute_and_deck(fv, breakdowns, report))
+    cuts = _cuts_from_states(cut_ids, cut_values)
+    peers = _peers_for(cuts, peer_mode, custom_peers)
+    return render_deck(_compute_and_deck(fv, breakdowns, report, cuts=cuts, peers=peers))
 
 
 @app.callback(
@@ -170,12 +215,19 @@ def _regenerate(n_clicks, report, filter_values, filter_ids, breakdowns):
     State({"type": "studio-filter", "col": ALL}, "value"),
     State({"type": "studio-filter", "col": ALL}, "id"),
     State("studio-breakdown", "value"),
+    State({"type": "studio-cut", "name": ALL}, "value"),
+    State({"type": "studio-cut", "name": ALL}, "id"),
+    State("studio-peer-mode", "value"),
+    State("studio-peer-custom", "value"),
     prevent_initial_call=True,
 )
-def _export(n_clicks, report, filter_values, filter_ids, breakdowns):
+def _export(n_clicks, report, filter_values, filter_ids, breakdowns,
+            cut_values, cut_ids, peer_mode, custom_peers):
     """Build the deck for the current selection and stream a real .pptx."""
     fv = _filters_from_states(filter_ids, filter_values)
-    deck = _compute_and_deck(fv, breakdowns, report)
+    cuts = _cuts_from_states(cut_ids, cut_values)
+    peers = _peers_for(cuts, peer_mode, custom_peers)
+    deck = _compute_and_deck(fv, breakdowns, report, cuts=cuts, peers=peers)
     carrier = str(fv.get("carrier", "Carrier")).replace(" ", "_")
     country = str(fv.get("country", "Market")).replace(" ", "_")
     suffix = "Executive_Summary" if report == "exec" else "QBR"

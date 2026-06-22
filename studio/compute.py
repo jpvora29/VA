@@ -10,7 +10,7 @@ sits behind it; here we drive the breakdown-by-dimension Overall page.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from core.analytics.library import (
     compute_breakdown,
@@ -75,6 +75,8 @@ class OverallResult:
     flow: str = "gpr"
     resolved_filters: Dict[str, Any] = field(default_factory=dict)
     engine: Any = None
+    # User-pinned custom peer set (Carrier_Group values); None → resolve from Peers table.
+    peers: Optional[Tuple[str, ...]] = None
 
 
 _BLANK_VALS = (None, "", "all", "All")
@@ -321,9 +323,17 @@ def concentration(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
             "hhi": round(sum(s * s for s in shares) * 10000), "n": len(vals)}
 
 
-def peer_gap(flow, filters, engine) -> Optional[Dict[str, Any]]:
-    """Subject's premium vs the aggregate peer average (confidential: no peer names)."""
-    facts = compute_peer_average(PrimitiveArgs(flow=flow, metric="premium", group_by=(), filters=filters), engine=engine)
+def peer_gap(flow, filters, engine, peers=None) -> Optional[Dict[str, Any]]:
+    """Subject's premium vs the aggregate peer average (confidential: no peer names).
+
+    `peers` pins a custom peer set; None resolves the peer group from the Peers table."""
+    facts = compute_peer_average(
+        PrimitiveArgs(
+            flow=flow, metric="premium", group_by=(), filters=filters,
+            peers=tuple(peers) if peers else None,
+        ),
+        engine=engine,
+    )
     subj = filters.get(_CARRIER_COL)
     if not facts or not subj:
         return None
@@ -333,12 +343,45 @@ def peer_gap(flow, filters, engine) -> Optional[Dict[str, Any]]:
             "ratio": (own / peer_avg) if peer_avg else None}
 
 
+def near_rank_gap(flow, filters, engine, subject, *, dim="Product_Line", top=8) -> Optional[Dict[str, Any]]:
+    """Gap to the next rank up, decomposed by product line (the rank waterfall).
+
+    Confidentiality: the next-rank carrier is NEVER named — only its rank position
+    and the per-product premium gaps are returned."""
+    if not subject:
+        return None
+    base = {k: v for k, v in filters.items() if k != _CARRIER_COL}
+    facts = compute_rank(PrimitiveArgs(flow=flow, metric="premium", group_by=(), filters=base), engine=engine)
+    ranked = sorted(((int(f.value), str(f.dims.get("entity", ""))) for f in facts), key=lambda x: x[0])
+    me = next((r for r in ranked if r[1].lower() == subject.lower()), None)
+    if not me:
+        return None
+    cur = me[0]
+    target = next((r for r in ranked if r[0] == cur - 1), None)
+    if not target:
+        return {"current_rank": cur, "target_rank": None, "competitor_rank": None,
+                "labels": [], "values": [], "total_gap": 0.0}
+
+    def by_dim(carrier):
+        f = {**base, _CARRIER_COL: carrier}
+        return {str(x.dims.get(dim)): x.value for x in compute_breakdown(
+            PrimitiveArgs(flow=flow, metric="premium", group_by=(dim,), filters=f), engine=engine)}
+
+    mine, theirs = by_dim(subject), by_dim(target[1])
+    gaps = [(p, theirs.get(p, 0.0) - mine.get(p, 0.0)) for p in set(mine) | set(theirs)]
+    gaps = sorted([(p, g) for p, g in gaps if g > 0], key=lambda kv: kv[1], reverse=True)[:top]
+    return {"current_rank": cur, "target_rank": cur - 1, "competitor_rank": target[0],
+            "labels": [p for p, _ in gaps], "values": [g for _, g in gaps],
+            "total_gap": sum(g for _, g in gaps)}
+
+
 def compute_overall(
     *,
     flow: str = "gpr",
     filters: Optional[Mapping[str, Any]] = None,
     breakdowns: Optional[List[str]] = None,
     engine: Any = None,
+    peers: Optional[Sequence[str]] = None,
 ) -> OverallResult:
     """Compute the Overall page from the live DB. Best-effort: a failing metric is
     logged and skipped, never fatal."""
@@ -349,7 +392,10 @@ def compute_overall(
     subject = resolved.get(_CARRIER_COL)
     dims = breakdowns or ["Product_Line", _INDUSTRY_COL]
     store = FactStore()
-    result = OverallResult(store=store, subject=subject, flow=flow, resolved_filters=dict(resolved), engine=engine)
+    result = OverallResult(
+        store=store, subject=subject, flow=flow, resolved_filters=dict(resolved),
+        engine=engine, peers=tuple(peers) if peers else None,
+    )
 
     try:
         result.kpis = _kpis(flow, resolved, engine, store, subject)

@@ -265,31 +265,45 @@ def compute_peer_average(args: PrimitiveArgs, *, engine: Optional[Any] = None) -
     cuts = _cut_columns(spec, args.group_by)
     params: Dict[str, Any] = {"subject": subject}
 
-    peer_where = [f'LOWER("{peer["key"]}") = LOWER(:subject)']
-    country_col = peer.get("country")
-    country_val = args.filters.get(spec.entity_columns.get("country"))
-    if country_col and country_val:
-        # Honour a multi-select country filter (IN) as well as a single value.
-        cvals = list(country_val) if isinstance(country_val, (list, tuple, set)) else [country_val]
-        cvals = [v for v in cvals if v not in (None, "", "all", "All")]
-        if cvals:
-            ph = []
-            for j, v in enumerate(cvals):
-                k = f"pc{j}"
-                params[k] = v
-                ph.append(f"LOWER(:{k})")
-            peer_where.append(f'LOWER("{country_col}") IN ({", ".join(ph)})')
-    peer_sub = (
-        f'SELECT DISTINCT "{peer["members"]}" FROM "{peer["table"]}" '
-        f'WHERE {" AND ".join(peer_where)}'
-    )
+    # Resolve the peer membership clause. A user-pinned custom peer set
+    # (``args.peers``) overrides the Peers-table lookup entirely (the same override
+    # the chatbot honours); otherwise resolve the subject's peer group from the
+    # Peers table, scoped to the selected country/countries.
+    pinned = [str(p).strip() for p in (args.peers or []) if str(p).strip()]
+    if pinned:
+        ph = []
+        for j, p in enumerate(pinned):
+            k = f"cp{j}"
+            params[k] = p
+            ph.append(f"LOWER(:{k})")
+        member_clause = f'LOWER("{carrier_col}") IN ({", ".join(ph)})'
+    else:
+        peer_where = [f'LOWER("{peer["key"]}") = LOWER(:subject)']
+        country_col = peer.get("country")
+        country_val = args.filters.get(spec.entity_columns.get("country"))
+        if country_col and country_val:
+            # Honour a multi-select country filter (IN) as well as a single value.
+            cvals = list(country_val) if isinstance(country_val, (list, tuple, set)) else [country_val]
+            cvals = [v for v in cvals if v not in (None, "", "all", "All")]
+            if cvals:
+                cph = []
+                for j, v in enumerate(cvals):
+                    k = f"pc{j}"
+                    params[k] = v
+                    cph.append(f"LOWER(:{k})")
+                peer_where.append(f'LOWER("{country_col}") IN ({", ".join(cph)})')
+        peer_sub = (
+            f'SELECT DISTINCT "{peer["members"]}" FROM "{peer["table"]}" '
+            f'WHERE {" AND ".join(peer_where)}'
+        )
+        member_clause = f'"{carrier_col}" IN ({peer_sub})'
 
     # All other filters apply to the measure table; the subject carrier filter is
     # excluded (we want the peers, not the subject). Reuse the shared `where_clause`
     # so multi-select (IN) filters are honoured exactly as in every other primitive.
     non_carrier = {k: v for k, v in args.filters.items() if k != carrier_col}
     extra = where_clause(spec, non_carrier, params)  # " WHERE …" or ""
-    clauses = [f'"{carrier_col}" IN ({peer_sub})']
+    clauses = [member_clause]
     if extra:
         clauses.append(extra.replace(" WHERE ", "", 1))
 

@@ -313,6 +313,44 @@ def bar_chart(
     return dcc.Graph(figure=fig, config={"displayModeBar": False}, className="studio-fig")
 
 
+def waterfall(
+    labels: Sequence[str],
+    values: Sequence[float],
+    *,
+    height: int = 280,
+    total_label: str = "Total gap",
+) -> dcc.Graph:
+    """Waterfall of per-category contributions summing to a total.
+
+    Used for the rank "gap to next rank" story: each bar is how much the next-rank
+    carrier out-earns you in one product line; the bars accumulate to the total
+    premium gap to close. Positive values rise (a gap to close)."""
+    labels = list(labels)
+    values = [float(v) for v in values]
+    measures = ["relative"] * len(labels) + ["total"]
+    x = labels + [total_label]
+    y = values + [sum(values)]
+    fig = go.Figure(
+        go.Waterfall(
+            orientation="v",
+            measure=measures,
+            x=x,
+            y=y,
+            text=[money(v) for v in y],
+            textposition="outside",
+            textfont=dict(size=10),
+            connector=dict(line=dict(color="rgba(12,25,58,0.25)")),
+            increasing=dict(marker=dict(color=ColorPalette.blue[0] if ColorPalette.blue else "#0b4bff")),
+            decreasing=dict(marker=dict(color="#57C67A")),
+            totals=dict(marker=dict(color=_NAVY)),
+        )
+    )
+    layout = _base_layout(height)
+    layout["xaxis"] = dict(showgrid=False, zeroline=False, automargin=True)
+    fig.update_layout(**layout)
+    return dcc.Graph(figure=fig, config={"displayModeBar": False}, className="studio-fig")
+
+
 def donut(labels: Sequence[str], values: Sequence[float], *, height: int = 260) -> dcc.Graph:
     fig = go.Figure(
         go.Pie(

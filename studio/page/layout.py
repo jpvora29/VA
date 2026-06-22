@@ -175,6 +175,43 @@ def _analyses(groups: Sequence[Mapping[str, Any]]) -> html.Div:
     )
 
 
+def _peers_panel() -> html.Div:
+    """Peer-set chooser, used when 'Peer average comparison' is ticked.
+
+    Existing peers come from the Peers table for the chosen carrier; if none exist
+    the message tells the user to pick custom peers."""
+    return html.Div(
+        [
+            html.Div("PEER SET", className="studio-field-label"),
+            html.Div(
+                "Used when “Peer average comparison” is ticked.",
+                className="studio-analyses-note",
+            ),
+            dcc.RadioItems(
+                id="studio-peer-mode",
+                options=[
+                    {"label": "Existing peers", "value": "existing"},
+                    {"label": "Custom peers", "value": "custom"},
+                ],
+                value="existing",
+                className="studio-report-radio",
+                inputClassName="studio-report-input",
+                labelClassName="studio-report-label",
+            ),
+            html.Div(id="studio-peer-msg", className="studio-peer-msg"),
+            dcc.Dropdown(
+                id="studio-peer-custom",
+                options=[],
+                value=[],
+                multi=True,
+                placeholder="Select custom peers",
+                className="studio-dd sm",
+            ),
+        ],
+        className="studio-field",
+    )
+
+
 def form_rail(
     cut_groups: Sequence[Mapping[str, Any]],
     *,
@@ -201,6 +238,7 @@ def form_rail(
             _filter_grid(filter_options, filter_values),
             _breakdown(),
             _analyses(cut_groups),
+            _peers_panel(),
             html.Button(
                 [html.I(className="bi bi-stars"), "Generate analysis"],
                 id="studio-generate",

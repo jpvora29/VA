@@ -59,6 +59,8 @@ def _visual(block: Any) -> Any:
     if kind == "chart":
         if block.chart == "donut":
             return render.donut(block.labels, block.values, height=250)
+        if block.chart == "waterfall":
+            return render.waterfall(block.labels, block.values, height=250)
         return render.bar_chart(block.labels, block.values, height=250)
     if kind == "table":
         return render.fact_table(block.rows, block.columns, hidden=block.hidden)

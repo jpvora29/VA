@@ -151,6 +151,61 @@ def _breakdown_slide(bsec) -> SlideSpec:
     )
 
 
+def _rank_slide(result: OverallResult) -> SlideSpec | None:
+    """Rank page: gap to the next rank up, by product line, as a waterfall.
+
+    Confidentiality — the next-rank carrier is referenced by position only."""
+    from studio.compute import near_rank_gap
+
+    data = near_rank_gap(result.flow, result.resolved_filters, result.engine, result.subject)
+    if not data:
+        return None
+    tgt = data.get("target_rank")
+    if not tgt or not data.get("labels"):
+        title = "You already lead the ranking — no carrier ranks ahead in this scope"
+        return SlideSpec(layout="insight", eyebrow="RANK · COMPETITIVE POSITION", title=title,
+                         accent="amber", question="What would it take to move up one rank?",
+                         takeaways=[{"label": "Position.", "text": f"You rank #{data.get('current_rank')}.", "tone": "good"}],
+                         sources=["GPR — premium ledger"])
+    lead = data["labels"][0]
+    return SlideSpec(
+        layout="insight", eyebrow="RANK · GAP TO NEXT RANK",
+        title=f"To reach rank #{tgt}, close {money(data['total_gap'])} — most of it in {lead}",
+        accent="amber", question="What would it take to move up one rank?",
+        takeaways=[
+            {"label": "Position.", "text": f"You rank #{data['current_rank']}; the next-rank carrier sits at #{data['competitor_rank']}.", "tone": "neutral"},
+            {"label": "Gap.", "text": f"{money(data['total_gap'])} of premium separates you, led by {lead}.", "tone": "warn"},
+            {"label": "Where.", "text": "Each bar is where the next-rank carrier out-earns you, by product line (carrier not named — confidential).", "tone": "neutral"},
+        ],
+        blocks=[ChartBlock("waterfall", data["labels"], data["values"], "Premium gap to the next-rank carrier, by product line")],
+        recommendation=f"Prioritise the top {min(3, len(data['labels']))} product lines where the gap is largest.",
+        confidence="high", sources=["GPR — premium ledger"],
+    )
+
+
+def _peer_slide(result: OverallResult) -> SlideSpec | None:
+    """Peer page: subject vs the aggregate peer average (custom set if pinned)."""
+    from studio.compute import peer_gap
+
+    pg = peer_gap(result.flow, result.resolved_filters, result.engine, peers=result.peers)
+    if not pg or pg.get("ratio") is None:
+        return None
+    ratio = pg["ratio"]
+    src = "custom peer set" if result.peers else "peer group"
+    return SlideSpec(
+        layout="insight", eyebrow="PEER COMPARISON",
+        title=f"You write {ratio:.2f}× the aggregate {src} average",
+        accent="blue", question="How do you compare to your peers?",
+        takeaways=[
+            {"label": "Benchmark.", "text": f"Premium is {ratio:.2f}× the aggregate {src} average.", "tone": "good" if ratio >= 1 else "danger"},
+            {"label": "Confidential.", "text": "Aggregate peer average only — no individual peer is named.", "tone": "neutral"},
+        ],
+        blocks=[ChartBlock("bar", ["You", "Peer avg"], [pg["own"], pg["peer_avg"]], "You vs aggregate peer average")],
+        recommendation="Use the peer gap to prioritise where to defend or grow.",
+        confidence="medium", sources=["GPR — premium ledger", "Peers — aggregate benchmark"],
+    )
+
+
 def _methodology_slide(spec: QBRContentSpec) -> SlideSpec:
     gaps = [{"label": AGENDA_LABEL.get(g.section, g.section) + ".", "text": g.reason, "tone": "warn"} for g in spec.data_gaps]
     return SlideSpec(
@@ -163,11 +218,28 @@ def _methodology_slide(spec: QBRContentSpec) -> SlideSpec:
     )
 
 
-def plan_deck(spec: QBRContentSpec, result: OverallResult, *, report: str = "qbr") -> DeckSpec:
+_COMPETITIVE_CHAPTER = "Competitive Position"
+
+
+def plan_deck(
+    spec: QBRContentSpec, result: OverallResult, *, report: str = "qbr", cuts=()
+) -> DeckSpec:
     cover, ex = _cover(spec), _exec(spec, result)
 
     if report == "exec":
         return DeckSpec(slides=[cover, ex], meta={**_meta(spec), "report": "exec"})
+
+    # Cut-driven competitive slides (the ANALYSES checkboxes for Rank / Peer).
+    cut_set = set(cuts or ())
+    competitive: List[SlideSpec] = []
+    if "rank_similar" in cut_set:
+        s = _rank_slide(result)
+        if s:
+            competitive.append(s)
+    if "peer_average" in cut_set:
+        s = _peer_slide(result)
+        if s:
+            competitive.append(s)
 
     # Tag every content slide with its chapter: material findings (canonical agenda
     # order) + a slide for every OTHER breakdown the user selected (Country, Business
@@ -184,7 +256,11 @@ def plan_deck(spec: QBRContentSpec, result: OverallResult, *, report: str = "qbr
 
     has_decisions = bool(spec.actions or spec.decisions)
     present = [ch for ch in _CHAPTER_ORDER if any(c == ch for c, _ in tagged)]
-    agenda_items = present + ([_DECISIONS_CHAPTER] if has_decisions else [])
+    agenda_items = (
+        present
+        + ([_COMPETITIVE_CHAPTER] if competitive else [])
+        + ([_DECISIONS_CHAPTER] if has_decisions else [])
+    )
 
     # Cover → Agenda → Executive summary → SECTION dividers + chapter slides.
     slides: List[SlideSpec] = [cover, _agenda_slide(agenda_items), ex]
@@ -196,6 +272,11 @@ def plan_deck(spec: QBRContentSpec, result: OverallResult, *, report: str = "qbr
         section_no += 1
         slides.append(_divider_slide(ch, section_no))
         slides.extend(chunk)
+
+    if competitive:
+        section_no += 1
+        slides.append(_divider_slide(_COMPETITIVE_CHAPTER, section_no))
+        slides.extend(competitive)
 
     if has_decisions:
         section_no += 1

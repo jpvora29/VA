@@ -163,6 +163,7 @@
 .studio-dd.sm .dash-dropdown-placeholder { font-size: 12px !important; }
 
 .studio-analyses-note { font-size: 11px; color: var(--s-faint); margin: 0 0 6px; font-style: italic; }
+.studio-peer-msg { font-size: 11px; color: var(--s-muted); line-height: 1.45; margin: 4px 0 6px; }
 
 .studio-analyses-group {
     font-size: 12px; font-weight: 700; color: var(--s-navy);

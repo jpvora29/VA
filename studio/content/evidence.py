@@ -156,7 +156,7 @@ def build_content_spec(result: OverallResult, *, carrier=None, country=None, yea
         ))
 
     # ── Share of wallet & market position ────────────────────────────────────
-    pg = peer_gap(flow, filters, engine)
+    pg = peer_gap(flow, filters, engine, peers=result.peers)
     if rankm or sowm or pg:
         ev = []
         tk = []

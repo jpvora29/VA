@@ -24,11 +24,12 @@ def build_deck(
     country: Optional[str] = None,
     year: Optional[Any] = None,
     report: str = "qbr",
+    cuts=(),
 ) -> DeckSpec:
     from studio.content import build_content_spec, plan_deck
 
     spec = build_content_spec(result, carrier=carrier, country=country, year=year)
-    return plan_deck(spec, result, report=report)
+    return plan_deck(spec, result, report=report, cuts=cuts)
 
 
 def build_qbr_deck(result, **kw) -> DeckSpec:

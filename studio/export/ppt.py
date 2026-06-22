@@ -301,9 +301,52 @@ def _cards(slide, region, block, prof):
         _text(slide, cx + 0.2, cy + 1.1, cw - 0.4, ch - 1.2, c.get("body", ""), size=10.5, color=prof.colors["muted"], spacing=1.1)
 
 
+def _waterfall(slide, region, block, prof):
+    """Waterfall via the invisible-base stacked-column trick (python-pptx has no
+    native waterfall). Bars accumulate to a final Total."""
+    x, y, w, h = region
+    labels = list(block.labels) + ["Total"]
+    vals = [float(v) for v in block.values]
+    base: List[float] = []
+    delta: List[float] = []
+    running = 0.0
+    for v in vals:
+        base.append(running)
+        delta.append(v)
+        running += v
+    base.append(0.0)
+    delta.append(running)  # total column starts at 0
+
+    data = CategoryChartData()
+    data.categories = labels
+    data.add_series("base", base)
+    data.add_series("delta", delta)
+    gf = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_STACKED, Inches(x), Inches(y), Inches(w), Inches(h), data)
+    chart = gf.chart
+    chart.has_legend = False
+    chart.has_title = False
+    plot = chart.plots[0]
+    plot.gap_width = 50
+    s_base, s_delta = plot.series[0], plot.series[1]
+    s_base.format.fill.background()       # invisible stepping base
+    s_base.format.line.fill.background()
+    pts = list(s_delta.points)
+    for i, pt in enumerate(pts):
+        pt.format.fill.solid()
+        pt.format.fill.fore_color.rgb = _rgb(prof.colors["navy"] if i == len(pts) - 1 else prof.colors["blue"])
+    for ax in (chart.category_axis, chart.value_axis):
+        ax.tick_labels.font.size = Pt(9)
+        ax.tick_labels.font.name = FONT
+
+
 def _visual(slide, region, block, prof):
     if block.kind == "chart":
-        (_donut if block.chart == "donut" else _bar)(slide, region, block, prof)
+        if block.chart == "donut":
+            _donut(slide, region, block, prof)
+        elif block.chart == "waterfall":
+            _waterfall(slide, region, block, prof)
+        else:
+            _bar(slide, region, block, prof)
     elif block.kind == "table":
         _table(slide, region, block, prof)
 
@@ -326,12 +369,12 @@ def _add_slide(prs, prof, spec: SlideSpec, idx: int, total: int):
         return
 
     if spec.layout == "divider":
-        accent = prof.colors.get(spec.accent, prof.colors["blue"])
-        _rect(slide, 0, 0, sw, sh, prof.colors["navy"], radius=False)
+        # Flat Marsh navy, no gradient; a single solid accent rule.
+        _rect(slide, 0, 0, sw, sh, "000F47", radius=False)
         _text(slide, 1.0, sh / 2 - 0.85, sw - 2, 0.35, spec.eyebrow, size=13, bold=True, color="5CC8FF")
         _text(slide, 1.0, sh / 2 - 0.4, sw - 2, 1.0, spec.title, size=34, bold=True, color="FFFFFF")
         bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1.0), Inches(sh / 2 + 0.62), Inches(1.4), Inches(0.06))
-        bar.fill.solid(); bar.fill.fore_color.rgb = _rgb(accent); bar.line.fill.background()
+        bar.fill.solid(); bar.fill.fore_color.rgb = _rgb("009DE0"); bar.line.fill.background()
         _footer(slide, prof, idx, dark=True)
         return
 
