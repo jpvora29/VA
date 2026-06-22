@@ -15,7 +15,7 @@ from pathlib import Path
 
 import dash
 import dash_bootstrap_components as dbc
-from dash import Input, Output, State, dcc
+from dash import ALL, Input, Output, State, dcc
 
 from studio.compute import FILTER_COLUMN, compute_overall
 from studio.data import filter_options as db_filter_options
@@ -42,17 +42,36 @@ _friendly = {fid: _col_opts.get(col, []) for fid, col in FILTER_COLUMN.items()}
 _result = compute_overall(filters=_DEFAULTS, breakdowns=_BREAKDOWNS, engine=engine)
 
 
-def _make_deck(report: str = "qbr"):
+_BLANK = (None, "", [], "all", "All")
+
+
+def _filters_from_states(ids, values) -> dict:
+    """Map the pattern-matching filter dropdowns (id,value pairs) to a friendly
+    filter dict, dropping blanks. `compute_overall` maps friendly ids → columns."""
+    fv: dict = {}
+    for id_, val in zip(ids or [], values or []):
+        if val in _BLANK:
+            continue
+        fv[id_["col"]] = val
+    return fv
+
+
+def _compute_and_deck(filter_values: dict, breakdowns, report: str):
+    """Recompute from the LIVE engine for the current selection, then build the deck."""
+    fv = filter_values or _DEFAULTS
+    result = compute_overall(
+        filters=fv, breakdowns=(breakdowns or _BREAKDOWNS), engine=engine
+    )
     return build_deck(
-        _result,
-        carrier=_DEFAULTS["carrier"],
-        country=_DEFAULTS["country"],
-        year=_DEFAULTS["year"],
-        report=report,
+        result,
+        carrier=fv.get("carrier"),
+        country=fv.get("country"),
+        year=fv.get("year"),
+        report=report or "qbr",
     )
 
 
-content = render_deck(_make_deck("qbr"))
+content = render_deck(_compute_and_deck(_DEFAULTS, _BREAKDOWNS, "qbr"))
 
 app = dash.Dash(
     __name__,
@@ -78,25 +97,39 @@ app.layout = dash.html.Div(
 
 @app.callback(
     Output("studio-canvas", "children"),
+    Input("studio-generate", "n_clicks"),
     Input("studio-report-type", "value"),
+    State({"type": "studio-filter", "col": ALL}, "value"),
+    State({"type": "studio-filter", "col": ALL}, "id"),
+    State("studio-breakdown", "value"),
     prevent_initial_call=True,
 )
-def _switch_report(report):
-    """Rebuild the deck for the chosen report type (Full QBR vs Executive summary)."""
-    return render_deck(_make_deck(report or "qbr"))
+def _regenerate(n_clicks, report, filter_values, filter_ids, breakdowns):
+    """Recompute and re-render the deck for the current filter selection.
+
+    Fires on "Generate analysis" and on a report-type switch; both read the live
+    filter dropdowns so DB selections actually drive the analysis."""
+    fv = _filters_from_states(filter_ids, filter_values)
+    return render_deck(_compute_and_deck(fv, breakdowns, report))
 
 
 @app.callback(
     Output("studio-pptx-download", "data"),
     Input("studio-export-pptx", "n_clicks"),
     State("studio-report-type", "value"),
+    State({"type": "studio-filter", "col": ALL}, "value"),
+    State({"type": "studio-filter", "col": ALL}, "id"),
+    State("studio-breakdown", "value"),
     prevent_initial_call=True,
 )
-def _export(n_clicks, report):
-    """Build the deck and stream a real .pptx to the browser."""
-    deck = _make_deck(report or "qbr")
+def _export(n_clicks, report, filter_values, filter_ids, breakdowns):
+    """Build the deck for the current selection and stream a real .pptx."""
+    fv = _filters_from_states(filter_ids, filter_values)
+    deck = _compute_and_deck(fv, breakdowns, report)
+    carrier = str(fv.get("carrier", "Carrier")).replace(" ", "_")
+    country = str(fv.get("country", "Market")).replace(" ", "_")
     suffix = "Executive_Summary" if report == "exec" else "QBR"
-    out = Path(tempfile.gettempdir()) / f"Zurich_Singapore_{suffix}.pptx"
+    out = Path(tempfile.gettempdir()) / f"{carrier}_{country}_{suffix}.pptx"
     export_deck(deck, out_path=str(out))
     return dcc.send_file(str(out))
 

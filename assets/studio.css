@@ -72,7 +72,7 @@
 /* ── body grid ───────────────────────────────────────────────────────────── */
 .studio-body {
     display: grid;
-    grid-template-columns: 320px minmax(0, 1fr);
+    grid-template-columns: 372px minmax(0, 1fr);
     gap: 28px;
     max-width: 1480px;
     margin: 0 auto;
@@ -106,11 +106,11 @@
     font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em;
     text-transform: uppercase; color: var(--s-faint);
 }
-.studio-field-label.sm { font-size: 9.5px; letter-spacing: 0.05em; margin-bottom: 1px; }
+.studio-field-label.sm { font-size: 10.5px; letter-spacing: 0.05em; margin-bottom: 2px; }
 
-/* compact 2-up filter grid so the full categorical set fits the rail */
+/* full-width single-column filters so selected values stay readable, not clipped */
 .studio-filter-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 10px 10px;
+    display: grid; grid-template-columns: 1fr; gap: 12px;
 }
 .studio-filter-grid .studio-field { gap: 3px; }
 
@@ -158,9 +158,9 @@
 }
 
 /* compact variant for the dense filter grid */
-.studio-dd.sm .dash-dropdown-trigger { min-height: 34px; }
+.studio-dd.sm .dash-dropdown-trigger { min-height: 38px; }
 .studio-dd.sm .dash-dropdown-value,
-.studio-dd.sm .dash-dropdown-placeholder { font-size: 10.5px !important; }
+.studio-dd.sm .dash-dropdown-placeholder { font-size: 12px !important; }
 
 .studio-analyses-note { font-size: 11px; color: var(--s-faint); margin: 0 0 6px; font-style: italic; }
 
