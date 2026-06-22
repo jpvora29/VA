@@ -24,15 +24,15 @@ PAGES: List[Mapping[str, str]] = [
 
 # Every categorical column offered as a filter (GPR scope). Survey scope swaps in
 # its own set at callback time; shown here is the premium vocabulary.
-GPR_FILTERS: List[Mapping[str, str]] = [
+GPR_FILTERS: List[Mapping[str, Any]] = [
     {"id": "region", "label": "Region", "ph": "All"},
-    {"id": "country", "label": "Country", "ph": "All"},
+    {"id": "country", "label": "Country", "ph": "All", "multi": True},
     {"id": "carrier", "label": "Carrier", "ph": "Select"},
     {"id": "year", "label": "Year", "ph": "Latest"},
-    {"id": "product_line", "label": "Product Line", "ph": "All"},
-    {"id": "business_line", "label": "Business Line", "ph": "All"},
-    {"id": "cover_line", "label": "Cover Line", "ph": "All"},
-    {"id": "industry", "label": "Industry", "ph": "All"},
+    {"id": "product_line", "label": "Product Line", "ph": "All", "multi": True},
+    {"id": "business_line", "label": "Business Line", "ph": "All", "multi": True},
+    {"id": "cover_line", "label": "Cover Line", "ph": "All", "multi": True},
+    {"id": "industry", "label": "Industry", "ph": "All", "multi": True},
     {"id": "sub_industry", "label": "Sub-Industry", "ph": "All"},
     {"id": "client_segment", "label": "Client Segment", "ph": "All"},
 ]
@@ -107,6 +107,7 @@ def _filter_grid(
                     options=options.get(f["id"], []),
                     value=values.get(f["id"]),
                     placeholder=f["ph"],
+                    multi=f.get("multi", False),
                     className="studio-dd sm",
                 ),
             ],

@@ -39,7 +39,10 @@ def get_engine():
     return create_engine(f"sqlite:///{seed}")
 
 
-def _distinct(engine, table: str, column: str, limit: int = 500) -> List[Any]:
+_OPTION_CAP = 100_000  # effectively "all" for a dropdown, but bounds a pathological column
+
+
+def _distinct(engine, table: str, column: str, limit: int = _OPTION_CAP) -> List[Any]:
     # Cap the scan at the SQL layer: on a huge table we only need enough distinct
     # values to populate a dropdown, and we never want to materialise millions.
     sql = (
@@ -55,13 +58,68 @@ def _distinct(engine, table: str, column: str, limit: int = 500) -> List[Any]:
 
 
 @lru_cache(maxsize=128)
-def _distinct_cached(table: str, column: str, limit: int = 500) -> tuple:
+def _distinct_cached(table: str, column: str, limit: int = _OPTION_CAP) -> tuple:
     """Process-lifetime cache of a column's distinct values (the singleton engine).
 
     Distinct values are stable for a session, so the expensive scan runs once per
     column — the rest of the run is instant. Returns a tuple so it stays hashable.
     """
     return tuple(_distinct(get_engine(), table, column, limit))
+
+
+@lru_cache(maxsize=256)
+def _distinct_where(table: str, column: str, where_key: tuple, limit: int = _OPTION_CAP) -> tuple:
+    """Cached distinct `column` values constrained by `where_key` (parametrised IN).
+
+    `where_key` is a hashable tuple of ``(col, (v1, v2, …))`` pairs — the cascade
+    constraints (e.g. Country values for a chosen Region)."""
+    clauses = [f'"{column}" IS NOT NULL']
+    params: Dict[str, Any] = {}
+    for i, (col, vals) in enumerate(where_key):
+        ph = []
+        for j, v in enumerate(vals):
+            k = f"w{i}_{j}"
+            params[k] = v
+            ph.append(f":{k}")
+        clauses.append(f'"{col}" IN ({", ".join(ph)})')
+    sql = (
+        f'SELECT v FROM (SELECT DISTINCT "{column}" AS v FROM "{table}" '
+        f'WHERE {" AND ".join(clauses)}) ORDER BY v LIMIT {int(limit)}'
+    )
+    try:
+        with get_engine().connect() as conn:
+            return tuple(r.v for r in conn.execute(text(sql), params).fetchall())
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("distinct_where(%s.%s) failed: %s", table, column, exc)
+        return ()
+
+
+def dependent_options(
+    flow: str, column: str, where: Dict[str, Any] | None = None
+) -> List[Dict[str, Any]]:
+    """`[{label, value}]` for `column`, optionally constrained by upstream selections.
+
+    Columns are validated against the flow registry (injection guard). With no
+    constraint this is the full (cached) distinct list — so it also serves the
+    "give me the entire carrier list" case."""
+    spec = get_flow_registry().get(flow)
+    if spec is None or column not in spec.columns:
+        return []
+    pairs = []
+    for col, val in (where or {}).items():
+        if col not in spec.columns:
+            continue
+        vals = val if isinstance(val, (list, tuple, set)) else [val]
+        vals = tuple(v for v in vals if v not in (None, "", "all", "All"))
+        if vals:
+            pairs.append((col, vals))
+    key = tuple(sorted(pairs))
+    values = (
+        _distinct_where(spec.primary_table, column, key)
+        if key
+        else _distinct_cached(spec.primary_table, column)
+    )
+    return [{"label": str(v), "value": v} for v in values]
 
 
 def filter_options(flow: str, *, engine=None) -> Dict[str, List[Dict[str, Any]]]:

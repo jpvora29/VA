@@ -325,6 +325,16 @@ def _add_slide(prs, prof, spec: SlideSpec, idx: int, total: int):
         _footer(slide, prof, idx, dark=True)
         return
 
+    if spec.layout == "divider":
+        accent = prof.colors.get(spec.accent, prof.colors["blue"])
+        _rect(slide, 0, 0, sw, sh, prof.colors["navy"], radius=False)
+        _text(slide, 1.0, sh / 2 - 0.85, sw - 2, 0.35, spec.eyebrow, size=13, bold=True, color="5CC8FF")
+        _text(slide, 1.0, sh / 2 - 0.4, sw - 2, 1.0, spec.title, size=34, bold=True, color="FFFFFF")
+        bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1.0), Inches(sh / 2 + 0.62), Inches(1.4), Inches(0.06))
+        bar.fill.solid(); bar.fill.fore_color.rgb = _rgb(accent); bar.line.fill.background()
+        _footer(slide, prof, idx, dark=True)
+        return
+
     # Header: eyebrow (+ question) + action title + accent rule.
     eyebrow = spec.eyebrow + (f"   ·   Q: {spec.question}" if spec.question else "")
     _text(slide, _MARGIN, 0.4, sw - 2 * _MARGIN, 0.28, eyebrow, size=10.5, bold=True, color=prof.colors["blue"])
@@ -343,6 +353,15 @@ def _add_slide(prs, prof, spec: SlideSpec, idx: int, total: int):
         _swot(slide, (cx, cy, cw, ch), blocks[0], prof)
     elif spec.layout == "initiatives" and blocks:
         _cards(slide, (cx, cy, cw, ch), blocks[0], prof)
+    elif spec.layout == "agenda":
+        ty = cy + 0.1
+        for p in list(spec.takeaways):
+            _rect(slide, cx, ty, 0.5, 0.5, prof.colors["navy"])
+            _text(slide, cx, ty + 0.06, 0.5, 0.4, p.get("label", ""), size=14, bold=True,
+                  color="FFFFFF", align=PP_ALIGN.CENTER)
+            _text(slide, cx + 0.72, ty, cw - 0.9, 0.5, p.get("text", ""), size=15, bold=True,
+                  color=prof.colors["navy"], anchor=MSO_ANCHOR.MIDDLE)
+            ty += 0.72
     elif spec.layout == "methodology":
         _methodology(slide, (cx, cy, cw, ch), spec, prof)
     elif spec.layout == "exec":

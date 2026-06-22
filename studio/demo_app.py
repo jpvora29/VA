@@ -18,7 +18,7 @@ import dash_bootstrap_components as dbc
 from dash import ALL, Input, Output, State, dcc, html
 
 from studio.compute import FILTER_COLUMN, compute_overall
-from studio.data import cached_filter_options, get_engine
+from studio.data import cached_filter_options, dependent_options, get_engine
 from studio.deck import build_deck
 from studio.export import export_deck
 from studio.page.layout import studio_shell
@@ -59,7 +59,7 @@ def _filters_from_states(ids, values) -> dict:
 
 def _compute_and_deck(filter_values: dict, breakdowns, report: str):
     """Recompute from the LIVE engine for the current selection, then build the deck."""
-    fv = filter_values or _DEFAULTS
+    fv = filter_values or {}
     result = compute_overall(
         filters=fv, breakdowns=(breakdowns or _BREAKDOWNS), engine=engine
     )
@@ -110,19 +110,39 @@ app.layout = html.Div(
 )
 
 
+_FLOW = "gpr"
+
+
 @app.callback(
     Output({"type": "studio-filter", "col": ALL}, "options"),
-    Output({"type": "studio-filter", "col": ALL}, "value"),
     Input("studio-boot", "n_intervals"),
+    Input({"type": "studio-filter", "col": "region"}, "value"),
+    Input({"type": "studio-filter", "col": "country"}, "value"),
     State({"type": "studio-filter", "col": ALL}, "id"),
     prevent_initial_call=True,
 )
-def _load_filters(_n, ids):
-    """Lazy-load DB filter options once after first paint; preselect defaults."""
-    fo = _friendly_options()
-    options = [fo.get(i["col"], []) for i in ids]
-    values = [_DEFAULTS.get(i["col"]) for i in ids]
-    return options, values
+def _load_filters(_n, region, country, ids):
+    """Lazy-load filter options after first paint AND cascade them.
+
+    One callback owns every dropdown's `options` (so there is no duplicate-output
+    conflict). Country is constrained by the chosen Region; Carrier by the chosen
+    Country (else Region). No `value` is set — the form starts blank, so nothing
+    (no Zurich) is pre-selected; the canvas stays on its empty state until Generate."""
+    base = _friendly_options()
+    country_opts = dependent_options(_FLOW, "Country", {"Region": region} if region else None)
+    carrier_where = {"Country": country} if country else ({"Region": region} if region else None)
+    carrier_opts = dependent_options(_FLOW, "Carrier_Group", carrier_where)
+
+    out = []
+    for i in ids:
+        col = i["col"]
+        if col == "country":
+            out.append(country_opts)
+        elif col == "carrier":
+            out.append(carrier_opts)
+        else:
+            out.append(base.get(col, []))
+    return out
 
 
 @app.callback(

@@ -77,12 +77,27 @@ class OverallResult:
     engine: Any = None
 
 
+_BLANK_VALS = (None, "", "all", "All")
+
+
 def _resolve_filters(filters: Mapping[str, Any]) -> Dict[str, Any]:
-    """Map non-empty form filters to real columns; drop blanks/'all'."""
+    """Map non-empty form filters to real columns; drop blanks/'all'.
+
+    Multi-select values (lists from the form) are kept as tuples so they stay
+    hashable for ``PrimitiveArgs.cache_key`` and flow through ``where_clause`` as
+    an ``IN (...)`` constraint."""
     out: Dict[str, Any] = {}
     for key, val in (filters or {}).items():
         col = FILTER_COLUMN.get(key, key)
-        if val in (None, "", "all", "All"):
+        if isinstance(val, (list, tuple, set)):
+            vals = [v for v in val if v not in _BLANK_VALS]
+            if not vals:
+                continue
+            if col == _YEAR_COL:
+                vals = [int(v) if str(v).isdigit() else v for v in vals]
+            out[col] = tuple(vals)
+            continue
+        if val in _BLANK_VALS:
             continue
         out[col] = int(val) if col == _YEAR_COL and str(val).isdigit() else val
     return out

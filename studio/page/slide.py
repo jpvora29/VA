@@ -239,6 +239,19 @@ def _body(slide: SlideSpec) -> Any:
     if layout == "methodology":
         return _methodology(slide)
 
+    if layout == "agenda":
+        items = [
+            html.Div(
+                [
+                    html.Span(p.get("label", ""), className="studio-agenda-num"),
+                    html.Span(p.get("text", ""), className="studio-agenda-text"),
+                ],
+                className="studio-agenda-item",
+            )
+            for p in slide.takeaways
+        ]
+        return html.Div(items, className="studio-agenda-list")
+
     # insight / decision (the workhorse): left rail + right visual + reco strip
     visual = _visual(slide.blocks[0]) if slide.blocks else None
     grid = html.Div(
@@ -251,7 +264,7 @@ def _body(slide: SlideSpec) -> Any:
     return html.Div([grid, _reco_strip(slide)], className="studio-insight-body")
 
 
-def render_slide(slide: SlideSpec, idx: int, total: int) -> html.Section:
+def render_slide(slide: SlideSpec, idx: int, total: int, *, flip: bool = False) -> html.Section:
     if slide.layout == "cover":
         return html.Section(
             [
@@ -270,16 +283,43 @@ def render_slide(slide: SlideSpec, idx: int, total: int) -> html.Section:
             **{"data-idx": idx},
         )
 
+    if slide.layout == "divider":
+        return html.Section(
+            [
+                html.Div(
+                    [
+                        html.Div(slide.eyebrow, className="studio-divider-eyebrow"),
+                        html.H2(slide.title, className="studio-divider-title"),
+                        html.Div(className="studio-divider-rule"),
+                    ],
+                    className="studio-divider-copy",
+                ),
+                _footer(idx, total),
+            ],
+            className=f"studio-slide layout-divider accent-{slide.accent}",
+            **{"data-idx": idx},
+        )
+
+    cls = f"studio-slide layout-{slide.layout}" + (" flip" if flip else "")
     return html.Section(
         [_header(slide), html.Div(_body(slide), className="studio-slide-body"), _footer(idx, total)],
-        className=f"studio-slide layout-{slide.layout}",
+        className=cls,
         **{"data-idx": idx},
     )
 
 
 def render_deck(deck) -> html.Div:
     total = len(deck.slides)
-    slides = [render_slide(s, i + 1, total) for i, s in enumerate(deck.slides)]
+    # Alternate the insight slides' rail/visual orientation so a long run of
+    # breakdown/insight slides doesn't read as the same frame repeated.
+    slides = []
+    insight_n = 0
+    for i, s in enumerate(deck.slides):
+        flip = False
+        if s.layout == "insight":
+            flip = insight_n % 2 == 1
+            insight_n += 1
+        slides.append(render_slide(s, i + 1, total, flip=flip))
     stage = html.Div(slides, className="studio-stage", id="studio-stage")
 
     thumbs = [

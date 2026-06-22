@@ -209,6 +209,57 @@
 
 /* compact KPI inheritance no longer needed (exec uses the stat band) */
 
+/* ── section divider slides (give the deck a QBR chapter rhythm) ──────────── */
+.studio-slide.layout-divider {
+    background:
+        radial-gradient(820px 460px at 112% 120%, rgba(0,157,224,0.32), transparent 55%),
+        linear-gradient(140deg, #001233 0%, #000F47 60%, #00223e 100%);
+    border: none; justify-content: center; align-items: flex-start;
+}
+.studio-divider-copy { padding: 0 64px; }
+.studio-divider-eyebrow {
+    font-size: 12px; font-weight: 800; letter-spacing: 0.22em; text-transform: uppercase; color: #5cc8ff;
+}
+.studio-divider-title {
+    font-size: 40px; font-weight: 800; letter-spacing: -0.025em; color: #fff; margin: 12px 0 0; line-height: 1.08;
+}
+.studio-divider-rule { width: 84px; height: 4px; border-radius: 2px; margin-top: 22px; background: linear-gradient(90deg, #009DE0, #5cc8ff); }
+/* per-chapter tint so consecutive dividers feel distinct */
+.studio-slide.layout-divider.accent-teal {
+    background: radial-gradient(820px 460px at 112% 120%, rgba(0,150,143,0.34), transparent 55%), linear-gradient(140deg,#04201f,#00302c 60%,#013d38);
+}
+.studio-slide.layout-divider.accent-teal .studio-divider-rule { background: linear-gradient(90deg,#0077A0,#4EA8C2); }
+.studio-slide.layout-divider.accent-green {
+    background: radial-gradient(820px 460px at 112% 120%, rgba(0,172,65,0.30), transparent 55%), linear-gradient(140deg,#04210f,#003317 60%,#014020);
+}
+.studio-slide.layout-divider.accent-green .studio-divider-rule { background: linear-gradient(90deg,#00AC41,#57C67A); }
+.studio-slide.layout-divider.accent-amber {
+    background: radial-gradient(820px 460px at 112% 120%, rgba(201,134,0,0.34), transparent 55%), linear-gradient(140deg,#241a02,#2e2305 60%,#3a2c06);
+}
+.studio-slide.layout-divider.accent-amber .studio-divider-rule { background: linear-gradient(90deg,#C98600,#FFD240); }
+.studio-slide.layout-divider .studio-slide-footer { border-top-color: rgba(255,255,255,0.12); color: rgba(255,255,255,0.55); }
+.studio-slide.layout-divider .studio-slide-foot-brand { color: rgba(255,255,255,0.75); }
+.studio-slide.layout-divider .studio-slide-foot-num { background: rgba(255,255,255,0.12); color: #fff; }
+
+/* ── agenda / contents slide ──────────────────────────────────────────────── */
+.studio-agenda-list { display: flex; flex-direction: column; gap: 13px; padding-top: 8px; max-width: 780px; }
+.studio-agenda-item {
+    display: flex; align-items: center; gap: 16px; padding: 13px 18px;
+    border: 1px solid var(--s-line); border-radius: 12px;
+    background: linear-gradient(180deg, #f8fbff, #f4f7fb); transition: border-color 150ms;
+}
+.studio-agenda-item:hover { border-color: var(--s-blue); }
+.studio-agenda-num {
+    width: 34px; height: 34px; flex-shrink: 0; display: grid; place-items: center; border-radius: 9px;
+    background: var(--s-navy); color: #fff; font-weight: 800; font-size: 14px;
+}
+.studio-agenda-text { font-size: 16px; font-weight: 700; color: var(--s-navy); letter-spacing: -0.01em; }
+
+/* ── alternate insight orientation (rail right) to break the repetition ────── */
+.studio-slide.flip .studio-insight-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 0.46fr); }
+.studio-slide.flip .studio-rail-wrap { order: 2; }
+.studio-slide.flip .studio-slide-visual { order: 1; }
+
 /* ── filmstrip ───────────────────────────────────────────────────────────── */
 .studio-filmstrip { display: flex; gap: 8px; overflow-x: auto; padding: 6px 2px 10px; scrollbar-width: thin; }
 .studio-thumb {

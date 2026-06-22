@@ -78,6 +78,22 @@ def where_clause(
     clauses: List[str] = []
     for i, (column, value) in enumerate(filters.items()):
         col = safe_column(spec, column)
+        # Multi-value filter → IN (...). Empty collection = no constraint.
+        if isinstance(value, (list, tuple, set)):
+            vals = list(value)
+            if not vals:
+                continue
+            keys = []
+            for j, v in enumerate(vals):
+                k = f"f{i}_{j}"
+                params[k] = v
+                keys.append(f":{k}")
+            if all(isinstance(v, str) for v in vals):  # case-insensitive text match
+                placeholders = ", ".join(f"LOWER({k})" for k in keys)
+                clauses.append(f'LOWER("{col}") IN ({placeholders})')
+            else:
+                clauses.append(f'"{col}" IN ({", ".join(keys)})')
+            continue
         key = f"f{i}"
         if isinstance(value, bool):  # guard: bool is an int subclass
             clauses.append(f'"{col}" = :{key}')

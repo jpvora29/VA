@@ -137,7 +137,8 @@ class CardsBlock(Block):
 # Layout names map to a template layout on export and to a CSS grid on screen.
 # The QBR workhorse is `insight`: action title + left commentary rail + right visual.
 LAYOUTS = frozenset(
-    {"cover", "exec", "insight", "swot", "initiatives", "decision", "methodology", "agenda"}
+    {"cover", "exec", "insight", "swot", "initiatives", "decision", "methodology",
+     "agenda", "divider"}
 )
 
 
