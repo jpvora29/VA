@@ -15,11 +15,10 @@ from pathlib import Path
 
 import dash
 import dash_bootstrap_components as dbc
-from dash import ALL, Input, Output, State, dcc
+from dash import ALL, Input, Output, State, dcc, html
 
 from studio.compute import FILTER_COLUMN, compute_overall
-from studio.data import filter_options as db_filter_options
-from studio.data import get_engine
+from studio.data import cached_filter_options, get_engine
 from studio.deck import build_deck
 from studio.export import export_deck
 from studio.page.layout import studio_shell
@@ -32,14 +31,16 @@ _ASSETS = str(Path(__file__).resolve().parent.parent / "assets")
 _DEFAULTS = {"carrier": "Zurich", "country": "Singapore", "year": 2025}
 _BREAKDOWNS = ["Product_Line", "SIC_Major_Class"]
 
-engine = get_engine()
+engine = get_engine()  # cheap: opens the engine, runs no query
 
-# DB-derived filter options, keyed back to the form's friendly ids.
-_col_opts = db_filter_options("gpr", engine=engine)
-_friendly = {fid: _col_opts.get(col, []) for fid, col in FILTER_COLUMN.items()}
 
-# Compute → deck → PPT-like on-screen render.
-_result = compute_overall(filters=_DEFAULTS, breakdowns=_BREAKDOWNS, engine=engine)
+def _friendly_options() -> dict:
+    """Lazy, cached DB filter options keyed back to the form's friendly ids.
+
+    The distinct scans (expensive on a huge table) happen here — on the boot
+    callback, after first paint, behind a spinner — never at import."""
+    col_opts = cached_filter_options("gpr")
+    return {fid: col_opts.get(col, []) for fid, col in FILTER_COLUMN.items()}
 
 
 _BLANK = (None, "", [], "all", "All")
@@ -71,7 +72,21 @@ def _compute_and_deck(filter_values: dict, breakdowns, report: str):
     )
 
 
-content = render_deck(_compute_and_deck(_DEFAULTS, _BREAKDOWNS, "qbr"))
+def _empty_state() -> html.Div:
+    """Instant first paint — invites Generate instead of auto-running a huge query."""
+    return html.Div(
+        [
+            html.I(className="bi bi-stars studio-empty-icon"),
+            html.Div("Build your view", className="studio-empty-title"),
+            html.P(
+                "Choose scope, filters and breakdowns on the left, then "
+                "Generate analysis. Figures are computed deterministically.",
+                className="studio-empty-sub",
+            ),
+        ],
+        className="studio-empty",
+    )
+
 
 app = dash.Dash(
     __name__,
@@ -79,20 +94,35 @@ app = dash.Dash(
     external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.icons.BOOTSTRAP],
     suppress_callback_exceptions=True,
 )
-app.layout = dash.html.Div(
+app.layout = html.Div(
     [
         studio_shell(
-            content,
+            _empty_state(),
             cut_groups=CUT_GROUPS,
             active="overall",
-            filter_options=_friendly,
-            filter_values=_DEFAULTS,
+            filter_options={},   # lazy — populated by the boot callback after first paint
+            filter_values={},
             page_rail=False,
             show_footer=False,
         ),
         dcc.Download(id="studio-pptx-download"),
     ]
 )
+
+
+@app.callback(
+    Output({"type": "studio-filter", "col": ALL}, "options"),
+    Output({"type": "studio-filter", "col": ALL}, "value"),
+    Input("studio-boot", "n_intervals"),
+    State({"type": "studio-filter", "col": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def _load_filters(_n, ids):
+    """Lazy-load DB filter options once after first paint; preselect defaults."""
+    fo = _friendly_options()
+    options = [fo.get(i["col"], []) for i in ids]
+    values = [_DEFAULTS.get(i["col"]) for i in ids]
+    return options, values
 
 
 @app.callback(

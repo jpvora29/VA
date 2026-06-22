@@ -117,7 +117,12 @@ def _filter_grid(
     return html.Div(
         [
             html.Div("FILTERS", className="studio-field-label"),
-            html.Div(cells, className="studio-filter-grid"),
+            dcc.Loading(
+                html.Div(cells, className="studio-filter-grid"),
+                type="dot",
+                color="#1f5fbf",
+                className="studio-loading",
+            ),
         ],
         className="studio-field",
     )
@@ -270,11 +275,21 @@ def studio_shell(
     main_children: list[Any] = []
     if page_rail:
         main_children.append(results_rail(active))
-    main_children.append(html.Div(content, id="studio-canvas"))
+    main_children.append(
+        dcc.Loading(
+            html.Div(content, id="studio-canvas"),
+            type="default",
+            color="#1f5fbf",
+            className="studio-loading studio-canvas-loading",
+        )
+    )
     if show_footer:
         main_children.append(footer())
     return html.Div(
         [
+            # Fires once after first paint so the shell appears instantly and the
+            # expensive filter-option scans run lazily (with a spinner), never at import.
+            dcc.Interval(id="studio-boot", interval=120, max_intervals=1),
             topbar(),
             html.Div(
                 [

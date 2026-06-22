@@ -40,29 +40,50 @@ def get_engine():
 
 
 def _distinct(engine, table: str, column: str, limit: int = 500) -> List[Any]:
-    sql = f'SELECT DISTINCT "{column}" AS v FROM "{table}" WHERE "{column}" IS NOT NULL ORDER BY v'
+    # Cap the scan at the SQL layer: on a huge table we only need enough distinct
+    # values to populate a dropdown, and we never want to materialise millions.
+    sql = (
+        f'SELECT v FROM (SELECT DISTINCT "{column}" AS v FROM "{table}" '
+        f'WHERE "{column}" IS NOT NULL) ORDER BY v LIMIT {int(limit)}'
+    )
     try:
         with engine.connect() as conn:
-            return [r.v for r in conn.execute(text(sql)).fetchall()][:limit]
+            return [r.v for r in conn.execute(text(sql)).fetchall()]
     except Exception as exc:  # noqa: BLE001 - a missing column must not break the form
         logger.debug("distinct(%s.%s) failed: %s", table, column, exc)
         return []
 
 
+@lru_cache(maxsize=128)
+def _distinct_cached(table: str, column: str, limit: int = 500) -> tuple:
+    """Process-lifetime cache of a column's distinct values (the singleton engine).
+
+    Distinct values are stable for a session, so the expensive scan runs once per
+    column — the rest of the run is instant. Returns a tuple so it stays hashable.
+    """
+    return tuple(_distinct(get_engine(), table, column, limit))
+
+
 def filter_options(flow: str, *, engine=None) -> Dict[str, List[Dict[str, Any]]]:
     """`{column: [{label, value}]}` for every entity/temporal column of the flow.
 
-    Driven by the flow registry so it stays in lock-step with the schema; values
-    are read live from the DB.
+    Driven by the flow registry so it stays in lock-step with the schema. Distinct
+    values are cached per column (``_distinct_cached``) so a huge table is scanned
+    once per column, not on every page load.
     """
-    engine = engine or get_engine()
     spec = get_flow_registry().get(flow)
     if spec is None:
         return {}
     cols = [c.name for c in spec.columns.values() if c.role in {"entity", "temporal"}]
     options: Dict[str, List[Dict[str, Any]]] = {}
     for col in cols:
-        values = _distinct(engine, spec.primary_table, col)
+        values = _distinct_cached(spec.primary_table, col)
         if values:
             options[col] = [{"label": str(v), "value": v} for v in values]
     return options
+
+
+@lru_cache(maxsize=4)
+def cached_filter_options(flow: str) -> Dict[str, List[Dict[str, Any]]]:
+    """Memoised `filter_options` for the lazy boot callback — built at most once."""
+    return filter_options(flow)

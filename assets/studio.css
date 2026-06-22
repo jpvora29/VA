@@ -388,6 +388,21 @@
 /* ── charts ──────────────────────────────────────────────────────────────── */
 .studio-fig { width: 100%; }
 
+/* ── loading + empty state ─────────────────────────────────────────────────── */
+/* keep the canvas spinner centred in a tall area so it reads as "working" */
+.studio-canvas-loading { display: block; min-height: 60vh; }
+.studio-loading .dash-spinner,
+.studio-loading ._dash-loading-callback { margin: 0 auto; }
+
+.studio-empty {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; gap: 10px; min-height: 60vh; padding: 40px;
+    color: var(--s-muted);
+}
+.studio-empty-icon { font-size: 38px; color: var(--s-blue); opacity: 0.85; }
+.studio-empty-title { font-size: 19px; font-weight: 800; color: var(--s-navy); }
+.studio-empty-sub { font-size: 13px; max-width: 420px; margin: 0; line-height: 1.55; }
+
 /* ── responsive ──────────────────────────────────────────────────────────── */
 @media (max-width: 1100px) {
     .studio-body { grid-template-columns: 1fr; }
