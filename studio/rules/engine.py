@@ -57,11 +57,25 @@ class WhitespaceRules:
 
 
 @dataclass(frozen=True)
+class OpportunityRules:
+    top_n: int = 5
+
+
+@dataclass(frozen=True)
+class TemporalRules:
+    ttm_min_months: int = 12
+    mom_significant_pct: float = 5.0
+    qoq_significant_pct: float = 8.0
+
+
+@dataclass(frozen=True)
 class RulesConfig:
     truncation: TruncationRules = field(default_factory=TruncationRules)
     yoy: YoyRules = field(default_factory=YoyRules)
     rank: RankRules = field(default_factory=RankRules)
     whitespace: WhitespaceRules = field(default_factory=WhitespaceRules)
+    opportunity: OpportunityRules = field(default_factory=OpportunityRules)
+    temporal: TemporalRules = field(default_factory=TemporalRules)
     swot: Dict[str, List[str]] = field(default_factory=dict)
 
 
@@ -99,6 +113,8 @@ def _load() -> RulesConfig:
     yoy = _section(meta, "yoy")
     rank = _section(meta, "rank")
     ws = _section(meta, "whitespace")
+    opp = _section(meta, "opportunity")
+    temporal = _section(meta, "temporal")
     swot = meta.get("swot")
 
     return RulesConfig(
@@ -117,6 +133,12 @@ def _load() -> RulesConfig:
             material_market_gwp=_num(ws, "material_market_gwp", 5_000_000.0),
             carrier_ceiling=_num(ws, "carrier_ceiling", 0.0),
             top_n=_int(ws, "top_n", 5),
+        ),
+        opportunity=OpportunityRules(top_n=_int(opp, "top_n", 5)),
+        temporal=TemporalRules(
+            ttm_min_months=_int(temporal, "ttm_min_months", 12),
+            mom_significant_pct=_num(temporal, "mom_significant_pct", 5.0),
+            qoq_significant_pct=_num(temporal, "qoq_significant_pct", 8.0),
         ),
         swot=swot if isinstance(swot, dict) else {},
     )

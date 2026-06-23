@@ -47,7 +47,10 @@ def _significant_movers(rows: List[Dict[str, Any]]) -> Tuple[List[str], List[str
         if y is None:
             continue
         if y >= cfg.high_growth_pct and p >= cfg.significant_premium_floor:
-            hi.append(f"{r['name']} ({pct(y, signed=True)})")
+            # >100% growth always shows previous + current year premium (the YoY rule);
+            # prior is derived exactly from current ÷ (1 + YoY) — no extra query.
+            prior = p / (1 + y / 100) if (1 + y / 100) else 0.0
+            hi.append(f"{r['name']} ({pct(y, signed=True)}: {money(prior)}→{money(p)})")
         elif y <= -10 and p >= cfg.significant_premium_floor:
             lo.append(f"{r['name']} ({pct(y, signed=True)})")
     return hi, lo
@@ -107,9 +110,17 @@ def build_swot(result):
     top_sow = sorted(have_sow, key=lambda r: r["sow"], reverse=True)[:2]
     low_sow = sorted(have_sow, key=lambda r: r["sow"])[:2]
 
+    # Strengths lead with where the carrier is BIG and well-positioned: high premium
+    # (scale), high share of portfolio (appetite), strong wallet penetration, momentum.
+    total_prem = sum((r.get("premium") or 0) for r in rows) or 1.0
+    top_prem = sorted(rows, key=lambda r: r.get("premium") or 0, reverse=True)[:2]
     strengths = []
     if rank:
         strengths.append(f"Market position at {rank}")
+    strengths += [
+        f"Scale in {r['name']} — {money(r['premium'])} ({(r.get('premium') or 0) / total_prem * 100:.0f}% of the book)"
+        for r in top_prem if (r.get("premium") or 0) > 0
+    ]
     strengths += [f"Strong penetration in {r['name']} ({r['sow']:.1f}%)" for r in top_sow]
     if hi:
         strengths.append(f"Momentum in {hi[0]}")

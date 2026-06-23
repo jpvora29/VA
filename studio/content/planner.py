@@ -50,6 +50,7 @@ _CHAPTER_ORDER = ["Performance", "Portfolio & Mix", "Position & Growth", "Risks 
 _CHAPTER_ACCENT = {
     "Performance": "blue", "Portfolio & Mix": "teal", "Position & Growth": "green",
     "Risks & Outlook": "amber", "Decisions & Next Steps": "navy",
+    "Geographic Performance": "green", "Competitive Position": "blue",
 }
 _BREAKDOWN_CHAPTER = "Portfolio & Mix"
 _DECISIONS_CHAPTER = "Decisions & Next Steps"
@@ -98,7 +99,7 @@ def _finding_slide(finding, spec) -> SlideSpec:
         recommendation=finding.recommendation,
         owner=finding.owner, due_date=finding.due_date, confidence=finding.confidence,
         takeaways=list(finding.takeaways),
-        blocks=[finding.visual] if finding.visual is not None else [],
+        blocks=finding.blocks(),
         evidence=_evidence_dicts(finding),
         sources=list(finding.sources or spec.sources),
     )
@@ -119,6 +120,11 @@ def _decision_slide(spec: QBRContentSpec) -> SlideSpec:
         accent="navy", question="What are we deciding and who owns it?",
         takeaways=[{"label": "Decision.", "text": d, "tone": "neutral"} for d in spec.decisions],
         blocks=[TableBlock(cols, rows)] if rows else [],
+        evidence=[
+            {"label": "Moves", "value": str(len(rows))},
+            {"label": "Owners", "value": str(len({r["owner"] for r in rows}))},
+            {"label": "Horizon", "value": "Next 1–2 quarters"},
+        ] if rows else [],
         sources=list(spec.sources),
     )
 
@@ -178,6 +184,11 @@ def _rank_slide(result: OverallResult) -> SlideSpec | None:
             {"label": "Where.", "text": "Each bar is where the next-rank carrier out-earns you, by product line (carrier not named — confidential).", "tone": "neutral"},
         ],
         blocks=[ChartBlock("waterfall", data["labels"], data["values"], "Premium gap to the next-rank carrier, by product line")],
+        evidence=[
+            {"label": "Your rank", "value": f"#{data['current_rank']}"},
+            {"label": "Target rank", "value": f"#{tgt}"},
+            {"label": "Premium gap", "value": money(data["total_gap"])},
+        ],
         recommendation=f"Prioritise the top {min(3, len(data['labels']))} product lines where the gap is largest.",
         confidence="high", sources=["GPR — premium ledger"],
     )
@@ -201,6 +212,11 @@ def _peer_slide(result: OverallResult) -> SlideSpec | None:
             {"label": "Confidential.", "text": "Aggregate peer average only — no individual peer is named.", "tone": "neutral"},
         ],
         blocks=[ChartBlock("bar", ["You", "Peer avg"], [pg["own"], pg["peer_avg"]], "You vs aggregate peer average")],
+        evidence=[
+            {"label": "Your GWP", "value": money(pg["own"])},
+            {"label": "Peer avg GWP", "value": money(pg["peer_avg"])},
+            {"label": "Ratio", "value": f"{ratio:.2f}x"},
+        ],
         recommendation="Use the peer gap to prioritise where to defend or grow.",
         confidence="medium", sources=["GPR — premium ledger", "Peers — aggregate benchmark"],
     )
@@ -219,6 +235,78 @@ def _methodology_slide(spec: QBRContentSpec) -> SlideSpec:
 
 
 _COMPETITIVE_CHAPTER = "Competitive Position"
+_GEOGRAPHIC_CHAPTER = "Geographic Performance"
+
+
+def _selected_countries(result: OverallResult) -> List[str]:
+    """The countries in scope (the form's multiselect) — drives per-country pages."""
+    val = result.resolved_filters.get("Country")
+    if val is None:
+        return []
+    if isinstance(val, (list, tuple, set)):
+        return [str(v) for v in val]
+    return [str(val)]
+
+
+def _country_result(result: OverallResult, country: str) -> OverallResult:
+    """Recompute the page scoped to one country (same primitives, country pinned)."""
+    from studio.compute import compute_overall
+
+    return compute_overall(
+        flow=result.flow,
+        filters={**dict(result.resolved_filters), "Country": country},
+        breakdowns=["Product_Line", "SIC_Major_Class"],
+        engine=result.engine,
+        peers=result.peers,
+    )
+
+
+def _country_slide(country: str, cres: OverallResult) -> SlideSpec:
+    """Per-country premium breakdown — a green 'Geographic' insight slide."""
+    from studio.narrate import breakdown_takeaways
+
+    prod = next((b for b in cres.breakdowns if b.column == "Product_Line"), None)
+    prod_rows = prod.rows if prod else []
+    rows = sorted(prod_rows, key=lambda r: r.get("premium") or 0, reverse=True)[:8]
+    total = sum((r.get("premium") or 0) for r in prod_rows)
+    blocks: List[Any] = [KpiBlock(cres.kpis)] if cres.kpis else []
+    if rows:
+        blocks.append(ChartBlock("bar", [r["name"] for r in rows], [r["premium"] for r in rows], f"Premium by product — {country}"))
+    return SlideSpec(
+        layout="insight", eyebrow=f"GEOGRAPHIC · {country.upper()}",
+        title=f"{country}: {money(total)} of premium across {len(prod_rows)} product lines",
+        accent="green", question=f"How does the book perform in {country}?",
+        takeaways=breakdown_takeaways(prod) if prod else [],
+        blocks=blocks, sources=["GPR — premium ledger"],
+    )
+
+
+def _country_swot_slide(country: str, cres: OverallResult) -> SlideSpec:
+    """Per-country SWOT — fact-driven quadrants from that country's result."""
+    from studio.narrate.commentary import build_swot
+
+    return SlideSpec(
+        layout="swot", eyebrow=f"SWOT · {country.upper()}",
+        title=f"{country} — strengths, gaps, opportunities and threats",
+        accent="navy", question=f"What is the strategic picture in {country}?",
+        blocks=[build_swot(cres)], sources=["GPR — premium ledger"],
+    )
+
+
+def _geographic_slides(result: OverallResult, cut_set: set) -> List[SlideSpec]:
+    """Per-country mini-section: a breakdown slide and/or a SWOT slide per country."""
+    want_breakdown = "country_breakdown" in cut_set
+    want_swot = "country_swot" in cut_set
+    if not (want_breakdown or want_swot):
+        return []
+    slides: List[SlideSpec] = []
+    for country in _selected_countries(result):
+        cres = _country_result(result, country)
+        if want_breakdown:
+            slides.append(_country_slide(country, cres))
+        if want_swot:
+            slides.append(_country_swot_slide(country, cres))
+    return slides
 
 
 def plan_deck(
@@ -241,6 +329,9 @@ def plan_deck(
         if s:
             competitive.append(s)
 
+    # Per-country pages (breakdown and/or SWOT) when the Country ticks are on.
+    geographic = _geographic_slides(result, cut_set)
+
     # Tag every content slide with its chapter: material findings (canonical agenda
     # order) + a slide for every OTHER breakdown the user selected (Country, Business
     # Line, …) so the breakdown dropdown drives slides, not just Product.
@@ -258,6 +349,7 @@ def plan_deck(
     present = [ch for ch in _CHAPTER_ORDER if any(c == ch for c, _ in tagged)]
     agenda_items = (
         present
+        + ([_GEOGRAPHIC_CHAPTER] if geographic else [])
         + ([_COMPETITIVE_CHAPTER] if competitive else [])
         + ([_DECISIONS_CHAPTER] if has_decisions else [])
     )
@@ -272,6 +364,11 @@ def plan_deck(
         section_no += 1
         slides.append(_divider_slide(ch, section_no))
         slides.extend(chunk)
+
+    if geographic:
+        section_no += 1
+        slides.append(_divider_slide(_GEOGRAPHIC_CHAPTER, section_no))
+        slides.extend(geographic)
 
     if competitive:
         section_no += 1

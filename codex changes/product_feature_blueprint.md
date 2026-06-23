@@ -15,6 +15,14 @@ The design principle is:
 This is reference material only. Nothing in this document is connected to the
 current runtime.
 
+## Related Visual Design Blueprint
+
+The detailed UI direction, concept images, QBR authoring workflow, page system,
+widget model, future LLM interaction, client-ready review rules, and recommended
+Storyroom + Boardroom Canvas hybrid are documented in:
+
+- [QBR Studio Visual Design Blueprint](QBR_STUDIO_VISUAL_DESIGN_BLUEPRINT.md)
+
 ## Product Experience
 
 The proposed product flow is:
@@ -753,4 +761,3 @@ It should be positioned as:
 > A governed insurance intelligence workspace where users explore trusted data,
 > collaborate with AI on interpretation and narrative, make accountable
 > decisions, and produce brand-approved executive presentations.
-

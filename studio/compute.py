@@ -14,9 +14,12 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from core.analytics.library import (
     compute_breakdown,
-    compute_peer_average,
+    compute_peer_average_total,
+    compute_period_change,
+    compute_period_series,
     compute_rank,
     compute_share_of_wallet,
+    compute_ttm,
     compute_yoy,
     find_whitespace,
 )
@@ -240,12 +243,27 @@ def _total(flow, filters, engine) -> float:
     return facts[0].value if facts else 0.0
 
 
+def _current_year(filters: Mapping[str, Any]) -> Optional[int]:
+    """The reporting year for YoY/movement — the MAX of a multi-select year filter
+    (so comparisons run against the latest selected year), or None when unset."""
+    yr = filters.get(_YEAR_COL)
+    if yr in (None, "", "all", "All"):
+        return None
+    if isinstance(yr, (list, tuple, set)):
+        years = [int(y) for y in yr if str(y).strip().isdigit()]
+        return max(years) if years else None
+    try:
+        return int(yr)
+    except (TypeError, ValueError):
+        return None
+
+
 def period_totals(flow, filters, engine) -> Optional[Dict[str, Any]]:
     """Current vs prior-year total premium. None if no year filter is set."""
-    yr = filters.get(_YEAR_COL)
-    if not yr:
+    cur = _current_year(filters)
+    if cur is None:
         return None
-    cur, prev = int(yr), int(yr) - 1
+    prev = cur - 1
     c = _total(flow, {**filters, _YEAR_COL: cur}, engine)
     p = _total(flow, {**filters, _YEAR_COL: prev}, engine)
     return {"current_year": cur, "prior_year": prev, "current": c, "prior": p,
@@ -254,10 +272,10 @@ def period_totals(flow, filters, engine) -> Optional[Dict[str, Any]]:
 
 def movement_by_dim(flow, dim, filters, engine, *, top: int = 6) -> List[Dict[str, Any]]:
     """Per-dim current vs prior premium + delta — the driver decomposition of YoY."""
-    yr = filters.get(_YEAR_COL)
-    if not yr:
+    cur = _current_year(filters)
+    if cur is None:
         return []
-    cur, prev = int(yr), int(yr) - 1
+    prev = cur - 1
 
     def by(year):
         return {str(f.dims.get(dim)): f.value for f in compute_breakdown(
@@ -274,10 +292,10 @@ def movement_by_dim(flow, dim, filters, engine, *, top: int = 6) -> List[Dict[st
 
 
 def rank_movement(flow, filters, engine, subject) -> Optional[Dict[str, Any]]:
-    yr = filters.get(_YEAR_COL)
-    if not yr or not subject:
+    cur = _current_year(filters)
+    if cur is None or not subject:
         return None
-    cur, prev = int(yr), int(yr) - 1
+    prev = cur - 1
     base = {k: v for k, v in filters.items() if k != _CARRIER_COL}
 
     def rank_at(year):
@@ -297,10 +315,10 @@ def rank_movement(flow, filters, engine, subject) -> Optional[Dict[str, Any]]:
 
 
 def sow_movement(flow, filters, engine, subject) -> Optional[Dict[str, Any]]:
-    yr = filters.get(_YEAR_COL)
-    if not yr or not subject:
+    cur = _current_year(filters)
+    if cur is None or not subject:
         return None
-    cur, prev = int(yr), int(yr) - 1
+    prev = cur - 1
 
     def sow_at(year):
         facts = compute_share_of_wallet(PrimitiveArgs(flow=flow, metric="premium", group_by=(), filters={**filters, _YEAR_COL: year}, subject=subject), engine=engine)
@@ -324,10 +342,14 @@ def concentration(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 
 
 def peer_gap(flow, filters, engine, peers=None) -> Optional[Dict[str, Any]]:
-    """Subject's premium vs the aggregate peer average (confidential: no peer names).
+    """Subject's total premium vs the average peer's TOTAL premium (confidential).
 
-    `peers` pins a custom peer set; None resolves the peer group from the Peers table."""
-    facts = compute_peer_average(
+    Like-for-like: the peer benchmark is the mean of each peer carrier's total
+    premium in scope (`compute_peer_average_total`), NOT a per-row average — so the
+    ratio is meaningful (≈1× means you write about as much as the average peer).
+    `peers` pins a custom peer set; None resolves the peer group from the Peers table.
+    """
+    facts = compute_peer_average_total(
         PrimitiveArgs(
             flow=flow, metric="premium", group_by=(), filters=filters,
             peers=tuple(peers) if peers else None,
@@ -339,8 +361,8 @@ def peer_gap(flow, filters, engine, peers=None) -> Optional[Dict[str, Any]]:
         return None
     peer_avg = facts[0].value
     own = _total(flow, filters, engine)
-    return {"peer_avg": peer_avg, "own": own, "delta": own - peer_avg,
-            "ratio": (own / peer_avg) if peer_avg else None}
+    return {"peer_avg": peer_avg, "own": own, "n_peers": facts[0].dims.get("peers"),
+            "delta": own - peer_avg, "ratio": (own / peer_avg) if peer_avg else None}
 
 
 def near_rank_gap(flow, filters, engine, subject, *, dim="Product_Line", top=8) -> Optional[Dict[str, Any]]:
@@ -373,6 +395,161 @@ def near_rank_gap(flow, filters, engine, subject, *, dim="Product_Line", top=8) 
     return {"current_rank": cur, "target_rank": cur - 1, "competitor_rank": target[0],
             "labels": [p for p, _ in gaps], "values": [g for _, g in gaps],
             "total_gap": sum(g for _, g in gaps)}
+
+
+# ── temporal helpers: TTM / QoQ / MoM (the time-based QBR views) ─────────────
+
+
+def _temporal_filters(filters: Mapping[str, Any]) -> Dict[str, Any]:
+    """Scope filters minus the year, so the time axis spans every available period."""
+    return {k: v for k, v in filters.items() if k != _YEAR_COL}
+
+
+def period_series(flow, filters, engine, *, grain: str = "month") -> Dict[str, Any]:
+    """Premium per month/quarter over the full available history (year filter dropped)."""
+    facts = compute_period_series(
+        PrimitiveArgs(flow=flow, metric="premium", filters=_temporal_filters(filters)),
+        grain=grain, engine=engine,
+    )
+    return {
+        "grain": grain,
+        "labels": [str(f.dims["period"]) for f in facts],
+        "values": [f.value for f in facts],
+    }
+
+
+def period_change(flow, filters, engine, *, grain: str = "month") -> Dict[str, Any]:
+    """Period-over-period %: ``grain='month'`` ⇒ MoM, ``grain='quarter'`` ⇒ QoQ."""
+    facts = compute_period_change(
+        PrimitiveArgs(flow=flow, metric="premium", filters=_temporal_filters(filters)),
+        grain=grain, engine=engine,
+    )
+    labels = [str(f.dims["period"]) for f in facts]
+    values = [f.value for f in facts]
+    return {
+        "grain": grain, "labels": labels, "values": values,
+        "latest": values[-1] if values else None,
+        "latest_label": labels[-1] if labels else None,
+    }
+
+
+def mom(flow, filters, engine) -> Dict[str, Any]:
+    return period_change(flow, filters, engine, grain="month")
+
+
+def qoq(flow, filters, engine) -> Dict[str, Any]:
+    return period_change(flow, filters, engine, grain="quarter")
+
+
+def ttm(flow, filters, engine) -> Optional[Dict[str, Any]]:
+    """Trailing-12-month rolling totals + the headline TTM-over-TTM %."""
+    facts = compute_ttm(
+        PrimitiveArgs(flow=flow, metric="premium", filters=_temporal_filters(filters)),
+        engine=engine,
+    )
+    if not facts:
+        return None
+    labels = [str(f.dims["period"]) for f in facts]
+    values = [f.value for f in facts]
+    ttm_pct = facts[-1].support[0].get("ttm_pct") if facts[-1].support else None
+    latest = round((values[-1] - values[-2]) / values[-2] * 100, 1) if (len(values) >= 2 and values[-2]) else None
+    return {
+        "labels": labels, "values": values,
+        "current": values[-1] if values else None,
+        "ttm_pct": ttm_pct, "latest": latest,
+    }
+
+
+# ── deterministic data for the advanced widgets (premium / SoW / appetite) ───
+
+
+def opportunity_matrix(flow, filters, engine, whitespace, *, top_n: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Opportunity bubbles from the whitespace candidates — fully premium-derived.
+
+    For each candidate (an industry the market writes materially but the carrier
+    barely touches — exactly "max premium in country, carrier negligible"):
+      • y (potential) = market GWP, scaled 0–100 across the candidates;
+      • x (ease to win) = ``1 − leader's premium share`` in that industry, scaled
+        0–100 (a fragmented market with no dominant incumbent is easier to enter);
+      • size = market GWP.
+    No random values — same inputs always yield the same bubbles.
+    """
+    if top_n is None:
+        top_n = load_rules().opportunity.top_n
+    cands = sorted(whitespace or [], key=lambda w: w.get("market", 0) or 0, reverse=True)[:top_n]
+    if not cands:
+        return []
+    max_mkt = max((w["market"] for w in cands), default=0.0) or 1.0
+    base = {k: v for k, v in filters.items() if k != _CARRIER_COL}
+    points: List[Dict[str, Any]] = []
+    for w in cands:
+        industry = w["name"]
+        carriers = compute_breakdown(
+            PrimitiveArgs(flow=flow, metric="premium", group_by=(_CARRIER_COL,),
+                          filters={**base, _INDUSTRY_COL: industry}),
+            engine=engine,
+        )
+        vals = sorted((c.value for c in carriers), reverse=True)
+        total = sum(vals) or 1.0
+        leader_share = (vals[0] / total) if vals else 1.0
+        points.append({
+            "label": industry,
+            "x": round((1 - leader_share) * 100, 1),     # ease to win
+            "y": round(w["market"] / max_mkt * 100, 1),  # premium potential
+            "size": round(30 + w["market"] / max_mkt * 60, 1),
+        })
+    return points
+
+
+def product_country_heatmap(
+    flow, filters, engine, *, max_products: int = 6, max_countries: int = 6
+) -> Optional[Dict[str, Any]]:
+    """Premium across Product Line × Country, normalised 0–100 per cell for colour."""
+    facts = compute_breakdown(
+        PrimitiveArgs(flow=flow, metric="premium", group_by=("Product_Line", "Country"), filters=filters),
+        engine=engine,
+    )
+    if not facts:
+        return None
+    cell: Dict[Tuple[str, str], float] = {}
+    prods: List[str] = []
+    countries: List[str] = []
+    for f in facts:
+        p, c = str(f.dims.get("Product_Line")), str(f.dims.get("Country"))
+        cell[(p, c)] = f.value
+        if p not in prods:
+            prods.append(p)
+        if c not in countries:
+            countries.append(c)
+    prods = sorted(prods, key=lambda p: sum(cell.get((p, c), 0) for c in countries), reverse=True)[:max_products]
+    countries = sorted(countries, key=lambda c: sum(cell.get((p, c), 0) for p in prods), reverse=True)[:max_countries]
+    mx = max((cell.get((p, c), 0) for p in prods for c in countries), default=0.0) or 1.0
+    values = [[round(cell.get((p, c), 0) / mx * 100) for c in countries] for p in prods]
+    return {"rows": prods, "columns": countries, "values": values}
+
+
+def position_radar(*, totals=None, rankm=None, sowm=None, pg=None, conc=None) -> Optional[Dict[str, Any]]:
+    """Competitive-standing radar — each axis 0–100, derived from existing facts.
+
+    Scaling bands are fixed (documented inline) so the chart is deterministic; the
+    underlying signals are all premium / rank / share / peer measures.
+    """
+    labels: List[str] = []
+    values: List[float] = []
+    if rankm and rankm.get("of_n"):  # #1 of N → 100
+        pctile = (1 - (rankm["current"] - 1) / max(rankm["of_n"] - 1, 1)) * 100
+        labels.append("Rank"); values.append(round(max(0, min(100, pctile)), 1))
+    if sowm and sowm.get("current") is not None:  # share of wallet is already a %
+        labels.append("Wallet share"); values.append(round(max(0, min(100, sowm["current"])), 1))
+    if totals and totals.get("pct") is not None:  # YoY band −20%..+40% → 0..100
+        labels.append("Growth"); values.append(round(max(0, min(100, (totals["pct"] + 20) / 60 * 100)), 1))
+    if pg and pg.get("ratio") is not None:  # 0..2× the peer average → 0..100
+        labels.append("Vs peers"); values.append(round(max(0, min(100, pg["ratio"] / 2 * 100)), 1))
+    if conc and conc.get("top3") is not None:  # diversification = inverse top-3 share
+        labels.append("Diversification"); values.append(round(max(0, min(100, 100 - conc["top3"])), 1))
+    if len(labels) < 3:
+        return None
+    return {"labels": labels, "values": values}
 
 
 def compute_overall(

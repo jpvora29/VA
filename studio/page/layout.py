@@ -28,7 +28,7 @@ GPR_FILTERS: List[Mapping[str, Any]] = [
     {"id": "region", "label": "Region", "ph": "All"},
     {"id": "country", "label": "Country", "ph": "All", "multi": True},
     {"id": "carrier", "label": "Carrier", "ph": "Select"},
-    {"id": "year", "label": "Year", "ph": "Latest"},
+    {"id": "year", "label": "Year", "ph": "Latest", "multi": True},
     {"id": "product_line", "label": "Product Line", "ph": "All", "multi": True},
     {"id": "business_line", "label": "Business Line", "ph": "All", "multi": True},
     {"id": "cover_line", "label": "Cover Line", "ph": "All", "multi": True},

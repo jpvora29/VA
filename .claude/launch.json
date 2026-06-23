@@ -12,6 +12,13 @@
       "runtimeExecutable": ".venv/Scripts/python.exe",
       "runtimeArgs": ["-m", "studio.demo_app"],
       "port": 8099
+    },
+    {
+      "name": "qbr-studio",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "studio.authoring_app"],
+      "port": 8131,
+      "autoPort": true
     }
   ]
 }

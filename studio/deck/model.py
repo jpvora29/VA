@@ -132,6 +132,67 @@ class CardsBlock(Block):
         object.__setattr__(self, "cards", list(cards))
 
 
+# ── advanced visuals (premium-derived; shared by the screen + PPT renderers) ──
+
+
+@dataclass(frozen=True)
+class MatrixBlock(Block):
+    """Opportunity bubble matrix: points = [{label, x, y, size}] (ease × potential)."""
+
+    points: Sequence[Mapping[str, Any]] = ()
+    title: str = ""
+
+    def __init__(self, points, title=""):
+        object.__setattr__(self, "kind", "matrix")
+        object.__setattr__(self, "points", list(points))
+        object.__setattr__(self, "title", title)
+
+
+@dataclass(frozen=True)
+class HeatmapBlock(Block):
+    """Portfolio heatmap: rows × columns grid of normalised 0–100 values."""
+
+    rows: Sequence[str] = ()
+    columns: Sequence[str] = ()
+    values: Sequence[Sequence[float]] = ()
+    title: str = ""
+
+    def __init__(self, rows, columns, values, title=""):
+        object.__setattr__(self, "kind", "heatmap")
+        object.__setattr__(self, "rows", list(rows))
+        object.__setattr__(self, "columns", list(columns))
+        object.__setattr__(self, "values", [list(r) for r in values])
+        object.__setattr__(self, "title", title)
+
+
+@dataclass(frozen=True)
+class RadarBlock(Block):
+    """Competitive-position radar: labels (axes) + 0–100 values."""
+
+    labels: Sequence[str] = ()
+    values: Sequence[float] = ()
+    title: str = ""
+
+    def __init__(self, labels, values, title=""):
+        object.__setattr__(self, "kind", "radar")
+        object.__setattr__(self, "labels", list(labels))
+        object.__setattr__(self, "values", list(values))
+        object.__setattr__(self, "title", title)
+
+
+@dataclass(frozen=True)
+class TimelineBlock(Block):
+    """Initiative gantt: tasks = [{task, start, duration, status, owner}]."""
+
+    tasks: Sequence[Mapping[str, Any]] = ()
+    title: str = ""
+
+    def __init__(self, tasks, title=""):
+        object.__setattr__(self, "kind", "timeline")
+        object.__setattr__(self, "tasks", list(tasks))
+        object.__setattr__(self, "title", title)
+
+
 # ── slides & deck ─────────────────────────────────────────────────────────────
 
 # Layout names map to a template layout on export and to a CSS grid on screen.

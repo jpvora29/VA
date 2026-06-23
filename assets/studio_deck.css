@@ -67,8 +67,8 @@
 .studio-slide-question::before { content: "Q — "; font-style: normal; font-weight: 700; color: var(--s-blue); }
 
 /* ── insight layout: rail + visual (grid) over a recommendation strip ─────── */
-.studio-insight-body { display: flex; flex-direction: column; gap: 12px; min-height: 100%; }
-.studio-insight-grid { display: grid; grid-template-columns: minmax(0, 0.46fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.studio-insight-body { display: flex; flex-direction: column; gap: 14px; height: 100%; min-height: 100%; }
+.studio-insight-grid { display: grid; grid-template-columns: minmax(0, 0.46fr) minmax(0, 1fr); gap: 24px; align-items: stretch; flex: 1 1 auto; min-height: 0; }
 .studio-rail-wrap { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 
 /* evidence chips */
@@ -124,9 +124,13 @@
 .studio-rail-label { font-weight: 800; color: var(--s-navy); }
 .studio-rail-text { font-size: 13px; color: var(--s-muted); line-height: 1.5; }
 .studio-rail-item > div { font-size: 13px; line-height: 1.5; }
-.studio-slide-visual { min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+.studio-slide-visual { min-width: 0; display: flex; flex-direction: column; justify-content: center; height: 100%; }
 .studio-slide-visual .studio-table { font-size: 12.5px; }
 .studio-slide-visual .studio-td { padding: 8px 10px; }
+/* Dense layout: full-width secondary visual row under the rail|primary grid. */
+.studio-secondary { flex: 0 0 auto; justify-content: flex-start; border-top: 1px solid var(--s-line, #e6ebf3); padding-top: 8px; }
+.studio-visual-stack { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.studio-insight-body > .studio-kpi-grid { margin-bottom: 0; flex: 0 0 auto; }
 
 /* ── exec layout: stat band + (takeaways | priority actions) ─────────────── */
 .studio-exec-body { display: flex; flex-direction: column; gap: 18px; height: 100%; }

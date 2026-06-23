@@ -11,6 +11,7 @@ tests are stable.
 """
 from __future__ import annotations
 
+import calendar
 import random
 from pathlib import Path
 from typing import Dict, List
@@ -65,12 +66,24 @@ _CARRIER_STRENGTH = {c: w for c, w in zip(CARRIERS, [0.85, 1.15, 1.05, 0.95, 0.8
 # Industries where the subject is growing fast (drives the >100% YoY rule demo).
 _SUBJECT_HOT = {"Cyber": 1.9, "Financial Lines": 1.55}
 
+# Deterministic intra-year seasonal curve (12 weights) — a gentle rising ramp with
+# a mid-year lift, so MoM / QoQ / TTM have real, non-flat signal. Normalised at use
+# so the 12 monthly rows always sum to the row's annual premium (yearly totals,
+# YoY and every existing breakdown stay byte-identical to the annual seed).
+_SEASON = [0.72, 0.78, 0.86, 0.92, 1.00, 1.08, 1.12, 1.06, 0.98, 1.04, 1.10, 1.18]
+
 
 def _premium(rng, *, carrier, industry_w, product_w, year, hot=1.0) -> float:
     base = 9_000_000 * industry_w * product_w * _CARRIER_STRENGTH[carrier]
     growth = {2023: 0.82, 2024: 0.93, 2025: 1.0}[year] * (hot if year == 2025 else 1.0)
     noise = rng.uniform(0.7, 1.3)
     return round(base * growth * noise, 2)
+
+
+def _monthly_split(annual: float) -> List[float]:
+    """Split an annual premium into 12 deterministic monthly amounts summing to it."""
+    weight_total = sum(_SEASON)
+    return [round(annual * w / weight_total, 2) for w in _SEASON]
 
 
 def build_seed(path: Path = _SEED_PATH) -> Path:
@@ -92,26 +105,32 @@ def build_seed(path: Path = _SEED_PATH) -> Path:
                     business, cover, prod_w = lines[0]
                     for year in YEARS:
                         hot = _SUBJECT_HOT.get(product, 1.0) if carrier == SUBJECT else 1.0
-                        rows.append(
-                            {
-                                "Region": REGION_OF[country],
-                                "Country": country,
-                                "Carrier_Group": carrier,
-                                "Product_Line": product,
-                                "Business_Line": business,
-                                "Cover_Line": cover,
-                                "Client_Segment": rng.choice(SEGMENTS),
-                                "SIC_Major_Class": industry,
-                                "SIC_Minor_Class": industry + " — General",
-                                "CLIENT_NAME": f"{carrier} client {rng.randint(1000, 9999)}",
-                                "Premium": _premium(
-                                    rng, carrier=carrier, industry_w=ind_w, product_w=prod_w, year=year, hot=hot
-                                ),
-                                "Billing_Date": f"{year}-0{rng.randint(1, 9)}-15",
-                                "Year": year,
-                                "Month_Name": "June",
-                            }
+                        annual = _premium(
+                            rng, carrier=carrier, industry_w=ind_w, product_w=prod_w, year=year, hot=hot
                         )
+                        # Draw the descriptive fields once per group/year, then emit
+                        # one row per calendar month carrying its split of the annual.
+                        segment = rng.choice(SEGMENTS)
+                        client = f"{carrier} client {rng.randint(1000, 9999)}"
+                        for month, monthly in enumerate(_monthly_split(annual), start=1):
+                            rows.append(
+                                {
+                                    "Region": REGION_OF[country],
+                                    "Country": country,
+                                    "Carrier_Group": carrier,
+                                    "Product_Line": product,
+                                    "Business_Line": business,
+                                    "Cover_Line": cover,
+                                    "Client_Segment": segment,
+                                    "SIC_Major_Class": industry,
+                                    "SIC_Minor_Class": industry + " — General",
+                                    "CLIENT_NAME": client,
+                                    "Premium": monthly,
+                                    "Billing_Date": f"{year}-{month:02d}-15",
+                                    "Year": year,
+                                    "Month_Name": calendar.month_name[month],
+                                }
+                            )
     gpr = pd.DataFrame(rows)
 
     # Peers: subject's peer set = nearest-strength carriers (aggregate-only use).

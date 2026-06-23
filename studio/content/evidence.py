@@ -13,26 +13,45 @@ from studio.compute import (
     OverallResult,
     concentration,
     movement_by_dim,
+    opportunity_matrix,
     peer_gap,
     period_totals,
+    position_radar,
+    product_country_heatmap,
     rank_movement,
     sow_movement,
+    ttm,
 )
 from studio.content.model import Action, DataGap, Evidence, Finding, QBRContentSpec
-from studio.deck.model import ChartBlock, TableBlock
+from studio.deck.model import ChartBlock, HeatmapBlock, MatrixBlock, RadarBlock, TableBlock
 from studio.page.format import money, pct
 
 _PRIMARY = "Product_Line"
+# Driver table shows BOTH years' premium + the YoY %, not just an absolute change —
+# YoY is what tells a carrier whether a line is genuinely growing.
 _MOVE_COLS = [
     {"key": "name", "label": "Segment", "align": "left"},
-    {"key": "prior", "label": "Prior", "kind": "money", "align": "right"},
-    {"key": "current", "label": "Current", "kind": "money", "align": "right"},
-    {"key": "delta", "label": "Change", "kind": "money", "align": "right"},
+    {"key": "prior", "label": "Prior yr", "kind": "money", "align": "right"},
+    {"key": "current", "label": "Current yr", "kind": "money", "align": "right"},
+    {"key": "pct", "label": "YoY", "kind": "delta", "align": "right"},
 ]
+# YoY above this always shows both years' premium (rules.yaml yoy.high_growth_pct).
+_HIGH_GROWTH = 100.0
 
 
 def _signed_money(v: float) -> str:
     return ("+" if v >= 0 else "-") + money(abs(v))
+
+
+def _mover_label(m: dict) -> str:
+    """A driver as 'Name (+X% YoY)', and for >100% growth, the two years' premium."""
+    pctv = m.get("pct")
+    label = m["name"]
+    if pctv is not None:
+        label += f" ({pct(pctv, signed=True)} YoY)"
+    if pctv is not None and pctv >= _HIGH_GROWTH:
+        label += f" [{money(m['prior'])}→{money(m['current'])}]"
+    return label
 
 
 def build_content_spec(result: OverallResult, *, carrier=None, country=None, year=None) -> QBRContentSpec:
@@ -50,6 +69,7 @@ def build_content_spec(result: OverallResult, *, carrier=None, country=None, yea
     sowm = sow_movement(flow, filters, engine, carrier)
     primary = next((b for b in result.breakdowns if b.column == _PRIMARY), result.breakdowns[0] if result.breakdowns else None)
     movers = movement_by_dim(flow, _PRIMARY, filters, engine) if totals else []
+    ttm_data = ttm(flow, filters, engine)
 
     # ── Performance vs prior period ──────────────────────────────────────────
     if totals:
@@ -70,6 +90,15 @@ def build_content_spec(result: OverallResult, *, carrier=None, country=None, yea
         if sowm and sowm.get("delta") is not None:
             ev.append(Evidence("Share of wallet", f"{sowm['current']:.1f}%", f"{sowm['delta']:+.1f} pts vs {comp}"))
         what_changed.insert(0, f"Premium {dir_word} {pct(p, signed=True) if p is not None else ''} to {money(totals['current'])}")
+        # Time-based view: a trailing-12-month GWP trend (when monthly data exists)
+        # PLUS the prior-vs-current bar — two visuals + a KPI band = a full slide.
+        perf_visuals: List[Any] = []
+        if ttm_data and ttm_data.get("values"):
+            perf_visuals.append(ChartBlock("line", ttm_data["labels"], ttm_data["values"], "Trailing-12-month GWP"))
+            if ttm_data.get("ttm_pct") is not None:
+                tk.append({"label": "TTM.", "text": f"Trailing-12-month GWP is {pct(ttm_data['ttm_pct'], signed=True)} vs the prior twelve months.",
+                           "tone": "good" if ttm_data["ttm_pct"] >= 0 else "danger"})
+        perf_visuals.append(ChartBlock("bar", [comp, period], [totals["prior"], totals["current"]], "Prior vs current GWP"))
         findings.append(Finding(
             section="performance",
             question=f"How did {carrier} perform versus {comp}?",
@@ -78,8 +107,8 @@ def build_content_spec(result: OverallResult, *, carrier=None, country=None, yea
             recommendation="Confirm the result against budget once plan figures are loaded.",
             owner="Regional placement lead", due_date=f"Q4 {totals['current_year']}", confidence="high",
             materiality=min(1.0, abs(p or 0) / 20 + 0.5),
-            evidence=ev, takeaways=tk,
-            visual=ChartBlock("bar", [comp, period], [totals["prior"], totals["current"]], "Total GWP"),
+            evidence=ev, takeaways=tk, kpis=list(result.kpis),
+            visuals=perf_visuals,
         ))
 
     # ── Premium movement & drivers ───────────────────────────────────────────
@@ -92,9 +121,9 @@ def build_content_spec(result: OverallResult, *, carrier=None, country=None, yea
         concentrated = lead_share >= 45
         tk = []
         if pos:
-            tk.append({"label": "Tailwinds.", "text": "Growth led by " + ", ".join(f"{m['name']} ({_signed_money(m['delta'])})" for m in pos) + ".", "tone": "good"})
+            tk.append({"label": "Tailwinds.", "text": "Growth led by " + ", ".join(_mover_label(m) for m in pos) + ".", "tone": "good"})
         if neg:
-            tk.append({"label": "Headwinds.", "text": "Offset by " + ", ".join(f"{m['name']} ({_signed_money(m['delta'])})" for m in neg) + ".", "tone": "danger"})
+            tk.append({"label": "Headwinds.", "text": "Offset by " + ", ".join(_mover_label(m) for m in neg) + ".", "tone": "danger"})
         tk.append({"label": "Shape.", "text": f"{lead['name']} alone is {lead_share:.0f}% of the gross movement — the change is {'concentrated' if concentrated else 'broad-based'}.", "tone": "neutral"})
         findings.append(Finding(
             section="premium_movement",
@@ -108,34 +137,55 @@ def build_content_spec(result: OverallResult, *, carrier=None, country=None, yea
             materiality=0.95,
             evidence=[Evidence(m["name"], _signed_money(m["delta"]), f"{money(m['prior'])} → {money(m['current'])}") for m in movers[:4]],
             takeaways=tk,
-            visual=TableBlock(_MOVE_COLS, movers),
+            # Premium bridge: each product line's contribution to the movement,
+            # accumulating to the net change — then the detail table beneath it.
+            visuals=[
+                ChartBlock("waterfall", [m["name"] for m in movers], [m["delta"] for m in movers], "Premium movement bridge"),
+                TableBlock(_MOVE_COLS, movers),
+            ],
         ))
 
-    # ── Portfolio & product mix (concentration) ──────────────────────────────
+    # ── Portfolio & product mix — where premium sits and where to grow ───────
     if primary and primary.rows:
         conc = concentration(primary.rows)
         if conc:
             top = sorted(primary.rows, key=lambda r: r["premium"] or 0, reverse=True)[:6]
-            risk = conc["hhi"] >= 2500 or conc["top3"] >= 70
+            # The clearest room to grow: the in-scope line with the lowest wallet
+            # penetration (headroom against the market), else the smallest line.
+            have_sow = [r for r in primary.rows if r.get("sow") is not None]
+            grow = min(have_sow, key=lambda r: r["sow"]) if have_sow else min(primary.rows, key=lambda r: r["premium"] or 0)
+            grow_sow = f" ({grow['sow']:.1f}% wallet share)" if grow.get("sow") is not None else ""
+            lead = top[0]
+            second = top[1] if len(top) > 1 else None
+            anchors = lead["name"] + (f" and {second['name']}" if second else "")
             findings.append(Finding(
                 section="portfolio_mix",
-                question="How concentrated is the portfolio?",
-                action_title=(f"Top 3 {primary.label.lower()}s hold {conc['top3']:.0f}% of premium — concentration is {'high' if risk else 'moderate'}"),
-                implication=("Concentration raises earnings volatility if a lead line softens."
-                             if risk else "Mix is reasonably diversified across the book."),
-                recommendation="Set a concentration guardrail and grow under-weight, profitable lines.",
+                question="Where does the premium sit, and where is the room to grow?",
+                action_title=(f"{anchors} anchor the book ({conc['top3']:.0f}% of premium); "
+                              f"{grow['name']} is the clearest line to grow"),
+                implication="Premium is concentrated in a few lines; deepening an under-penetrated, "
+                            "in-appetite line is the most reliable way to write more premium.",
+                recommendation=f"Grow {grow['name']}{grow_sow} — lowest penetration, with headroom against the market.",
                 owner="Portfolio strategy lead", due_date=f"Q1 {(int(year) + 1) if year else ''}".strip(), confidence="high",
-                materiality=0.7 + (0.2 if risk else 0),
+                materiality=0.75,
                 evidence=[
-                    Evidence("Lead line share", f"{conc['lead']:.0f}%"),
+                    Evidence("Lead line", lead["name"], f"{conc['lead']:.0f}% of book"),
                     Evidence("Top-3 share", f"{conc['top3']:.0f}%"),
-                    Evidence("HHI", str(conc["hhi"]), "0–10,000; >2,500 = concentrated"),
+                    Evidence("Grow", grow["name"], grow_sow.strip(" ()") or "under-weight"),
                 ],
                 takeaways=[
-                    {"label": "Concentration.", "text": f"Top 3 lines are {conc['top3']:.0f}% of premium (HHI {conc['hhi']}).", "tone": "warn" if risk else "neutral"},
-                    {"label": "Lead.", "text": f"{top[0]['name']} alone is {conc['lead']:.0f}% of the book.", "tone": "neutral"},
+                    {"label": "Anchors.", "text": f"{anchors} carry {conc['top3']:.0f}% of premium; {lead['name']} alone is {conc['lead']:.0f}% of the book.", "tone": "good"},
+                    {"label": "Grow here.", "text": f"{grow['name']} is the least-penetrated in-scope line{grow_sow} — the clearest headroom to write more premium.", "tone": "warn"},
                 ],
-                visual=ChartBlock("donut", [r["name"] for r in top], [r["premium"] for r in top], f"Mix by {primary.label}"),
+                visuals=[
+                    ChartBlock("donut", [r["name"] for r in top], [r["premium"] for r in top], f"Mix by {primary.label}"),
+                    TableBlock(
+                        [{"key": "name", "label": primary.label, "align": "left"},
+                         {"key": "premium", "label": "GWP", "kind": "money", "align": "right"},
+                         {"key": "sow", "label": "Share of Wallet", "kind": "pct", "align": "right"}],
+                        top, title=f"Top {primary.label.lower()}s",
+                    ),
+                ],
             ))
 
     # ── Country / industry performance ───────────────────────────────────────
@@ -143,6 +193,10 @@ def build_content_spec(result: OverallResult, *, carrier=None, country=None, yea
     if industry and industry.rows:
         top = sorted(industry.rows, key=lambda r: r["premium"] or 0, reverse=True)[:8]
         from studio.narrate import breakdown_takeaways
+        geo_visuals: List[Any] = [ChartBlock("bar", [r["name"] for r in top], [r["premium"] for r in top], "Premium by industry")]
+        hm = product_country_heatmap(flow, filters, engine)
+        if hm and len(hm["columns"]) >= 2:  # only meaningful across ≥2 countries
+            geo_visuals.append(HeatmapBlock(hm["rows"], hm["columns"], hm["values"], "Premium: product × country"))
         findings.append(Finding(
             section="geo_industry",
             question="Which industries carry the book?",
@@ -152,7 +206,7 @@ def build_content_spec(result: OverallResult, *, carrier=None, country=None, yea
             owner="Industry practice lead", due_date=f"Q1 {(int(year) + 1) if year else ''}".strip(), confidence="high",
             materiality=0.6, evidence=[Evidence(r["name"], money(r["premium"]), (f"{r['sow']:.1f}% wallet" if r.get("sow") is not None else "")) for r in top[:4]],
             takeaways=breakdown_takeaways(industry),
-            visual=ChartBlock("bar", [r["name"] for r in top], [r["premium"] for r in top], "Premium by industry"),
+            visuals=geo_visuals,
         ))
 
     # ── Share of wallet & market position ────────────────────────────────────
@@ -169,6 +223,10 @@ def build_content_spec(result: OverallResult, *, carrier=None, country=None, yea
         if pg and pg.get("ratio"):
             ev.append(Evidence("Vs peer average", f"{pg['ratio']:.2f}x", "aggregate peer GWP (confidential)"))
             tk.append({"label": "Peers.", "text": f"Premium is {pg['ratio']:.2f}x the aggregate peer average.", "tone": "good" if pg["ratio"] >= 1 else "danger"})
+        radar = position_radar(
+            totals=totals, rankm=rankm, sowm=sowm, pg=pg,
+            conc=concentration(primary.rows) if (primary and primary.rows) else None,
+        )
         findings.append(Finding(
             section="share_position",
             question="What is the market position versus peers?",
@@ -177,6 +235,7 @@ def build_content_spec(result: OverallResult, *, carrier=None, country=None, yea
             recommendation="Convert two large in-appetite accounts to lift wallet share.",
             owner="Distribution lead", due_date=f"Q4 {totals['current_year'] if totals else ''}".strip(), confidence="medium",
             materiality=0.65, evidence=ev, takeaways=tk,
+            visual=RadarBlock(radar["labels"], radar["values"], "Competitive position") if radar else None,
         ))
 
     # ── Whitespace & growth opportunities (with feasibility) ─────────────────
@@ -204,7 +263,9 @@ def build_content_spec(result: OverallResult, *, carrier=None, country=None, yea
                 {"label": "Priority.", "text": f"{ws[0]['name']} is the largest single gap.", "tone": "warn"},
                 {"label": "Caveat.", "text": "Feasibility indicative — validate against underwriting appetite.", "tone": "neutral"},
             ],
-            visual=TableBlock(ws_cols, rows),
+            # Opportunity matrix (premium potential × ease-to-win, both derived
+            # from market premium — never random) above the whitespace detail.
+            visuals=_whitespace_visuals(flow, filters, engine, ws, ws_cols, rows),
         ))
 
     # ── Material risks ───────────────────────────────────────────────────────
@@ -214,9 +275,15 @@ def build_content_spec(result: OverallResult, *, carrier=None, country=None, yea
         risk_points += [{"label": "Erosion.", "text": f"{m['name']} down {_signed_money(m['delta'])} vs {comp}.", "tone": "danger"} for m in neg]
     if primary and primary.rows:
         conc = concentration(primary.rows)
-        if conc and (conc["hhi"] >= 2500 or conc["top3"] >= 70):
-            risk_points.append({"label": "Concentration.", "text": f"Top-3 lines = {conc['top3']:.0f}% of premium.", "tone": "warn"})
+        if conc and conc["top3"] >= 70:
+            risk_points.append({"label": "Concentration.", "text": f"Top-3 lines = {conc['top3']:.0f}% of premium — a soft lead line would hit the book.", "tone": "warn"})
     if risk_points:
+        neg_all = [m for m in movers if m["delta"] < 0] if movers else []
+        risk_evidence = [Evidence(m["name"], _signed_money(m["delta"]), f"{money(m['prior'])} → {money(m['current'])}") for m in neg_all[:3]]
+        risk_visual = (
+            ChartBlock("bar", [m["name"] for m in neg_all[:6]], [abs(m["delta"]) for m in neg_all[:6]], "Premium erosion by line")
+            if neg_all else None
+        )
         findings.append(Finding(
             section="risks", question="What could derail the plan?",
             action_title="Concentration and line-level erosion are the principal risks",
@@ -224,6 +291,7 @@ def build_content_spec(result: OverallResult, *, carrier=None, country=None, yea
             recommendation="Assign owners to each risk and review monthly.",
             owner="Chief underwriting officer", due_date=f"Q4 {totals['current_year'] if totals else ''}".strip(),
             confidence="medium", materiality=0.6, takeaways=risk_points,
+            evidence=risk_evidence, visual=risk_visual,
         ))
 
     # ── Actions / decisions ──────────────────────────────────────────────────
@@ -249,6 +317,16 @@ def build_content_spec(result: OverallResult, *, carrier=None, country=None, yea
         findings=findings, actions=actions, decisions=decisions, data_gaps=gaps,
         sources=("GPR — premium ledger", "Peers — aggregate benchmark"),
     )
+
+
+def _whitespace_visuals(flow, filters, engine, ws, ws_cols, rows) -> List[Any]:
+    """Opportunity bubble matrix (if computable) then the whitespace detail table."""
+    visuals: List[Any] = []
+    points = opportunity_matrix(flow, filters, engine, ws)
+    if points:
+        visuals.append(MatrixBlock(points, "Opportunity matrix — potential × ease to win"))
+    visuals.append(TableBlock(ws_cols, rows))
+    return visuals
 
 
 def _build_actions(result, movers, year) -> List[Action]:

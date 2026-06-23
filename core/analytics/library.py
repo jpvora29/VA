@@ -241,34 +241,24 @@ def compute_market_presence(
     ]
 
 
-def compute_peer_average(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[AnalyticsFact]:
-    """The peer group's average of the measure, per group_by cut.
+def _peer_clauses(
+    spec, args: PrimitiveArgs, params: Dict[str, Any]
+) -> Optional[Tuple[str, List[str]]]:
+    """Build the SQL clauses selecting the subject's peer set under the args' filters.
 
-    Resolves the subject's peer set from the flow's Peers table (registry
-    `peer_columns`), then aggregates the measure over those peers — peer AVERAGE
-    only, never individual peers (the survey rule). The subject's own carrier
-    filter is dropped so the result is the peers, not the subject.
+    Returns ``(carrier_col, [where clauses])`` or None when the flow has no peer
+    config / no subject. Shared by the per-row peer average and the per-peer-total
+    peer average so both resolve the SAME peer membership the same way. A pinned
+    custom peer set overrides the Peers-table lookup; the subject's own carrier
+    filter is always excluded (we want the peers, not the subject).
     """
-    spec = flow_spec(args.flow)
-    eng = resolve_engine(engine)
     peer = spec.peer_columns
     carrier_col = spec.entity_columns.get("carrier")
     subject = args.subject or args.filters.get(carrier_col)
     if not peer or not carrier_col or not subject:
-        return []
+        return None
 
-    # Peer AVERAGE is an average across peers regardless of the metric's own
-    # aggregation (AVG(Premium) / AVG(Score) — the rules/gpr.py / rules/survey.py
-    # definition), so the measure column is resolved but the aggregation is AVG.
-    column, _ = resolve_measure(spec, args.metric)
-    agg = "AVG"
-    cuts = _cut_columns(spec, args.group_by)
-    params: Dict[str, Any] = {"subject": subject}
-
-    # Resolve the peer membership clause. A user-pinned custom peer set
-    # (``args.peers``) overrides the Peers-table lookup entirely (the same override
-    # the chatbot honours); otherwise resolve the subject's peer group from the
-    # Peers table, scoped to the selected country/countries.
+    params["subject"] = subject
     pinned = [str(p).strip() for p in (args.peers or []) if str(p).strip()]
     if pinned:
         ph = []
@@ -298,14 +288,34 @@ def compute_peer_average(args: PrimitiveArgs, *, engine: Optional[Any] = None) -
         )
         member_clause = f'"{carrier_col}" IN ({peer_sub})'
 
-    # All other filters apply to the measure table; the subject carrier filter is
-    # excluded (we want the peers, not the subject). Reuse the shared `where_clause`
-    # so multi-select (IN) filters are honoured exactly as in every other primitive.
     non_carrier = {k: v for k, v in args.filters.items() if k != carrier_col}
     extra = where_clause(spec, non_carrier, params)  # " WHERE …" or ""
     clauses = [member_clause]
     if extra:
         clauses.append(extra.replace(" WHERE ", "", 1))
+    return carrier_col, clauses
+
+
+def compute_peer_average(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[AnalyticsFact]:
+    """The peer group's per-ROW average of the measure, per group_by cut.
+
+    AVG over the peer set's rows — the right shape for an averaged-by-row metric
+    like a survey score (used by `find_service_gaps`). For an additive measure like
+    premium, prefer `compute_peer_average_total` (a peer's contribution is its
+    total, not its per-row average). Peer AVERAGE only, never individual peers.
+    """
+    spec = flow_spec(args.flow)
+    eng = resolve_engine(engine)
+    # Aggregation is AVG regardless of the metric's own (the rules/gpr.py /
+    # rules/survey.py definition resolves the measure column, averages across rows).
+    column, _ = resolve_measure(spec, args.metric)
+    agg = "AVG"
+    cuts = _cut_columns(spec, args.group_by)
+    params: Dict[str, Any] = {}
+    parts = _peer_clauses(spec, args, params)
+    if parts is None:
+        return []
+    _carrier_col, clauses = parts
 
     cut_sel = ", ".join(f'"{c}"' for c in cuts)
     select = (cut_sel + ", " if cut_sel else "") + f'{agg}("{column}") AS value'
@@ -326,6 +336,48 @@ def compute_peer_average(args: PrimitiveArgs, *, engine: Optional[Any] = None) -
             formula=f"{agg}({column}) over the subject's peer set",
         )
         for row in rows
+    ]
+
+
+def compute_peer_average_total(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[AnalyticsFact]:
+    """Average of each peer's TOTAL measure: SUM per peer carrier, then AVG across peers.
+
+    The correct 'aggregate peer average' for additive measures like premium — a
+    peer's contribution is its total in scope, so the subject's total compares
+    like-for-like. (Contrast `compute_peer_average`, which averages per row and is
+    only meaningful for averaged metrics like scores.) Confidential: returns a single
+    aggregate fact; `dims['peers']` carries only the peer COUNT, never a name.
+    """
+    spec = flow_spec(args.flow)
+    eng = resolve_engine(engine)
+    column, agg = resolve_measure(spec, args.metric)  # SUM for premium
+    params: Dict[str, Any] = {}
+    parts = _peer_clauses(spec, args, params)
+    if parts is None:
+        return []
+    carrier_col, clauses = parts
+
+    sql = (
+        f'SELECT AVG(carrier_total) AS value, COUNT(*) AS n FROM ('
+        f'  SELECT {agg}("{column}") AS carrier_total FROM "{spec.primary_table}" '
+        f'  WHERE {" AND ".join(clauses)} GROUP BY "{carrier_col}"'
+        f")"
+    )
+    rows = run_rows(eng, sql, params)
+    if not rows or rows[0].get("value") is None:
+        return []
+    row = rows[0]
+    value = _num(row["value"])
+    return [
+        AnalyticsFact(
+            name="peer_average_total",
+            value=round(value, 2),
+            unit=column,
+            rendered=f"{value:,.2f}",
+            dims={"peers": int(row.get("n") or 0)},
+            support=[row],
+            formula=f"AVG over peers of {agg}({column}) — average of peer totals",
+        )
     ]
 
 
@@ -505,6 +557,146 @@ def find_service_gaps(
     return gaps[:top_n]
 
 
+# ── Tier 1 — atomic, temporal (sub-year periods from the date column) ────────
+
+
+def _period_expr(spec, grain: str) -> Optional[str]:
+    """SQLite expression bucketing the flow's date column into a period label.
+
+    ``month`` → ``YYYY-MM``; ``quarter`` → ``YYYY-Qn`` (n from the calendar
+    month). Returns None when the flow declares no ``date`` column, so callers
+    degrade gracefully (no monthly signal) rather than raise.
+    """
+    date_col = spec.date_columns.get("date")
+    if not date_col:
+        return None
+    safe = safe_column(spec, date_col)
+    if grain == "month":
+        return f"strftime('%Y-%m', \"{safe}\")"
+    if grain == "quarter":
+        return (
+            f"strftime('%Y', \"{safe}\") || '-Q' || "
+            f"CAST((CAST(strftime('%m', \"{safe}\") AS INTEGER) + 2) / 3 AS INTEGER)"
+        )
+    raise ValueError(f"unknown period grain {grain!r}")
+
+
+def compute_period_series(
+    args: PrimitiveArgs, *, grain: str = "month", engine: Optional[Any] = None
+) -> List[AnalyticsFact]:
+    """The measure per calendar period (month or quarter), in chronological order.
+
+    The time axis for the TTM / QoQ / MoM views — derived from the flow's date
+    column (GPR ``Billing_Date``), so it is real and deterministic, not synthetic.
+    """
+    spec = flow_spec(args.flow)
+    eng = resolve_engine(engine)
+    column, agg = resolve_measure(spec, args.metric)
+    pexpr = _period_expr(spec, grain)
+    if pexpr is None:
+        return []
+    params: Dict[str, Any] = {}
+    where = where_clause(spec, args.filters, params)
+    sql = (
+        f'SELECT {pexpr} AS period, {agg}("{column}") AS value '
+        f'FROM "{spec.primary_table}"{where} GROUP BY period ORDER BY period'
+    )
+    rows = run_rows(eng, sql, params)
+    return [
+        AnalyticsFact(
+            name="period_series",
+            value=_num(row["value"]),
+            unit=column,
+            rendered=f'{_num(row["value"]):,.1f}',
+            dims={"period": row["period"], "grain": grain},
+            support=[row],
+            formula=f"{agg}({column}) by {grain}",
+        )
+        for row in rows
+        if row.get("period")
+    ]
+
+
+def compute_period_change(
+    args: PrimitiveArgs, *, grain: str = "month", engine: Optional[Any] = None
+) -> List[AnalyticsFact]:
+    """Period-over-period % change of the measure (``grain='month'`` ⇒ MoM,
+    ``grain='quarter'`` ⇒ QoQ). Mirrors ``compute_yoy`` with a calendar bucket
+    instead of the year column; emits nothing for the first period (no prior).
+    """
+    spec = flow_spec(args.flow)
+    eng = resolve_engine(engine)
+    column, agg = resolve_measure(spec, args.metric)
+    pexpr = _period_expr(spec, grain)
+    if pexpr is None:
+        return []
+    params: Dict[str, Any] = {}
+    where = where_clause(spec, args.filters, params)
+    sql = f"""
+        WITH agg AS (
+            SELECT {pexpr} AS period, {agg}("{column}") AS measure
+            FROM "{spec.primary_table}"{where}
+            GROUP BY period
+        )
+        SELECT *, LAG(measure) OVER (ORDER BY period) AS prev FROM agg ORDER BY period
+    """
+    rows = run_rows(eng, sql, params)
+    facts: List[AnalyticsFact] = []
+    for row in rows:
+        if not row.get("period"):
+            continue
+        prev = row.get("prev")
+        if prev in (None, 0) or _num(prev) == 0.0:
+            continue
+        pct = round((_num(row["measure"]) - _num(prev)) / _num(prev) * 100, 1)
+        facts.append(
+            AnalyticsFact(
+                name="period_change",
+                value=pct,
+                unit="%",
+                rendered=f"{pct:+.1f}%",
+                dims={"period": row["period"], "grain": grain},
+                support=[row],
+                formula=f"(current - prior) / prior * 100, by {grain}",
+            )
+        )
+    return facts
+
+
+def compute_ttm(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[AnalyticsFact]:
+    """Trailing-twelve-month rolling totals over the monthly series.
+
+    Each fact is the sum of the measure over the 12 months ending at its period;
+    the final fact's ``support`` carries the prior-TTM window and the TTM-over-TTM
+    %, so a renderer can show both the rolling line and the headline TTM delta.
+    """
+    series = compute_period_series(args, grain="month", engine=engine)
+    if len(series) < 12:
+        return []
+    periods = [str(f.dims["period"]) for f in series]
+    values = [f.value for f in series]
+    facts: List[AnalyticsFact] = []
+    rolling: List[float] = []
+    for i in range(11, len(values)):
+        window = sum(values[i - 11 : i + 1])
+        rolling.append(window)
+        facts.append(
+            AnalyticsFact(
+                name="ttm",
+                value=window,
+                unit=args.metric or "premium",
+                rendered=f"{window:,.1f}",
+                dims={"period": periods[i], "window": "trailing12"},
+                support=[],
+                formula="rolling 12-month sum",
+            )
+        )
+    if len(rolling) >= 13 and rolling[-13]:
+        ttm_pct = round((rolling[-1] - rolling[-13]) / rolling[-13] * 100, 1)
+        facts[-1].support.append({"prior_ttm": rolling[-13], "ttm_pct": ttm_pct})
+    return facts
+
+
 # ── Dispatch ───────────────────────────────────────────────────────────────
 # Name → primitive, all callable as ``fn(args, engine=engine)`` (composites carry
 # defaulted tuning kwargs). The orchestrator dispatches over this map; the planner
@@ -513,9 +705,13 @@ LIBRARY: Dict[str, Any] = {
     "compute_breakdown": compute_breakdown,
     "compute_rank": compute_rank,
     "compute_yoy": compute_yoy,
+    "compute_period_series": compute_period_series,
+    "compute_period_change": compute_period_change,
+    "compute_ttm": compute_ttm,
     "compute_share_of_portfolio": compute_share_of_portfolio,
     "compute_market_presence": compute_market_presence,
     "compute_peer_average": compute_peer_average,
+    "compute_peer_average_total": compute_peer_average_total,
     "compute_share_of_wallet": compute_share_of_wallet,
     "compute_nps": compute_nps,
     "compute_attribute_breakdown": compute_attribute_breakdown,

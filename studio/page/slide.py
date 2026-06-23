@@ -54,16 +54,26 @@ def _rail(takeaways: List[dict], *, heading: str = "Key takeaways") -> html.Div:
     )
 
 
-def _visual(block: Any) -> Any:
+def _visual(block: Any, *, height: int = 250) -> Any:
     kind = block.kind
     if kind == "chart":
         if block.chart == "donut":
-            return render.donut(block.labels, block.values, height=250)
+            return render.donut(block.labels, block.values, height=height)
         if block.chart == "waterfall":
-            return render.waterfall(block.labels, block.values, height=250)
-        return render.bar_chart(block.labels, block.values, height=250)
+            return render.waterfall(block.labels, block.values, height=height)
+        if block.chart == "line":
+            return render.line_chart(block.labels, block.values, height=height)
+        return render.bar_chart(block.labels, block.values, height=height)
     if kind == "table":
         return render.fact_table(block.rows, block.columns, hidden=block.hidden)
+    if kind == "matrix":
+        return render.scatter_bubbles(block.points, height=height)
+    if kind == "heatmap":
+        return render.heatmap(block.rows, block.columns, block.values, height=height)
+    if kind == "radar":
+        return render.radar_chart(block.labels, block.values, height=height)
+    if kind == "timeline":
+        return render.gantt_chart(block.tasks, height=height)
     return None
 
 
@@ -254,16 +264,30 @@ def _body(slide: SlideSpec) -> Any:
         ]
         return html.Div(items, className="studio-agenda-list")
 
-    # insight / decision (the workhorse): left rail + right visual + reco strip
-    visual = _visual(slide.blocks[0]) if slide.blocks else None
+    # content (insight / decision): a dense LayoutPlan that always fills the frame —
+    # stat band ▸ (rail | primary visual) ▸ full-width secondary visual ▸ reco.
+    from studio.deck.compose import compose
+
+    plan = compose(slide)
+    parts: List[Any] = []
+    if plan.stat_band:
+        parts.append(_kpi_band(plan.stat_band))
+    rail_children: List[Any] = [_rail(plan.rail)]
+    if not plan.stat_from_evidence:
+        rail_children.append(_evidence_chips(plan.evidence))
+    primary_h = 300 if plan.secondary is None else 260
     grid = html.Div(
         [
-            html.Div([_rail(slide.takeaways), _evidence_chips(slide.evidence)], className="studio-rail-wrap"),
-            html.Div(visual, className="studio-slide-visual"),
+            html.Div(rail_children, className="studio-rail-wrap"),
+            html.Div(_visual(plan.primary, height=primary_h) if plan.primary is not None else None, className="studio-slide-visual"),
         ],
         className="studio-insight-grid",
     )
-    return html.Div([grid, _reco_strip(slide)], className="studio-insight-body")
+    parts.append(grid)
+    if plan.secondary is not None:
+        parts.append(html.Div(_visual(plan.secondary, height=210), className="studio-slide-visual studio-secondary"))
+    parts.append(_reco_strip(slide))
+    return html.Div(parts, className="studio-insight-body")
 
 
 def render_slide(slide: SlideSpec, idx: int, total: int, *, flip: bool = False) -> html.Section:

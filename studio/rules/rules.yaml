@@ -26,11 +26,19 @@ whitespace:
 peer:
   aggregate_only: true   # confidentiality: peer comparisons are AVERAGES only, never named peers
 
+opportunity:
+  top_n: 5               # keep the N biggest whitespace candidates as opportunity bubbles
+
+temporal:
+  ttm_min_months: 12     # need at least this many months of history before a TTM trend is shown
+  mom_significant_pct: 5.0   # |MoM %| above this is called out as a material monthly swing
+  qoq_significant_pct: 8.0   # |QoQ %| above this is called out as a material quarterly swing
+
 # SWOT quadrant selectors — fact-driven (DESIGN.md §1). Each quadrant lists the
 # signals that route a fact into it. v1 placeholders; thresholds reuse the blocks
 # above. Expanded when the Country/SWOT page is built.
 swot:
-  strengths:   [high_share_of_wallet, strong_rank, above_peer_score]
+  strengths:   [high_premium, high_share_of_portfolio, high_share_of_wallet, strong_rank, above_peer_score]
   weaknesses:  [below_peer_score, negative_yoy_significant]
   opportunities: [whitespace, high_growth_significant]
   threats:     [peer_outgrowing, declining_rank, eroding_share_of_wallet]

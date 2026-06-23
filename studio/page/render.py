@@ -365,3 +365,203 @@ def donut(labels: Sequence[str], values: Sequence[float], *, height: int = 260) 
     )
     fig.update_layout(**_base_layout(height))
     return dcc.Graph(figure=fig, config={"displayModeBar": False}, className="studio-fig")
+
+
+def line_chart(
+    labels: Sequence[str],
+    values: Sequence[float],
+    *,
+    height: int = 220,
+    compact: bool = False,
+) -> dcc.Graph:
+    fig = go.Figure(
+        go.Scatter(
+            x=list(labels),
+            y=list(values),
+            mode="lines+markers" if not compact else "lines",
+            line=dict(color="#0B4BFF", width=2.5),
+            marker=dict(size=5, color="#0B4BFF"),
+            fill="tozeroy" if compact else None,
+            fillcolor="rgba(11,75,255,0.08)",
+            hovertemplate="%{x}: %{y:,.1f}<extra></extra>",
+        )
+    )
+    layout = _base_layout(height)
+    layout.update(
+        margin=dict(l=4, r=4, t=4, b=4 if compact else 24),
+        xaxis=dict(visible=not compact, showgrid=False),
+        yaxis=dict(visible=not compact, showgrid=not compact, gridcolor="rgba(12,25,58,0.06)"),
+    )
+    fig.update_layout(**layout)
+    return dcc.Graph(
+        figure=fig,
+        config={"displayModeBar": False},
+        className="studio-fig qs-sparkline" if compact else "studio-fig",
+    )
+
+
+def heatmap(
+    rows: Sequence[str],
+    columns: Sequence[str],
+    values: Sequence[Sequence[float]],
+    *,
+    height: int = 220,
+) -> dcc.Graph:
+    fig = go.Figure(
+        go.Heatmap(
+            x=list(columns),
+            y=list(rows),
+            z=[list(row) for row in values],
+            colorscale=[
+                [0, "#F6F8FC"],
+                [0.35, "#DDE7FF"],
+                [0.7, "#56C5C1"],
+                [1, "#007A78"],
+            ],
+            showscale=False,
+            text=[[f"{value:.0f}" for value in row] for row in values],
+            texttemplate="%{text}",
+            hovertemplate="%{y} · %{x}: %{z:.0f}<extra></extra>",
+        )
+    )
+    layout = _base_layout(height)
+    layout.update(
+        margin=dict(l=64, r=8, t=8, b=30),
+        xaxis=dict(side="bottom", showgrid=False, tickfont=dict(size=9)),
+        yaxis=dict(autorange="reversed", showgrid=False, tickfont=dict(size=9)),
+    )
+    fig.update_layout(**layout)
+    return dcc.Graph(figure=fig, config={"displayModeBar": False}, className="studio-fig")
+
+
+def scatter_bubbles(
+    points: Sequence[Mapping[str, Any]], *, height: int = 230
+) -> dcc.Graph:
+    fig = go.Figure()
+    palette = ["#007A78", "#0B4BFF", "#F2A900", "#7A61D1", "#5B6577"]
+    for index, point in enumerate(points):
+        fig.add_trace(
+            go.Scatter(
+                x=[point.get("x", 0)],
+                y=[point.get("y", 0)],
+                mode="markers+text",
+                text=[point.get("label", "")],
+                textposition="middle center",
+                textfont=dict(size=9, color="#ffffff"),
+                marker=dict(
+                    size=max(20, float(point.get("size", 30))),
+                    color=point.get("color") or palette[index % len(palette)],
+                    opacity=0.88,
+                    line=dict(color="#ffffff", width=1.5),
+                ),
+                hovertemplate=(
+                    f"{point.get('label', '')}<br>"
+                    "Ease: %{x:.1f}<br>Potential: %{y:.1f}<extra></extra>"
+                ),
+                showlegend=False,
+            )
+        )
+    layout = _base_layout(height)
+    layout.update(
+        margin=dict(l=38, r=12, t=8, b=34),
+        xaxis=dict(range=[0, 100], title="Ease to win", gridcolor="rgba(12,25,58,0.08)", zeroline=False),
+        yaxis=dict(range=[0, 100], title="Premium potential", gridcolor="rgba(12,25,58,0.08)", zeroline=False),
+        shapes=[
+            dict(type="line", x0=50, x1=50, y0=0, y1=100, line=dict(color="#9AA4B6", dash="dot")),
+            dict(type="line", x0=0, x1=100, y0=50, y1=50, line=dict(color="#9AA4B6", dash="dot")),
+        ],
+    )
+    fig.update_layout(**layout)
+    return dcc.Graph(figure=fig, config={"displayModeBar": False}, className="studio-fig")
+
+
+def radar_chart(
+    labels: Sequence[str], values: Sequence[float], *, height: int = 230
+) -> dcc.Graph:
+    theta = list(labels)
+    vals = [float(v) for v in values]
+    if theta and vals:
+        theta.append(theta[0])
+        vals.append(vals[0])
+    fig = go.Figure(
+        go.Scatterpolar(
+            r=vals,
+            theta=theta,
+            fill="toself",
+            line=dict(color="#0B4BFF", width=2),
+            fillcolor="rgba(11,75,255,0.16)",
+            marker=dict(size=5),
+        )
+    )
+    layout = _base_layout(height)
+    layout.update(
+        margin=dict(l=24, r=24, t=12, b=12),
+        polar=dict(
+            bgcolor="rgba(0,0,0,0)",
+            radialaxis=dict(range=[0, 100], showticklabels=False, gridcolor="rgba(12,25,58,0.10)"),
+            angularaxis=dict(gridcolor="rgba(12,25,58,0.08)", tickfont=dict(size=9)),
+        ),
+    )
+    fig.update_layout(**layout)
+    return dcc.Graph(figure=fig, config={"displayModeBar": False}, className="studio-fig")
+
+
+def radial_chart(
+    labels: Sequence[str], values: Sequence[float], *, height: int = 230
+) -> dcc.Graph:
+    fig = go.Figure(
+        go.Barpolar(
+            r=[float(v) for v in values],
+            theta=list(labels),
+            marker=dict(
+                color=ColorPalette.sequential(len(values)),
+                line=dict(color="#ffffff", width=1),
+            ),
+            opacity=0.9,
+            hovertemplate="%{theta}: %{r:.0f}<extra></extra>",
+        )
+    )
+    layout = _base_layout(height)
+    layout.update(
+        margin=dict(l=20, r=20, t=12, b=12),
+        polar=dict(
+            bgcolor="rgba(0,0,0,0)",
+            radialaxis=dict(showticklabels=False, gridcolor="rgba(12,25,58,0.08)"),
+            angularaxis=dict(tickfont=dict(size=9)),
+        ),
+    )
+    fig.update_layout(**layout)
+    return dcc.Graph(figure=fig, config={"displayModeBar": False}, className="studio-fig")
+
+
+def gantt_chart(tasks: Sequence[Mapping[str, Any]], *, height: int = 230) -> dcc.Graph:
+    names = [str(task.get("task", "")) for task in tasks]
+    starts = [float(task.get("start", 0)) for task in tasks]
+    durations = [float(task.get("duration", 1)) for task in tasks]
+    colors = [
+        {"on_track": "#1F9D55", "at_risk": "#F2A900", "planned": "#0B4BFF"}.get(
+            str(task.get("status", "")).lower(), "#5B6577"
+        )
+        for task in tasks
+    ]
+    fig = go.Figure(
+        go.Bar(
+            y=names,
+            x=durations,
+            base=starts,
+            orientation="h",
+            marker=dict(color=colors),
+            text=[task.get("owner", "") for task in tasks],
+            textposition="inside",
+            hovertemplate="%{y}<br>Month %{base:.0f}–%{x:.0f}<extra></extra>",
+        )
+    )
+    layout = _base_layout(height)
+    layout.update(
+        margin=dict(l=105, r=10, t=8, b=26),
+        bargap=0.42,
+        xaxis=dict(title="Quarter timeline", dtick=1, gridcolor="rgba(12,25,58,0.08)", zeroline=False),
+        yaxis=dict(autorange="reversed", showgrid=False, tickfont=dict(size=9)),
+    )
+    fig.update_layout(**layout)
+    return dcc.Graph(figure=fig, config={"displayModeBar": False}, className="studio-fig")

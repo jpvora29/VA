@@ -67,8 +67,23 @@ class Finding:
     materiality: float = 0.0         # 0..1, drives slide selection/order
     evidence: Sequence[Evidence] = field(default_factory=tuple)
     takeaways: Sequence[Mapping[str, Any]] = field(default_factory=tuple)  # left-rail points
-    visual: Optional[Any] = None     # a deck Block (chart/table/swot/cards) or None
+    visual: Optional[Any] = None     # a single deck Block (chart/table/swot/cards) or None
+    visuals: Sequence[Any] = field(default_factory=tuple)  # multiple visuals → dense slide
+    kpis: Sequence[Mapping[str, Any]] = field(default_factory=tuple)  # optional KPI band on top
     sources: Sequence[str] = ("GPR",)
+
+    def blocks(self) -> List[Any]:
+        """Resolved deck blocks for this finding: optional KPI band, then visuals."""
+        from studio.deck.model import KpiBlock
+
+        out: List[Any] = []
+        if self.kpis:
+            out.append(KpiBlock(self.kpis))
+        if self.visuals:
+            out.extend(self.visuals)
+        elif self.visual is not None:
+            out.append(self.visual)
+        return out
 
 
 @dataclass(frozen=True)
