@@ -221,10 +221,52 @@
 .qs-preview-empty i { font-size: 22px; color: #5cc8ff; }
 .qs-setup-aside .qs-generate-btn { width: 100%; margin-top: 0; padding: 14px; font-size: 15px; }
 
+/* ── Setup look & feel polish ─────────────────────────────────────────────── */
+.qs-setup-wrap { padding: 8px 4px 28px; }
+.qs-setup-card { padding: 0; overflow: hidden; }
+.qs-setup-head {
+    margin: 0; padding: 22px 28px 20px;
+    background: linear-gradient(135deg, #f3f7ff 0%, #eef6f5 100%);
+    border-bottom: 1px solid var(--line);
+}
+.qs-setup-title { font-size: 19px; }
+.qs-setup-layout { padding: 22px 28px 26px; }
+.qs-setup-section { transition: border-color 140ms, box-shadow 140ms, transform 140ms; }
+.qs-setup-section:hover { border-color: #c7d8ff; box-shadow: var(--shadow-sm); }
+.qs-sec-title i { font-size: 15px; }
+
+/* Template-driven "Deck sections" list */
+.qs-tsec { display: flex; flex-direction: column; gap: 12px; }
+.qs-tsec-summary { display: flex; gap: 8px; }
+.qs-tsec-total {
+    font-size: 11px; font-weight: 700; color: var(--blue);
+    background: #eef3ff; border: 1px solid #d7e3ff; border-radius: 999px; padding: 3px 10px;
+}
+.qs-tsec-total.alt { color: #0b7d76; background: #e7f6f4; border-color: #c8ece8; }
+.qs-tsec-list {
+    display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px;
+}
+.qs-tsec-row {
+    display: flex; align-items: center; gap: 10px; padding: 9px 11px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+}
+.qs-tsec-icon {
+    flex: none; width: 28px; height: 28px; display: grid; place-items: center;
+    border-radius: 8px; background: #eef3ff; color: var(--blue); font-size: 14px;
+}
+.qs-tsec-text { flex: 1; min-width: 0; }
+.qs-tsec-label { font-size: 12.5px; font-weight: 700; color: var(--navy); }
+.qs-tsec-note { font-size: 10.5px; color: var(--muted); margin-top: 1px; }
+.qs-tsec-count {
+    flex: none; font-size: 10px; font-weight: 700; color: var(--faint);
+    background: var(--bg, #f1f5fc); border-radius: 999px; padding: 2px 8px;
+}
+
 @media (max-width: 1080px) {
     .qs-setup-layout { grid-template-columns: 1fr; }
     .qs-setup-sections { grid-template-columns: 1fr; }
     .qs-setup-aside { position: static; }
+    .qs-tsec-list { grid-template-columns: 1fr; }
 }
 
 /* ── Narrative (Storyroom): outline | center | analyst ───────────────────── */
@@ -1602,6 +1644,14 @@ body.qs-cv-dragging { user-select: none; cursor: grabbing; }
 .qs-tf-box.is-picture { background: transparent; }
 .qs-tf-chartwrap .qs-tf-diag { z-index: 2; }
 .qs-tf-chartwrap .qs-tf-dot { z-index: 3; }
+
+/* manual-chart cue: chart can't be auto-filled (think-cell / linked data) */
+.qs-tf-chart-cue { position: absolute; top: 3px; right: 3px; z-index: 5;
+  display: inline-flex; align-items: center; gap: 3px; padding: 1px 5px;
+  background: #fff4d6; color: #8a6d1a; border: 1px solid #e6c965; border-radius: 3px;
+  font-size: 9px; font-weight: 600; line-height: 1.4; pointer-events: auto; cursor: help; }
+.qs-tf-bars { position: relative; }
+.qs-tf-stub { position: relative; }
 
 /* ── Template edit: read-only slide + real edit panel ─────────────────────── */
 .qs-tf-workspace { display: flex; gap: 16px; align-items: flex-start; }

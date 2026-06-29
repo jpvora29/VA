@@ -52,8 +52,12 @@ def derive_manifest(path: str, *, use_ai: bool = False) -> Tuple[Template, List[
     cached = _cache.get(key)
     if cached is not None:
         return cached
+    from studio.template_fill import commentary, grids
+
     template = analyze(path)
     bindings = R.infer(S.detect(template), use_ai=use_ai)
+    bindings = grids.augment(template, bindings)
+    bindings = commentary.augment(template, bindings)
     logger.info("template_fill: derived %d slot(s), %d mapped, from %s",
                 len(bindings), sum(1 for b in bindings if not b.placeholder), path)
     self = (template, bindings)

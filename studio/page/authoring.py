@@ -26,7 +26,6 @@ from studio.page import document as D
 from studio.page import render
 from studio.page.layout import (
     GPR_FILTERS,
-    _analyses,
     _breakdown,
     _filter_grid,
     _peers_panel,
@@ -39,7 +38,6 @@ from studio.page.slide import render_slide
 #    three that drive real, working screens + Setup and Export) ────────────────
 MODES: List[Mapping[str, str]] = [
     {"id": "setup", "label": "Setup", "icon": "bi-sliders2", "hint": "Scope & data"},
-    {"id": "narrative", "label": "Narrative", "icon": "bi-list-stars", "hint": "Story flow"},
     {"id": "canvas", "label": "Canvas", "icon": "bi-grid-1x2", "hint": "Compose pages"},
     {"id": "review", "label": "Review", "icon": "bi-patch-check", "hint": "Client-ready"},
     {"id": "export", "label": "Export", "icon": "bi-filetype-pptx", "hint": "PowerPoint"},
@@ -251,10 +249,6 @@ def top_bar(deck: DeckSpec, doc: Optional[Mapping[str, Any]] = None) -> html.Hea
                         className="qs-deck-id",
                     ),
                     html.Span(
-                        [html.I(className="bi bi-bounding-box"), "Marsh ICG · Navy theme"],
-                        className="qs-template-chip",
-                    ),
-                    html.Span(
                         [html.I(className="bi bi-cloud-check"), "Saved in browser"],
                         className="qs-autosave",
                         title="The editable document persists in local storage and survives a refresh.",
@@ -270,10 +264,6 @@ def top_bar(deck: DeckSpec, doc: Optional[Mapping[str, Any]] = None) -> html.Hea
                             "Client-ready" if ready else f"{counts['needs_review']} to review",
                         ],
                         className="qs-ready-badge" + (" ok" if ready else " warn"),
-                    ),
-                    html.Div(
-                        [html.Span("JV", className="qs-rev-av"), html.Span("KP", className="qs-rev-av alt")],
-                        className="qs-rev-stack",
                     ),
                     html.Button([html.I(className="bi bi-easel"), "Present"], className="qs-btn-ghost"),
                     html.Button(
@@ -423,6 +413,80 @@ def _template_control() -> html.Div:
     )
 
 
+# Section type → (friendly label, icon, how it's handled) for the template preview.
+_SECTION_META: Mapping[str, Tuple[str, str, str]] = {
+    "summary": ("Executive summary", "bi-grid-1x2", ""),
+    "highlights": ("Highlights", "bi-stars", "Commentary auto-written"),
+    "trading_summary": ("Trading summary", "bi-chat-square-text", "Commentary auto-written"),
+    "portfolio": ("Portfolio analysis", "bi-pie-chart", ""),
+    "feedback": ("Feedback", "bi-clipboard-heart", "Qualitative — filled by hand"),
+    "ranking": ("Portfolio & ranking", "bi-trophy", "Chart edited in PowerPoint"),
+    "growth": ("Growth quadrant", "bi-bullseye", "Chart edited in PowerPoint"),
+    "swot": ("SWOT", "bi-grid-3x3", "Commentary auto-written"),
+    "country_divider": ("Country divider", "bi-signpost-split", ""),
+    "breakdown": ("Carrier breakdown", "bi-table", "Per-product, per-country"),
+    "carrier_title": ("Section title", "bi-bookmark", ""),
+    "other": ("Other", "bi-file-earmark", ""),
+}
+
+
+def template_sections_panel(template_path: Optional[str] = None) -> html.Div:
+    """The sections THIS template will produce — selection driven by the deck itself,
+    not a static list. Grouped by section type in reading order, with page counts and
+    a note on how each is filled (data, commentary, or manual chart)."""
+    from studio.template_fill.registry import active_template_path, derive_manifest
+    from studio.template_fill.sections import classify_sections
+
+    path = template_path or active_template_path()
+    try:
+        template, _ = derive_manifest(path)
+        secs = classify_sections(template)
+    except Exception:  # noqa: BLE001 — a missing/odd template must not break Setup
+        return html.Div(
+            [html.I(className="bi bi-exclamation-circle"), " Pick a template to see its sections."],
+            className="qs-preview-empty",
+        )
+    order: List[str] = []
+    counts: dict = {}
+    for idx in sorted(secs):
+        key = secs[idx].value
+        if key not in counts:
+            order.append(key)
+        counts[key] = counts.get(key, 0) + 1
+    rows = []
+    for key in order:
+        label, icon, note = _SECTION_META.get(key, (key.title(), "bi-file-earmark", ""))
+        n = counts[key]
+        rows.append(
+            html.Div(
+                [
+                    html.I(className=f"bi {icon} qs-tsec-icon"),
+                    html.Div(
+                        [
+                            html.Div(label, className="qs-tsec-label"),
+                            html.Div(note, className="qs-tsec-note") if note else None,
+                        ],
+                        className="qs-tsec-text",
+                    ),
+                    html.Span(f"{n} page{'s' if n > 1 else ''}", className="qs-tsec-count"),
+                ],
+                className="qs-tsec-row",
+            )
+        )
+    total = len(secs)
+    return html.Div(
+        [
+            html.Div(
+                [html.Span(f"{total} pages", className="qs-tsec-total"),
+                 html.Span(f"{len(order)} section types", className="qs-tsec-total alt")],
+                className="qs-tsec-summary",
+            ),
+            html.Div(rows, className="qs-tsec-list"),
+        ],
+        className="qs-tsec",
+    )
+
+
 def setup_body(
     cut_groups: Sequence[Mapping[str, Any]],
     *,
@@ -453,9 +517,9 @@ def setup_body(
                 _audience_length(),
             ),
             _setup_section(
-                "bi-list-check", "Analyses",
-                "Toggle the cuts; Country drives per-country pages and SWOT.",
-                _analyses(cut_groups), span=True,
+                "bi-collection", "Deck sections",
+                "The pages this template will produce — read straight from the .pptx above.",
+                html.Div(template_sections_panel(), id="studio-template-sections"), span=True,
             ),
             _setup_section(
                 "bi-people", "Peers",
@@ -499,181 +563,6 @@ def setup_body(
         className="qs-setup-card",
     )
     return html.Div(form, className="qs-setup-wrap")
-
-
-# ── Narrative mode (Storyroom) ───────────────────────────────────────────────
-
-
-def _status_pill(slide: SlideSpec) -> html.Span:
-    key, label = slide_status(slide)
-    return html.Span(label, className=f"qs-status-pill {key}")
-
-
-def _outline(deck: DeckSpec, active_idx: int) -> html.Div:
-    rows: List[Any] = []
-    for ch in chapters(deck):
-        # Chapter header is a section marker (not a nav target) — the slides under
-        # it are the clickable items. This also keeps every qs-goto id unique.
-        rows.append(
-            html.Div(
-                [
-                    html.Span(ch["eyebrow"], className="qs-ch-eyebrow"),
-                    html.Span(ch["title"], className="qs-ch-title"),
-                ],
-                className="qs-ch-head",
-            )
-        )
-        for idx, s in ch["slides"]:
-            rows.append(
-                html.Button(
-                    [
-                        html.Span(s.eyebrow or s.layout.title(), className="qs-out-eyebrow"),
-                        html.Span(s.title, className="qs-out-title"),
-                        _status_pill(s),
-                    ],
-                    id={"type": "qs-goto", "idx": idx, "src": "outline"},
-                    className="qs-out-item" + (" active" if idx == active_idx else ""),
-                )
-            )
-    return html.Div(
-        [
-            html.Div(
-                [html.I(className="bi bi-list-stars"), "Narrative"],
-                className="qs-panel-title",
-            ),
-            html.Div(rows, className="qs-outline-list"),
-        ],
-        className="qs-outline",
-    )
-
-
-def _spine_strip(slide: SlideSpec) -> html.Div:
-    sp = spine(slide)
-    steps = [
-        ("Thesis", "bi-flag", sp["thesis"], "blue"),
-        (
-            "Evidence",
-            "bi-clipboard-data",
-            f"{len(sp['evidence'])} linked fact(s)" if sp["evidence"] else "No evidence linked",
-            "teal" if sp["evidence"] else "amber",
-        ),
-        ("Implication", "bi-signpost-2", sp["implication"] or "—", "navy"),
-        (
-            "Decision",
-            "bi-check2-square",
-            sp["decision"] or "No decision proposed",
-            "green" if sp["decision"] else "amber",
-        ),
-    ]
-    nodes = []
-    for i, (lbl, icon, text, accent) in enumerate(steps):
-        nodes.append(
-            html.Div(
-                [
-                    html.Div(
-                        [html.I(className=f"bi {icon}"), html.Span(lbl, className="qs-spine-lbl")],
-                        className=f"qs-spine-head {accent}",
-                    ),
-                    html.Div(text, className="qs-spine-text"),
-                ],
-                className="qs-spine-node",
-            )
-        )
-        if i < len(steps) - 1:
-            nodes.append(html.I(className="bi bi-chevron-right qs-spine-arrow"))
-    return html.Div(nodes, className="qs-spine")
-
-
-def _analyst_panel(slide: SlideSpec, doc: Optional[Mapping[str, Any]], idx: int) -> html.Div:
-    sp = spine(slide)
-    conf = (sp.get("confidence") or "medium").lower()
-    conf_pct = {"high": 92, "medium": 68, "low": 40}.get(conf, 68)
-    # The displayed value is the materialized (edited) value; provenance from the doc.
-    edited = _edited(doc, idx, "recommendation")
-    return html.Div(
-        [
-            html.Div(
-                [html.I(className="bi bi-stars"), "Analyst", html.Span("Deterministic", className="qs-analyst-mode")],
-                className="qs-panel-title",
-            ),
-            html.Div(
-                [
-                    html.Div("PROPOSED NARRATIVE", className="qs-analyst-label"),
-                    html.P(sp["thesis"], className="qs-analyst-thesis"),
-                ],
-                className="qs-analyst-block",
-            ),
-            html.Div(
-                [
-                    html.Div("DECISION / RECOMMENDATION", className="qs-analyst-label"),
-                    dcc.Textarea(
-                        id={"type": "qs-edit", "field": "recommendation", "idx": idx},
-                        value=sp.get("decision") or "",
-                        className="qs-analyst-edit",
-                        placeholder="No recommendation generated — write one.",
-                    ),
-                    html.Div(
-                        [
-                            _prov_badge(edited),
-                            html.Span("edits apply to the slide & export on blur", className="qs-edit-hint"),
-                            html.Button(
-                                "Reset",
-                                id={"type": "qs-reset", "field": "recommendation", "idx": idx},
-                                className="qs-reset-link",
-                            )
-                            if edited
-                            else None,
-                        ],
-                        className="qs-prov-row",
-                    ),
-                ],
-                className="qs-analyst-block",
-            ),
-            html.Div(
-                [
-                    html.Div(
-                        [html.Span("Confidence", className="qs-meter-lbl"), html.Span(conf.title(), className="qs-meter-val")],
-                        className="qs-meter-head",
-                    ),
-                    html.Div(html.Div(className=f"qs-meter-fill {conf}", style={"width": f"{conf_pct}%"}), className="qs-meter-track"),
-                ],
-                className="qs-analyst-block",
-            ),
-            html.Div(
-                [
-                    html.Button([html.I(className="bi bi-magic"), "Get suggestion"], className="qs-analyst-act", disabled=True),
-                    html.Button([html.I(className="bi bi-search"), "Find evidence"], className="qs-analyst-act ghost", disabled=True),
-                ],
-                className="qs-analyst-actions",
-            ),
-            html.P(
-                "AI assistance arrives as a suggestion layer — it will never silently "
-                "replace approved deterministic content.",
-                className="qs-analyst-foot",
-            ),
-        ],
-        className="qs-analyst",
-    )
-
-
-def narrative_body(deck: DeckSpec, active_idx: int, doc: Optional[Mapping[str, Any]]) -> html.Div:
-    active_idx = max(0, min(active_idx, len(deck.slides) - 1))
-    slide = deck.slides[active_idx]
-    total = len(deck.slides)
-    preview = render_slide(slide, active_idx + 1, total)
-    thumbs = _filmstrip(deck, active_idx)
-    center = html.Div(
-        [
-            _spine_strip(slide) if slide.layout in ("insight", "decision", "exec") else None,
-            html.Div(html.Div(preview, className="qs-slide-scale"), className="qs-slide-frame"),
-            thumbs,
-        ],
-        className="qs-narr-center",
-    )
-    return html.Div(
-        [_outline(deck, active_idx), center, _analyst_panel(slide, doc, active_idx)],
-        className="qs-narrative",
-    )
 
 
 # ── Canvas mode (Boardroom Canvas + Widget Inspector) ────────────────────────
@@ -2083,7 +1972,7 @@ def body_for(
     if tdoc:
         from studio.page import template_preview as TP
 
-        if mode in ("canvas", "narrative"):
+        if mode == "canvas":
             return TP.template_preview_body(tdoc, view)
         if mode == "review":
             return TP.template_review_body(tdoc)
@@ -2092,8 +1981,6 @@ def body_for(
     if deck is None or not deck.slides:
         return empty_canvas()
     idx = int(view.get("idx", 0))
-    if mode == "narrative":
-        return narrative_body(deck, idx, doc)
     if mode == "canvas":
         return canvas_body(
             deck,
@@ -2114,7 +2001,7 @@ def body_for(
         return review_body(deck, doc)
     if mode == "export":
         return export_body(deck, doc)
-    return narrative_body(deck, idx, doc)
+    return canvas_body(deck, idx, doc, view.get("sel"), view.get("zoom", ZOOM_FIT))
 
 
 def authoring_shell(
@@ -2159,7 +2046,6 @@ def _placeholder_topbar(enabled: bool = False) -> html.Header:
                         [html.Span("New QBR deck", className="qs-deck-name"), html.Span("Not generated", className="qs-deck-period")],
                         className="qs-deck-id",
                     ),
-                    html.Span([html.I(className="bi bi-bounding-box"), "Marsh ICG · Navy theme"], className="qs-template-chip"),
                 ],
                 className="qs-top-left",
             ),

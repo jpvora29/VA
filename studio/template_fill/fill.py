@@ -15,6 +15,7 @@ Correctness rules (a corrupt deck is worse than an unfilled one):
 """
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -168,6 +169,63 @@ def _add_elements(slide, elements: List[Dict[str, Any]], width_emu: int, height_
                 r.font.size = Pt(int(el.get("size", 12)))
 
 
+# ── charts (guarded, best-effort) ────────────────────────────────────────────
+
+
+def _chart_is_external(chart) -> bool:
+    """True for think-cell / externally-linked charts — never safe to rewrite.
+
+    The link is either an external relationship or a ``<c:externalData>`` element in
+    the chart XML (think-cell); treat either as external.
+    """
+    try:
+        return (b"externalData" in chart.part.blob
+                or any(getattr(r, "is_external", False) for r in chart.part.rels.values()))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _fill_charts(prs, values: Dict[str, Any]) -> None:
+    """Best-effort: write the computed carrier-vs-Marsh growth data into NATIVE
+    scatter/bubble charts. Externally-linked (think-cell) charts are skipped — they
+    corrupt on ``replace_data`` and are surfaced with a manual-fill cue instead.
+
+    Off-switch: ``STUDIO_FILL_CHARTS=off``. Any per-chart failure is swallowed so a
+    chart never breaks the export.
+    """
+    if os.getenv("STUDIO_FILL_CHARTS", "auto").strip().lower() in {"off", "0", "false", "no"}:
+        return
+    points = (values.get("growth_bubble") or {}).get("points") or []
+    if not points:
+        return
+    from pptx.chart.data import BubbleChartData, XyChartData
+
+    for slide in prs.slides:
+        for sh in _iter_leaves(slide.shapes):
+            if not getattr(sh, "has_chart", False):
+                continue
+            chart = sh.chart
+            if _chart_is_external(chart):
+                continue
+            ctype = str(chart.chart_type)
+            try:
+                if "BUBBLE" in ctype:
+                    data = BubbleChartData()
+                    ser = data.add_series("Carrier vs Marsh growth")
+                    for p in points:
+                        ser.add_data_point(p.get("marsh_yoy") or 0.0, p.get("carrier_yoy") or 0.0,
+                                           abs(p.get("size") or 0.0) or 1.0)
+                    chart.replace_data(data)
+                elif "SCATTER" in ctype:
+                    data = XyChartData()
+                    ser = data.add_series("Carrier vs Marsh growth")
+                    for p in points:
+                        ser.add_data_point(p.get("marsh_yoy") or 0.0, p.get("carrier_yoy") or 0.0)
+                    chart.replace_data(data)
+            except Exception as exc:  # noqa: BLE001 — a chart must never break the export
+                logger.warning("template_fill: chart fill skipped (%s): %s", ctype, exc)
+
+
 # ── hidden / reordered slides ────────────────────────────────────────────────
 
 
@@ -217,6 +275,8 @@ def fill_template(doc: Dict[str, Any], *, out_path: Optional[str] = None) -> str
                 _write_table(shape, where, str(fld["text"]))
         _apply_subs(slide, subs)
         _add_elements(slide, doc.get("added", {}).get(str(sidx), []), width_emu, height_emu)
+
+    _fill_charts(prs, values)
 
     n = len(prs.slides)
     _apply_order(prs, doc.get("order", list(range(n))), doc.get("hidden", []))

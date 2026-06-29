@@ -53,6 +53,21 @@ def _has(ctx: str, *words: str) -> bool:
     return any(w in ctx for w in words)
 
 
+# Phrases that mark a premium figure as the SUBJECT carrier's own book intermediated
+# by Marsh ("premium written with Marsh", "placed with Marsh") — NOT the whole Marsh
+# book. Without these, a context mentioning "Marsh" was wrongly read as the Marsh
+# total, so a carrier's headline premium showed the entire book.
+_CARRIER_PREMIUM_MARKERS = (
+    "with marsh", "written with", "placed with", "via marsh", "through marsh",
+    "brokered", "with us",
+)
+
+
+def _is_carrier_premium(ctx: str) -> bool:
+    """True when the context describes the subject carrier's premium (not Marsh's book)."""
+    return _has(ctx, *_CARRIER_PREMIUM_MARKERS) or _has(ctx, "carrier")
+
+
 def _enum_index(token: str) -> Optional[int]:
     m = re.search(r"\(\s*(\d+)\s*\)", token)
     return int(m.group(1)) - 1 if m else None
@@ -80,22 +95,26 @@ def _infer_role(slot: Slot) -> Optional[str]:
     is_prior = "py" in ctx or "yoy" in ctx or "change" in ctx or "prior" in ctx
 
     if kind == "money":
+        # The subject carrier's own premium (incl. "written with Marsh") comes first,
+        # so a carrier figure is never swallowed by the Marsh-book branch.
+        if _is_carrier_premium(ctx):
+            return ROLE_CARRIER_GWP
         if _has(ctx, "marsh"):
             return ROLE_MARSH_GWP
-        if _has(ctx, "carrier"):
-            return ROLE_CARRIER_GWP
-        # "Overall Marsh premium" style with no carrier word → Marsh.
+        # Bare "premium"/"gwp" in a carrier QBR → the subject carrier (the deck's focus).
         if _has(ctx, "premium", "gwp"):
-            return ROLE_MARSH_GWP
+            return ROLE_CARRIER_GWP
         return None
 
     if kind == "pct":
         if _has(ctx, "sow", "share of wallet", "share"):
             return ROLE_SOW_YOY if is_prior else ROLE_SOW_PCT
-        if _has(ctx, "carrier"):
+        if _is_carrier_premium(ctx):
             return ROLE_CARRIER_GWP_YOY
-        if _has(ctx, "marsh", "premium", "gwp"):
+        if _has(ctx, "marsh"):
             return ROLE_MARSH_GWP_YOY
+        if _has(ctx, "premium", "gwp"):
+            return ROLE_CARRIER_GWP_YOY
         return None
 
     if kind in ("rank", "int"):

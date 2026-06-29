@@ -63,9 +63,13 @@ def _template_year(template) -> Optional[int]:
 
 def new_template_doc(result, *, template_path: Optional[str] = None, use_ai: bool = False) -> Dict[str, Any]:
     """Seed a TemplateDoc from an ``OverallResult`` against the active template."""
+    from studio.template_fill import commentary, grids
+
     path = template_path or active_template_path()
     template, bindings = derive_manifest(path, use_ai=use_ai)
     values = resolve_roles(result)
+    values.update(grids.grid_values(template, result))
+    values.update(commentary.values(template, result))
     tyear = _template_year(template)
     if tyear is not None:
         values["template_year"] = tyear

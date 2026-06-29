@@ -112,10 +112,22 @@ def _table_shape(shape, fields_by_target, slide_idx, subs) -> Optional[html.Div]
     return html.Div(html.Table(html.Tbody(rows), className="qs-tf-table"), className="qs-tf-shape")
 
 
+def _chart_manual_cue() -> Any:
+    """A small badge marking a chart the engine cannot auto-fill (think-cell/linked),
+    so the user knows to update its data by hand in PowerPoint."""
+    return html.Div(
+        [html.I(className="bi bi-exclamation-triangle-fill"), " Manual chart"],
+        className="qs-tf-chart-cue",
+        title="This chart is think-cell / externally linked — its data can't be filled "
+              "automatically. The preview shows the live figures; update the chart in PowerPoint.",
+    )
+
+
 def _chart_svg(shape, values, w_px, h_px) -> Any:
     """A populated mini chart: the per-LoB growth quadrant for scatter/bubble, else a
     small bar of the template's own series — so the preview shows DATA, not a stub."""
     is_quadrant = any(k in (shape.chart_type or "") for k in ("XY_SCATTER", "BUBBLE"))
+    cue = [_chart_manual_cue()] if getattr(shape, "chart_external", False) else []
     pts = (values.get("growth_bubble") or {}).get("points", []) if is_quadrant else []
     pad = 6
     iw, ih = max(40, w_px - 2 * pad), max(30, h_px - 2 * pad)
@@ -148,15 +160,15 @@ def _chart_svg(shape, values, w_px, h_px) -> Any:
         diag = html.Div(className="qs-tf-diag",
                         style={"left": f"{pad}px", "top": f"{pad}px",
                                "width": f"{iw:.0f}px", "height": f"{ih:.0f}px"})
-        return html.Div([*quads, diag, *dots], className="qs-tf-chartwrap")
+        return html.Div([*quads, diag, *dots, *cue], className="qs-tf-chartwrap")
     # Fallback: render the template's first series as proportional bars.
     series = shape.chart_series[0][1] if shape.chart_series else []
     if series:
         m = max(abs(v) for v in series) or 1
         bars = [html.Div(className="qs-tf-bar2",
                          style={"height": f"{abs(v) / m * ih:.0f}px"}) for v in series[:12]]
-        return html.Div(bars, className="qs-tf-bars")
-    return html.Div([html.I(className="bi bi-bar-chart"), " chart"], className="qs-tf-stub")
+        return html.Div([*bars, *cue], className="qs-tf-bars")
+    return html.Div([html.I(className="bi bi-bar-chart"), " chart", *cue], className="qs-tf-stub")
 
 
 def _render_shape(shape, fields_by_target, scale, slide_idx, values, subs, *, rendered_background: bool = False) -> Optional[html.Div]:

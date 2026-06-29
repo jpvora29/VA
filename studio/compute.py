@@ -365,6 +365,75 @@ def peer_gap(flow, filters, engine, peers=None) -> Optional[Dict[str, Any]]:
             "delta": own - peer_avg, "ratio": (own / peer_avg) if peer_avg else None}
 
 
+def product_breakdown_rows(
+    flow, filters, engine, subject, *, dim: str = "Product_Line", top: int = 7
+) -> List[Dict[str, Any]]:
+    """Per-product-line breakdown for the 'Carrier breakdown' slide.
+
+    One row per product line (biggest GWP first) for the subject carrier, in the
+    latest selected year, carrying everything the slide's columns need:
+      • ``gwp``         — the carrier's premium in that product line;
+      • ``var``         — YoY % change of that premium (None without a prior year);
+      • ``sow``         — the carrier's share of wallet in that product line;
+      • ``rank``        — the carrier's rank among carriers in that product line;
+      • ``rank_change`` — rank improvement vs the prior year (+ = moved up);
+      • ``runway``      — own premium − the TOP-5 carriers' AVERAGE premium in that
+                          product line (negative = behind the top-5 average).
+    Everything is premium-derived — no LLM, no random values.
+    """
+    if not subject:
+        return []
+    cur = _current_year(filters)
+    base = {k: v for k, v in filters.items() if k != _CARRIER_COL}
+
+    def scoped(f, year):
+        return f if year is None else {**f, _YEAR_COL: year}
+
+    def by_product(f):
+        return {str(x.dims.get(dim)): x.value for x in compute_breakdown(
+            PrimitiveArgs(flow=flow, metric="premium", group_by=(dim,), filters=f), engine=engine)}
+
+    gwp = by_product(scoped(filters, cur))
+    prev_gwp = by_product(scoped(filters, cur - 1)) if cur is not None else {}
+
+    sow = {str(x.dims.get(dim)): x.value for x in compute_share_of_wallet(
+        PrimitiveArgs(flow=flow, metric="premium", group_by=(dim,), filters=scoped(filters, cur),
+                      subject=subject), engine=engine)}
+
+    def ranks(year):
+        out: Dict[str, int] = {}
+        for f in compute_rank(PrimitiveArgs(flow=flow, metric="premium", group_by=(dim,),
+                                            filters=scoped(base, year)), engine=engine):
+            if str(f.dims.get("entity", "")).lower() == subject.lower():
+                out[str(f.dims.get(dim))] = int(f.value)
+        return out
+
+    rank_cur = ranks(cur)
+    rank_prev = ranks(cur - 1) if cur is not None else {}
+
+    # Runway: TOP-5 carrier-average premium per product (one grouped query).
+    per_carrier: Dict[str, List[float]] = {}
+    for x in compute_breakdown(PrimitiveArgs(flow=flow, metric="premium", group_by=(dim, _CARRIER_COL),
+                                             filters=scoped(base, cur)), engine=engine):
+        per_carrier.setdefault(str(x.dims.get(dim)), []).append(x.value)
+    runway: Dict[str, float] = {}
+    for p, vals in per_carrier.items():
+        top5 = sorted(vals, reverse=True)[:5]
+        avg = sum(top5) / len(top5) if top5 else 0.0
+        runway[p] = (gwp.get(p, 0.0) or 0.0) - avg
+
+    rows: List[Dict[str, Any]] = []
+    for p in sorted(gwp, key=lambda k: gwp[k] or 0.0, reverse=True)[:top]:
+        prev = prev_gwp.get(p)
+        var = ((gwp[p] - prev) / prev * 100) if prev else None
+        rc = (rank_prev[p] - rank_cur[p]) if (p in rank_prev and p in rank_cur) else None
+        rows.append({
+            "name": p, "gwp": gwp.get(p), "var": var, "sow": sow.get(p),
+            "rank": rank_cur.get(p), "rank_change": rc, "runway": runway.get(p),
+        })
+    return rows
+
+
 def near_rank_gap(flow, filters, engine, subject, *, dim="Product_Line", top=8) -> Optional[Dict[str, Any]]:
     """Gap to the next rank up, decomposed by product line (the rank waterfall).
 

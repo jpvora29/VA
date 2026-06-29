@@ -74,17 +74,17 @@ def test_fill_replaces_mapped_tokens_and_keeps_placeholders(tmp_path):
     doc = new_template_doc(_result(), template_path=TEMPLATE)
     out = fill_template(doc, out_path=str(tmp_path / "filled.pptx"))
     prs = Presentation(out)
-    all_text = "\n".join(
-        sh.text_frame.text
-        for s in prs.slides for sh in s.shapes
-        if sh.has_text_frame
-    )
-    # The carrier name replaced the generic "Carrier" label, and no x-placeholder
-    # money token survived where a value was mapped.
-    assert "Zurich" in all_text
-    assert "$xx,xxxm" not in all_text and "$xxx.xM" not in all_text
-    # An unmapped qualitative placeholder (ellipsis prose) survived untouched.
-    assert "…" in all_text or "......" in all_text
+    frame_text = "\n".join(sh.text_frame.text for s in prs.slides for sh in s.shapes
+                           if sh.has_text_frame)
+    table_text = "\n".join(c.text for s in prs.slides for sh in s.shapes if sh.has_table
+                           for row in sh.table.rows for c in row.cells)
+    # The carrier name replaced the generic "Carrier" label, and no mapped money
+    # placeholder token survived in the body text frames.
+    assert "Zurich" in frame_text
+    assert "$xx,xxxm" not in frame_text and "$xxx.xM" not in frame_text
+    # Qualitative relationship-feedback prose (table cells, not data-derivable) is left
+    # as its ellipsis placeholder — only fact-grounded sections get commentary.
+    assert "…" in (frame_text + table_text) or "......" in (frame_text + table_text)
 
 
 def test_render_token_matches_placeholder_style():
@@ -123,3 +123,92 @@ def test_materialize_is_parity_source():
     fields = materialize_fields(doc)
     filled = [f for f in fields.values() if f["filled"]]
     assert filled and all(not str(f["text"]).strip().endswith("x") for f in filled)
+
+
+# ── carrier vs Marsh disambiguation (the slide-1 headline bug) ───────────────
+
+
+def test_carrier_premium_not_mapped_to_marsh_book():
+    # "Premium written with Marsh" is the SUBJECT's premium, not the whole book;
+    # only "Overall Marsh premium" maps to the Marsh-book role.
+    bindings = R.infer(S.detect(analyze(TEMPLATE)))
+    by_ctx = {b.slot.context.lower(): b.role for b in bindings if b.role}
+    carrier_hdr = next((r for c, r in by_ctx.items() if "premium written with marsh" in c), None)
+    marsh_hdr = next((r for c, r in by_ctx.items() if "overall marsh premium" in c), None)
+    assert carrier_hdr == "carrier_gwp"
+    assert marsh_hdr == "marsh_gwp"
+
+
+# ── per-product breakdown grid (slides 9 / 14) ───────────────────────────────
+
+
+def test_breakdown_grid_fills_distinct_rows_per_product():
+    from studio.template_fill import grids
+    from studio.template_fill.registry import derive_manifest
+
+    res = _result()
+    template, _ = derive_manifest(TEMPLATE)
+    values = grids.grid_values(template, res)
+    # The grid produced per-row GWP keys, and the rows are NOT all the same value
+    # (the old bug repeated the carrier total down every row).
+    gwp = {k: v for k, v in values.items() if k.endswith(":gwp") and v not in ("", None)}
+    assert len(gwp) >= 4
+    assert len(set(gwp.values())) > 1, "breakdown rows must differ per product"
+
+
+def test_sections_classify_known_slides():
+    from studio.template_fill.sections import Section, classify_sections
+
+    secs = set(classify_sections(analyze(TEMPLATE)).values())
+    # The starter deck must expose the sections commentary + grids depend on.
+    assert {Section.TRADING_SUMMARY, Section.FEEDBACK, Section.BREAKDOWN,
+            Section.COUNTRY_DIVIDER} <= secs
+
+
+def test_commentary_fills_trading_summary_with_grounded_text():
+    from studio.template_fill import commentary
+    from studio.template_fill.registry import derive_manifest
+
+    template, _ = derive_manifest(TEMPLATE)
+    vals = commentary.values(template, _result())
+    notes = {k: v for k, v in vals.items() if k.startswith("note:") and v}
+    # The 4 trading-summary columns are filled, the carrier is named, and every figure
+    # is faithful (the verifier guarantees no number absent from the deterministic text).
+    assert len(notes) >= 3
+    assert any("Zurich" in v for v in notes.values())
+
+
+def test_feedback_prose_is_left_as_placeholder():
+    # Qualitative relationship feedback isn't premium-derivable → must NOT be auto-filled.
+    from studio.template_fill import commentary
+    from studio.template_fill.registry import derive_manifest
+
+    template, _ = derive_manifest(TEMPLATE)
+    from studio.template_fill.sections import Section, section_of
+    fb = [s.index for s in template.slides if section_of(s) == Section.FEEDBACK]
+    vals = commentary.values(template, _result())
+    assert fb and not any(k.split(":")[1] in {str(i) for i in fb} for k in vals)
+
+
+def test_external_charts_are_flagged_and_not_rewritten(tmp_path):
+    # think-cell / externally-linked charts must be flagged (for the manual-fill cue)
+    # and left untouched by the guarded chart fill — the export still reopens cleanly.
+    template = analyze(TEMPLATE)
+    charts = [sh for s in template.slides for sh in s.shapes if sh.kind == "chart"]
+    assert charts and all(c.chart_external for c in charts), "starter charts are think-cell"
+    out = fill_template(new_template_doc(_result(), template_path=TEMPLATE),
+                        out_path=str(tmp_path / "charts.pptx"))
+    # Re-analysing the export must still find every chart (none dropped/corrupted).
+    assert len([sh for s in analyze(out).slides for sh in s.shapes if sh.kind == "chart"]) == len(charts)
+
+
+def test_breakdown_slides_are_scoped_to_their_own_country():
+    from studio.template_fill import grids
+    from studio.template_fill.registry import derive_manifest
+
+    template, _ = derive_manifest(TEMPLATE)
+    values = grids.grid_values(template, _result())
+    subtitles = [v for k, v in values.items() if k.endswith(":subtitle")]
+    # Two breakdown slides → two subtitles, each naming a DIFFERENT country.
+    assert len(subtitles) >= 2
+    assert len(set(subtitles)) == len(subtitles)

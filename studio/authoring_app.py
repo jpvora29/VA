@@ -949,6 +949,19 @@ def _upload_template(contents, filename):
 
 
 @app.callback(
+    Output("studio-template-sections", "children"),
+    Input("studio-template", "value"),
+    prevent_initial_call=True,
+)
+def _template_sections(path):
+    """Make the active template live: select it and refresh the 'Deck sections' list."""
+    if not path:
+        return no_update
+    registry.set_active_template(path)
+    return A.template_sections_panel(path)
+
+
+@app.callback(
     Output("qs-view", "data", allow_duplicate=True),
     Input({"type": "qs-tf-revalidate"}, "n_clicks"),
     State("qs-view", "data"),

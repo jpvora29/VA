@@ -41,6 +41,7 @@ class Shape:
     chart_type: Optional[str] = None                              # chart shapes
     chart_categories: List[str] = field(default_factory=list)
     chart_series: List[Tuple[str, List[float]]] = field(default_factory=list)
+    chart_external: bool = False                                   # think-cell/linked data → can't auto-fill
     fill_color: Optional[str] = None                              # solid fill hex (no #)
     font_color: Optional[str] = None                              # first-run font hex
     font_face: Optional[str] = None
@@ -161,7 +162,17 @@ def _read_chart(shape):
             series.append((str(s.name or ""), [float(v) for v in vals]))
     except Exception:  # noqa: BLE001
         series = []
-    return ctype, cats, series
+    # A think-cell / linked-workbook chart cannot be safely repopulated (replace_data
+    # corrupts the link), so flag it for a manual-fill cue instead of touching it. The
+    # link shows up EITHER as an external relationship OR as a ``<c:externalData>``
+    # element in the chart XML (think-cell uses the latter) — treat either as external.
+    external = False
+    try:
+        external = (b"externalData" in ch.part.blob
+                    or any(getattr(r, "is_external", False) for r in ch.part.rels.values()))
+    except Exception:  # noqa: BLE001
+        external = False
+    return ctype, cats, series, external
 
 
 def _walk(shapes, tf):
@@ -271,7 +282,7 @@ def _extract(shape, box, template_path: str, slide_idx: int, palette: Optional[d
     if kind == "table":
         rec.table = _read_table(shape)
     elif kind == "chart":
-        rec.chart_type, rec.chart_categories, rec.chart_series = _read_chart(shape)
+        rec.chart_type, rec.chart_categories, rec.chart_series, rec.chart_external = _read_chart(shape)
     elif kind == "picture":
         try:
             rec.image_url = preview_assets.cache_picture(
