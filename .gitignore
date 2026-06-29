@@ -28,3 +28,6 @@ studio/_seed/
 
 # Studio filter-option cache (generated per DB; speeds app launch)
 studio/_cache/
+
+# Studio template preview cache (generated from uploaded PPTX files)
+assets/studio_template_previews/

@@ -29,6 +29,9 @@ from studio.export import export_document
 from studio.page import authoring as A
 from studio.page import document as D
 from studio.page.sample import CUT_GROUPS
+from studio.template_fill import fill_template, new_template_doc, registry
+from studio.template_fill import validate as TV
+from studio.template_fill.model import add_element, set_override
 
 _ASSETS = str(Path(__file__).resolve().parent.parent / "assets")
 _BREAKDOWNS = ["Product_Line", "SIC_Major_Class"]
@@ -99,6 +102,33 @@ def _generated_deck(selection: Optional[Dict[str, Any]]) -> Optional[DeckSpec]:
         return None
 
 
+@lru_cache(maxsize=32)
+def _tdoc_for(selection_json: str) -> Optional[Dict[str, Any]]:
+    """Seed a template doc (active template, filled from the same OverallResult)."""
+    sel = json.loads(selection_json)
+    filters = {k: v for k, v in (sel.get("filters") or {}).items() if v not in _BLANK}
+    result = compute_overall(
+        filters=filters,
+        breakdowns=sel.get("breakdowns") or _BREAKDOWNS,
+        engine=engine,
+        peers=sel.get("peers") or None,
+    )
+    return new_template_doc(result, template_path=sel.get("template_path") or None,
+                            use_ai=bool(sel.get("ai")))
+
+
+def _generated_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not selection or not selection.get("filters", {}).get("carrier"):
+        return None
+    try:
+        return _tdoc_for(json.dumps(selection, sort_keys=True))
+    except Exception as exc:  # noqa: BLE001 — template issues must not white-screen the app
+        from logger import get_logger
+
+        get_logger(__name__).warning("template doc build failed: %s", exc)
+        return None
+
+
 def _deck(doc) -> Optional[DeckSpec]:
     """The on-screen deck = the document materialized (edits + page order applied)."""
     try:
@@ -141,6 +171,8 @@ app.layout = html.Div(
         # document both persist locally so a refresh keeps your work.
         dcc.Store(id="qs-selection", data=None, storage_type="local"),
         dcc.Store(id="qs-doc", data=None, storage_type="local"),
+        # The filled-template document — the actual deliverable in template mode.
+        dcc.Store(id="qs-tdoc", data=None, storage_type="local"),
         dcc.Download(id="studio-pptx-download"),
         # Hidden sink: the canvas JS writes select/move/resize actions here.
         dcc.Input(id="qs-cv-sink", style={"display": "none"}),
@@ -156,9 +188,10 @@ app.layout = html.Div(
     Output("qs-app", "children"),
     Input("qs-view", "data"),
     Input("qs-doc", "data"),
+    Input("qs-tdoc", "data"),
     State("qs-selection", "data"),
 )
-def _render(view, doc, selection):
+def _render(view, doc, tdoc, selection):
     deck = _deck(doc)
     opts = _friendly_options()
     fvals = (selection or {}).get("filters") or _DEFAULT_FILTERS
@@ -170,6 +203,7 @@ def _render(view, doc, selection):
         cut_groups=CUT_GROUPS,
         filter_options=opts,
         filter_values=fvals,
+        tdoc=tdoc,
     )
 
 
@@ -346,6 +380,7 @@ def _toggle_canvas_panel(_clicks, view):
 @app.callback(
     Output("qs-selection", "data"),
     Output("qs-doc", "data", allow_duplicate=True),
+    Output("qs-tdoc", "data", allow_duplicate=True),
     Output("qs-view", "data", allow_duplicate=True),
     Input("studio-generate", "n_clicks"),
     State("studio-report-type", "value"),
@@ -359,12 +394,13 @@ def _toggle_canvas_panel(_clicks, view):
     State("studio-audience", "value"),
     State("studio-meeting-length", "value"),
     State("studio-ai-toggle", "value"),
+    State("studio-template", "value"),
     prevent_initial_call=True,
 )
 def _generate(n, report, fvals, fids, breakdowns, cut_vals, cut_ids, peer_mode, custom_peers,
-              audience, meeting_length, ai):
+              audience, meeting_length, ai, template_path):
     if not n:
-        return no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update
     filters = {i["col"]: v for i, v in zip(fids or [], fvals or []) if v not in _BLANK}
     cuts = [i["name"] for i, v in zip(cut_ids or [], cut_vals or []) if v]
     peers = None
@@ -379,10 +415,12 @@ def _generate(n, report, fvals, fids, breakdowns, cut_vals, cut_ids, peer_mode, 
         "audience": audience or "executive",
         "meeting_length": meeting_length or "standard",
         "ai": bool(ai),
+        "template_path": template_path or registry.active_template_path(),
     }
     deck = _generated_deck(selection)
     doc = D.new_document(deck) if deck else None
-    return selection, doc, {"mode": "narrative", "idx": 0, "tab": "setup"}
+    tdoc = _generated_tdoc(selection)
+    return selection, doc, tdoc, {"mode": "canvas", "idx": 0, "tab": "setup"}
 
 
 # ── live scope preview: cheap headline figures as the filters change ─────────
@@ -797,11 +835,20 @@ def _widget_chart(values, ids, doc, view):
 @app.callback(
     Output("studio-pptx-download", "data"),
     Input({"type": "qs-export", "loc": ALL}, "n_clicks"),
+    State("qs-tdoc", "data"),
     State("qs-doc", "data"),
     prevent_initial_call=True,
 )
-def _export(clicks, doc):
-    if not any(clicks or []) or not doc or not doc.get("order"):
+def _export(clicks, tdoc, doc):
+    if not any(clicks or []):
+        return no_update
+    # Template mode is the deliverable: the export IS the filled template.
+    if tdoc and tdoc.get("template_path"):
+        subject = str((tdoc.get("values") or {}).get("subject_name", "Carrier")).replace(" ", "_")
+        out = Path(tempfile.gettempdir()) / f"{subject}_QBR.pptx"
+        fill_template(dict(tdoc), out_path=str(out))
+        return dcc.send_file(str(out))
+    if not doc or not doc.get("order"):
         return no_update
     meta = dict(doc.get("meta") or {})
     carrier = str(meta.get("carrier", "Carrier")).replace(" ", "_")
@@ -811,6 +858,109 @@ def _export(clicks, doc):
     # Pages composed on the canvas export by widget geometry; the rest stay polished.
     export_document(doc, out_path=str(out))
     return dcc.send_file(str(out))
+
+
+# ── template editing: slot overrides, added notes, validation re-run ─────────
+
+
+@app.callback(
+    Output("qs-tdoc", "data", allow_duplicate=True),
+    Input({"type": "qs-tf-edit", "key": ALL}, "value"),
+    State({"type": "qs-tf-edit", "key": ALL}, "id"),
+    State("qs-tdoc", "data"),
+    prevent_initial_call=True,
+)
+def _edit_slot(values, ids, tdoc):
+    if not tdoc or not ids:
+        return no_update
+    from studio.template_fill.model import materialize_fields
+
+    fields = materialize_fields(dict(tdoc))
+    overrides = dict(tdoc.get("overrides", {}))
+    changed = False
+    for val, ident in zip(values or [], ids or []):
+        key = ident["key"]
+        if val is None:
+            continue
+        # Only persist a genuine edit — a value that differs from what the slot
+        # already renders. This stops untouched placeholder tokens from being
+        # written back as spurious overrides (the false "stale" issues).
+        current = str(fields.get(key, {}).get("text", ""))
+        if str(val) == current:
+            continue
+        if overrides.get(key) != val:
+            overrides[key] = val
+            changed = True
+    if not changed:
+        return no_update
+    return {**tdoc, "overrides": overrides}
+
+
+@app.callback(
+    Output("qs-tdoc", "data", allow_duplicate=True),
+    Input({"type": "qs-tf-add", "slide": ALL}, "n_clicks"),
+    State("qs-tdoc", "data"),
+    prevent_initial_call=True,
+)
+def _add_note(clicks, tdoc):
+    if not tdoc or not ctx.triggered_id or not any(clicks or []):
+        return no_update
+    slide_idx = int(ctx.triggered_id["slide"])
+    w = int(tdoc.get("width_emu", 12192000))
+    h = int(tdoc.get("height_emu", 6858000))
+    el = {"x": w // 12, "y": h // 12, "w": w // 3, "h": h // 10, "text": "New note", "size": 12}
+    return add_element(dict(tdoc), slide_idx, el)
+
+
+@app.callback(
+    Output("qs-tdoc", "data", allow_duplicate=True),
+    Input({"type": "qs-tf-autofix"}, "n_clicks"),
+    State("qs-tdoc", "data"),
+    prevent_initial_call=True,
+)
+def _autofix(n, tdoc):
+    if not n or not tdoc:
+        return no_update
+    return TV.auto_fix(dict(tdoc))
+
+
+@app.callback(
+    Output("studio-template", "options"),
+    Output("studio-template", "value"),
+    Input("studio-template-upload", "contents"),
+    State("studio-template-upload", "filename"),
+    prevent_initial_call=True,
+)
+def _upload_template(contents, filename):
+    if not contents or not filename:
+        return no_update, no_update
+    import base64
+
+    name = Path(filename).name
+    if not name.lower().endswith(".pptx"):
+        return no_update, no_update
+    dest = Path("template") / name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _, b64 = contents.split(",", 1)
+    dest.write_bytes(base64.b64decode(b64))
+    path = str(dest).replace("\\", "/")
+    templates = registry.list_templates() or [path]
+    return [{"label": Path(t).name, "value": t} for t in templates], path
+
+
+@app.callback(
+    Output("qs-view", "data", allow_duplicate=True),
+    Input({"type": "qs-tf-revalidate"}, "n_clicks"),
+    State("qs-view", "data"),
+    prevent_initial_call=True,
+)
+def _revalidate(n, view):
+    # Validation is computed live on every render; bumping a nonce forces a re-run.
+    if not n:
+        return no_update
+    view = dict(view or {})
+    view["revalidate"] = int(view.get("revalidate", 0)) + 1
+    return view
 
 
 if __name__ == "__main__":

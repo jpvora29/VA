@@ -1506,3 +1506,126 @@ body.qs-cv-dragging { user-select: none; cursor: grabbing; }
     .qs-inspector-scroll { max-height: 560px; }
     .qs-comp-grid { grid-template-columns: repeat(4, 1fr); }
 }
+
+/* ── Template-fill: geometry preview, editable slots, validation ──────────── */
+.qs-tf-preview { display: flex; flex-direction: column; gap: 14px; padding: 12px 16px; }
+.qs-tf-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.qs-tf-title { font-weight: 700; color: #0b1f44; font-size: 14px; }
+.qs-tf-actions { display: flex; align-items: center; gap: 8px; }
+.qs-tf-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600;
+  padding: 2px 8px; border-radius: 999px; background: #eef2f8; color: #41506b; }
+.qs-tf-pill.ok { background: #e7f6ee; color: #1f7a47; }
+.qs-tf-pill.warn { background: #fdf1e3; color: #9a5b07; }
+.qs-tf-addbtn { border: 1px solid #cfd9ea; background: #fff; color: #243859; border-radius: 8px;
+  padding: 5px 10px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.qs-tf-addbtn:hover { background: #f2f6fc; }
+.qs-tf-stage { display: flex; justify-content: center; background: #eef1f6; border-radius: 12px; padding: 18px; overflow: auto; }
+.qs-tf-surface { position: relative; background: #fff; box-shadow: 0 6px 26px rgba(12,28,60,.14);
+  border-radius: 4px; overflow: hidden; }
+.qs-tf-surface.has-rendered-bg .qs-tf-box { background: transparent; }
+.qs-tf-box { position: absolute; box-sizing: border-box; padding: 2px 3px; overflow: hidden; font-size: 11px; }
+.qs-tf-surface.has-rendered-bg .qs-tf-box { padding: 0; overflow: visible; }
+.qs-tf-shape { width: 100%; height: 100%; display: flex; flex-direction: column; gap: 2px; }
+.qs-tf-static { color: #33415c; line-height: 1.18; white-space: pre-wrap; }
+.qs-tf-input { width: 100%; border: 1px solid #bcd; border-radius: 4px; padding: 1px 4px; font-size: inherit;
+  font-family: inherit; line-height: 1.16; background: rgba(241,248,255,.9); color: #0b1f44; font-weight: 600; box-sizing: border-box; }
+.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay {
+  width: 100%; height: 100%; min-height: 18px; padding: 0; border-color: transparent;
+  border-radius: 2px; background: transparent; color: transparent; caret-color: #0b1f44;
+  box-shadow: none; font-weight: inherit;
+}
+.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay:hover,
+.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay:focus {
+  background: rgba(255,255,255,.88); border-color: rgba(31,95,191,.65);
+  color: #0b1f44; outline: none; box-shadow: 0 0 0 2px rgba(31,95,191,.14);
+}
+.qs-tf-input input { width: 100%; border: 1px solid #bcd; border-radius: 4px; padding: 1px 4px; font-size: 11px;
+  background: #f1f8ff; color: #0b1f44; font-weight: 600; }
+.qs-tf-input.placeholder { background: #fff7ec; border-color: #f0cfa0; color: #9a5b07; font-style: italic; font-weight: 500; }
+.qs-tf-input.placeholder input { background: #fff7ec; border-color: #f0cfa0; color: #9a5b07; font-style: italic; font-weight: 500; }
+.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay.placeholder {
+  background: transparent; border-color: transparent; color: transparent; font-style: inherit;
+}
+.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay.placeholder:hover,
+.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay.placeholder:focus {
+  background: rgba(255,255,255,.88); border-color: rgba(31,95,191,.65); color: #0b1f44;
+}
+/* The PNG already shows every value — over it the editable INNER <input> must be
+   fully transparent (no double text, no stray boxes) and only reveal itself on
+   hover/focus so a user can change a value. dcc.Input styles the inner element,
+   so these rules must target `... input`, not just the wrapper div. */
+.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay input {
+  background: transparent; border: 1px solid transparent; border-radius: 2px;
+  color: transparent; caret-color: #0b1f44; box-shadow: none; padding: 0 2px;
+  height: 100%; width: 100%; box-sizing: border-box;
+}
+.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay input::placeholder { color: transparent; }
+.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay input:hover,
+.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay input:focus {
+  background: #fff; color: #0b1f44; border-color: #1f5fbf; outline: none;
+  box-shadow: 0 0 0 2px rgba(31,95,191,.18);
+}
+.qs-tf-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.qs-tf-surface.has-rendered-bg .qs-tf-table { height: 100%; }
+.qs-tf-table td { border: 1px solid #e3e8f0; padding: 1px 3px; vertical-align: top; }
+.qs-tf-surface.has-rendered-bg .qs-tf-table td { border-color: transparent; padding: 0; }
+.qs-tf-table .qs-tf-th { background: #0b1f44; color: #fff; font-weight: 700; }
+.qs-tf-stub { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  gap: 6px; background: #f6f8fc; border: 1px dashed #c7d2e6; border-radius: 4px; color: #6b7a96; font-size: 11px; }
+.qs-tf-img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.qs-tf-box.is-picture { padding: 0; background: transparent; }
+.qs-tf-upload { margin-top: 8px; border: 1px dashed #c7d2e6; border-radius: 8px; padding: 8px;
+  text-align: center; color: #41506b; font-size: 12px; cursor: pointer; background: #fafcff; }
+
+/* ── Template-fill preview v2: faithful colors + populated charts ─────────── */
+.qs-tf-box { background: transparent; }                 /* let template fills show */
+.qs-tf-box.is-chart { background: #fff; border: 1px solid #e3e8f0; border-radius: 4px; }
+.qs-tf-surface.has-rendered-bg .qs-tf-box.is-chart { background: rgba(255,255,255,.94); }
+.qs-tf-static { line-height: 1.16; white-space: pre-wrap; font-size: inherit; color: inherit; }
+.qs-tf-shape { color: inherit; }
+.qs-review-card .qs-preview-note { color: #506179; }
+/* mini growth-quadrant scatter */
+.qs-tf-chartwrap { position: relative; width: 100%; height: 100%; }
+.qs-tf-diag { position: absolute; border-left: 1px solid #c7d2e6; border-bottom: 1px solid #c7d2e6;
+  box-sizing: border-box; }
+.qs-tf-diag::after { content: ""; position: absolute; left: 0; bottom: 0; width: 141%; height: 1px;
+  background: repeating-linear-gradient(90deg,#9fb3d4 0 4px,transparent 4px 8px);
+  transform-origin: left bottom; transform: rotate(-45deg); }
+.qs-tf-dot { position: absolute; width: 9px; height: 9px; margin: -4px 0 0 -4px; border-radius: 50%;
+  background: #1f5fbf; opacity: .8; box-shadow: 0 0 0 2px rgba(31,95,191,.18); }
+.qs-tf-bars { display: flex; align-items: flex-end; gap: 3px; width: 100%; height: 100%; padding: 4px; box-sizing: border-box; }
+.qs-tf-bar2 { flex: 1; background: #1f5fbf; border-radius: 2px 2px 0 0; min-height: 2px; }
+
+/* growth-quadrant 4-colour backgrounds + extracted pictures */
+.qs-tf-quad { position: absolute; box-sizing: border-box; }
+.qs-tf-img { width: 100%; height: 100%; object-fit: contain; }
+.qs-tf-box.is-picture { background: transparent; }
+.qs-tf-chartwrap .qs-tf-diag { z-index: 2; }
+.qs-tf-chartwrap .qs-tf-dot { z-index: 3; }
+
+/* ── Template edit: read-only slide + real edit panel ─────────────────────── */
+.qs-tf-workspace { display: flex; gap: 16px; align-items: flex-start; }
+.qs-tf-workspace .qs-tf-stage { flex: 1 1 auto; min-width: 0; }
+.qs-tf-static.is-filled { color: #0b1f44; font-weight: 600; }
+.qs-tf-static.is-ph { color: #9a5b07; font-style: italic; opacity: .8; }
+.qs-tf-td.is-filled { color: #0b1f44; font-weight: 600; }
+
+.qs-tf-fp { flex: 0 0 312px; align-self: stretch; background: #fff; border: 1px solid #e3e8f0;
+  border-radius: 12px; padding: 14px; max-height: 72vh; overflow: auto; box-shadow: 0 4px 18px rgba(12,28,60,.06); }
+.qs-tf-fp-title { font-weight: 700; color: #0b1f44; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+.qs-tf-fp-note { color: #6b7a96; font-size: 11px; margin: 4px 0 12px; }
+.qs-tf-fp-empty { color: #6b7a96; font-size: 12px; padding: 10px 4px; }
+.qs-tf-fp-list { display: flex; flex-direction: column; gap: 10px; }
+.qs-tf-fp-row { display: flex; flex-direction: column; gap: 4px; }
+.qs-tf-fp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.qs-tf-fp-label { font-size: 12px; font-weight: 600; color: #33415c; }
+.qs-tf-fp-tag { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  padding: 1px 6px; border-radius: 999px; background: #fdf1e3; color: #9a5b07; }
+.qs-tf-fp-tag.ok { background: #e7f6ee; color: #1f7a47; }
+.qs-tf-fp-input { width: 100%; }
+.qs-tf-fp-input input, .qs-tf-fp-input.dash-input-container input {
+  width: 100%; border: 1px solid #cfd9ea; border-radius: 8px; padding: 6px 9px; font-size: 13px;
+  color: #0b1f44; background: #fff; box-sizing: border-box; transition: border-color .12s, box-shadow .12s; }
+.qs-tf-fp-input input:hover { border-color: #aebfdb; }
+.qs-tf-fp-input input:focus { outline: none; border-color: #1f5fbf; box-shadow: 0 0 0 3px rgba(31,95,191,.14); }
+@media (max-width: 1100px) { .qs-tf-workspace { flex-direction: column; } .qs-tf-fp { flex-basis: auto; width: 100%; } }
