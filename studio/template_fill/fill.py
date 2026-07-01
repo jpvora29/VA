@@ -113,6 +113,16 @@ def _label_subs(values: Dict[str, Any]) -> List[Any]:
         subs.append((re.compile(r"\b(?:Country|Region)\s+xyz\b", re.I), primary))
         subs.append((re.compile(r"\bxyz\b", re.I), primary))
 
+    # Product deck: rewrite the template's authored example products (e.g. "Marine
+    # Feedback", "Energy") to the single product this deck is for. Longest names first so a
+    # multi-word product isn't half-matched by a shorter one.
+    product = str(values.get("product_name", "")).strip()
+    if product:
+        vocab = [str(p).strip() for p in (values.get("product_vocab") or []) if str(p).strip()]
+        for authored in sorted(set(vocab), key=len, reverse=True):
+            if authored.casefold() != product.casefold():
+                subs.append((re.compile(rf"\b{re.escape(authored)}\b"), product))
+
     carrier = str(values.get("subject_name", "")).strip()
     if carrier:
         # Carrier / Carrier's / Carriers's (template typo) → the carrier (possessive kept).

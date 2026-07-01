@@ -1,0 +1,182 @@
+{
+  "name": "overall",
+  "path": "template/overall_template.pptx",
+  "bindings": [
+    {
+      "slide_idx": 1,
+      "shape_id": 10,
+      "where": [
+        "para",
+        0
+      ],
+      "value_kind": "money",
+      "token": "$xxx.xm",
+      "role": "carrier_gwp"
+    },
+    {
+      "slide_idx": 1,
+      "shape_id": 11,
+      "where": [
+        "para",
+        0
+      ],
+      "value_kind": "pct",
+      "token": "x.x%",
+      "role": "carrier_gwp_yoy"
+    },
+    {
+      "slide_idx": 1,
+      "shape_id": 13,
+      "where": [
+        "para",
+        0
+      ],
+      "value_kind": "pct",
+      "token": "+xx.x%",
+      "role": "carrier_gwp_yoy"
+    },
+    {
+      "slide_idx": 1,
+      "shape_id": 16,
+      "where": [
+        "para",
+        0
+      ],
+      "value_kind": "pct",
+      "token": "+x.x%",
+      "role": "sow_pct"
+    },
+    {
+      "slide_idx": 1,
+      "shape_id": 17,
+      "where": [
+        "para",
+        0
+      ],
+      "value_kind": "int",
+      "token": "#x",
+      "role": "rank"
+    },
+    {
+      "slide_idx": 1,
+      "shape_id": 19,
+      "where": [
+        "para",
+        0
+      ],
+      "value_kind": "pct",
+      "token": "-x.x%",
+      "role": "marsh_gwp_yoy"
+    },
+    {
+      "slide_idx": 1,
+      "shape_id": 20,
+      "where": [
+        "para",
+        0
+      ],
+      "value_kind": "money",
+      "token": "$xx,xxxm",
+      "role": "marsh_gwp"
+    },
+    {
+      "slide_idx": 1,
+      "shape_id": 21,
+      "where": [
+        "para",
+        0
+      ],
+      "value_kind": "pct",
+      "token": "-x.x%",
+      "role": "marsh_gwp_yoy"
+    },
+    {
+      "slide_idx": 2,
+      "shape_id": 10,
+      "where": [
+        "para",
+        0
+      ],
+      "value_kind": "text",
+      "token": "\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026..",
+      "role": null
+    },
+    {
+      "slide_idx": 2,
+      "shape_id": 10,
+      "where": [
+        "para",
+        1
+      ],
+      "value_kind": "text",
+      "token": ".,\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026",
+      "role": null
+    },
+    {
+      "slide_idx": 2,
+      "shape_id": 10,
+      "where": [
+        "para",
+        2
+      ],
+      "value_kind": "text",
+      "token": "\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026.",
+      "role": null
+    },
+    {
+      "slide_idx": 2,
+      "shape_id": 16,
+      "where": [
+        "para",
+        0
+      ],
+      "value_kind": "text",
+      "token": "\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026.",
+      "role": null
+    },
+    {
+      "slide_idx": 2,
+      "shape_id": 16,
+      "where": [
+        "para",
+        1
+      ],
+      "value_kind": "text",
+      "token": "Property: \u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026",
+      "role": null
+    },
+    {
+      "slide_idx": 2,
+      "shape_id": 16,
+      "where": [
+        "para",
+        2
+      ],
+      "value_kind": "text",
+      "token": "Growth: \u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026.",
+      "role": null
+    },
+    {
+      "slide_idx": 2,
+      "shape_id": 20,
+      "where": [
+        "para",
+        0
+      ],
+      "value_kind": "text",
+      "token": "\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026",
+      "role": null
+    },
+    {
+      "slide_idx": 2,
+      "shape_id": 22,
+      "where": [
+        "para",
+        0
+      ],
+      "value_kind": "text",
+      "token": "\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026..",
+      "role": null
+    }
+  ]
+}

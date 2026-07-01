@@ -924,28 +924,8 @@ def _autofix(n, tdoc):
     return TV.auto_fix(dict(tdoc))
 
 
-@app.callback(
-    Output("studio-template", "options"),
-    Output("studio-template", "value"),
-    Input("studio-template-upload", "contents"),
-    State("studio-template-upload", "filename"),
-    prevent_initial_call=True,
-)
-def _upload_template(contents, filename):
-    if not contents or not filename:
-        return no_update, no_update
-    import base64
-
-    name = Path(filename).name
-    if not name.lower().endswith(".pptx"):
-        return no_update, no_update
-    dest = Path("template") / name
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    _, b64 = contents.split(",", 1)
-    dest.write_bytes(base64.b64decode(b64))
-    path = str(dest).replace("\\", "/")
-    templates = registry.list_templates() or [path]
-    return [{"label": Path(t).name, "value": t} for t in templates], path
+# Template upload was removed: templates are now a fixed, author-made set (assembled
+# per product/country and merged), not user-uploaded. See studio/template_fill/assemble.py.
 
 
 @app.callback(
@@ -954,10 +934,9 @@ def _upload_template(contents, filename):
     prevent_initial_call=True,
 )
 def _template_sections(path):
-    """Make the active template live: select it and refresh the 'Deck sections' list."""
+    """Refresh the 'Deck sections' list when the fixed template selection changes."""
     if not path:
         return no_update
-    registry.set_active_template(path)
     return A.template_sections_panel(path)
 
 

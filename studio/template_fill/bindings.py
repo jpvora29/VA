@@ -9,7 +9,8 @@ leaves their slots as the template's placeholder. Keyed by the role vocabulary i
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from dataclasses import replace
+from typing import Any, Dict, List, Optional, Tuple
 
 from logger import get_logger
 from studio import compute as C
@@ -18,6 +19,7 @@ logger = get_logger(__name__)
 
 _CARRIER_COL = "Carrier_Group"
 _COUNTRY_COL = "Country"
+_PRODUCT_COL = "Product_Line"
 _YEAR_COL = "Year"
 
 
@@ -121,3 +123,90 @@ def resolve_roles(result) -> Dict[str, Any]:
         out["growth_bubble"] = bubble
 
     return out
+
+
+# ── per-entity resolution (split-template model) ─────────────────────────────
+# The split templates fill one sub-deck per selected product / country. Each sub-deck
+# wants the SAME role vocabulary as ``overall``, but computed for a single entity — so
+# we re-scope the result's filters to that one value and reuse ``resolve_roles`` wholesale
+# (no new analytics; the deterministic compute layer does the slicing via its filters).
+
+
+def _selected(result, column: str) -> Tuple[Any, ...]:
+    """The values pinned for ``column`` as a tuple (``()`` when unfiltered → caller decides)."""
+    val = (getattr(result, "resolved_filters", None) or {}).get(column)
+    if val is None:
+        return ()
+    return tuple(val) if isinstance(val, (list, tuple, set)) else (val,)
+
+
+def selected_products(result) -> Tuple[Any, ...]:
+    """Product-lines the user pinned (drives how many product sub-decks to build)."""
+    return _selected(result, _PRODUCT_COL)
+
+
+def selected_countries(result) -> Tuple[Any, ...]:
+    """Countries the user pinned (drives how many country sub-decks to build)."""
+    return _selected(result, _COUNTRY_COL)
+
+
+def carrier_countries(result) -> Tuple[str, ...]:
+    """Every country the carrier writes in, biggest premium first.
+
+    The fallback set of country sub-decks when the user pins no country — same ordering as
+    the ``country_name[i]`` labels.
+    """
+    return tuple(row["name"] for row in _country_breakdown(result) if row.get("name"))
+
+
+def _rescope(result, column: str, value: Any):
+    """A shallow copy of ``result`` with ``column`` pinned to a single ``value``."""
+    filters = {**(getattr(result, "resolved_filters", None) or {}), column: value}
+    return replace(result, resolved_filters=filters)
+
+
+def scope_to_product(result, product: Any):
+    """``result`` re-scoped to a single product line (for a ``product`` sub-deck)."""
+    return _rescope(result, _PRODUCT_COL, product)
+
+
+def scope_to_country(result, country: Any):
+    """``result`` re-scoped to a single country (for a ``country`` sub-deck)."""
+    return _rescope(result, _COUNTRY_COL, country)
+
+
+def resolve_roles_for_product(result, product: Any) -> Dict[str, Any]:
+    """Role → value map scoped to a single product line (for one ``product`` sub-deck).
+
+    Adds ``product_name`` so the fill engine can rewrite the template's authored example
+    product word (e.g. "Marine Feedback") to the product this deck is actually about.
+    """
+    out = resolve_roles(scope_to_product(result, product))
+    out["product_name"] = str(product)
+    return out
+
+
+def resolve_roles_for_country(result, country: Any) -> Dict[str, Any]:
+    """Role → value map scoped to a single country (for one ``country`` sub-deck)."""
+    return resolve_roles(scope_to_country(result, country))
+
+
+def product_vocab(result) -> Tuple[str, ...]:
+    """Every product-line value in scope — the words a product deck may need rewritten.
+
+    The product templates are authored with example products ("Marine" on the feedback
+    slides, "Energy" on the ranking slide); a per-product deck rewrites all of them to the
+    one product it is for. Ignores the pinned ``Product_Line`` filter so the full vocabulary
+    is returned regardless of selection.
+    """
+    from core.analytics.library import compute_breakdown
+    from core.analytics.types import PrimitiveArgs
+
+    base = {k: v for k, v in (getattr(result, "resolved_filters", None) or {}).items()
+            if k != _PRODUCT_COL}
+    facts = _safe(
+        compute_breakdown,
+        PrimitiveArgs(flow=result.flow, metric="premium", group_by=(_PRODUCT_COL,), filters=base),
+        engine=result.engine,
+    ) or []
+    return tuple(str(f.dims.get(_PRODUCT_COL)) for f in facts if f.dims.get(_PRODUCT_COL))
