@@ -20,10 +20,10 @@ from __future__ import annotations
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from logger import get_logger
-from studio.template_fill import grids
+from studio.template_fill import grids, prune
 from studio.template_fill.analyze import analyze
 from studio.template_fill.binding_map import BindingMap, available, get_binding_map
 from studio.template_fill.bindings import (
@@ -49,26 +49,35 @@ COUNTRY = "country"
 
 @dataclass(frozen=True)
 class SubDeck:
-    """One sub-template to fill: which registered template, with which role values."""
+    """One sub-template to fill: which registered template, its values, and any pages to drop."""
 
     template: str
     values: Dict[str, Any]
-    label: str = ""             # e.g. the product/country name, for filenames + logs
+    label: str = ""                     # the product/country name, for filenames + logs
+    hidden: Tuple[int, ...] = ()        # slide indices to drop (surplus country pages)
 
 
-def _with_grid_values(template_name: str, scoped_result, values: Dict[str, Any]) -> Dict[str, Any]:
-    """``values`` plus the per-row breakdown-grid values for this sub-deck.
+def _country_count(values: Dict[str, Any]) -> int:
+    """How many countries this deck fills — its ``country_name[i]`` count."""
+    return sum(1 for k in values if k.startswith("country_name["))
 
-    A no-op for a deck without a "Carrier breakdown" grid (``grid_values`` detects the grid
-    and returns ``{}`` otherwise). Failures are swallowed — a grid must never break the deck.
+
+def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], label: str) -> SubDeck:
+    """Finish a sub-deck: fold in breakdown-grid rows and drop surplus country pages.
+
+    The template is analysed once here (reused for both). Any failure is swallowed — neither
+    the grid nor the pruning may break assembly (a full deck beats a broken one).
     """
+    hidden: Tuple[int, ...] = ()
     try:
         template = analyze(get_binding_map(template_name).path)
         grid = grids.grid_values(template, scoped_result)
-    except Exception as exc:  # noqa: BLE001 — a failing grid must not break assembly
-        logger.warning("assemble: grid values failed for %s: %s", template_name, exc)
-        grid = {}
-    return {**values, **grid} if grid else values
+        if grid:
+            values = {**values, **grid}
+        hidden = tuple(prune.hidden_country_pages(template, _country_count(values)))
+    except Exception as exc:  # noqa: BLE001 — grid/pruning must never break assembly
+        logger.warning("assemble: grid/prune failed for %s: %s", template_name, exc)
+    return SubDeck(template_name, values, label=label, hidden=hidden)
 
 
 def plan_subdecks(result) -> List[SubDeck]:
@@ -77,8 +86,9 @@ def plan_subdecks(result) -> List[SubDeck]:
     Product/country axes are included only when their template is registered. The entities
     are the user's selection when they pin any, ELSE every product/country the carrier writes
     in (so an unfiltered run produces the carrier's full book, one block each). Each deck's
-    values carry the entity roles, the breakdown-grid rows, and (for products) the product
-    vocabulary the fill engine rewrites to the deck's product.
+    values carry the entity roles, breakdown-grid rows, and (for products) the product
+    vocabulary the fill engine rewrites; surplus per-country pages are pruned to the country
+    count so a 2-country run doesn't leave empty feedback pages.
     """
     names = set(available())
     vocab = product_vocab(result) if PRODUCT in names else ()
@@ -86,29 +96,28 @@ def plan_subdecks(result) -> List[SubDeck]:
     countries = (selected_countries(result) or carrier_countries(result)) if COUNTRY in names else ()
 
     decks: List[SubDeck] = [
-        SubDeck(OVERALL, _with_grid_values(OVERALL, result, resolve_roles(result)), label="overall")
+        _build_subdeck(OVERALL, result, resolve_roles(result), "overall")
     ]
     for product in products:
         values = resolve_roles_for_product(result, product)
         values["product_vocab"] = vocab
-        values = _with_grid_values(PRODUCT, scope_to_product(result, product), values)
-        decks.append(SubDeck(PRODUCT, values, label=str(product)))
+        decks.append(_build_subdeck(PRODUCT, scope_to_product(result, product), values, str(product)))
     for country in countries:
-        values = _with_grid_values(COUNTRY, scope_to_country(result, country),
-                                   resolve_roles_for_country(result, country))
-        decks.append(SubDeck(COUNTRY, values, label=str(country)))
+        decks.append(_build_subdeck(COUNTRY, scope_to_country(result, country),
+                                    resolve_roles_for_country(result, country), str(country)))
     return decks
 
 
-def _doc_from_map(bmap: BindingMap, values: Dict[str, Any]) -> Dict[str, Any]:
+def _doc_from_map(bmap: BindingMap, sub: SubDeck) -> Dict[str, Any]:
     """A minimal TemplateDoc that ``fill.fill_template`` consumes (manifest from the static map)."""
     return {
         "template_path": bmap.path,
-        "values": values,
+        "values": sub.values,
         "manifest": bmap.manifest(),
         "overrides": {},
         "map_overrides": {},
         "added": {},
+        "hidden": list(sub.hidden),
     }
 
 
@@ -116,7 +125,7 @@ def _fill_subdeck(sub: SubDeck, work_dir: str, idx: int) -> str:
     bmap = get_binding_map(sub.template)
     safe_label = "".join(c if c.isalnum() else "_" for c in sub.label)[:24]
     out = str(Path(work_dir) / f"{idx:02d}_{sub.template}_{safe_label}.pptx")
-    return fill_template(_doc_from_map(bmap, sub.values), out_path=out)
+    return fill_template(_doc_from_map(bmap, sub), out_path=out)
 
 
 def assemble_deck(result, *, out_path: Optional[str] = None, work_dir: Optional[str] = None) -> str:

@@ -7,7 +7,7 @@ widget-config change mutates that document; and BOTH the on-screen deck and the
 PowerPoint export are produced by ``materialize(doc)`` — so what you edit is what
 exports. The document lives in a persisted store, so it survives a refresh.
 
-    python -m studio.authoring_app   →   http://127.0.0.1:8131
+    python authoring_app.py   →   http://127.0.0.1:8131
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ from studio.template_fill import fill_template, new_template_doc, registry
 from studio.template_fill import validate as TV
 from studio.template_fill.model import add_element, set_override
 
-_ASSETS = str(Path(__file__).resolve().parent.parent / "assets")
+_ASSETS = str(Path(__file__).resolve().parent / "assets")
 _BREAKDOWNS = ["Product_Line", "SIC_Major_Class"]
 _BLANK = (None, "", [], "all", "All")
 # Sensible defaults so the Setup form is pre-filled and a deck is one click away.

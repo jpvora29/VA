@@ -358,15 +358,17 @@ def _template_control() -> html.Div:
     """
     from studio.template_fill.binding_map import available, template_path
 
-    names = available()
-    options = [{"label": Path(template_path(n)).name, "value": n} for n in names]
+    # The dropdown VALUE is the template's .pptx PATH — the Setup preview / tdoc pipeline
+    # (``new_template_doc`` → ``derive_manifest``) opens that path. Preview "overall" first.
+    names = sorted(available(), key=lambda n: (n != "overall", n))
+    options = [{"label": Path(template_path(n)).name, "value": template_path(n)} for n in names]
     return html.Div(
         [
             html.Div("TEMPLATE", className="studio-field-label"),
             dcc.Dropdown(
                 id="studio-template",
                 options=options,
-                value=names[0] if names else None,
+                value=options[0]["value"] if options else None,
                 clearable=False,
                 className="studio-dd",
             ),
