@@ -85,13 +85,17 @@ def plan_axes(src_path: str) -> Dict[str, List[int]]:
 
 
 def split_template(src_path: str, out_dir: str = "template") -> Dict[str, str]:
-    """Write each planned axis to ``out_dir/<axis>.pptx``; return ``{axis: path}``."""
+    """Write each planned axis to ``out_dir/<axis>_template.pptx``; return ``{axis: path}``.
+
+    The dict is keyed by axis name (``overall``/``country``); the file it points at carries
+    the ``_template`` suffix to match the author's naming convention.
+    """
     axes = plan_axes(src_path)
     out: Dict[str, str] = {}
     for axis, indices in axes.items():
         if not indices:
             continue
-        out[axis] = extract_to_file(src_path, indices, str(Path(out_dir) / f"{axis}.pptx"))
+        out[axis] = extract_to_file(src_path, indices, str(Path(out_dir) / f"{axis}_template.pptx"))
     return out
 
 

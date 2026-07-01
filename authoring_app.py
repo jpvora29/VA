@@ -832,17 +832,51 @@ def _widget_chart(values, ids, doc, view):
 # ── export (real .pptx from the SAME materialized document) ──────────────────
 
 
+def _assembled_export(selection: Dict[str, Any]) -> Optional[str]:
+    """The real deliverable: overall + per-product + per-country, filled and merged.
+
+    Rebuilds the ``OverallResult`` from the form selection (same as the preview) and runs
+    the split-template assembly. Returns the output path, or ``None`` if it can't run.
+    """
+    filters = {k: v for k, v in ((selection or {}).get("filters") or {}).items() if v not in _BLANK}
+    if not filters.get("carrier"):
+        return None
+    from studio.template_fill.assemble import assemble_deck
+
+    result = compute_overall(
+        filters=filters,
+        breakdowns=selection.get("breakdowns") or _BREAKDOWNS,
+        engine=engine,
+        peers=selection.get("peers") or None,
+    )
+    subject = str(filters.get("carrier", "Carrier")).replace(" ", "_")
+    out = Path(tempfile.gettempdir()) / f"{subject}_QBR.pptx"
+    return assemble_deck(result, out_path=str(out))
+
+
 @app.callback(
     Output("studio-pptx-download", "data"),
     Input({"type": "qs-export", "loc": ALL}, "n_clicks"),
+    State("qs-selection", "data"),
     State("qs-tdoc", "data"),
     State("qs-doc", "data"),
     prevent_initial_call=True,
 )
-def _export(clicks, tdoc, doc):
+def _export(clicks, selection, tdoc, doc):
     if not any(clicks or []):
         return no_update
-    # Template mode is the deliverable: the export IS the filled template.
+    # The deliverable is the ASSEMBLED deck: overall + one block per product + one per
+    # country the carrier writes in (or the user's selection), filled and merged.
+    try:
+        assembled = _assembled_export(selection)
+    except Exception as exc:  # noqa: BLE001 — fall back rather than white-screen the export
+        from logger import get_logger
+
+        get_logger(__name__).warning("assembled export failed, falling back: %s", exc)
+        assembled = None
+    if assembled:
+        return dcc.send_file(assembled)
+    # Fallback: the single filled template (pre-split behaviour) if assembly can't run.
     if tdoc and tdoc.get("template_path"):
         subject = str((tdoc.get("values") or {}).get("subject_name", "Carrier")).replace(" ", "_")
         out = Path(tempfile.gettempdir()) / f"{subject}_QBR.pptx"

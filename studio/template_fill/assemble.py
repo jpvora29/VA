@@ -1,10 +1,10 @@
 """Assembly — fill the split sub-templates per entity and merge into one deck.
 
-The split-template pipeline:
+The split-template pipeline (axis name → its .pptx, e.g. ``overall`` → ``overall_template.pptx``):
 
-    overall.pptx           filled once (subject-level roles)
-    product.pptx           filled once per selected product
-    country.pptx           filled once per selected country
+    overall   filled once (subject-level roles)
+    product   filled once per selected product
+    country   filled once per selected country
         ↓
     merge_pptx([overall, product₁ … productₙ, country₁ … countryₘ])  → one .pptx
 

@@ -131,9 +131,9 @@ def template(name: str) -> Callable[[Callable[[], BindingMap]], Callable[[], Bin
 
     Use for code-built maps::
 
-        @template("overall")
+        @template("overall")                       # axis name (registry key)
         def _overall() -> BindingMap:
-            return BindingMap("overall", "template/overall.pptx", (...))
+            return BindingMap("overall", "template/overall_template.pptx", (...))  # → the file
     """
     def deco(builder: Callable[[], BindingMap]) -> Callable[[], BindingMap]:
         _REGISTRY[name] = builder

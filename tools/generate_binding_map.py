@@ -8,11 +8,14 @@ curated JSON is the single source of truth (see ``binding_map.py``).
 So ``analyze.py`` / ``slots.py`` / ``roles.py`` stay in the tree as *dev tools only*; they
 are no longer on the runtime fill path.
 
+The first arg is the logical AXIS NAME (the registry key: overall / product / country);
+the second is the .pptx FILE (whatever it's actually called). They need not match.
+
 Usage::
 
-    python -m tools.generate_binding_map overall template/overall.pptx
-    python -m tools.generate_binding_map product template/product.pptx
-    python -m tools.generate_binding_map country template/country.pptx
+    python -m tools.generate_binding_map overall template/overall_template.pptx
+    python -m tools.generate_binding_map product template/product_template.pptx
+    python -m tools.generate_binding_map country template/country_template.pptx
 """
 from __future__ import annotations
 
