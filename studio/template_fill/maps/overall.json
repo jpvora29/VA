@@ -33,7 +33,7 @@
       ],
       "value_kind": "pct",
       "token": "+xx.x%",
-      "role": "carrier_gwp_yoy"
+      "role": "spotlight_carrier_yoy"
     },
     {
       "slide_idx": 1,
@@ -88,7 +88,7 @@
       ],
       "value_kind": "pct",
       "token": "-x.x%",
-      "role": "marsh_gwp_yoy"
+      "role": "spotlight_marsh_yoy"
     },
     {
       "slide_idx": 2,

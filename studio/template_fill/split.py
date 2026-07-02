@@ -47,8 +47,9 @@ def extract_slides(src_path: str, indices: Sequence[int]) -> Presentation:
 
     cloned: Dict[int, object] = {}
     reserved: Set[str] = set()
+    shared: Dict[Tuple[str, str], object] = {}
     for i in indices:
-        _append_slide(dst, src.slides[i], cloned, reserved)
+        _append_slide(dst, src.slides[i], cloned, reserved, shared)
     return dst
 
 

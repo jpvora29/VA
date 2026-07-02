@@ -22,9 +22,10 @@ Entry points:
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Tuple
 
 from pptx import Presentation
 from pptx.opc.constants import RELATIONSHIP_TARGET_MODE as RTM
@@ -74,15 +75,35 @@ def _alloc_partname(package, template: str, reserved: Set[str]) -> PackURI:
     return PackURI(name)
 
 
-def _clone_part(package, src_part: Part, cloned: Dict[int, Part], reserved: Set[str]) -> Part:
+def _clone_part(
+    package,
+    src_part: Part,
+    cloned: Dict[int, Part],
+    reserved: Set[str],
+    shared: Dict[Tuple[str, str], Part],
+) -> Part:
     """Deep-clone ``src_part`` (and everything it reaches) into ``package``.
 
-    Returns the destination clone. Memoised by source-object identity so a part shared by
-    several slides of the same source deck (a master, a theme) is copied once.
+    Returns the destination clone. Two levels of de-duplication:
+      * ``cloned`` (per source deck, by object identity) — a part reused by several slides
+        of the same deck (a master, a theme) is copied once;
+      * ``shared`` (whole merge, by content hash) — a **leaf** part with no relationships
+        (an image, a font, an embedded blob) that is byte-identical across sub-decks is
+        stored ONCE. This is what stops a 3 MB template image from being copied per product
+        block. Only relationship-free parts are shared, so nothing with divergent rels (a
+        master/layout) is ever wrongly merged.
     """
     memo = cloned.get(id(src_part))
     if memo is not None:
         return memo
+
+    leaf = len(src_part.rels) == 0
+    if leaf:
+        digest = (src_part.content_type, hashlib.sha1(src_part.blob).hexdigest())
+        existing = shared.get(digest)
+        if existing is not None:
+            cloned[id(src_part)] = existing
+            return existing
 
     dst_part = Part(
         _alloc_partname(package, _name_template(src_part.partname), reserved),
@@ -91,6 +112,8 @@ def _clone_part(package, src_part: Part, cloned: Dict[int, Part], reserved: Set[
         src_part.blob,            # original bytes — never re-serialized
     )
     cloned[id(src_part)] = dst_part
+    if leaf:
+        shared[digest] = dst_part
 
     base_uri = dst_part.partname.baseURI
     dst_rels = dst_part.rels._rels  # the {rId: _Relationship} backing dict
@@ -98,14 +121,20 @@ def _clone_part(package, src_part: Part, cloned: Dict[int, Part], reserved: Set[
         if rel.is_external:
             dst_rels[rId] = _Relationship(base_uri, rId, rel.reltype, RTM.EXTERNAL, rel.target_ref)
         else:
-            target = _clone_part(package, rel.target_part, cloned, reserved)
+            target = _clone_part(package, rel.target_part, cloned, reserved, shared)
             dst_rels[rId] = _Relationship(base_uri, rId, rel.reltype, RTM.INTERNAL, target)
     return dst_part
 
 
-def _append_slide(base: Presentation, src_slide, cloned: Dict[int, Part], reserved: Set[str]) -> None:
+def _append_slide(
+    base: Presentation,
+    src_slide,
+    cloned: Dict[int, Part],
+    reserved: Set[str],
+    shared: Dict[Tuple[str, str], Part],
+) -> None:
     """Clone one source slide's part graph into ``base`` and register it as a new slide."""
-    dst_slide_part = _clone_part(base.part.package, src_slide.part, cloned, reserved)
+    dst_slide_part = _clone_part(base.part.package, src_slide.part, cloned, reserved, shared)
     rId = base.part.relate_to(dst_slide_part, _SLIDE_RELTYPE)
     base.slides._sldIdLst.add_sldId(rId)
 
@@ -120,11 +149,19 @@ def merge_pptx(paths: List[str]) -> Presentation:
         raise ValueError("merge_pptx: no input paths")
     base = Presentation(paths[0])
     reserved: Set[str] = set()
+
+    # Seed the content-hash pool with the base deck's own leaf parts, so a media blob the
+    # appended decks share with the base is stored once, not re-copied per sub-deck.
+    shared: Dict[Tuple[str, str], Part] = {}
+    for part in base.part.package.iter_parts():
+        if len(part.rels) == 0:
+            shared[(part.content_type, hashlib.sha1(part.blob).hexdigest())] = part
+
     for path in paths[1:]:
         src = Presentation(path)
         cloned: Dict[int, Part] = {}   # per-source-deck identity memo
         for slide in src.slides:
-            _append_slide(base, slide, cloned, reserved)
+            _append_slide(base, slide, cloned, reserved, shared)
     logger.info("merge_pptx: stitched %d deck(s) -> %d slide(s)", len(paths), len(base.slides._sldIdLst))
     return base
 

@@ -47,6 +47,39 @@ def _country_breakdown(result) -> List[Dict[str, Any]]:
     return rows
 
 
+def _spotlight(result) -> Optional[Dict[str, Any]]:
+    """The single entity to feature in the "… Country xyz YoY change" highlights.
+
+    Significance = largest current premium in scope. When several countries are in scope the
+    spotlight is the top COUNTRY; when exactly one country is in scope the country dimension is
+    fixed, so we drill down and spotlight the top PRODUCT instead. Returns the entity name plus
+    its carrier and Marsh YoY (both scoped to that entity), or ``None`` if it can't resolve.
+    """
+    from core.analytics.library import compute_breakdown
+    from core.analytics.types import PrimitiveArgs
+
+    f = result.resolved_filters
+    pinned = f.get(_COUNTRY_COL)
+    n_countries = len(set(pinned)) if isinstance(pinned, (list, tuple, set)) else (1 if pinned else 0)
+    dim = _PRODUCT_COL if n_countries == 1 else _COUNTRY_COL
+
+    facts = _safe(
+        compute_breakdown,
+        PrimitiveArgs(flow=result.flow, metric="premium", group_by=(dim,), filters=f),
+        engine=result.engine,
+    ) or []
+    facts = [x for x in facts if x.dims.get(dim) is not None]
+    if not facts:
+        return None
+    top = str(max(facts, key=lambda x: x.value or 0.0).dims.get(dim))
+
+    scoped = {**f, dim: top}
+    carrier = _safe(C.period_totals, result.flow, scoped, result.engine) or {}
+    marsh = _safe(C.period_totals, result.flow,
+                  {k: v for k, v in scoped.items() if k != _CARRIER_COL}, result.engine) or {}
+    return {"name": top, "carrier_yoy": carrier.get("pct"), "marsh_yoy": marsh.get("pct")}
+
+
 def _growth_bubble(result) -> Optional[Dict[str, Any]]:
     """Per-LoB carrier-vs-Marsh YoY growth (+ bubble size) for the growth-rate chart."""
     f = result.resolved_filters
@@ -117,6 +150,16 @@ def resolve_roles(result) -> Dict[str, Any]:
     # Country labels (positional).
     for i, row in enumerate(_country_breakdown(result)):
         out[f"country_name[{i}]"] = row["name"]
+
+    # Spotlight YoY (a significant single country, or a product when one country is in scope)
+    # for the "… Country xyz YoY change" highlights — distinct from the blended overall YoY.
+    spot = _spotlight(result)
+    if spot:
+        out["spotlight_name"] = spot["name"]
+        if spot.get("carrier_yoy") is not None:
+            out["spotlight_carrier_yoy"] = spot["carrier_yoy"]
+        if spot.get("marsh_yoy") is not None:
+            out["spotlight_marsh_yoy"] = spot["marsh_yoy"]
 
     bubble = _growth_bubble(result)
     if bubble:

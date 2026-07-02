@@ -107,11 +107,13 @@ def _label_subs(values: Dict[str, Any]) -> List[Any]:
     # is left on the quadrant/portfolio/feedback slides.
     for idx in range(len(countries) + 1, 10):
         subs.append((re.compile(rf"\b(?:Country\s*/\s*)?(?:Country|Region)\s*\(\s*{idx}\s*\)", re.I), ""))
-    primary = countries[0] if countries else ""
-    if primary:
-        # "Country xyz" / "Region xyz" → just the country (no leading "Country").
-        subs.append((re.compile(r"\b(?:Country|Region)\s+xyz\b", re.I), primary))
-        subs.append((re.compile(r"\bxyz\b", re.I), primary))
+    # "Country xyz" / "Region xyz" / bare "xyz" mark the spotlight-YoY callout — name it after
+    # the spotlight entity (a significant country, or a product when one country is in scope) so
+    # the label agrees with the spotlight value. Falls back to the top country.
+    spotlight = str(values.get("spotlight_name", "")).strip() or (countries[0] if countries else "")
+    if spotlight:
+        subs.append((re.compile(r"\b(?:Country|Region)\s+xyz\b", re.I), spotlight))
+        subs.append((re.compile(r"\bxyz\b", re.I), spotlight))
 
     # Product deck: rewrite the template's authored example products (e.g. "Marine
     # Feedback", "Energy") to the single product this deck is for. Longest names first so a

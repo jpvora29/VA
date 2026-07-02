@@ -70,6 +70,41 @@ def test_manifest_maps_core_roles():
     assert {"subject_name", "marsh_gwp", "carrier_gwp", "sow_pct", "rank"} <= roles
 
 
+# ── spotlight YoY (the "… Country xyz YoY change" highlights) ─────────────────
+
+
+def test_spotlight_slots_get_distinct_roles():
+    # The "Carrier/Marsh Country xyz YoY change" callouts must NOT map to the overall
+    # carrier/marsh YoY — else they duplicate the blended figure.
+    from studio.template_fill.slots import Slot
+
+    def role_of(context):
+        return R._infer_role(Slot(1, 1, ["para", 0], "+xx.x%", "pct", context))
+
+    assert role_of("Carrier Country xyz YoY change") == "spotlight_carrier_yoy"
+    assert role_of("Marsh Country xyz YoY change") == "spotlight_marsh_yoy"
+    assert role_of("Change in Premium YoY") == "carrier_gwp_yoy"      # overall, unchanged
+
+
+def test_spotlight_is_a_country_distinct_from_overall_when_multi_country():
+    from studio.template_fill.bindings import resolve_roles
+
+    r = compute_overall(filters={"carrier": "Zurich", "country": ["Singapore", "Hong Kong"], "year": 2025})
+    v = resolve_roles(r)
+    assert v.get("spotlight_name") in {"Singapore", "Hong Kong"}
+    # A single country's YoY should differ from the blended two-country YoY.
+    assert v.get("spotlight_carrier_yoy") != v.get("carrier_gwp_yoy")
+
+
+def test_spotlight_drills_to_a_product_when_single_country():
+    from studio.template_fill.bindings import resolve_roles
+
+    r = compute_overall(filters={"carrier": "Zurich", "country": ["Singapore"], "year": 2025})
+    v = resolve_roles(r)
+    # One country in scope → the spotlight is a product line, not a country.
+    assert v.get("spotlight_name") not in (None, "Singapore")
+
+
 def test_fill_replaces_mapped_tokens_and_keeps_placeholders(tmp_path):
     doc = new_template_doc(_result(), template_path=TEMPLATE)
     out = fill_template(doc, out_path=str(tmp_path / "filled.pptx"))

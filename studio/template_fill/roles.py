@@ -32,6 +32,11 @@ ROLE_RANK = "rank"
 ROLE_RANK_YOY = "rank_yoy"
 ROLE_COUNTRY_NAME = "country_name"          # indexed: country_name[i]
 ROLE_GROWTH_BUBBLE = "growth_bubble"
+# "Carrier/Marsh Country xyz YoY change" — a SINGLE spotlight entity's YoY (a significant
+# country when several are in scope; a significant product when only one country is), NOT the
+# blended overall YoY. Kept distinct so these slots don't duplicate carrier/marsh_gwp_yoy.
+ROLE_SPOTLIGHT_CARRIER_YOY = "spotlight_carrier_yoy"
+ROLE_SPOTLIGHT_MARSH_YOY = "spotlight_marsh_yoy"
 
 
 @dataclass
@@ -109,6 +114,10 @@ def _infer_role(slot: Slot) -> Optional[str]:
     if kind == "pct":
         if _has(ctx, "sow", "share of wallet", "share"):
             return ROLE_SOW_YOY if is_prior else ROLE_SOW_PCT
+        # Spotlight YoY slots ("Carrier/Marsh Country xyz YoY change"): the "xyz" marks a
+        # single-entity callout, so it must NOT collapse onto the overall carrier/marsh YoY.
+        if "xyz" in ctx:
+            return ROLE_SPOTLIGHT_MARSH_YOY if _has(ctx, "marsh") else ROLE_SPOTLIGHT_CARRIER_YOY
         if _is_carrier_premium(ctx):
             return ROLE_CARRIER_GWP_YOY
         if _has(ctx, "marsh"):
