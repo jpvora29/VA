@@ -33,4 +33,12 @@ register_export(app)       # fill/assemble the template and download the .pptx
 if __name__ == "__main__":
     import os
 
-    app.run(debug=True, port=int(os.environ.get("PORT", "8131")))
+    # Keep debug tracebacks, but DISABLE hot-reload: the long Generate assembly used to
+    # trigger a browser reload that reset the in-memory view back to Setup mid-build, so
+    # the finished deck never showed. See studio/authoring/layout.py (qs-view now persists).
+    app.run(
+        debug=True,
+        dev_tools_hot_reload=False,
+        use_reloader=False,
+        port=int(os.environ.get("PORT", "8131")),
+    )

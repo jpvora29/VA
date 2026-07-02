@@ -8,6 +8,7 @@ real ``template/qbr_template.pptx`` (think-cell + native charts) when it is pres
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 from pptx import Presentation
@@ -15,6 +16,11 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.util import Emu, Inches
 
 from studio.template_fill.merge import merge_pptx, merge_to_file
+
+
+@pytest.fixture(autouse=True)
+def _force_opc_merge(monkeypatch):
+    monkeypatch.setenv("STUDIO_PPT_MERGE_ENGINE", "opc")
 
 
 def _tiny_deck(path: str, *, n_slides: int, with_picture: bool = False) -> str:
@@ -78,6 +84,26 @@ def test_merge_single_path_is_identity(tmp_path):
 def test_merge_empty_raises():
     with pytest.raises(ValueError):
         merge_pptx([])
+
+
+def test_merge_to_file_can_use_powerpoint_engine(tmp_path, monkeypatch):
+    a = _tiny_deck(str(tmp_path / "a.pptx"), n_slides=1)
+    b = _tiny_deck(str(tmp_path / "b.pptx"), n_slides=1)
+    calls = {}
+
+    def fake_powerpoint(paths, out_path):
+        calls["paths"] = list(paths)
+        calls["out_path"] = out_path
+        Path(out_path).write_bytes(Path(paths[0]).read_bytes())
+        return out_path
+
+    monkeypatch.setenv("STUDIO_PPT_MERGE_ENGINE", "powerpoint")
+    monkeypatch.setattr("studio.template_fill.merge._merge_to_file_powerpoint", fake_powerpoint)
+
+    out = merge_to_file([a, b], str(tmp_path / "merged.pptx"))
+
+    assert out == str(tmp_path / "merged.pptx")
+    assert calls == {"paths": [a, b], "out_path": str(tmp_path / "merged.pptx")}
 
 
 @pytest.mark.skipif(

@@ -31,6 +31,7 @@ def register_setup(app):
         Output("qs-doc", "data", allow_duplicate=True),
         Output("qs-tdoc", "data", allow_duplicate=True),
         Output("qs-view", "data", allow_duplicate=True),
+        Output("qs-generating", "data"),
         Input("studio-generate", "n_clicks"),
         State("studio-report-type", "value"),
         State({"type": "studio-filter", "col": ALL}, "value"),
@@ -49,7 +50,7 @@ def register_setup(app):
     def generate(n, report, fvals, fids, breakdowns, cut_vals, cut_ids, peer_mode, custom_peers,
                  audience, meeting_length, ai, template_path):
         if not n:
-            return no_update, no_update, no_update, no_update
+            return no_update, no_update, no_update, no_update, no_update
         filters = {i["col"]: v for i, v in zip(fids or [], fvals or []) if v not in BLANK}
         cuts = [i["name"] for i, v in zip(cut_ids or [], cut_vals or []) if v]
         peers = None
@@ -71,7 +72,7 @@ def register_setup(app):
         # Preview the ASSEMBLED deck (overall + per product + per country); fall back to the
         # single-template doc only if assembly can't run.
         tdoc = _generated_assembled_tdoc(selection) or _generated_tdoc(selection)
-        return selection, doc, tdoc, {"mode": "canvas", "idx": 0, "tab": "setup"}
+        return selection, doc, tdoc, {"mode": "canvas", "idx": 0, "tab": "setup"}, n
 
     @app.callback(
         Output("studio-scope-preview", "children"),

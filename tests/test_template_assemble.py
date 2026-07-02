@@ -15,6 +15,11 @@ from studio.template_fill import assemble as A
 from studio.template_fill import binding_map as BM
 
 
+@pytest.fixture(autouse=True)
+def _force_opc_merge(monkeypatch):
+    monkeypatch.setenv("STUDIO_PPT_MERGE_ENGINE", "opc")
+
+
 def _tiny_template(path: str, n_slides: int) -> str:
     prs = Presentation()
     for i in range(n_slides):

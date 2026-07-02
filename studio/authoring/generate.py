@@ -20,6 +20,7 @@ from studio.deck import build_deck
 from studio.deck.model import DeckSpec
 from studio.page import document as D
 from studio.template_fill import new_template_doc
+from studio.template_fill.preview_assets import ensure_doc_backgrounds, ensure_rendered_slide_backgrounds
 
 from logger import get_logger
 from studio.authoring.config import BLANK, BREAKDOWNS, engine
@@ -123,10 +124,24 @@ def _generated_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
     if not selection or not selection.get("filters", {}).get("carrier"):
         return None
     try:
-        return _tdoc_for(json.dumps(selection, sort_keys=True))
+        return _with_background_urls(_tdoc_for(json.dumps(selection, sort_keys=True)))
     except Exception as exc:  # noqa: BLE001 — template issues must not white-screen the app
         log.warning("template doc build failed: %s", exc)
         return None
+
+
+def _with_background_urls(tdoc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Attach pre-rendered backgrounds during Generate, never during navigation."""
+    if not tdoc or tdoc.get("background_urls"):
+        return tdoc
+    n = int(tdoc.get("n_slides") or len(tdoc.get("order") or []))
+    if not n:
+        return tdoc
+    try:
+        return {**tdoc, "background_urls": ensure_doc_backgrounds(dict(tdoc), n)}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("template background render failed: %s", exc)
+        return tdoc
 
 
 # ── the assembled deck (overall + per product + per country, merged) ─────────
@@ -177,6 +192,11 @@ def _assembled_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
 
     template = analyze(path)
     n = len(template.slides)
+    try:
+        background_urls = ensure_rendered_slide_backgrounds(path, n)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("assembled preview render failed: %s", exc)
+        background_urls = [None] * n
     return {
         "template_path": path,
         "values": {},
@@ -190,6 +210,7 @@ def _assembled_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
         "height_emu": template.height_emu,
         "n_slides": n,
         "assembled": True,
+        "background_urls": background_urls,
     }
 
 

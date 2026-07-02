@@ -66,6 +66,10 @@ def cache_picture(template_path: str, slide_idx: int, shape_id: int, ext: str, b
 
 def _cached_backgrounds(template_path: str, slide_count: int) -> List[Optional[str]]:
     out_dir = template_cache_dir(template_path) / "backgrounds"
+    return _background_urls(out_dir, slide_count)
+
+
+def _background_urls(out_dir: Path, slide_count: int) -> List[Optional[str]]:
     urls: List[Optional[str]] = []
     for idx in range(slide_count):
         path = out_dir / f"slide-{idx:03d}.png"
@@ -168,6 +172,21 @@ def ensure_slide_backgrounds(template_path: str, slide_count: int, *, width_px: 
     return _cached_backgrounds(template_path, slide_count)
 
 
+def ensure_rendered_slide_backgrounds(pptx_path: str, slide_count: int, *, width_px: int = 1600) -> List[Optional[str]]:
+    """Render a PPTX once, including PowerPoint fallback, and return cached URLs.
+
+    This is used at generation/export time, not while navigating slides. Keeping
+    PowerPoint startup out of the page render path makes next/previous instant
+    when a cached image exists and falls back to geometry when it does not.
+    """
+    cached = _cached_backgrounds(pptx_path, slide_count)
+    if all(cached):
+        return cached
+    out_dir = template_cache_dir(pptx_path) / "backgrounds"
+    _render_slides(pptx_path, out_dir, slide_count, width_px)
+    return _cached_backgrounds(pptx_path, slide_count)
+
+
 def _doc_render_key(doc: dict, *, width_px: int) -> str:
     # NOTE: deliberately keyed on the data-driven values only, NOT on manual
     # overrides/added notes. A full PowerPoint re-render takes seconds, so making
@@ -184,6 +203,15 @@ def _doc_render_key(doc: dict, *, width_px: int) -> str:
     return hashlib.sha1(raw).hexdigest()[:16]
 
 
+def cached_doc_backgrounds(doc: dict, slide_count: int, *, width_px: int = 1600) -> List[Optional[str]]:
+    """Return existing filled-document background URLs without rendering."""
+    template_path = str(doc.get("template_path") or "")
+    if not template_path:
+        return [None] * slide_count
+    render_dir = template_cache_dir(template_path) / "doc-backgrounds" / _doc_render_key(doc, width_px=width_px)
+    return _background_urls(render_dir, slide_count)
+
+
 def ensure_doc_backgrounds(doc: dict, slide_count: int, *, width_px: int = 1600) -> List[Optional[str]]:
     """Render the filled template document and return per-slide PNG URLs.
 
@@ -195,12 +223,7 @@ def ensure_doc_backgrounds(doc: dict, slide_count: int, *, width_px: int = 1600)
     if not template_path:
         return [None] * slide_count
     render_dir = template_cache_dir(template_path) / "doc-backgrounds" / _doc_render_key(doc, width_px=width_px)
-    urls = [
-        _public_url(render_dir / f"slide-{idx:03d}.png")
-        if (render_dir / f"slide-{idx:03d}.png").exists() and (render_dir / f"slide-{idx:03d}.png").stat().st_size > 0
-        else None
-        for idx in range(slide_count)
-    ]
+    urls = cached_doc_backgrounds(doc, slide_count, width_px=width_px)
     if all(urls):
         return urls
 
@@ -220,9 +243,4 @@ def ensure_doc_backgrounds(doc: dict, slide_count: int, *, width_px: int = 1600)
     except Exception as exc:  # noqa: BLE001
         logger.warning("template preview filled-background render failed for %s: %s", template_path, exc)
 
-    return [
-        _public_url(render_dir / f"slide-{idx:03d}.png")
-        if (render_dir / f"slide-{idx:03d}.png").exists() and (render_dir / f"slide-{idx:03d}.png").stat().st_size > 0
-        else None
-        for idx in range(slide_count)
-    ]
+    return _background_urls(render_dir, slide_count)

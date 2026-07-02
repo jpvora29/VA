@@ -104,7 +104,10 @@ def authoring_shell(
 ) -> html.Div:
     view = view or {"idx": 0, "tab": "setup"}
     counts = deck_counts(deck, doc) if deck else {"total": 0}
-    if not deck and tdoc:
+    # When a filled template doc is present it IS the previewed deliverable (overall +
+    # per product + per country), so the rail page-count should reflect ALL its slides,
+    # not just the overall deck — otherwise it reads "17" while the canvas shows 25.
+    if tdoc:
         counts = {"total": int(tdoc.get("n_slides", 0))}
     top = top_bar(deck, doc) if deck else _placeholder_topbar(enabled=bool(tdoc))
     body = body_for(

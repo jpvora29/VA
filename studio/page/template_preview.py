@@ -19,7 +19,7 @@ from studio.template_fill import registry
 from studio.template_fill import validate as TV
 from studio.template_fill.fill import _label_subs
 from studio.template_fill.model import materialize_fields
-from studio.template_fill.preview_assets import ensure_doc_backgrounds
+from studio.template_fill.preview_assets import cached_doc_backgrounds
 
 PREVIEW_W = 900  # px — the on-screen slide width; height derives from the aspect ratio
 
@@ -300,7 +300,12 @@ def _fields_panel(slide_fields: List[Dict[str, Any]]) -> html.Div:
 def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> html.Div:
     template, _ = registry.derive_manifest(tdoc["template_path"])
     fields = materialize_fields(dict(tdoc))
-    rendered_urls = ensure_doc_backgrounds(dict(tdoc), len(template.slides))
+    stored_urls = list(tdoc.get("background_urls") or [])
+    cached_urls = cached_doc_backgrounds(dict(tdoc), len(template.slides))
+    rendered_urls = [
+        (stored_urls[i] if i < len(stored_urls) and stored_urls[i] else cached_urls[i])
+        for i in range(len(template.slides))
+    ]
     order = [i for i in tdoc.get("order", list(range(len(template.slides)))) if i not in tdoc.get("hidden", [])]
     pos = int(view.get("idx", 0))
     pos = pos if 0 <= pos < len(order) else 0

@@ -19,6 +19,7 @@ dependencies = [
     "pydantic>=2.13.4",
     "python-dotenv>=1.2.2",
     "python-pptx>=1.0.2",
+    "pywin32>=311; sys_platform == 'win32'",
     "pyyaml>=6.0.3",
     "sqlalchemy>=2.0.50",
 ]

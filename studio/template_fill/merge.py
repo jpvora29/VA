@@ -23,9 +23,12 @@ Entry points:
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import shutil
+import sys
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from pptx import Presentation
 from pptx.opc.constants import RELATIONSHIP_TARGET_MODE as RTM
@@ -167,9 +170,81 @@ def merge_pptx(paths: List[str]) -> Presentation:
 
 
 def merge_to_file(paths: List[str], out_path: str) -> str:
-    """Merge ``paths`` and save the result to ``out_path`` (returned)."""
+    """Merge ``paths`` and save the result to ``out_path`` (returned).
+
+    Windows desktop exports prefer PowerPoint itself for the final append. That
+    keeps opaque PowerPoint/vendor package parts intact, which is safer than
+    asking python-pptx to re-save a complex merged package. Set
+    ``STUDIO_PPT_MERGE_ENGINE=opc`` to force the old pure-python path for CI.
+    """
+    engine = os.getenv("STUDIO_PPT_MERGE_ENGINE", "auto").strip().lower()
+    if not paths:
+        raise ValueError("merge_pptx: no input paths")
+
+    if len(paths) == 1 and engine != "opc":
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(paths[0], out_path)
+        logger.info("merge_pptx: copied single deck -> %s", out_path)
+        return out_path
+
+    if engine in {"auto", "", "powerpoint", "win32", "com"} and sys.platform == "win32":
+        try:
+            return _merge_to_file_powerpoint(paths, out_path)
+        except Exception as exc:  # noqa: BLE001
+            if engine in {"powerpoint", "win32", "com"}:
+                raise
+            logger.warning("merge_pptx: PowerPoint merge unavailable, falling back to OPC: %s", exc)
+    elif engine not in {"auto", "", "opc"}:
+        raise ValueError(f"unknown STUDIO_PPT_MERGE_ENGINE={engine!r}")
+
     prs = merge_pptx(paths)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     prs.save(out_path)
     logger.info("merge_pptx: exported -> %s", out_path)
     return out_path
+
+
+def _merge_to_file_powerpoint(paths: List[str], out_path: str) -> str:
+    """Append decks using local Microsoft PowerPoint COM automation."""
+    try:
+        import pythoncom  # type: ignore
+        import win32com.client  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("pywin32 is not available") from exc
+
+    out = Path(out_path).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    abs_paths = [str(Path(p).resolve()) for p in paths]
+    if out.exists():
+        out.unlink()
+
+    app: Optional[object] = None
+    prs: Optional[object] = None
+    pythoncom.CoInitialize()
+    try:
+        try:
+            app = win32com.client.DispatchEx("PowerPoint.Application")
+        except Exception:
+            app = win32com.client.Dispatch("PowerPoint.Application")
+        try:
+            app.DisplayAlerts = 0
+        except Exception:
+            pass
+        prs = app.Presentations.Open(abs_paths[0], WithWindow=False)
+        for src in abs_paths[1:]:
+            prs.Slides.InsertFromFile(src, prs.Slides.Count)
+        prs.SaveAs(str(out))
+        logger.info("merge_pptx: PowerPoint merged %d deck(s) -> %s", len(paths), out)
+        return str(out)
+    finally:
+        try:
+            if prs is not None:
+                prs.Close()
+        except Exception:
+            pass
+        try:
+            if app is not None:
+                app.Quit()
+        except Exception:
+            pass
+        pythoncom.CoUninitialize()

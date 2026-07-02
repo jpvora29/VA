@@ -16,7 +16,7 @@
     {
       "name": "qbr-studio",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["-m", "studio.authoring_app"],
+      "runtimeArgs": ["authoring_app.py"],
       "port": 8131,
       "autoPort": true
     }

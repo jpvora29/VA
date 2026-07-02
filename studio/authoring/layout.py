@@ -24,8 +24,12 @@ def build_layout() -> html.Div:
     """The page shell: the persisted stores plus the ``qs-app`` mount the shell renders into."""
     return html.Div(
         [
+            # The view (mode/slide/tab) ALSO persists locally now — otherwise a browser
+            # refresh (or Generate's post-callback reload) drops you back to Setup even
+            # though the deck is still saved, which looked like "Generate did nothing".
             dcc.Store(
                 id="qs-view",
+                storage_type="local",
                 data={
                     "mode": "setup",
                     "idx": 0,
@@ -47,6 +51,14 @@ def build_layout() -> html.Div:
             dcc.Download(id="studio-pptx-download"),
             # Hidden sink: the canvas JS writes select/move/resize actions here.
             dcc.Input(id="qs-cv-sink", style={"display": "none"}),
+            # Full-screen spinner shown ONLY while Generate is assembling the deck
+            # (it's the sole writer of ``qs-generating``, so ordinary edits don't flash it).
+            dcc.Loading(
+                id="qs-generating-loader",
+                fullscreen=True,
+                type="default",
+                children=dcc.Store(id="qs-generating"),
+            ),
             html.Div(id="qs-app"),
         ]
     )
