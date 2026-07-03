@@ -15,6 +15,15 @@ module (navigation / setup / editing / export).
 """
 from __future__ import annotations
 
+# Load .env BEFORE any studio import: ``studio.authoring.config`` builds the DB engine
+# at import time via ``get_engine()``, which reads DB_PATH/STUDIO_DB_PATH. If .env isn't
+# applied first, that env var is unset and the app silently falls back to the seed DB
+# instead of the real database. (The old single-file app got this for free because the
+# engine was created after imports that already loaded .env.)
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from studio.authoring.editing import register_editing
 from studio.authoring.export import register_export
 from studio.authoring.layout import build_layout, create_app

@@ -35,6 +35,22 @@ _POLISH_SYS = (
     "competitor. Reply with 1–2 short sentences only."
 )
 
+# The commentary voice chosen in Setup → the instruction appended to the polish prompt.
+# Every style keeps the same faithfulness guardrails; only the tone/length shifts.
+_STYLE_DIRECTIVE: Dict[str, str] = {
+    "concise": "Be terse and punchy — one short sentence, only the headline figure.",
+    "balanced": "Reply with 1–2 short sentences only.",
+    "detailed": "Give 2–3 sentences with the supporting figures and the 'so what'.",
+}
+
+
+def _style_system(style: Optional[str]) -> str:
+    base = (
+        "Rewrite this insurance QBR commentary to be crisp and executive. Keep EVERY number "
+        "and the carrier name exactly as given; never invent figures and never name a competitor. "
+    )
+    return base + _STYLE_DIRECTIVE.get((style or "balanced").lower(), _STYLE_DIRECTIVE["balanced"])
+
 
 def _cx(sh: Shape) -> float:
     return sh.x + sh.w / 2.0
@@ -119,17 +135,21 @@ def augment(template: Template, bindings: List[R.Binding]) -> List[R.Binding]:
 # ── text generation ──────────────────────────────────────────────────────────
 
 
-def _polish(text: str, *, node: str) -> str:
-    """LLM-polish ``text`` if available, keeping only verifier-faithful output."""
+def _polish(text: str, *, node: str, style: Optional[str] = None) -> str:
+    """LLM-polish ``text`` if available, keeping only verifier-faithful output.
+
+    ``style`` (from Setup) tunes the tone/length of the rewrite; the faithfulness
+    guardrails are identical across styles."""
     if not text:
         return text
     from studio.ai import client
     from studio.ai.verifier import allowed_numbers, verify_text
 
     allowed = allowed_numbers(text)
+    system = _style_system(style)
 
     def call() -> Optional[str]:
-        out = client.generate(_POLISH_SYS, text, tier="fast", node=node)
+        out = client.generate(system, text, tier="fast", node=node)
         if not out:
             return None
         clean, _ = verify_text(out, allowed)
@@ -172,13 +192,14 @@ def values(template: Template, result) -> Dict[str, Any]:
     targets = _prose_targets(template)
     if not targets:
         return out
+    style = getattr(result, "style", "balanced")
     cache: Dict[str, str] = {}
     for t in targets:
         topic = t["topic"]
         if topic not in cache:
             try:
                 base = _topic_text(result, topic)
-                cache[topic] = _polish(base, node=f"commentary-{topic}") if base else ""
+                cache[topic] = _polish(base, node=f"commentary-{topic}", style=style) if base else ""
             except Exception as exc:  # noqa: BLE001 — commentary must never break the doc
                 logger.warning("commentary: topic %s failed: %s", topic, exc)
                 cache[topic] = ""

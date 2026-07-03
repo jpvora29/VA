@@ -108,11 +108,15 @@
 }
 .studio-field-label.sm { font-size: 10.5px; letter-spacing: 0.05em; margin-bottom: 2px; }
 
-/* full-width single-column filters so selected values stay readable, not clipped */
+/* two-column filter grid — halves the vertical run of the Setup form while the
+   dropdowns still expand to show selected values. Collapses to one column when narrow. */
 .studio-filter-grid {
-    display: grid; grid-template-columns: 1fr; gap: 12px;
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px;
 }
-.studio-filter-grid .studio-field { gap: 3px; }
+.studio-filter-grid .studio-field { gap: 3px; min-width: 0; }
+@media (max-width: 720px) {
+    .studio-filter-grid { grid-template-columns: 1fr; }
+}
 
 .studio-scope-row { display: flex; gap: 8px; }
 .studio-scope-chip {

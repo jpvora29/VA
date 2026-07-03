@@ -80,6 +80,9 @@ class OverallResult:
     engine: Any = None
     # User-pinned custom peer set (Carrier_Group values); None → resolve from Peers table.
     peers: Optional[Tuple[str, ...]] = None
+    # Commentary voice, chosen in Setup and applied when prose is written (see
+    # ``studio.template_fill.commentary`` / ``studio.narrate.commentary``).
+    style: str = "balanced"
 
 
 _BLANK_VALS = (None, "", "all", "All")
@@ -628,6 +631,7 @@ def compute_overall(
     breakdowns: Optional[List[str]] = None,
     engine: Any = None,
     peers: Optional[Sequence[str]] = None,
+    style: str = "balanced",
 ) -> OverallResult:
     """Compute the Overall page from the live DB. Best-effort: a failing metric is
     logged and skipped, never fatal."""
@@ -640,7 +644,7 @@ def compute_overall(
     store = FactStore()
     result = OverallResult(
         store=store, subject=subject, flow=flow, resolved_filters=dict(resolved),
-        engine=engine, peers=tuple(peers) if peers else None,
+        engine=engine, peers=tuple(peers) if peers else None, style=style or "balanced",
     )
 
     try:

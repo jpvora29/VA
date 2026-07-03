@@ -6,14 +6,12 @@ The scope-preview cards and template-sections panel are refreshed by app callbac
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
 from studio.page.layout import (
-    _breakdown,
     _filter_grid,
     _peers_panel,
     _report_type,
@@ -59,11 +57,13 @@ def _audience_length() -> html.Div:
                 {"label": "Deal team", "value": "deal_team"},
                 {"label": "Board", "value": "board"},
             ], "executive"),
-            _radio_field("MEETING LENGTH", "studio-meeting-length", [
-                {"label": "Short · 15m", "value": "short"},
-                {"label": "Standard · 30m", "value": "standard"},
-                {"label": "Detailed · 60m", "value": "detailed"},
-            ], "standard"),
+            # Commentary voice — words, not meeting minutes. Passed to the deck when the
+            # qualitative prose is written (studio.template_fill.commentary).
+            _radio_field("COMMENTARY STYLE", "studio-commentary-style", [
+                {"label": "Concise", "value": "concise"},
+                {"label": "Balanced", "value": "balanced"},
+                {"label": "Detailed", "value": "detailed"},
+            ], "balanced"),
         ],
         className="qs-sec-grid cols-2",
     )
@@ -127,26 +127,44 @@ def _scope_preview() -> html.Div:
     )
 
 
+# Assembly-scope choices (Setup "Scope" dropdown). Value = the axis set to assemble;
+# "all" is the full deck (overall + product + country). Only axes with a registered
+# template are offered.
+_SCOPE_LABELS = {
+    "all": "All — overall + product + country",
+    "overall": "Overall only",
+    "product": "Product pages",
+    "country": "Country pages",
+}
+
+
+def _scope_options() -> list:
+    """The scope choices, gated to the axes whose fixed template is registered."""
+    from studio.template_fill.binding_map import available
+
+    axes = set(available())
+    opts = [{"label": _SCOPE_LABELS["all"], "value": "all"}]
+    for axis in ("overall", "product", "country"):
+        if axis in axes:
+            opts.append({"label": _SCOPE_LABELS[axis], "value": axis})
+    return opts
+
+
 def _template_control() -> html.Div:
-    """The fixed, author-made templates the deck is assembled from.
+    """Assembly scope — which fixed sub-decks to build and merge.
 
-    Templates are no longer user-uploaded — they are a fixed set the author maintains
-    (``overall`` / ``product`` / ``country``), split by axis and merged per selection. The
-    dropdown just picks which fixed deck the Setup preview reflects.
+    Templates are a fixed, author-made set (``overall`` / ``product`` / ``country``), split
+    by axis and merged per selection. This dropdown picks how much of the deck to assemble:
+    everything, or just the overall / product / country pages.
     """
-    from studio.template_fill.binding_map import available, template_path
-
-    # The dropdown VALUE is the template's .pptx PATH — the Setup preview / tdoc pipeline
-    # (``new_template_doc`` → ``derive_manifest``) opens that path. Preview "overall" first.
-    names = sorted(available(), key=lambda n: (n != "overall", n))
-    options = [{"label": Path(template_path(n)).name, "value": template_path(n)} for n in names]
+    options = _scope_options()
     return html.Div(
         [
-            html.Div("TEMPLATE", className="studio-field-label"),
+            html.Div("SCOPE", className="studio-field-label"),
             dcc.Dropdown(
                 id="studio-template",
                 options=options,
-                value=options[0]["value"] if options else None,
+                value="all",
                 clearable=False,
                 className="studio-dd",
             ),
@@ -239,30 +257,19 @@ def setup_body(
         [
             _setup_section(
                 "bi-funnel", "Scope & filters",
-                "Client, period and every cut — computed deterministically from the governed dataset.",
+                "Client, period and every cut — each list narrows to what the selection above it writes in.",
                 html.Div([_scope_toggle(), _filter_grid(filter_options, filter_values)], className="qs-sec-stack"),
                 span=True,
             ),
             _setup_section(
-                "bi-diagram-3", "Report & breakdown",
-                "Report type and the dimensions to break results down by.",
-                html.Div([_report_type(), _breakdown()], className="qs-sec-grid cols-2"),
+                "bi-diagram-3", "Report & scope",
+                "Report type and how much of the deck to assemble.",
+                html.Div([_report_type(), _template_control()], className="qs-sec-grid cols-2"),
             ),
             _setup_section(
-                "bi-file-earmark-slides", "Template",
-                "The deck is assembled from fixed, author-made templates — filled per "
-                "product and country, then merged.",
-                _template_control(), span=True,
-            ),
-            _setup_section(
-                "bi-easel2", "Audience & length",
-                "Tunes which slides the AI selection keeps for the meeting.",
+                "bi-easel2", "Audience & commentary",
+                "Audience tunes which slides the AI selection keeps; style sets the commentary voice.",
                 _audience_length(),
-            ),
-            _setup_section(
-                "bi-collection", "Deck sections",
-                "The pages this template will produce — read straight from the .pptx above.",
-                html.Div(template_sections_panel(), id="studio-template-sections"), span=True,
             ),
             _setup_section(
                 "bi-people", "Peers",
@@ -273,6 +280,11 @@ def setup_body(
                 "bi-stars", "AI assist",
                 "Optional, faithfulness-verified enhancement layer.",
                 _ai_control(),
+            ),
+            _setup_section(
+                "bi-collection", "Deck sections",
+                "The pages this scope will produce — read straight from the fixed templates.",
+                html.Div(template_sections_panel(), id="studio-template-sections"), span=True,
             ),
         ],
         className="qs-setup-sections",

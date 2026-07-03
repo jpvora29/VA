@@ -9,6 +9,8 @@ from __future__ import annotations
 from dash import ALL, Input, Output, State, ctx, no_update
 
 from logger import get_logger
+from studio.compute import FILTER_COLUMN
+from studio.data import dependent_options
 from studio.page import authoring as A
 from studio.page import document as D
 from studio.template_fill import registry
@@ -21,6 +23,25 @@ from studio.authoring.generate import (
 )
 
 log = get_logger(__name__)
+
+
+def _scope_template_path(scope):
+    """A concrete template ``.pptx`` for the tdoc fallback, derived from the scope choice.
+
+    The assembled preview drives the canvas; this path only feeds the single-template
+    fallback (``new_template_doc``), so a specific axis maps to its template and "all"
+    maps to the overall template.
+    """
+    from studio.template_fill.binding_map import available, template_path
+
+    axes = set(available())
+    axis = scope if scope in {"overall", "product", "country"} else "overall"
+    if axis not in axes:
+        axis = "overall" if "overall" in axes else (sorted(axes)[0] if axes else None)
+    try:
+        return template_path(axis) if axis else registry.active_template_path()
+    except Exception:  # noqa: BLE001 — fall back to whatever the registry considers active
+        return registry.active_template_path()
 
 
 def register_setup(app):
@@ -36,19 +57,18 @@ def register_setup(app):
         State("studio-report-type", "value"),
         State({"type": "studio-filter", "col": ALL}, "value"),
         State({"type": "studio-filter", "col": ALL}, "id"),
-        State("studio-breakdown", "value"),
         State({"type": "studio-cut", "name": ALL}, "value"),
         State({"type": "studio-cut", "name": ALL}, "id"),
         State("studio-peer-mode", "value"),
         State("studio-peer-custom", "value"),
         State("studio-audience", "value"),
-        State("studio-meeting-length", "value"),
+        State("studio-commentary-style", "value"),
         State("studio-ai-toggle", "value"),
         State("studio-template", "value"),
         prevent_initial_call=True,
     )
-    def generate(n, report, fvals, fids, breakdowns, cut_vals, cut_ids, peer_mode, custom_peers,
-                 audience, meeting_length, ai, template_path):
+    def generate(n, report, fvals, fids, cut_vals, cut_ids, peer_mode, custom_peers,
+                 audience, style, ai, template_scope):
         if not n:
             return no_update, no_update, no_update, no_update, no_update
         filters = {i["col"]: v for i, v in zip(fids or [], fvals or []) if v not in BLANK}
@@ -59,13 +79,17 @@ def register_setup(app):
         selection = {
             "report": report or "qbr",
             "filters": filters,
-            "breakdowns": breakdowns or BREAKDOWNS,
+            # The breakdown control was removed from Setup; the deck keeps the deterministic
+            # default breakdowns so the on-screen DeckSpec still has its sections.
+            "breakdowns": BREAKDOWNS,
             "cuts": cuts,
             "peers": peers,
             "audience": audience or "executive",
-            "meeting_length": meeting_length or "standard",
+            "meeting_length": "standard",
+            "style": style or "balanced",
             "ai": bool(ai),
-            "template_path": template_path or registry.active_template_path(),
+            "template_scope": template_scope or "all",
+            "template_path": _scope_template_path(template_scope),
         }
         deck = _generated_deck(selection)
         doc = D.new_document(deck) if deck else None
@@ -73,6 +97,36 @@ def register_setup(app):
         # single-template doc only if assembly can't run.
         tdoc = _generated_assembled_tdoc(selection) or _generated_tdoc(selection)
         return selection, doc, tdoc, {"mode": "canvas", "idx": 0, "tab": "setup"}, n
+
+    @app.callback(
+        Output({"type": "studio-filter", "col": ALL}, "options"),
+        Input({"type": "studio-filter", "col": ALL}, "value"),
+        State({"type": "studio-filter", "col": ALL}, "id"),
+    )
+    def cascade_filters(values, ids):
+        """Narrow every filter's options to what the OTHER selections allow.
+
+        Pick a region and only its countries/carriers remain; pick a carrier and only the
+        products, cover lines, industries and segments it writes in remain; and so on. Each
+        dropdown is recomputed from the distinct values compatible with all the other picks
+        (``dependent_options`` is cached, so this is cheap after the first scan).
+        """
+        ids = ids or []
+        selected = {i["col"]: v for i, v in zip(ids, values or []) if v not in BLANK}
+        out = []
+        for i in ids:
+            col = i["col"]
+            gcol = FILTER_COLUMN.get(col)
+            if not gcol:
+                out.append(no_update)
+                continue
+            where = {
+                FILTER_COLUMN[c]: v
+                for c, v in selected.items()
+                if c != col and c in FILTER_COLUMN
+            }
+            out.append(dependent_options("gpr", gcol, where))
+        return out
 
     @app.callback(
         Output("studio-scope-preview", "children"),

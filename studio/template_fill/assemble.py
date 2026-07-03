@@ -32,6 +32,7 @@ from studio.template_fill.bindings import (
     resolve_roles,
     resolve_roles_for_country,
     resolve_roles_for_product,
+    scope_overall,
     scope_to_country,
     scope_to_product,
     selected_countries,
@@ -45,6 +46,19 @@ logger = get_logger(__name__)
 OVERALL = "overall"
 PRODUCT = "product"
 COUNTRY = "country"
+
+# Which sub-deck axes each Setup "scope" choice assembles. "all" is the full deck; the
+# single-axis choices let the author generate just the overall, product or country pages.
+_SCOPE_AXES: Dict[str, Tuple[str, ...]] = {
+    "all": (OVERALL, PRODUCT, COUNTRY),
+    OVERALL: (OVERALL,),
+    PRODUCT: (OVERALL, PRODUCT),
+    COUNTRY: (OVERALL, COUNTRY),
+}
+
+
+def _axes_for(scope: Optional[str]) -> Tuple[str, ...]:
+    return _SCOPE_AXES.get((scope or "all"), _SCOPE_AXES["all"])
 
 
 @dataclass(frozen=True)
@@ -80,24 +94,33 @@ def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], la
     return SubDeck(template_name, values, label=label, hidden=hidden)
 
 
-def plan_subdecks(result) -> List[SubDeck]:
+def plan_subdecks(result, *, scope: Optional[str] = None) -> List[SubDeck]:
     """The ordered sub-decks for ``result``: overall, then per product, then per country.
 
-    Product/country axes are included only when their template is registered. The entities
-    are the user's selection when they pin any, ELSE every product/country the carrier writes
-    in (so an unfiltered run produces the carrier's full book, one block each). Each deck's
-    values carry the entity roles, breakdown-grid rows, and (for products) the product
-    vocabulary the fill engine rewrites; surplus per-country pages are pruned to the country
-    count so a 2-country run doesn't leave empty feedback pages.
+    ``scope`` (from the Setup "scope" control) selects which axes to build — the full deck
+    ("all"), or just the overall / product / country pages. Product/country axes are also
+    gated on their template being registered. The product/country entities are the user's
+    selection when they pin any, ELSE every product/country the carrier writes in (so an
+    unfiltered run produces the carrier's full book, one block each).
+
+    The OVERALL block reports the carrier's whole book (``scope_overall`` drops any pinned
+    product-line filter) so its summary stays on overall numbers; the pinned products only
+    decide how many product pages follow. Each deck's values carry the entity roles,
+    breakdown-grid rows, and (for products) the product vocabulary the fill engine rewrites;
+    surplus per-country pages are pruned to the country count.
     """
+    axes = _axes_for(scope)
     names = set(available())
     vocab = product_vocab(result) if PRODUCT in names else ()
-    products = (selected_products(result) or vocab) if PRODUCT in names else ()
-    countries = (selected_countries(result) or carrier_countries(result)) if COUNTRY in names else ()
+    want_products = PRODUCT in axes and PRODUCT in names
+    want_countries = COUNTRY in axes and COUNTRY in names
+    products = (selected_products(result) or vocab) if want_products else ()
+    countries = (selected_countries(result) or carrier_countries(result)) if want_countries else ()
 
-    decks: List[SubDeck] = [
-        _build_subdeck(OVERALL, result, resolve_roles(result), "overall")
-    ]
+    decks: List[SubDeck] = []
+    if OVERALL in axes and OVERALL in names:
+        overall_result = scope_overall(result)
+        decks.append(_build_subdeck(OVERALL, overall_result, resolve_roles(overall_result), "overall"))
     for product in products:
         values = resolve_roles_for_product(result, product)
         values["product_vocab"] = vocab
@@ -128,12 +151,14 @@ def _fill_subdeck(sub: SubDeck, work_dir: str, idx: int) -> str:
     return fill_template(_doc_from_map(bmap, sub), out_path=out)
 
 
-def assemble_deck(result, *, out_path: Optional[str] = None, work_dir: Optional[str] = None) -> str:
+def assemble_deck(result, *, out_path: Optional[str] = None, work_dir: Optional[str] = None,
+                  scope: Optional[str] = None) -> str:
     """Fill every sub-deck for ``result`` and merge them, in order, into ``out_path``.
 
-    ``work_dir`` holds the intermediate filled sub-decks (a temp dir by default).
+    ``scope`` picks which axes to assemble (see :func:`plan_subdecks`); ``work_dir`` holds
+    the intermediate filled sub-decks (a temp dir by default).
     """
-    decks = plan_subdecks(result)
+    decks = plan_subdecks(result, scope=scope)
     tmp = work_dir or tempfile.mkdtemp(prefix="qbr_assemble_")
     Path(tmp).mkdir(parents=True, exist_ok=True)
     filled = [_fill_subdeck(sub, tmp, i) for i, sub in enumerate(decks)]

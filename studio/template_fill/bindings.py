@@ -31,6 +31,26 @@ def _safe(fn, *a, **k):
         return None
 
 
+def _latest_year_in_scope(result, base: Dict[str, Any]) -> Optional[int]:
+    """The most recent Year present for ``base`` — the reporting year to fall back on.
+
+    The corner KPIs (Marsh/Carrier GWP, rank, SoW) are period comparisons that need a
+    reference year. When the user pins no year we still want the values to populate, so
+    we resolve the latest year available in scope and report on that.
+    """
+    from core.analytics.library import compute_breakdown
+    from core.analytics.types import PrimitiveArgs
+
+    facts = _safe(
+        compute_breakdown,
+        PrimitiveArgs(flow=result.flow, metric="premium", group_by=(_YEAR_COL,), filters=base),
+        engine=result.engine,
+    ) or []
+    years = [int(f.dims.get(_YEAR_COL)) for f in facts
+             if str(f.dims.get(_YEAR_COL) or "").strip().isdigit()]
+    return max(years) if years else None
+
+
 def _country_breakdown(result) -> List[Dict[str, Any]]:
     """Subject's premium by country, biggest first — feeds the Country (n) labels."""
     from core.analytics.library import compute_breakdown
@@ -113,20 +133,29 @@ def resolve_roles(result) -> Dict[str, Any]:
     if subject:
         out["subject_name"] = str(subject)
 
+    # Reporting year: the pinned year (max of a multi-select), else the latest year in
+    # scope. Resolving it here means the corner KPIs still populate when no year is pinned
+    # (the period comparisons below need a reference year to compute current vs prior).
     year = f.get(_YEAR_COL)
     if isinstance(year, (list, tuple, set)):
         year = max(int(y) for y in year) if year else None
+    if year is None:
+        year = _latest_year_in_scope(result, {k: v for k, v in f.items() if k != _YEAR_COL})
     if year is not None:
         out["period_year"] = int(year)
 
+    # Scope the period comparisons to the reporting year so the current-value KPIs always
+    # have a year to land on, even when the user left the year filter on "All".
+    fy = {**f, _YEAR_COL: int(year)} if year is not None else dict(f)
+
     # Carrier (subject) total + YoY, and the whole Marsh book total + YoY (raw).
-    carrier_tot = _safe(C.period_totals, result.flow, f, result.engine)
+    carrier_tot = _safe(C.period_totals, result.flow, fy, result.engine)
     if carrier_tot:
         out["carrier_gwp"] = carrier_tot["current"]
         if carrier_tot.get("pct") is not None:
             out["carrier_gwp_yoy"] = carrier_tot["pct"]
 
-    base = {k: v for k, v in f.items() if k != _CARRIER_COL}
+    base = {k: v for k, v in fy.items() if k != _CARRIER_COL}
     marsh_tot = _safe(C.period_totals, result.flow, base, result.engine)
     if marsh_tot:
         out["marsh_gwp"] = marsh_tot["current"]
@@ -134,14 +163,14 @@ def resolve_roles(result) -> Dict[str, Any]:
             out["marsh_gwp_yoy"] = marsh_tot["pct"]
 
     # Share of wallet (current + YoY delta).
-    sow = _safe(C.sow_movement, result.flow, f, result.engine, subject)
+    sow = _safe(C.sow_movement, result.flow, fy, result.engine, subject)
     if sow:
         out["sow_pct"] = sow["current"]
         if sow.get("delta") is not None:
             out["sow_yoy"] = sow["delta"]
 
     # Market rank (current + improvement).
-    rankm = _safe(C.rank_movement, result.flow, f, result.engine, subject)
+    rankm = _safe(C.rank_movement, result.flow, fy, result.engine, subject)
     if rankm:
         out["rank"] = int(rankm["current"])
         if rankm.get("delta") is not None:
@@ -205,6 +234,23 @@ def carrier_countries(result) -> Tuple[str, ...]:
 def _rescope(result, column: str, value: Any):
     """A shallow copy of ``result`` with ``column`` pinned to a single ``value``."""
     filters = {**(getattr(result, "resolved_filters", None) or {}), column: value}
+    return replace(result, resolved_filters=filters)
+
+
+# The product-hierarchy filters the overall summary must ignore: the overall block reports
+# the carrier's WHOLE book, so a pinned product/business/cover line only decides how many
+# product sub-decks to build — it never narrows the overall numbers.
+_PRODUCT_SCOPE_COLS = ("Product_Line", "Business_Line", "Cover_Line")
+
+
+def scope_overall(result):
+    """``result`` with the product-hierarchy filters dropped (for the ``overall`` sub-deck).
+
+    So the overall summary stays on the carrier's total book even when the user pins
+    specific products — the product selection only drives the per-product pages.
+    """
+    filters = {k: v for k, v in (getattr(result, "resolved_filters", None) or {}).items()
+               if k not in _PRODUCT_SCOPE_COLS}
     return replace(result, resolved_filters=filters)
 
 

@@ -69,6 +69,7 @@ def _deck_for(selection_json: str) -> Optional[DeckSpec]:
         breakdowns=sel.get("breakdowns") or BREAKDOWNS,
         engine=engine,
         peers=sel.get("peers") or None,
+        style=sel.get("style") or "balanced",
     )
     return build_deck(
         result,
@@ -115,6 +116,7 @@ def _tdoc_for(selection_json: str) -> Optional[Dict[str, Any]]:
         breakdowns=sel.get("breakdowns") or BREAKDOWNS,
         engine=engine,
         peers=sel.get("peers") or None,
+        style=sel.get("style") or "balanced",
     )
     return new_template_doc(result, template_path=sel.get("template_path") or None,
                             use_ai=bool(sel.get("ai")))
@@ -166,11 +168,12 @@ def _assembled_for(selection_json: str) -> Optional[str]:
         breakdowns=selection.get("breakdowns") or BREAKDOWNS,
         engine=engine,
         peers=selection.get("peers") or None,
+        style=selection.get("style") or "balanced",
     )
     subject = str(filters.get("carrier", "Carrier")).replace(" ", "_")
     tag = hashlib.sha1(selection_json.encode("utf-8")).hexdigest()[:8]
     out = Path(tempfile.gettempdir()) / f"{subject}_{tag}_QBR.pptx"
-    return assemble_deck(result, out_path=str(out))
+    return assemble_deck(result, out_path=str(out), scope=selection.get("template_scope"))
 
 
 def _assembled_export(selection: Optional[Dict[str, Any]]) -> Optional[str]:
