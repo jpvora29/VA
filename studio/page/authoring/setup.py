@@ -49,9 +49,13 @@ def _radio_field(label: str, cid: str, options: Sequence[Mapping[str, str]], val
     )
 
 
-def _audience_length() -> html.Div:
+def _setup_options() -> html.Div:
+    """The compact 'options bar' — report, assembly scope, audience and commentary voice
+    as segmented pills in one dense auto-fitting row (keeps the form short)."""
     return html.Div(
         [
+            _report_type(),
+            _template_control(),
             _radio_field("AUDIENCE", "studio-audience", [
                 {"label": "Executive", "value": "executive"},
                 {"label": "Deal team", "value": "deal_team"},
@@ -65,8 +69,13 @@ def _audience_length() -> html.Div:
                 {"label": "Detailed", "value": "detailed"},
             ], "balanced"),
         ],
-        className="qs-sec-grid cols-2",
+        className="qs-options-grid",
     )
+
+
+# Kept for backward-compat imports; the options now live in ``_setup_options``.
+def _audience_length() -> html.Div:  # pragma: no cover - legacy shim
+    return _setup_options()
 
 
 def _ai_control() -> html.Div:
@@ -213,35 +222,31 @@ def template_sections_panel(template_path: Optional[str] = None) -> html.Div:
         if key not in counts:
             order.append(key)
         counts[key] = counts.get(key, 0) + 1
-    rows = []
+    chips = []
     for key in order:
-        label, icon, note = _SECTION_META.get(key, (key.title(), "bi-file-earmark", ""))
+        label, icon, _ = _SECTION_META.get(key, (key.title(), "bi-file-earmark", ""))
         n = counts[key]
-        rows.append(
-            html.Div(
+        chips.append(
+            html.Span(
                 [
-                    html.I(className=f"bi {icon} qs-tsec-icon"),
-                    html.Div(
-                        [
-                            html.Div(label, className="qs-tsec-label"),
-                            html.Div(note, className="qs-tsec-note") if note else None,
-                        ],
-                        className="qs-tsec-text",
-                    ),
-                    html.Span(f"{n} page{'s' if n > 1 else ''}", className="qs-tsec-count"),
+                    html.I(className=f"bi {icon}"),
+                    html.Span(label, className="qs-tchip-label"),
+                    html.Span(str(n), className="qs-tchip-n"),
                 ],
-                className="qs-tsec-row",
+                className="qs-tchip",
             )
         )
     total = len(secs)
     return html.Div(
         [
             html.Div(
-                [html.Span(f"{total} pages", className="qs-tsec-total"),
-                 html.Span(f"{len(order)} section types", className="qs-tsec-total alt")],
+                [
+                    html.Span([html.B(str(total)), " pages"], className="qs-tsec-total"),
+                    html.Span([html.B(str(len(order))), " section types"], className="qs-tsec-total alt"),
+                ],
                 className="qs-tsec-summary",
             ),
-            html.Div(rows, className="qs-tsec-list"),
+            html.Div(chips, className="qs-tchip-row"),
         ],
         className="qs-tsec",
     )
@@ -257,34 +262,24 @@ def setup_body(
         [
             _setup_section(
                 "bi-funnel", "Scope & filters",
-                "Client, period and every cut — each list narrows to what the selection above it writes in.",
+                "Every list narrows to what the selection above it writes in.",
                 html.Div([_scope_toggle(), _filter_grid(filter_options, filter_values)], className="qs-sec-stack"),
                 span=True,
             ),
             _setup_section(
-                "bi-diagram-3", "Report & scope",
-                "Report type and how much of the deck to assemble.",
-                html.Div([_report_type(), _template_control()], className="qs-sec-grid cols-2"),
-            ),
-            _setup_section(
-                "bi-easel2", "Audience & commentary",
-                "Audience tunes which slides the AI selection keeps; style sets the commentary voice.",
-                _audience_length(),
+                "bi-sliders", "Report, scope & audience",
+                "",
+                _setup_options(), span=True,
             ),
             _setup_section(
                 "bi-people", "Peers",
-                "Confidential — aggregate benchmark only, never a named peer.",
+                "Confidential — aggregate benchmark only.",
                 _peers_panel(),
             ),
             _setup_section(
                 "bi-stars", "AI assist",
-                "Optional, faithfulness-verified enhancement layer.",
+                "Optional, faithfulness-verified layer.",
                 _ai_control(),
-            ),
-            _setup_section(
-                "bi-collection", "Deck sections",
-                "The pages this scope will produce — read straight from the fixed templates.",
-                html.Div(template_sections_panel(), id="studio-template-sections"), span=True,
             ),
         ],
         className="qs-setup-sections",
@@ -296,6 +291,15 @@ def setup_body(
                 [html.I(className="bi bi-stars"), "Generate deck"],
                 id="studio-generate",
                 className="qs-generate-btn",
+            ),
+            # Deck sections live in the aside so the main form stays a single screen.
+            html.Div(
+                [
+                    html.Div([html.I(className="bi bi-collection"), "Deck sections"],
+                             className="qs-aside-card-head"),
+                    html.Div(template_sections_panel(), id="studio-template-sections"),
+                ],
+                className="qs-aside-card",
             ),
         ],
         className="qs-setup-aside",

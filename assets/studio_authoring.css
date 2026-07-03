@@ -1679,3 +1679,122 @@ body.qs-cv-dragging { user-select: none; cursor: grabbing; }
 .qs-tf-fp-input input:hover { border-color: #aebfdb; }
 .qs-tf-fp-input input:focus { outline: none; border-color: #1f5fbf; box-shadow: 0 0 0 3px rgba(31,95,191,.14); }
 @media (max-width: 1100px) { .qs-tf-workspace { flex-direction: column; } .qs-tf-fp { flex-basis: auto; width: 100%; } }
+
+/* ============================================================================
+   Setup redesign v2 — full-width, single-viewport, modern. Appended so these
+   rules win over the earlier .qs-setup-* block. Goals: use the full width, kill
+   the vertical scroll, segmented pill controls, dropdown values that never
+   overflow, a dense filter grid and a compact deck-sections strip.
+   ========================================================================== */
+.qs-canvas-host { padding: 16px 22px !important; }
+.mode-setup .qs-canvas-host { padding: 16px 22px !important; }
+
+.qs-setup-wrap { max-width: none !important; width: 100%; margin: 0 !important; padding: 0 !important; }
+.qs-setup-card { padding: 0 !important; overflow: hidden; border-radius: var(--r-lg); }
+
+.qs-setup-head { margin: 0; padding: 14px 22px 12px;
+    background: linear-gradient(120deg, #f3f8ff 0%, #eaf5f3 100%); border-bottom: 1px solid var(--line); }
+.qs-setup-title { font-size: 16px; font-weight: 800; }
+.qs-setup-sub { font-size: 11.5px; margin: 3px 0 0; max-width: 760px; line-height: 1.4; }
+
+.qs-setup-layout { grid-template-columns: minmax(0,1fr) 288px !important; gap: 16px !important;
+    padding: 16px 22px 20px !important; }
+.qs-setup-sections { grid-template-columns: repeat(2, minmax(0,1fr)) !important; gap: 10px !important;
+    align-content: start; }
+.qs-setup-section { background: #f7fafe; border: 1px solid var(--line); border-radius: var(--r-md);
+    padding: 10px 13px !important; transition: border-color 140ms, box-shadow 140ms; }
+.qs-setup-section:hover { border-color: #cadcff; box-shadow: var(--shadow-sm); }
+
+.qs-sec-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 9px !important; flex-wrap: wrap; }
+.qs-sec-title { font-size: 11.5px !important; font-weight: 800; letter-spacing: .03em; text-transform: uppercase; }
+.qs-sec-title i { font-size: 12.5px !important; }
+.qs-sec-sub { font-size: 10.5px !important; color: var(--faint); margin: 0 !important; line-height: 1.3; }
+.qs-sec-stack { gap: 11px; }
+
+/* dense options bar: report / scope / audience / commentary style */
+.qs-options-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px 18px; }
+.qs-setup-section .studio-field-label,
+.qs-setup-section .studio-field-label.sm { font-size: 9.5px !important; font-weight: 700;
+    letter-spacing: .07em; text-transform: uppercase; color: var(--faint); margin-bottom: 6px; }
+
+/* segmented pill radios (report type / audience / commentary style / peer mode).
+   Dash renders each option as <label.dash-options-list-option><input><span.text>> and
+   flags the checked one with `.selected` — so the whole label is the pill. */
+.studio-report-radio { display: flex; flex-wrap: wrap; gap: 5px; }
+.studio-report-radio input, .studio-report-input { display: none !important; }
+.studio-report-radio .dash-options-list-option-wrapper { display: none !important; }
+.studio-report-radio .dash-options-list-option {
+    display: inline-flex; align-items: center; cursor: pointer; user-select: none; margin: 0;
+    padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line-mid);
+    background: #fff; font-size: 11.5px; font-weight: 600; color: var(--muted);
+    transition: all 130ms cubic-bezier(.4,0,.2,1); }
+.studio-report-radio .dash-options-list-option:hover { border-color: var(--blue); color: var(--blue); }
+.studio-report-radio .dash-options-list-option.selected {
+    background: linear-gradient(145deg, var(--blue), #001F52); color: #fff; border-color: transparent;
+    box-shadow: 0 4px 12px rgba(11,75,255,.22); }
+.studio-report-radio .dash-options-list-option-text,
+.studio-report-radio .studio-report-label { color: inherit; font: inherit; margin: 0; }
+
+/* filters: dense auto-fill grid, values clipped so they never overlap */
+.studio-filter-grid { display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important; gap: 8px 12px !important; }
+.studio-filter-grid .studio-field { gap: 4px; min-width: 0; }
+.qs-root .studio-dd .dash-dropdown-trigger { min-height: 34px !important; padding-top: 2px; padding-bottom: 2px; }
+.studio-dd .dash-dropdown-value, .studio-dd .dash-dropdown-value-item {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
+/* data-scope chips a touch tighter */
+.studio-scope-chip { padding: 7px 10px; font-size: 12px; }
+
+/* AI + peers compact */
+.qs-ai-field { gap: 6px; }
+.qs-ai-note { font-size: 10.5px; }
+.studio-check label, .studio-check .form-check-label { font-size: 12px; }
+.studio-peer-msg, .studio-analyses-note { font-size: 10.5px; }
+
+/* sticky aside — scope preview + generate + deck sections */
+.qs-setup-aside { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 12px; }
+.qs-scope-preview { padding: 14px 16px; border-radius: var(--r-md); }
+.qs-prev-value { font-size: 17px; }
+.qs-setup-aside .qs-generate-btn { width: 100%; margin: 0; padding: 13px; font-size: 14.5px; }
+.qs-aside-card { background: #f7fafe; border: 1px solid var(--line); border-radius: var(--r-md); padding: 12px 14px; }
+.qs-aside-card-head { display: flex; align-items: center; gap: 7px; font-size: 11.5px; font-weight: 800;
+    letter-spacing: .03em; text-transform: uppercase; color: var(--navy); margin-bottom: 10px; }
+.qs-aside-card-head i { color: var(--blue); font-size: 12.5px; }
+
+/* deck-sections: compact summary + wrapping type chips */
+.qs-tsec { gap: 9px; }
+.qs-tsec-summary { display: flex; gap: 8px; }
+.qs-tsec-total { font-size: 10.5px; font-weight: 600; color: var(--muted);
+    background: #eef3ff; border: 1px solid #d7e3ff; border-radius: 999px; padding: 2px 10px; }
+.qs-tsec-total b { color: var(--blue); font-weight: 800; }
+.qs-tsec-total.alt { background: #e7f6f4; border-color: #c8ece8; color: var(--muted); }
+.qs-tsec-total.alt b { color: #0b7d76; }
+.qs-tchip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.qs-tchip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 8px;
+    background: var(--surface); border: 1px solid var(--line); font-size: 11px; font-weight: 600; color: var(--ink); }
+.qs-tchip i { color: var(--blue); font-size: 12px; }
+.qs-tchip-label { line-height: 1; }
+.qs-tchip-n { font-size: 9.5px; font-weight: 800; color: var(--faint); background: #eef2f8;
+    border-radius: 999px; padding: 1px 6px; }
+
+@media (max-width: 1120px) {
+    .qs-setup-layout { grid-template-columns: 1fr !important; }
+    .qs-setup-aside { position: static; }
+}
+@media (max-width: 620px) {
+    .qs-setup-sections { grid-template-columns: 1fr !important; }
+}
+
+/* ── Generate: frosted-glass loader — blur the Setup screen instead of a white wipe ── */
+.qs-gen-loader .dash-spinner-container,
+.dash-spinner-container.qs-gen-loader {
+    background-color: rgba(233, 239, 249, 0.45) !important;
+    -webkit-backdrop-filter: blur(8px) saturate(108%);
+    backdrop-filter: blur(8px) saturate(108%);
+}
+.qs-gen-loader .dash-default-spinner-rect1,
+.qs-gen-loader .dash-default-spinner-rect2,
+.qs-gen-loader .dash-default-spinner-rect3,
+.qs-gen-loader .dash-default-spinner-rect4,
+.qs-gen-loader .dash-default-spinner-rect5 { background-color: #0b4bff !important; }

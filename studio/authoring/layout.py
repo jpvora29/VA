@@ -57,6 +57,11 @@ def build_layout() -> html.Div:
                 id="qs-generating-loader",
                 fullscreen=True,
                 type="default",
+                color="#0b4bff",
+                # ``qs-gen-loader`` lets the CSS turn the default solid-white fullscreen wipe
+                # into a frosted-glass overlay that blurs the Setup screen behind the spinner.
+                className="qs-gen-loader",
+                parent_className="qs-gen-loader",
                 children=dcc.Store(id="qs-generating"),
             ),
             html.Div(id="qs-app"),

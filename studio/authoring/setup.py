@@ -156,11 +156,17 @@ def register_setup(app):
             mine = next((f for f in rank_facts if str(f.dims.get("entity", "")).lower() == str(subject).lower()), None)
             country = filters.get("country")
             n_countries = len(country) if isinstance(country, (list, tuple)) else (1 if country else "All")
+            year_val = filters.get("year")
+            if isinstance(year_val, (list, tuple, set)):
+                years = sorted(str(y) for y in year_val if str(y).strip())
+                year_disp = ", ".join(years) if years else "All"
+            else:
+                year_disp = str(year_val) if year_val else "All"
             items = [
                 {"label": "Total GWP", "value": money(total), "sub": str(subject)},
                 {"label": "Market rank", "value": (mine.rendered if mine else "—")},
                 {"label": "Countries", "value": str(n_countries)},
-                {"label": "Year", "value": str(filters.get("year") or "All")},
+                {"label": "Year", "value": year_disp},
             ]
             return A.scope_preview_card(items)
         except Exception as exc:  # noqa: BLE001 — preview is best-effort, never blocks Setup
