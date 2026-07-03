@@ -1681,41 +1681,46 @@ body.qs-cv-dragging { user-select: none; cursor: grabbing; }
 @media (max-width: 1100px) { .qs-tf-workspace { flex-direction: column; } .qs-tf-fp { flex-basis: auto; width: 100%; } }
 
 /* ============================================================================
-   Setup redesign v2 — full-width, single-viewport, modern. Appended so these
-   rules win over the earlier .qs-setup-* block. Goals: use the full width, kill
-   the vertical scroll, segmented pill controls, dropdown values that never
-   overflow, a dense filter grid and a compact deck-sections strip.
+   Setup redesign v3 — modern, spacious, consistent. Fixes the two real problems:
+   (1) open dropdown menus were CLIPPED by the card's overflow:hidden and rendered
+   absurdly tall; (2) filters were too cramped to read. Cards share one look and
+   align to equal heights per row.
    ========================================================================== */
-.qs-canvas-host { padding: 16px 22px !important; }
-.mode-setup .qs-canvas-host { padding: 16px 22px !important; }
+.qs-canvas-host { padding: 20px 26px !important; }
+.mode-setup .qs-canvas-host { padding: 20px 26px !important; }
 
 .qs-setup-wrap { max-width: none !important; width: 100%; margin: 0 !important; padding: 0 !important; }
-.qs-setup-card { padding: 0 !important; overflow: hidden; border-radius: var(--r-lg); }
+/* overflow VISIBLE so open dropdown menus are never clipped by the card */
+.qs-setup-card { padding: 0 !important; overflow: visible !important; border-radius: var(--r-lg) !important;
+    border: 1px solid var(--line); box-shadow: var(--shadow-md); background: var(--surface); }
 
-.qs-setup-head { margin: 0; padding: 14px 22px 12px;
-    background: linear-gradient(120deg, #f3f8ff 0%, #eaf5f3 100%); border-bottom: 1px solid var(--line); }
-.qs-setup-title { font-size: 16px; font-weight: 800; }
-.qs-setup-sub { font-size: 11.5px; margin: 3px 0 0; max-width: 760px; line-height: 1.4; }
+.qs-setup-head { margin: 0; padding: 20px 26px 18px;
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    background: linear-gradient(120deg, #eef4ff 0%, #eafaf6 100%); border-bottom: 1px solid var(--line); }
+.qs-setup-title { font-size: 19px; font-weight: 800; letter-spacing: -0.01em; }
+.qs-setup-title i { color: var(--blue); }
+.qs-setup-sub { font-size: 12.5px; margin: 5px 0 0; max-width: 780px; line-height: 1.5; }
 
-.qs-setup-layout { grid-template-columns: minmax(0,1fr) 288px !important; gap: 16px !important;
-    padding: 16px 22px 20px !important; }
-.qs-setup-sections { grid-template-columns: repeat(2, minmax(0,1fr)) !important; gap: 10px !important;
-    align-content: start; }
-.qs-setup-section { background: #f7fafe; border: 1px solid var(--line); border-radius: var(--r-md);
-    padding: 10px 13px !important; transition: border-color 140ms, box-shadow 140ms; }
-.qs-setup-section:hover { border-color: #cadcff; box-shadow: var(--shadow-sm); }
+.qs-setup-layout { grid-template-columns: minmax(0,1fr) 312px !important; gap: 20px !important;
+    padding: 20px 26px 24px !important; align-items: start; }
+.qs-setup-sections { grid-template-columns: repeat(2, minmax(0,1fr)) !important; gap: 14px !important;
+    align-items: stretch; align-content: start; }
+.qs-setup-section { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
+    padding: 16px 18px !important; box-shadow: var(--shadow-sm);
+    transition: border-color 150ms, box-shadow 150ms, transform 150ms; }
+.qs-setup-section:hover { border-color: #c3d6ff; box-shadow: 0 6px 18px rgba(10,22,54,.08); }
 
-.qs-sec-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 9px !important; flex-wrap: wrap; }
-.qs-sec-title { font-size: 11.5px !important; font-weight: 800; letter-spacing: .03em; text-transform: uppercase; }
-.qs-sec-title i { font-size: 12.5px !important; }
-.qs-sec-sub { font-size: 10.5px !important; color: var(--faint); margin: 0 !important; line-height: 1.3; }
-.qs-sec-stack { gap: 11px; }
+.qs-sec-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px !important; flex-wrap: wrap; }
+.qs-sec-title { font-size: 12px !important; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.qs-sec-title i { font-size: 13px !important; }
+.qs-sec-sub { font-size: 11px !important; color: var(--faint); margin: 0 !important; line-height: 1.35; }
+.qs-sec-stack { gap: 16px; }
 
-/* dense options bar: report / scope / audience / commentary style */
-.qs-options-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px 18px; }
+/* options bar: report / scope / audience / commentary style — even, roomy columns */
+.qs-options-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px 22px; }
 .qs-setup-section .studio-field-label,
-.qs-setup-section .studio-field-label.sm { font-size: 9.5px !important; font-weight: 700;
-    letter-spacing: .07em; text-transform: uppercase; color: var(--faint); margin-bottom: 6px; }
+.qs-setup-section .studio-field-label.sm { font-size: 10px !important; font-weight: 700;
+    letter-spacing: .07em; text-transform: uppercase; color: var(--faint); margin-bottom: 7px; }
 
 /* Radio options as chips WITH a visible native radio dot (report type / audience /
    commentary style / peer mode). The input stays visible (accent-blue) so the control can
@@ -1739,21 +1744,45 @@ body.qs-cv-dragging { user-select: none; cursor: grabbing; }
 .studio-report-radio .dash-options-list-option-text,
 .studio-report-radio .studio-report-label { color: inherit; font: inherit; margin: 0; }
 
-/* filters: dense auto-fill grid, values clipped so they never overlap */
+/* filters: roomy, readable auto-fill grid (≈3–4 cols). Values ellipsis-clip so they
+   never overlap; the OPEN menu is capped and elevated so it's never buried. */
 .studio-filter-grid { display: grid !important;
-    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)) !important; gap: 8px 12px !important; }
-.studio-filter-grid .studio-field { gap: 4px; min-width: 0; }
-.qs-root .studio-dd .dash-dropdown-trigger { min-height: 34px !important; padding-top: 2px; padding-bottom: 2px; }
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)) !important; gap: 14px 16px !important; }
+.studio-filter-grid .studio-field { gap: 6px; min-width: 0; }
+.qs-root .studio-dd .dash-dropdown-trigger { min-height: 40px !important; padding: 4px 10px !important;
+    border: 1px solid var(--line-mid) !important; border-radius: 10px !important; background: #fff;
+    transition: border-color 130ms, box-shadow 130ms; }
+.qs-root .studio-dd .dash-dropdown-trigger:hover { border-color: #b7c8ea !important; }
+.qs-root .studio-dd:focus-within .dash-dropdown-trigger {
+    border-color: var(--blue) !important; box-shadow: 0 0 0 3px rgba(11,75,255,.13) !important; }
 .studio-dd .dash-dropdown-value { min-width: 0; }
 .studio-dd .dash-dropdown-value, .studio-dd .dash-dropdown-value-item {
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.studio-dd .dash-dropdown-value, .studio-dd .dash-dropdown-placeholder,
+.studio-dd .dash-dropdown-value-item { font-size: 12.5px !important; }
 /* Multi-select: when the compact "N selected" count pill is shown, hide the cramped,
    separator-less value list so the two never collide inside the narrow trigger. */
 .studio-dd .dash-dropdown-trigger:has(.dash-dropdown-value-count) .dash-dropdown-value { display: none !important; }
-.studio-dd .dash-dropdown-value-count { white-space: nowrap; flex: none; }
+.studio-dd .dash-dropdown-value-count { white-space: nowrap; flex: none;
+    font-size: 10px !important; font-weight: 700; color: var(--blue) !important;
+    background: var(--blue-soft); padding: 2px 9px; border-radius: 999px; }
 
-/* data-scope chips a touch tighter */
-.studio-scope-chip { padding: 7px 10px; font-size: 12px; }
+/* Open options menu — the Dash dropdown PORTALS this to <body>, so it must be styled
+   with a GLOBAL selector (not scoped under .studio-dd/.qs-root). Cap the height with an
+   internal scrollbar so a long list (e.g. 12 carriers) never runs off-screen. */
+.dash-dropdown-options {
+    max-height: 260px !important; overflow-y: auto !important; z-index: 4000 !important;
+    background: #fff !important; border: 1px solid var(--line-mid, #cfd9ea) !important; border-radius: 12px !important;
+    box-shadow: 0 18px 44px rgba(10,22,54,.18) !important; padding: 5px !important; margin-top: 4px !important; }
+.dash-dropdown-options .dash-options-list-option {
+    border-radius: 8px !important; padding: 8px 10px !important; font-size: 12.5px !important;
+    font-family: 'Inter', Arial, sans-serif !important; color: #1c2636 !important; }
+.dash-dropdown-options .dash-options-list-option:hover,
+.dash-dropdown-options .dash-options-list-option.selected {
+    background: #eef3ff !important; color: #000F47 !important; }
+
+/* data-scope chips */
+.studio-scope-chip { padding: 9px 12px; font-size: 12.5px; }
 
 /* AI + peers compact */
 .qs-ai-field { gap: 6px; }
@@ -1762,14 +1791,26 @@ body.qs-cv-dragging { user-select: none; cursor: grabbing; }
 .studio-peer-msg, .studio-analyses-note { font-size: 10.5px; }
 
 /* sticky aside — scope preview + generate + deck sections */
-.qs-setup-aside { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 12px; }
-.qs-scope-preview { padding: 14px 16px; border-radius: var(--r-md); }
-.qs-prev-value { font-size: 17px; }
-.qs-setup-aside .qs-generate-btn { width: 100%; margin: 0; padding: 13px; font-size: 14.5px; }
-.qs-aside-card { background: #f7fafe; border: 1px solid var(--line); border-radius: var(--r-md); padding: 12px 14px; }
-.qs-aside-card-head { display: flex; align-items: center; gap: 7px; font-size: 11.5px; font-weight: 800;
-    letter-spacing: .03em; text-transform: uppercase; color: var(--navy); margin-bottom: 10px; }
-.qs-aside-card-head i { color: var(--blue); font-size: 12.5px; }
+.qs-setup-aside { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 14px; }
+.qs-scope-preview { padding: 18px 18px; border-radius: var(--r-lg);
+    background: radial-gradient(120% 140% at 0% 0%, #123a9e 0%, #0a1f5c 45%, #050f3e 100%) !important;
+    box-shadow: 0 18px 40px rgba(6, 18, 60, 0.32); position: relative; overflow: hidden; }
+.qs-scope-preview::after { content: ""; position: absolute; inset: -40% -30% auto auto; width: 220px; height: 220px;
+    background: radial-gradient(circle, rgba(92,200,255,.28), transparent 62%); pointer-events: none; }
+.qs-prev-grid { gap: 12px; }
+.qs-prev-tile { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 12px; padding: 12px 13px; backdrop-filter: blur(2px); }
+.qs-prev-value { font-size: 19px; font-weight: 800; }
+.qs-setup-aside .qs-generate-btn { width: 100%; margin: 0; padding: 15px; font-size: 15px; font-weight: 800;
+    border-radius: 14px; letter-spacing: .01em;
+    background: linear-gradient(135deg, #0b4bff 0%, #00a2b3 130%);
+    box-shadow: 0 14px 30px rgba(11, 75, 255, 0.36); }
+.qs-setup-aside .qs-generate-btn:hover { transform: translateY(-2px); box-shadow: 0 20px 40px rgba(11,75,255,.46); }
+.qs-aside-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
+    padding: 15px 16px; box-shadow: var(--shadow-sm); }
+.qs-aside-card-head { display: flex; align-items: center; gap: 8px; font-size: 11.5px; font-weight: 800;
+    letter-spacing: .04em; text-transform: uppercase; color: var(--navy); margin-bottom: 12px; }
+.qs-aside-card-head i { color: var(--blue); font-size: 13px; }
 
 /* deck-sections: compact summary + wrapping type chips */
 .qs-tsec { gap: 9px; }
