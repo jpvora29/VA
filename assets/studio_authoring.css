@@ -1717,31 +1717,40 @@ body.qs-cv-dragging { user-select: none; cursor: grabbing; }
 .qs-setup-section .studio-field-label.sm { font-size: 9.5px !important; font-weight: 700;
     letter-spacing: .07em; text-transform: uppercase; color: var(--faint); margin-bottom: 6px; }
 
-/* segmented pill radios (report type / audience / commentary style / peer mode).
-   Dash renders each option as <label.dash-options-list-option><input><span.text>> and
-   flags the checked one with `.selected` — so the whole label is the pill. */
-.studio-report-radio { display: flex; flex-wrap: wrap; gap: 5px; }
-.studio-report-radio input, .studio-report-input { display: none !important; }
-.studio-report-radio .dash-options-list-option-wrapper { display: none !important; }
+/* Radio options as chips WITH a visible native radio dot (report type / audience /
+   commentary style / peer mode). The input stays visible (accent-blue) so the control can
+   never disappear even if the chip styling fails to load; the chip + `.selected` state add
+   the modern look. Dash markup: <label.dash-options-list-option><span.wrapper><input></span>
+   <span.text>>, with `.selected` on the checked label. */
+.studio-report-radio { display: flex; flex-wrap: wrap; gap: 6px; }
 .studio-report-radio .dash-options-list-option {
-    display: inline-flex; align-items: center; cursor: pointer; user-select: none; margin: 0;
-    padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line-mid);
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; margin: 0;
+    padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line-mid);
     background: #fff; font-size: 11.5px; font-weight: 600; color: var(--muted);
     transition: all 130ms cubic-bezier(.4,0,.2,1); }
 .studio-report-radio .dash-options-list-option:hover { border-color: var(--blue); color: var(--blue); }
 .studio-report-radio .dash-options-list-option.selected {
-    background: linear-gradient(145deg, var(--blue), #001F52); color: #fff; border-color: transparent;
-    box-shadow: 0 4px 12px rgba(11,75,255,.22); }
+    border-color: var(--blue); background: var(--blue-soft); color: var(--navy);
+    box-shadow: 0 2px 8px rgba(11,75,255,.14); }
+.studio-report-radio .dash-options-list-option-wrapper { display: inline-flex; align-items: center; margin: 0; }
+.studio-report-radio input[type="radio"], .studio-report-input {
+    display: inline-block !important; width: 13px; height: 13px; margin: 0 !important;
+    accent-color: var(--blue); cursor: pointer; }
 .studio-report-radio .dash-options-list-option-text,
 .studio-report-radio .studio-report-label { color: inherit; font: inherit; margin: 0; }
 
 /* filters: dense auto-fill grid, values clipped so they never overlap */
 .studio-filter-grid { display: grid !important;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important; gap: 8px 12px !important; }
+    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)) !important; gap: 8px 12px !important; }
 .studio-filter-grid .studio-field { gap: 4px; min-width: 0; }
 .qs-root .studio-dd .dash-dropdown-trigger { min-height: 34px !important; padding-top: 2px; padding-bottom: 2px; }
+.studio-dd .dash-dropdown-value { min-width: 0; }
 .studio-dd .dash-dropdown-value, .studio-dd .dash-dropdown-value-item {
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+/* Multi-select: when the compact "N selected" count pill is shown, hide the cramped,
+   separator-less value list so the two never collide inside the narrow trigger. */
+.studio-dd .dash-dropdown-trigger:has(.dash-dropdown-value-count) .dash-dropdown-value { display: none !important; }
+.studio-dd .dash-dropdown-value-count { white-space: nowrap; flex: none; }
 
 /* data-scope chips a touch tighter */
 .studio-scope-chip { padding: 7px 10px; font-size: 12px; }
