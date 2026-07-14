@@ -192,7 +192,7 @@
       ],
       "value_kind": "pct",
       "token": "PY (+x.x%\u25b2)",
-      "role": "sow_pct"
+      "role": "sow_yoy"
     },
     {
       "slide_idx": 1,
@@ -204,7 +204,7 @@
       ],
       "value_kind": "rank",
       "token": "PY (+x\u25b2)",
-      "role": "rank"
+      "role": "rank_yoy"
     },
     {
       "slide_idx": 2,
@@ -396,7 +396,7 @@
       ],
       "value_kind": "pct",
       "token": "PY (+x.x%\u25b2)",
-      "role": "sow_pct"
+      "role": "sow_yoy"
     },
     {
       "slide_idx": 2,
@@ -408,7 +408,7 @@
       ],
       "value_kind": "rank",
       "token": "PY (+x\u25b2)",
-      "role": "rank"
+      "role": "rank_yoy"
     },
     {
       "slide_idx": 3,
@@ -600,7 +600,7 @@
       ],
       "value_kind": "pct",
       "token": "PY (+x.x%\u25b2)",
-      "role": "sow_pct"
+      "role": "sow_yoy"
     },
     {
       "slide_idx": 3,
@@ -612,7 +612,7 @@
       ],
       "value_kind": "rank",
       "token": "PY (+x\u25b2)",
-      "role": "rank"
+      "role": "rank_yoy"
     },
     {
       "slide_idx": 4,
@@ -804,7 +804,7 @@
       ],
       "value_kind": "pct",
       "token": "PY (+x.x%\u25b2)",
-      "role": "sow_pct"
+      "role": "sow_yoy"
     },
     {
       "slide_idx": 4,
@@ -816,7 +816,7 @@
       ],
       "value_kind": "rank",
       "token": "PY (+x\u25b2)",
-      "role": "rank"
+      "role": "rank_yoy"
     },
     {
       "slide_idx": 5,
@@ -898,9 +898,9 @@
         2,
         2
       ],
-      "value_kind": "rank",
-      "token": "PY (+x\u25b2)",
-      "role": "rank"
+      "value_kind": "pct",
+      "token": "PY (+x.x%\u25b2)",
+      "role": "sow_yoy"
     },
     {
       "slide_idx": 5,
@@ -912,7 +912,7 @@
       ],
       "value_kind": "rank",
       "token": "PY (+x\u25b2)",
-      "role": "rank"
+      "role": "rank_yoy"
     },
     {
       "slide_idx": 5,

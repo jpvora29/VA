@@ -23,7 +23,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from logger import get_logger
-from studio.template_fill import grids, prune
+from studio.template_fill import commentary, feedback, grids, prune
+from studio.template_fill import roles as R
 from studio.template_fill.analyze import analyze
 from studio.template_fill.binding_map import BindingMap, available, get_binding_map
 from studio.template_fill.bindings import (
@@ -40,6 +41,7 @@ from studio.template_fill.bindings import (
 )
 from studio.template_fill.fill import fill_template
 from studio.template_fill.merge import merge_to_file
+from studio.template_fill.model import _template_year
 
 logger = get_logger(__name__)
 
@@ -77,17 +79,27 @@ def _country_count(values: Dict[str, Any]) -> int:
 
 
 def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], label: str) -> SubDeck:
-    """Finish a sub-deck: fold in breakdown-grid rows and drop surplus country pages.
+    """Finish a sub-deck: fold in grid rows, table commentary/KPIs and prose commentary,
+    then drop surplus country pages.
 
-    The template is analysed once here (reused for both). Any failure is swallowed — neither
-    the grid nor the pruning may break assembly (a full deck beats a broken one).
+    The template is analysed once here (reused for all). Any failure is swallowed — no
+    enrichment may break assembly (a full deck beats a broken one).
     """
     hidden: Tuple[int, ...] = ()
     try:
         template = analyze(get_binding_map(template_name).path)
-        grid = grids.grid_values(template, scoped_result)
-        if grid:
-            values = {**values, **grid}
+        for provider in (grids.grid_values, feedback.values, commentary.values):
+            try:
+                extra = provider(template, scoped_result)
+            except Exception as exc:  # noqa: BLE001 — one provider must not sink the rest
+                logger.warning("assemble: %s failed for %s: %s",
+                               getattr(provider, "__module__", provider), template_name, exc)
+                extra = None
+            if extra:
+                values = {**values, **extra}
+        tyear = _template_year(template)
+        if tyear is not None:
+            values.setdefault("template_year", tyear)
         hidden = tuple(prune.hidden_country_pages(template, _country_count(values)))
     except Exception as exc:  # noqa: BLE001 — grid/pruning must never break assembly
         logger.warning("assemble: grid/prune failed for %s: %s", template_name, exc)
@@ -131,12 +143,33 @@ def plan_subdecks(result, *, scope: Optional[str] = None) -> List[SubDeck]:
     return decks
 
 
+_manifest_cache: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+
+
+def _augmented_manifest(bmap: BindingMap) -> List[Dict[str, Any]]:
+    """The static map's manifest + the dynamic re-binders (cached per template file).
+
+    ``commentary.augment`` binds the ellipsis prose slots (Trading Summary etc.) and
+    ``feedback.augment`` the feedback/quadrant/highlight table cells — so the curated
+    maps stay about scalar KPIs while narrative slots are recognised generically.
+    """
+    key = (bmap.name, bmap.path)
+    cached = _manifest_cache.get(key)
+    if cached is None:
+        template = analyze(bmap.path)
+        bindings = R.manifest_from_dicts(bmap.manifest())
+        bindings = commentary.augment(template, bindings)
+        bindings = feedback.augment(template, bindings)
+        cached = _manifest_cache[key] = R.manifest_to_dicts(bindings)
+    return cached
+
+
 def _doc_from_map(bmap: BindingMap, sub: SubDeck) -> Dict[str, Any]:
     """A minimal TemplateDoc that ``fill.fill_template`` consumes (manifest from the static map)."""
     return {
         "template_path": bmap.path,
         "values": sub.values,
-        "manifest": bmap.manifest(),
+        "manifest": _augmented_manifest(bmap),
         "overrides": {},
         "map_overrides": {},
         "added": {},

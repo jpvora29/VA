@@ -29,12 +29,6 @@ _ELLIPSIS = re.compile(r"…|\.{3,}")
 _COMMENTARY_SECTIONS = {
     Section.TRADING_SUMMARY, Section.SWOT, Section.HIGHLIGHTS, Section.SUMMARY,
 }
-_POLISH_SYS = (
-    "Rewrite this insurance QBR commentary to be crisp and executive. Keep EVERY number "
-    "and the carrier name exactly as given; never invent figures and never name a "
-    "competitor. Reply with 1–2 short sentences only."
-)
-
 # The commentary voice chosen in Setup → the instruction appended to the polish prompt.
 # Every style keeps the same faithfulness guardrails; only the tone/length shifts.
 _STYLE_DIRECTIVE: Dict[str, str] = {
@@ -46,8 +40,12 @@ _STYLE_DIRECTIVE: Dict[str, str] = {
 
 def _style_system(style: Optional[str]) -> str:
     base = (
-        "Rewrite this insurance QBR commentary to be crisp and executive. Keep EVERY number "
-        "and the carrier name exactly as given; never invent figures and never name a competitor. "
+        "You are a senior Marsh broking analyst polishing commentary for a carrier QBR slide. "
+        "Rewrite the draft so it reads board-ready: lead with the 'so what', use active voice, "
+        "and keep every claim anchored to the figures provided. "
+        "HARD RULES: keep EVERY number, currency amount, percentage and rank EXACTLY as written — "
+        "never invent, recalculate or round a figure; never name a competitor carrier; "
+        "no bullet characters or headings — plain sentences only. "
     )
     return base + _STYLE_DIRECTIVE.get((style or "balanced").lower(), _STYLE_DIRECTIVE["balanced"])
 

@@ -57,9 +57,19 @@ def _set_paragraph_text(paragraph, text: str) -> None:
 
 
 def _set_cell_text(cell, text: str) -> None:
-    paras = cell.text_frame.paragraphs
-    _set_paragraph_text(paras[0], text)
-    for p in paras[1:]:
+    """Write ``text`` into a cell, mapping ``\\n``-separated lines onto the cell's own
+    paragraphs — so a composite value keeps its caption paragraph's formatting (e.g.
+    ``"$57M (+4.1%▲)\\nMarsh GWP"`` fills the value line and rewrites the 9pt caption
+    in place). Surplus template paragraphs are blanked; surplus lines are appended."""
+    tf = cell.text_frame
+    paras = list(tf.paragraphs)
+    lines = str(text).split("\n")
+    for i, line in enumerate(lines):
+        if i < len(paras):
+            _set_paragraph_text(paras[i], line)
+        else:
+            tf.add_paragraph().text = line
+    for p in paras[len(lines):]:
         for r in p.runs:
             r.text = ""
 
@@ -197,42 +207,126 @@ def _chart_is_external(chart) -> bool:
         return False
 
 
+def _detach_external_data(chart) -> bool:
+    """Cut a chart loose from its external (think-cell / linked-workbook) data source.
+
+    Removes the ``<c:externalData>`` element and drops its relationship, turning the
+    chart into a plain native chart whose cached plot XML remains — after which
+    ``replace_data`` is safe (python-pptx creates a fresh embedded workbook).
+    Returns True when the chart is (now) safe to rewrite."""
+    from pptx.oxml.ns import qn
+
+    try:
+        cs = chart._chartSpace
+        ext = cs.find(qn("c:externalData"))
+        if ext is None:
+            return not _chart_is_external(chart)
+        rid = ext.get(qn("r:id"))
+        cs.remove(ext)
+        if rid:
+            try:
+                chart.part.drop_rel(rid)
+            except (KeyError, AttributeError):
+                pass
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("template_fill: could not detach external chart data: %s", exc)
+        return False
+
+
+def _bubble_points(points: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The plottable growth points — both YoY axes known. Axis values are FRACTIONS
+    (the template charts carry ``0.0%``-formatted axes), sizes are raw premium."""
+    return [p for p in points
+            if p.get("carrier_yoy") is not None and p.get("marsh_yoy") is not None]
+
+
+def _write_bubble_chart(chart, points: List[Dict[str, Any]]) -> None:
+    """One series per line of business (x = Marsh YoY, y = carrier YoY, size = carrier
+    GWP) so every bubble gets its own colour and legend entry."""
+    from pptx.chart.data import BubbleChartData
+    from pptx.enum.chart import XL_LEGEND_POSITION
+
+    data = BubbleChartData()
+    for p in points:
+        ser = data.add_series(str(p.get("lob") or ""))
+        ser.add_data_point(p["marsh_yoy"] / 100.0, p["carrier_yoy"] / 100.0,
+                           abs(p.get("size") or 0.0) or 1.0)
+    chart.replace_data(data)
+    try:
+        chart.has_legend = True
+        chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+        chart.legend.include_in_layout = False
+    except Exception:  # noqa: BLE001 — a legend is nice-to-have, never fatal
+        pass
+
+
+def _blank_stale_point_labels(slide, chart_shape, points: List[Dict[str, Any]]) -> None:
+    """Blank the hand-placed point-label textboxes over a refilled bubble chart —
+    they were positioned for the template's authored dummy bubbles, and the legend
+    now names each bubble instead.
+
+    A stale label is a text *placeholder* whose text matches a plotted name, or a
+    short placeholder sitting wholly inside the chart frame (the authored labels for
+    lines the data doesn't have). Quadrant captions/speech bubbles are rectangles,
+    and the axis captions sit outside the frame — both survive. Labels often hold
+    their text in ``<a:fld>`` elements (no runs), so the whole frame is replaced."""
+    names = {str(p.get("lob") or "").strip() for p in points if p.get("lob")}
+
+    def _inside(sh) -> bool:
+        try:
+            return (sh.left >= chart_shape.left and sh.top >= chart_shape.top
+                    and sh.left + sh.width <= chart_shape.left + chart_shape.width
+                    and sh.top + sh.height <= chart_shape.top + chart_shape.height)
+        except TypeError:                       # a shape without geometry → leave it
+            return False
+
+    for sh in _iter_leaves(slide.shapes):
+        if not getattr(sh, "has_text_frame", False) or sh is chart_shape:
+            continue
+        txt = sh.text_frame.text.strip()
+        if not txt or "placeholder" not in sh.name.lower():
+            continue
+        if txt in names or (len(txt) <= 30 and _inside(sh)):
+            sh.text_frame.text = ""
+
+
 def _fill_charts(prs, values: Dict[str, Any]) -> None:
-    """Best-effort: write the computed carrier-vs-Marsh growth data into NATIVE
-    scatter/bubble charts. Externally-linked (think-cell) charts are skipped — they
-    corrupt on ``replace_data`` and are surfaced with a manual-fill cue instead.
+    """Best-effort: write the computed carrier-vs-Marsh growth data into the deck's
+    scatter/bubble charts. Bubble charts that are think-cell/externally linked are
+    first detached from the link (native PowerPoint supports bubble charts, so the
+    refilled chart stands alone); externally-linked scatter charts (the LC-ranking
+    think-cell visual, whose semantics aren't growth) are left untouched.
 
     Off-switch: ``STUDIO_FILL_CHARTS=off``. Any per-chart failure is swallowed so a
     chart never breaks the export.
     """
     if os.getenv("STUDIO_FILL_CHARTS", "auto").strip().lower() in {"off", "0", "false", "no"}:
         return
-    points = (values.get("growth_bubble") or {}).get("points") or []
+    points = _bubble_points((values.get("growth_bubble") or {}).get("points") or [])
     if not points:
         return
-    from pptx.chart.data import BubbleChartData, XyChartData
+    from pptx.chart.data import XyChartData
 
     for slide in prs.slides:
         for sh in _iter_leaves(slide.shapes):
             if not getattr(sh, "has_chart", False):
                 continue
             chart = sh.chart
-            if _chart_is_external(chart):
-                continue
             ctype = str(chart.chart_type)
             try:
                 if "BUBBLE" in ctype:
-                    data = BubbleChartData()
-                    ser = data.add_series("Carrier vs Marsh growth")
-                    for p in points:
-                        ser.add_data_point(p.get("marsh_yoy") or 0.0, p.get("carrier_yoy") or 0.0,
-                                           abs(p.get("size") or 0.0) or 1.0)
-                    chart.replace_data(data)
+                    if not _detach_external_data(chart):
+                        continue
+                    _write_bubble_chart(chart, points)
+                    _blank_stale_point_labels(slide, sh, points)
                 elif "SCATTER" in ctype:
+                    if _chart_is_external(chart):
+                        continue
                     data = XyChartData()
                     ser = data.add_series("Carrier vs Marsh growth")
                     for p in points:
-                        ser.add_data_point(p.get("marsh_yoy") or 0.0, p.get("carrier_yoy") or 0.0)
+                        ser.add_data_point(p["marsh_yoy"] / 100.0, p["carrier_yoy"] / 100.0)
                     chart.replace_data(data)
             except Exception as exc:  # noqa: BLE001 — a chart must never break the export
                 logger.warning("template_fill: chart fill skipped (%s): %s", ctype, exc)
