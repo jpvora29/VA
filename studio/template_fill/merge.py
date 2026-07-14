@@ -142,6 +142,78 @@ def _append_slide(
     base.slides._sldIdLst.add_sldId(rId)
 
 
+_SLD_LAYOUT_ID = re.compile(rb'(<p:sldLayoutId[^>]*\bid=")(\d+)(")')
+
+
+def _renumber_layout_ids(base: Presentation) -> None:
+    """Give every ``p:sldLayoutId`` in the merged package a document-unique id.
+
+    Each source deck numbers its layout ids from 2147483649, so the cloned masters
+    collide with the base's — one of the invalidities that made PowerPoint refuse
+    the merged file. The ids live only inside each master's ``sldLayoutIdLst``
+    (references are by r:id), so a byte-level renumber of the master blobs is safe.
+    """
+    masters = [p for p in base.part.package.iter_parts()
+               if p.content_type.endswith("slideMaster+xml")]
+    used = [int(m.group(2)) for p in masters for m in _SLD_LAYOUT_ID.finditer(p.blob)]
+    counter = max(used, default=2147483648) + 1
+    for part in masters:
+        # Only CLONED masters are raw ``Part``s holding literal blob bytes; the base
+        # deck's own masters are typed XmlParts whose ids are already consistent.
+        if type(part) is not Part:
+            continue
+
+        def fresh(m):
+            nonlocal counter
+            out = m.group(1) + str(counter).encode() + m.group(3)
+            counter += 1
+            return out
+
+        part._blob = _SLD_LAYOUT_ID.sub(fresh, part.blob)
+
+
+def _register_cloned_masters(base: Presentation) -> None:
+    """Register every reachable slide/notes master in the presentation's master lists.
+
+    Cloned slides bring their layout → master part-graphs across, but a master that is
+    only *reachable* (via slide rels) and not LISTED in ``p:sldMasterIdLst`` /
+    ``p:notesMasterIdLst`` makes the package invalid to PowerPoint ("could not open
+    the file" / repair prompt) even though python-pptx reads it happily. Walk the
+    merged package and add a presentation-level relationship + id-list entry for any
+    master PowerPoint doesn't know about yet.
+    """
+    from pptx.oxml.ns import qn
+
+    pres_part = base.part
+    pres_elm = pres_part._element
+
+    def listed(list_tag: str, id_tag: str, reltype: str, content_type_suffix: str) -> None:
+        lst = pres_elm.find(qn(list_tag))
+        known = {id(rel.target_part) for rel in pres_part.rels.values() if rel.reltype == reltype}
+        masters = [p for p in pres_part.package.iter_parts()
+                   if p.content_type.endswith(content_type_suffix) and id(p) not in known]
+        if not masters:
+            return
+        if lst is None:
+            # Schema order: sldMasterIdLst, notesMasterIdLst, … precede sldIdLst.
+            lst = pres_elm.makeelement(qn(list_tag), {})
+            anchor = pres_elm.find(qn("p:sldMasterIdLst"))
+            pres_elm.insert(list(pres_elm).index(anchor) + 1 if anchor is not None else 0, lst)
+        next_id = max([int(e.get("id")) for e in lst if e.get("id")] + [2147483647]) + 1
+        for part in masters:
+            rId = pres_part.relate_to(part, reltype)
+            entry = lst.makeelement(qn(id_tag), {})
+            if id_tag == "p:sldMasterId":                 # notesMasterId carries no id attr
+                entry.set("id", str(next_id))
+                next_id += 1
+            entry.set(qn("r:id"), rId)
+            lst.append(entry)
+        logger.info("merge_pptx: registered %d %s master(s)", len(masters), id_tag)
+
+    listed("p:sldMasterIdLst", "p:sldMasterId", RT.SLIDE_MASTER, "slideMaster+xml")
+    listed("p:notesMasterIdLst", "p:notesMasterId", RT.NOTES_MASTER, "notesMaster+xml")
+
+
 def merge_pptx(paths: List[str]) -> Presentation:
     """Concatenate the slides of ``paths`` (in order) into one |Presentation|.
 
@@ -165,6 +237,8 @@ def merge_pptx(paths: List[str]) -> Presentation:
         cloned: Dict[int, Part] = {}   # per-source-deck identity memo
         for slide in src.slides:
             _append_slide(base, slide, cloned, reserved, shared)
+    _renumber_layout_ids(base)
+    _register_cloned_masters(base)
     logger.info("merge_pptx: stitched %d deck(s) -> %d slide(s)", len(paths), len(base.slides._sldIdLst))
     return base
 
@@ -188,13 +262,17 @@ def merge_to_file(paths: List[str], out_path: str) -> str:
         return out_path
 
     if engine in {"auto", "", "powerpoint", "win32", "com"} and sys.platform == "win32":
+        # NO OPC fallback on Windows: for the real (think-cell) templates the OPC
+        # merge currently produces a package PowerPoint refuses to open — serving it
+        # corrupts the preview render and the export. Retry once (the usual failure
+        # is a transiently busy COM instance), then fail loudly so the caller can
+        # fall back to a valid single-template deck instead.
         try:
             return _merge_to_file_powerpoint(paths, out_path)
         except Exception as exc:  # noqa: BLE001
-            if engine in {"powerpoint", "win32", "com"}:
-                raise
-            logger.warning("merge_pptx: PowerPoint merge unavailable, falling back to OPC: %s", exc)
-    elif engine not in {"auto", "", "opc"}:
+            logger.warning("merge_pptx: PowerPoint merge failed (%s) — retrying once", exc)
+        return _merge_to_file_powerpoint(paths, out_path)
+    if engine not in {"auto", "", "opc"}:
         raise ValueError(f"unknown STUDIO_PPT_MERGE_ENGINE={engine!r}")
 
     prs = merge_pptx(paths)

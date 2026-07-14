@@ -52,8 +52,66 @@ def _set_paragraph_text(paragraph, text: str) -> None:
         runs[0].text = text
         for r in runs[1:]:
             r.text = ""
-    else:
-        paragraph.text = text
+        return
+    # No <a:r> runs — the visible text (and ALL its formatting) lives in <a:fld>
+    # elements. ``paragraph.text`` drops the fld together with its rPr, so the new run
+    # fell back to the theme default (product names lost their white bold, rank
+    # changes their green). Capture the fld's rPr and graft it onto the new run.
+    from copy import deepcopy
+
+    from pptx.oxml.ns import qn
+
+    fld = paragraph._p.find(qn("a:fld"))
+    rPr = fld.find(qn("a:rPr")) if fld is not None else None
+    paragraph.text = text
+    if rPr is not None:
+        for run in paragraph.runs:
+            old = run._r.find(qn("a:rPr"))
+            if old is not None:
+                run._r.remove(old)
+            run._r.insert(0, deepcopy(rPr))
+
+
+# The template's own trend palette (sampled from the authored delta runs):
+# green ▲/↑ growth, red ▼/↓ decline, Marsh amber ►/flat.
+_TREND_COLOR = {"▲": "6ABF30", "↑": "6ABF30", "▼": "C53532", "↓": "C53532", "►": "FFBF00"}
+# A value line ending in a parenthesised trend, e.g. "$411M (+9.8%▲)" / "PY (+4▲)".
+_DELTA_TAIL = re.compile(r"^(?P<head>.*?)\s*(?P<delta>\([^()]*[▲▼►]\))\s*$")
+
+
+def _trend_color(text: str):
+    from pptx.dml.color import RGBColor
+
+    for arrow, hexv in _TREND_COLOR.items():
+        if arrow in text:
+            return RGBColor.from_string(hexv)
+    return None
+
+
+def _set_value_line(paragraph, line: str) -> None:
+    """Write one value line, keeping the template's value-vs-delta run structure.
+
+    The authored cells split "value (delta▲)" across runs — big white value runs, then
+    coloured delta runs from the first "(". A whole-line write into run 0 destroyed
+    that (everything came out in the value's white). Re-split on the same boundary and
+    colour the delta by its OWN sign (the template's colour is a static example — a
+    red-authored cell must still show green when the real number grew)."""
+    m = _DELTA_TAIL.match(line)
+    runs = list(paragraph.runs)
+    if m and runs:
+        split = next((i for i, r in enumerate(runs) if r.text.lstrip().startswith("(")), None)
+        if split:                                   # a real delta run group exists
+            runs[0].text = m.group("head") + " "
+            for r in runs[1:split]:
+                r.text = ""
+            runs[split].text = m.group("delta")
+            for r in runs[split + 1:]:
+                r.text = ""
+            color = _trend_color(m.group("delta"))
+            if color is not None:
+                runs[split].font.color.rgb = color
+            return
+    _set_paragraph_text(paragraph, line)
 
 
 def _set_cell_text(cell, text: str) -> None:
@@ -66,7 +124,7 @@ def _set_cell_text(cell, text: str) -> None:
     lines = str(text).split("\n")
     for i, line in enumerate(lines):
         if i < len(paras):
-            _set_paragraph_text(paras[i], line)
+            _set_value_line(paras[i], line)
         else:
             tf.add_paragraph().text = line
     for p in paras[len(lines):]:
@@ -112,12 +170,47 @@ def _is_commentary_role(role: Optional[str]) -> bool:
 
 
 def _style_commentary_paragraphs(paragraphs) -> None:
+    from pptx.oxml.ns import qn
     from pptx.util import Pt
 
     for p in paragraphs:
         for r in p.runs:
             r.font.name = _COMMENTARY_FONT_NAME
             r.font.size = Pt(_COMMENTARY_FONT_PT)
+            # Some template placeholders carry a yellow <a:highlight> — real
+            # commentary must not inherit the author's "fill me" marker.
+            rPr = r._r.find(qn("a:rPr"))
+            hl = rPr.find(qn("a:highlight")) if rPr is not None else None
+            if hl is not None:
+                rPr.remove(hl)
+
+
+# Grid metrics whose colour must follow the SIGN of the real value — the template
+# authors them with static example colours (a red "-xx.x%" row), which a positive
+# actual would wrongly inherit.
+_SIGNED_ROLE_SUFFIXES = (":var", ":rank_change")
+
+
+def _recolor_by_sign(shape, where: List[Any], text: str) -> None:
+    """Colour a signed metric's runs by the written value's own trend."""
+    t = str(text).strip()
+    color = _trend_color(t)
+    if color is None:
+        if t.startswith("+"):
+            color = _trend_color("▲")
+        elif t.startswith("-"):
+            color = _trend_color("▼")
+    if color is None:
+        return
+    try:
+        if where and where[0] == "para" and shape.has_text_frame:
+            idx = int(where[1])
+            paras = shape.text_frame.paragraphs
+            if 0 <= idx < len(paras):
+                for r in paras[idx].runs:
+                    r.font.color.rgb = color
+    except Exception as exc:  # noqa: BLE001 — colouring must never break the fill
+        logger.warning("template_fill: sign recolor skipped: %s", exc)
 
 
 def _style_commentary(shape, where: List[Any]) -> None:
@@ -422,8 +515,11 @@ def fill_template(doc: Dict[str, Any], *, out_path: Optional[str] = None) -> str
                 _write_text_shape(shape, where, str(fld["text"]))
             elif where and where[0] == "cell":
                 _write_table(shape, where, str(fld["text"]))
-            if _is_commentary_role(fld.get("role")):
+            role = str(fld.get("role") or "")
+            if _is_commentary_role(role):
                 _style_commentary(shape, where)
+            elif role.endswith(_SIGNED_ROLE_SUFFIXES) and str(fld["text"]).strip():
+                _recolor_by_sign(shape, where, str(fld["text"]))
         _apply_subs(slide, subs)
         _add_elements(slide, doc.get("added", {}).get(str(sidx), []), width_emu, height_emu)
 
