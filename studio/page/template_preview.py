@@ -302,6 +302,13 @@ def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> h
     fields = materialize_fields(dict(tdoc))
     stored_urls = list(tdoc.get("background_urls") or [])
     cached_urls = cached_doc_backgrounds(dict(tdoc), len(template.slides))
+    # Assembled decks cache their renders per FILE (not per doc-values) — consult that
+    # store too, so a render that failed at generate time but succeeded later (e.g. the
+    # user's own PowerPoint stopped hogging COM) still replaces the geometry fallback.
+    if not any(cached_urls) and tdoc.get("assembled"):
+        from studio.template_fill.preview_assets import _cached_backgrounds
+
+        cached_urls = _cached_backgrounds(tdoc["template_path"], len(template.slides))
     rendered_urls = [
         (stored_urls[i] if i < len(stored_urls) and stored_urls[i] else cached_urls[i])
         for i in range(len(template.slides))

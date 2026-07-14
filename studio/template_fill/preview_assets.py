@@ -118,7 +118,11 @@ def _render_with_powerpoint(pptx_path: str, out_dir: Path, slide_count: int, wid
     presentation = None
     pythoncom.CoInitialize()
     try:
-        app = win32com.client.Dispatch("PowerPoint.Application")
+        # DispatchEx: a PRIVATE PowerPoint instance. Dispatch attaches to the user's
+        # running PowerPoint — whose interactive session rejects COM calls while they
+        # type/edit (every render fails → the canvas falls back to raw geometry), and
+        # the Quit() below would try to close THEIR presentations.
+        app = win32com.client.DispatchEx("PowerPoint.Application")
         presentation = app.Presentations.Open(str(Path(pptx_path).resolve()), WithWindow=False)
         height_px = int(width_px * float(presentation.PageSetup.SlideHeight) / float(presentation.PageSetup.SlideWidth or 1))
         count = min(slide_count, int(presentation.Slides.Count))
@@ -184,7 +188,14 @@ def ensure_rendered_slide_backgrounds(pptx_path: str, slide_count: int, *, width
         return cached
     out_dir = template_cache_dir(pptx_path) / "backgrounds"
     _render_slides(pptx_path, out_dir, slide_count, width_px)
-    return _cached_backgrounds(pptx_path, slide_count)
+    cached = _cached_backgrounds(pptx_path, slide_count)
+    if not any(cached):
+        # Nothing rendered at all — usually a transient COM failure. One retry
+        # here beats a whole generation whose canvas falls back to raw geometry.
+        logger.warning("template preview: no backgrounds rendered for %s — retrying once", pptx_path)
+        _render_slides(pptx_path, out_dir, slide_count, width_px)
+        cached = _cached_backgrounds(pptx_path, slide_count)
+    return cached
 
 
 def _doc_render_key(doc: dict, *, width_px: int) -> str:
