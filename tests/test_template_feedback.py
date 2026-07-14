@@ -80,11 +80,11 @@ def _stub_compute(monkeypatch):
 def test_augment_binds_feedback_quadrant_and_highlight_cells():
     bindings = F.augment(_template(), [])
     roles = {b.role for b in bindings}
-    # Country (1) block: 3 commentary columns + 4 KPI callouts.
-    assert {"fb:0:2:1:1", "fb:0:2:1:2", "fb:0:2:1:3",
+    # Country (1) block: 3 commentary columns (fbnote:) + 4 KPI callouts (fb:).
+    assert {"fbnote:0:2:1:1", "fbnote:0:2:1:2", "fbnote:0:2:1:3",
             "fb:0:2:1:4", "fb:0:2:1:5", "fb:0:2:2:4", "fb:0:2:2:5"} <= roles
     # Country (2) block binds too, plus the quadrant row and the highlights cell.
-    assert {"fb:0:2:3:4", "fb:1:4:1:0", "fb:1:4:1:3", "fb:1:3:0:0"} <= roles
+    assert {"fb:0:2:3:4", "fbnote:1:4:1:0", "fbnote:1:4:1:3", "fbnote:1:3:0:0"} <= roles
     assert all(not b.placeholder for b in bindings)
 
 
@@ -124,10 +124,10 @@ def test_values_blank_country_rows_beyond_scope(_stub_compute):
 
 def test_values_commentary_carries_figures(_stub_compute):
     vals = F.values(_template(), _result())
-    assert "+52.5%" in vals["fb:0:2:1:1"] and "$48M" in vals["fb:0:2:1:1"]      # working well
-    assert "$363M" in vals["fb:0:2:1:3"]                                        # headroom
-    assert vals["fb:1:3:0:0"].startswith("Key Highlights:")
-    assert "rank #2" in vals["fb:1:4:1:3"]                                      # key messages
+    assert "+52.5%" in vals["fbnote:0:2:1:1"] and "$48M" in vals["fbnote:0:2:1:1"]  # working well
+    assert "$363M" in vals["fbnote:0:2:1:3"]                                        # headroom
+    assert vals["fbnote:1:3:0:0"].startswith("Key Highlights:")
+    assert "rank #2" in vals["fbnote:1:4:1:3"]                                      # key messages
 
 
 def test_declines_flow_to_challenges():
@@ -136,6 +136,46 @@ def test_declines_flow_to_challenges():
     text = F._challenges_text(facts)
     assert "-12.0%" in text and "slipped" in text
     assert F._kpi_cell("rank", facts) == "6 (-2▼)\nCarrier Rank"
+
+
+def test_commentary_written_in_consistent_arial_11(tmp_path):
+    # Commentary inherits ad-hoc template run formatting (18pt here, 10pt there) —
+    # every note:/fbnote: write must come out Arial 11, KPI cells keep their own style.
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+
+    from studio.template_fill.fill import fill_template
+    from studio.template_fill.slots import Slot
+
+    src = str(tmp_path / "t.pptx")
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    tb = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(6), Inches(1))
+    tb.text_frame.text = "…………"
+    tb.text_frame.paragraphs[0].runs[0].font.size = Pt(18)
+    frame = slide.shapes.add_table(2, 2, Inches(1), Inches(3), Inches(6), Inches(2))
+    frame.table.rows[1].cells[1].text = "…………"
+    tb_id, tbl_id = tb.shape_id, frame.shape_id
+    prs.save(src)
+
+    note_role, cell_role = f"note:0:{tb_id}:0", f"fbnote:0:{tbl_id}:1:1"
+    manifest = [
+        R.Binding(Slot(0, tb_id, ["para", 0], "…………", "text", ""), note_role, False).to_dict(),
+        R.Binding(Slot(0, tbl_id, ["cell", 1, 1], "…………", "text", ""), cell_role, False).to_dict(),
+    ]
+    doc = {"template_path": src, "manifest": manifest,
+           "values": {note_role: "Growth of +5.0% YoY.", cell_role: "Line one.\nLine two."},
+           "overrides": {}, "map_overrides": {}, "added": {}}
+    out = fill_template(doc, out_path=str(tmp_path / "styled.pptx"))
+
+    prs2 = Presentation(out)
+    shapes = {sh.shape_id: sh for sh in prs2.slides[0].shapes}
+    note_runs = [r for p in shapes[tb_id].text_frame.paragraphs for r in p.runs if r.text]
+    cell_runs = [r for p in shapes[tbl_id].table.rows[1].cells[1].text_frame.paragraphs
+                 for r in p.runs if r.text]
+    assert note_runs and cell_runs
+    for run in note_runs + cell_runs:
+        assert run.font.name == "Arial" and run.font.size.pt == 11
 
 
 # ── the real bubble chart (native fill after detaching the think-cell link) ───

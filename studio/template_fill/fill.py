@@ -94,6 +94,49 @@ def _write_table(shape, where: List[Any], text: str) -> None:
             _set_cell_text(cells[c], text)
 
 
+# ── commentary typography ─────────────────────────────────────────────────────
+
+# Written commentary uses ONE face/size everywhere. The template's ellipsis
+# placeholders carry whatever ad-hoc run formatting the author left (10pt here,
+# 14pt there, theme default on appended paragraphs), so inheriting it makes the
+# prose inconsistent — too big in one box (overlapping the lines below), too
+# small in the next. Roles prefixed ``note:`` (prose slots) and ``fbnote:``
+# (feedback/quadrant/highlights table cells) are restyled after the write.
+_COMMENTARY_FONT_NAME = "Arial"
+_COMMENTARY_FONT_PT = 11
+_COMMENTARY_ROLE_PREFIXES = ("note:", "fbnote:")
+
+
+def _is_commentary_role(role: Optional[str]) -> bool:
+    return bool(role) and str(role).startswith(_COMMENTARY_ROLE_PREFIXES)
+
+
+def _style_commentary_paragraphs(paragraphs) -> None:
+    from pptx.util import Pt
+
+    for p in paragraphs:
+        for r in p.runs:
+            r.font.name = _COMMENTARY_FONT_NAME
+            r.font.size = Pt(_COMMENTARY_FONT_PT)
+
+
+def _style_commentary(shape, where: List[Any]) -> None:
+    """Force the standard commentary font on the paragraphs a write just touched."""
+    try:
+        if where and where[0] == "para" and shape.has_text_frame:
+            idx = int(where[1])
+            paras = shape.text_frame.paragraphs
+            if 0 <= idx < len(paras):
+                _style_commentary_paragraphs([paras[idx]])
+        elif where and where[0] == "cell" and shape.has_table:
+            r, c = int(where[1]), int(where[2])
+            rows = shape.table.rows
+            if 0 <= r < len(rows) and 0 <= c < len(rows[r].cells):
+                _style_commentary_paragraphs(rows[r].cells[c].text_frame.paragraphs)
+    except Exception as exc:  # noqa: BLE001 — styling must never break the fill
+        logger.warning("template_fill: commentary styling skipped: %s", exc)
+
+
 # ── literal label substitution (Country (n) / Region (n) / xyz) ──────────────
 
 
@@ -379,6 +422,8 @@ def fill_template(doc: Dict[str, Any], *, out_path: Optional[str] = None) -> str
                 _write_text_shape(shape, where, str(fld["text"]))
             elif where and where[0] == "cell":
                 _write_table(shape, where, str(fld["text"]))
+            if _is_commentary_role(fld.get("role")):
+                _style_commentary(shape, where)
         _apply_subs(slide, subs)
         _add_elements(slide, doc.get("added", {}).get(str(sidx), []), width_emu, height_emu)
 

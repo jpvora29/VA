@@ -57,8 +57,12 @@ _QUADRANT_TOPICS: Tuple[Tuple[str, str], ...] = (
 )
 
 
-def _role(slide_idx: int, shape_id: int, r: int, c: int) -> str:
-    return f"fb:{slide_idx}:{shape_id}:{r}:{c}"
+def _role(slide_idx: int, shape_id: int, r: int, c: int, kind: str) -> str:
+    """Positional cell role. Commentary cells get the ``fbnote:`` prefix (the fill
+    engine styles those in the standard commentary font); KPI callouts stay ``fb:``
+    so they keep the template's own value/caption formatting."""
+    prefix = "fbnote" if kind in _COMPOSERS else "fb"
+    return f"{prefix}:{slide_idx}:{shape_id}:{r}:{c}"
 
 
 # ── detection (header/caption driven, template-agnostic) ─────────────────────
@@ -164,7 +168,7 @@ def augment(template: Template, bindings: List[R.Binding]) -> List[R.Binding]:
     n = 0
     for t in _targets(template):
         slot = Slot(t["slide_idx"], t["shape_id"], ["cell", t["r"], t["c"]], "", "text", "")
-        role = _role(t["slide_idx"], t["shape_id"], t["r"], t["c"])
+        role = _role(t["slide_idx"], t["shape_id"], t["r"], t["c"], t["kind"])
         existing = by_key.get(slot.key)
         if existing is not None:
             existing.role, existing.placeholder = role, False
@@ -386,10 +390,11 @@ def values(template: Template, result) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for t in targets:
         ordn = t["country_ord"]
+        role = _role(t["slide_idx"], t["shape_id"], t["r"], t["c"], t["kind"])
         country: Optional[str] = None
         if ordn is not None:
             if ordn > len(countries):            # row beyond the data → blank the block
-                out[_role(t["slide_idx"], t["shape_id"], t["r"], t["c"])] = ""
+                out[role] = ""
                 continue
             country = countries[ordn - 1]
         key = (country, t["kind"])
@@ -401,6 +406,6 @@ def values(template: Template, result) -> Dict[str, Any]:
         # KPI callouts always write (a blank beats a stale "$xx.xM" placeholder);
         # an empty commentary keeps the template's ellipsis as a visible fill-me cue.
         if text_cache[key] or t["kind"] not in _COMPOSERS:
-            out[_role(t["slide_idx"], t["shape_id"], t["r"], t["c"])] = text_cache[key]
+            out[role] = text_cache[key]
     logger.info("feedback: resolved %d table cell value(s)", len(out))
     return out
