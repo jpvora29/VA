@@ -204,3 +204,19 @@ def test_generated_advanced_widgets_export_as_native_powerpoint(tmp_path):
     # not a single blank placeholder.
     contentful = [sl for sl in prs.slides if len(sl.shapes) > 3]
     assert len(contentful) >= 10
+
+
+def test_stale_persisted_template_doc_is_dropped(tmp_path):
+    # qs-tdoc persists in browser local storage; an assembled doc points at a temp
+    # .pptx that Windows cleans between sessions. The master render must drop it
+    # (crash regression: FileNotFoundError "<carrier>_<hash>_QBR.pptx" on app open).
+    from studio.authoring.generate import usable_tdoc
+
+    stale = {"template_path": str(tmp_path / "AIG_GROUP_deadbeef_QBR.pptx"), "assembled": True}
+    assert usable_tdoc(stale) is None
+    assert usable_tdoc(None) is None
+
+    live_path = tmp_path / "live.pptx"
+    live_path.write_bytes(b"x")
+    live = {"template_path": str(live_path)}
+    assert usable_tdoc(live) is live

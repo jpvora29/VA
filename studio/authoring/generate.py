@@ -56,6 +56,24 @@ def _selection_filters(selection: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in ((selection or {}).get("filters") or {}).items() if v not in BLANK}
 
 
+def usable_tdoc(tdoc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The persisted template doc, or ``None`` when its ``.pptx`` no longer exists.
+
+    ``qs-tdoc`` lives in browser local storage, so it survives app restarts — but an
+    ASSEMBLED doc's ``template_path`` points into the system temp dir, which Windows
+    cleans between sessions. Rendering such a doc crashes the master render callback
+    (``derive_manifest`` reads the file bytes), so a doc whose file is gone is dropped
+    and the app opens on Setup; the selection is persisted too, so Generate rebuilds it.
+    """
+    if not tdoc:
+        return None
+    path = tdoc.get("template_path")
+    if path and not Path(path).exists():
+        log.warning("stale template doc dropped (file missing): %s", path)
+        return None
+    return tdoc
+
+
 # ── the on-screen deck (a generated deck, or the edited document) ─────────────
 
 
@@ -179,7 +197,13 @@ def _assembled_for(selection_json: str) -> Optional[str]:
 def _assembled_export(selection: Optional[Dict[str, Any]]) -> Optional[str]:
     if not selection or not _selection_filters(selection).get("carrier"):
         return None
-    return _assembled_for(json.dumps(selection, sort_keys=True))
+    key = json.dumps(selection, sort_keys=True)
+    path = _assembled_for(key)
+    if path and not Path(path).exists():
+        # The cached path outlived its temp file (Windows temp cleanup) — rebuild.
+        _assembled_for.cache_clear()
+        path = _assembled_for(key)
+    return path
 
 
 def _assembled_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

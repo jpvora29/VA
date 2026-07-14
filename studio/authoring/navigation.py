@@ -12,7 +12,7 @@ from studio.page import authoring as A
 from studio.page.sample import CUT_GROUPS
 
 from studio.authoring.config import DEFAULT_FILTERS
-from studio.authoring.generate import _deck, _friendly_options
+from studio.authoring.generate import _deck, _friendly_options, usable_tdoc
 
 
 def register_navigation(app):
@@ -27,6 +27,7 @@ def register_navigation(app):
     )
     def render(view, doc, tdoc, selection):
         deck = _deck(doc)
+        tdoc = usable_tdoc(tdoc)   # a persisted doc whose temp .pptx is gone must not crash the app
         opts = _friendly_options()
         fvals = (selection or {}).get("filters") or DEFAULT_FILTERS
         return A.authoring_shell(

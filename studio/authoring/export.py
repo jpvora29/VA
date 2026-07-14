@@ -47,7 +47,7 @@ def register_export(app):
         except Exception as exc:  # noqa: BLE001 — fall back rather than white-screen the export
             log.warning("assembled export failed, falling back: %s", exc)
             assembled = None
-        if assembled:
+        if assembled and Path(assembled).exists():
             return dcc.send_file(assembled)
         # Fallback: the single filled template (pre-split behaviour) if assembly can't run.
         if tdoc and tdoc.get("template_path"):
