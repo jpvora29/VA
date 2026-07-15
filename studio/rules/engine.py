@@ -42,6 +42,32 @@ class YoyRules:
     high_growth_pct: float = 100.0
     significant_premium_floor: float = 1_000_000.0
     always_show_both_years: bool = True
+    always_include_current_and_prior: bool = True
+    require_absolute_change: bool = True
+    suppress_if_current_premium_below: float = 1_000_000.0
+
+
+@dataclass(frozen=True)
+class MaterialityRules:
+    min_premium_for_industry_commentary: float = 5_000_000.0
+    min_premium_for_practice_commentary: float = 5_000_000.0
+    min_share_of_portfolio_pct: float = 3.0
+
+
+@dataclass(frozen=True)
+class DriverRules:
+    require_driver_for_large_change: bool = True
+    large_change_pct: float = 20.0
+    min_driver_contribution_pct: float = 40.0
+
+
+@dataclass(frozen=True)
+class CommentaryRules:
+    max_bullets_per_slide: int = 3
+    max_sentences_per_bullet: int = 2
+    block_named_peer_mentions: bool = True
+    block_causal_language_without_driver_fact: bool = True
+    min_binding_confidence: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -76,6 +102,9 @@ class RulesConfig:
     whitespace: WhitespaceRules = field(default_factory=WhitespaceRules)
     opportunity: OpportunityRules = field(default_factory=OpportunityRules)
     temporal: TemporalRules = field(default_factory=TemporalRules)
+    materiality: MaterialityRules = field(default_factory=MaterialityRules)
+    drivers: DriverRules = field(default_factory=DriverRules)
+    commentary: CommentaryRules = field(default_factory=CommentaryRules)
     swot: Dict[str, List[str]] = field(default_factory=dict)
 
 
@@ -115,6 +144,9 @@ def _load() -> RulesConfig:
     ws = _section(meta, "whitespace")
     opp = _section(meta, "opportunity")
     temporal = _section(meta, "temporal")
+    mat = _section(meta, "materiality")
+    drv = _section(meta, "drivers")
+    comm = _section(meta, "commentary")
     swot = meta.get("swot")
 
     return RulesConfig(
@@ -127,6 +159,9 @@ def _load() -> RulesConfig:
             high_growth_pct=_num(yoy, "high_growth_pct", 100.0),
             significant_premium_floor=_num(yoy, "significant_premium_floor", 1_000_000.0),
             always_show_both_years=bool(yoy.get("always_show_both_years", True)),
+            always_include_current_and_prior=bool(yoy.get("always_include_current_and_prior", True)),
+            require_absolute_change=bool(yoy.get("require_absolute_change", True)),
+            suppress_if_current_premium_below=_num(yoy, "suppress_if_current_premium_below", 1_000_000.0),
         ),
         rank=RankRules(window=_int(rank, "window", 5)),
         whitespace=WhitespaceRules(
@@ -139,6 +174,25 @@ def _load() -> RulesConfig:
             ttm_min_months=_int(temporal, "ttm_min_months", 12),
             mom_significant_pct=_num(temporal, "mom_significant_pct", 5.0),
             qoq_significant_pct=_num(temporal, "qoq_significant_pct", 8.0),
+        ),
+        materiality=MaterialityRules(
+            min_premium_for_industry_commentary=_num(mat, "min_premium_for_industry_commentary", 5_000_000.0),
+            min_premium_for_practice_commentary=_num(mat, "min_premium_for_practice_commentary", 5_000_000.0),
+            min_share_of_portfolio_pct=_num(mat, "min_share_of_portfolio_pct", 3.0),
+        ),
+        drivers=DriverRules(
+            require_driver_for_large_change=bool(drv.get("require_driver_for_large_change", True)),
+            large_change_pct=_num(drv, "large_change_pct", 20.0),
+            min_driver_contribution_pct=_num(drv, "min_driver_contribution_pct", 40.0),
+        ),
+        commentary=CommentaryRules(
+            max_bullets_per_slide=_int(comm, "max_bullets_per_slide", 3),
+            max_sentences_per_bullet=_int(comm, "max_sentences_per_bullet", 2),
+            block_named_peer_mentions=bool(comm.get("block_named_peer_mentions", True)),
+            block_causal_language_without_driver_fact=bool(
+                comm.get("block_causal_language_without_driver_fact", True)
+            ),
+            min_binding_confidence=_num(comm, "min_binding_confidence", 0.5),
         ),
         swot=swot if isinstance(swot, dict) else {},
     )

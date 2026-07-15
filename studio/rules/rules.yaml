@@ -14,6 +14,26 @@ yoy:
   high_growth_pct: 100.0           # only surface YoY growth above this %
   significant_premium_floor: 1000000   # ...and only when current-year premium >= this  (NEEDS-SIGNOFF: $1M)
   always_show_both_years: true     # always render prior + current premium side by side
+  always_include_current_and_prior: true  # commentary citing YoY must also cite current + prior premium
+  require_absolute_change: true    # large-growth commentary must include the absolute movement
+  suppress_if_current_premium_below: 1000000  # never narrate YoY on a book smaller than this
+
+materiality:
+  min_premium_for_industry_commentary: 5000000   # industry commentary needs >= this premium  (NEEDS-SIGNOFF: $5M)
+  min_premium_for_practice_commentary: 5000000   # practice/product commentary floor  (NEEDS-SIGNOFF: $5M)
+  min_share_of_portfolio_pct: 3.0                # ...or >= this share of the portfolio
+
+drivers:
+  require_driver_for_large_change: true   # a large move needs a decomposition fact before "driven by"
+  large_change_pct: 20.0                  # |YoY %| above this counts as a large change
+  min_driver_contribution_pct: 40.0       # a named driver must explain >= this share of the movement
+
+commentary:
+  max_bullets_per_slide: 3            # commentary contract: at most this many bullets per slide
+  max_sentences_per_bullet: 2         # ...and this many sentences per bullet
+  block_named_peer_mentions: true     # carrier-facing output never names an individual peer
+  block_causal_language_without_driver_fact: true  # "drove/because" needs a decomposition fact
+  min_binding_confidence: 0.5         # agent-suggested slot mappings below this are flagged for review
 
 rank:
   window: 5             # compare carrier rank R against [R-window, R+window] excluding R  (NEEDS-SIGNOFF: 5)
