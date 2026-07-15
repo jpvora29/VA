@@ -3,6 +3,210 @@
   "path": "template/product_template.pptx",
   "bindings": [
     {
+      "slide_idx": 0,
+      "shape_id": 2,
+      "where": [
+        "cell",
+        1,
+        1
+      ],
+      "value_kind": "text",
+      "token": "Relationship & Communication: \u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u00a0\n Germany is a Top Performer: \u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026.",
+      "role": null
+    },
+    {
+      "slide_idx": 0,
+      "shape_id": 2,
+      "where": [
+        "cell",
+        1,
+        4
+      ],
+      "value_kind": "money",
+      "token": "$xxx.xM \u000b(+x.x%\u25b2)\nMarsh GWP",
+      "role": null
+    },
+    {
+      "slide_idx": 0,
+      "shape_id": 2,
+      "where": [
+        "cell",
+        1,
+        5
+      ],
+      "value_kind": "money",
+      "token": "$xx.xM \u000b(-x.x\u25bc)\nCarrier GWP",
+      "role": null
+    },
+    {
+      "slide_idx": 0,
+      "shape_id": 2,
+      "where": [
+        "cell",
+        2,
+        4
+      ],
+      "value_kind": "int",
+      "token": "x \u000b(=0\u25ba) \nCarrier Rank",
+      "role": null
+    },
+    {
+      "slide_idx": 0,
+      "shape_id": 2,
+      "where": [
+        "cell",
+        2,
+        5
+      ],
+      "value_kind": "pct",
+      "token": "x.x% (+x.x%\u25b2)\nCarrier SoW",
+      "role": null
+    },
+    {
+      "slide_idx": 0,
+      "shape_id": 2,
+      "where": [
+        "cell",
+        3,
+        4
+      ],
+      "value_kind": "money",
+      "token": "$xxx.xM \u000b(+x.x%\u25b2) Marsh GWP",
+      "role": null
+    },
+    {
+      "slide_idx": 0,
+      "shape_id": 2,
+      "where": [
+        "cell",
+        3,
+        5
+      ],
+      "value_kind": "money",
+      "token": "$xx.xM \u000b(-x.x\u25bc)\nCarrier GWP",
+      "role": null
+    },
+    {
+      "slide_idx": 0,
+      "shape_id": 2,
+      "where": [
+        "cell",
+        4,
+        4
+      ],
+      "value_kind": "int",
+      "token": "x \u000b(+x\u25b2) \nCarrier Rank",
+      "role": null
+    },
+    {
+      "slide_idx": 0,
+      "shape_id": 2,
+      "where": [
+        "cell",
+        4,
+        5
+      ],
+      "value_kind": "pct",
+      "token": "x.x% \u000b(-x.x\u25bc)\nCarrier SoW",
+      "role": null
+    },
+    {
+      "slide_idx": 0,
+      "shape_id": 31,
+      "where": [
+        "cell",
+        1,
+        0
+      ],
+      "value_kind": "money",
+      "token": "x.xB",
+      "role": "marsh_gwp"
+    },
+    {
+      "slide_idx": 0,
+      "shape_id": 31,
+      "where": [
+        "cell",
+        1,
+        1
+      ],
+      "value_kind": "money",
+      "token": "xxxM",
+      "role": "carrier_gwp"
+    },
+    {
+      "slide_idx": 0,
+      "shape_id": 31,
+      "where": [
+        "cell",
+        1,
+        2
+      ],
+      "value_kind": "pct",
+      "token": "x.x%",
+      "role": "sow_pct"
+    },
+    {
+      "slide_idx": 0,
+      "shape_id": 31,
+      "where": [
+        "cell",
+        1,
+        3
+      ],
+      "value_kind": "rank",
+      "token": "x",
+      "role": "rank"
+    },
+    {
+      "slide_idx": 0,
+      "shape_id": 31,
+      "where": [
+        "cell",
+        2,
+        0
+      ],
+      "value_kind": "pct",
+      "token": "PY (-x.x%\u25bc)",
+      "role": "marsh_gwp_yoy"
+    },
+    {
+      "slide_idx": 0,
+      "shape_id": 31,
+      "where": [
+        "cell",
+        2,
+        1
+      ],
+      "value_kind": "pct",
+      "token": "PY (+x.x%\u25b2)",
+      "role": "carrier_gwp_yoy"
+    },
+    {
+      "slide_idx": 0,
+      "shape_id": 31,
+      "where": [
+        "cell",
+        2,
+        2
+      ],
+      "value_kind": "pct",
+      "token": "PY (+x.x%\u25b2)",
+      "role": "sow_yoy"
+    },
+    {
+      "slide_idx": 0,
+      "shape_id": 31,
+      "where": [
+        "cell",
+        2,
+        3
+      ],
+      "value_kind": "rank",
+      "token": "PY (+x\u25b2)",
+      "role": "rank_yoy"
+    },
+    {
       "slide_idx": 1,
       "shape_id": 2,
       "where": [
@@ -616,210 +820,6 @@
     },
     {
       "slide_idx": 4,
-      "shape_id": 2,
-      "where": [
-        "cell",
-        1,
-        1
-      ],
-      "value_kind": "text",
-      "token": "Relationship & Communication: \u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u00a0\n Germany is a Top Performer: \u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026.",
-      "role": null
-    },
-    {
-      "slide_idx": 4,
-      "shape_id": 2,
-      "where": [
-        "cell",
-        1,
-        4
-      ],
-      "value_kind": "money",
-      "token": "$xxx.xM \u000b(+x.x%\u25b2)\nMarsh GWP",
-      "role": null
-    },
-    {
-      "slide_idx": 4,
-      "shape_id": 2,
-      "where": [
-        "cell",
-        1,
-        5
-      ],
-      "value_kind": "money",
-      "token": "$xx.xM \u000b(-x.x\u25bc)\nCarrier GWP",
-      "role": null
-    },
-    {
-      "slide_idx": 4,
-      "shape_id": 2,
-      "where": [
-        "cell",
-        2,
-        4
-      ],
-      "value_kind": "int",
-      "token": "x \u000b(=0\u25ba) \nCarrier Rank",
-      "role": null
-    },
-    {
-      "slide_idx": 4,
-      "shape_id": 2,
-      "where": [
-        "cell",
-        2,
-        5
-      ],
-      "value_kind": "pct",
-      "token": "x.x% (+x.x%\u25b2)\nCarrier SoW",
-      "role": null
-    },
-    {
-      "slide_idx": 4,
-      "shape_id": 2,
-      "where": [
-        "cell",
-        3,
-        4
-      ],
-      "value_kind": "money",
-      "token": "$xxx.xM \u000b(+x.x%\u25b2) Marsh GWP",
-      "role": null
-    },
-    {
-      "slide_idx": 4,
-      "shape_id": 2,
-      "where": [
-        "cell",
-        3,
-        5
-      ],
-      "value_kind": "money",
-      "token": "$xx.xM \u000b(-x.x\u25bc)\nCarrier GWP",
-      "role": null
-    },
-    {
-      "slide_idx": 4,
-      "shape_id": 2,
-      "where": [
-        "cell",
-        4,
-        4
-      ],
-      "value_kind": "int",
-      "token": "x \u000b(+x\u25b2) \nCarrier Rank",
-      "role": null
-    },
-    {
-      "slide_idx": 4,
-      "shape_id": 2,
-      "where": [
-        "cell",
-        4,
-        5
-      ],
-      "value_kind": "pct",
-      "token": "x.x% \u000b(-x.x\u25bc)\nCarrier SoW",
-      "role": null
-    },
-    {
-      "slide_idx": 4,
-      "shape_id": 31,
-      "where": [
-        "cell",
-        1,
-        0
-      ],
-      "value_kind": "money",
-      "token": "x.xB",
-      "role": "marsh_gwp"
-    },
-    {
-      "slide_idx": 4,
-      "shape_id": 31,
-      "where": [
-        "cell",
-        1,
-        1
-      ],
-      "value_kind": "money",
-      "token": "xxxM",
-      "role": "carrier_gwp"
-    },
-    {
-      "slide_idx": 4,
-      "shape_id": 31,
-      "where": [
-        "cell",
-        1,
-        2
-      ],
-      "value_kind": "pct",
-      "token": "x.x%",
-      "role": "sow_pct"
-    },
-    {
-      "slide_idx": 4,
-      "shape_id": 31,
-      "where": [
-        "cell",
-        1,
-        3
-      ],
-      "value_kind": "rank",
-      "token": "x",
-      "role": "rank"
-    },
-    {
-      "slide_idx": 4,
-      "shape_id": 31,
-      "where": [
-        "cell",
-        2,
-        0
-      ],
-      "value_kind": "pct",
-      "token": "PY (-x.x%\u25bc)",
-      "role": "marsh_gwp_yoy"
-    },
-    {
-      "slide_idx": 4,
-      "shape_id": 31,
-      "where": [
-        "cell",
-        2,
-        1
-      ],
-      "value_kind": "pct",
-      "token": "PY (+x.x%\u25b2)",
-      "role": "carrier_gwp_yoy"
-    },
-    {
-      "slide_idx": 4,
-      "shape_id": 31,
-      "where": [
-        "cell",
-        2,
-        2
-      ],
-      "value_kind": "pct",
-      "token": "PY (+x.x%\u25b2)",
-      "role": "sow_yoy"
-    },
-    {
-      "slide_idx": 4,
-      "shape_id": 31,
-      "where": [
-        "cell",
-        2,
-        3
-      ],
-      "value_kind": "rank",
-      "token": "PY (+x\u25b2)",
-      "role": "rank_yoy"
-    },
-    {
-      "slide_idx": 5,
       "shape_id": 6,
       "where": [
         "cell",
@@ -831,7 +831,7 @@
       "role": "marsh_gwp"
     },
     {
-      "slide_idx": 5,
+      "slide_idx": 4,
       "shape_id": 6,
       "where": [
         "cell",
@@ -843,7 +843,7 @@
       "role": "carrier_gwp"
     },
     {
-      "slide_idx": 5,
+      "slide_idx": 4,
       "shape_id": 6,
       "where": [
         "cell",
@@ -855,7 +855,7 @@
       "role": "sow_pct"
     },
     {
-      "slide_idx": 5,
+      "slide_idx": 4,
       "shape_id": 6,
       "where": [
         "cell",
@@ -867,7 +867,7 @@
       "role": "rank"
     },
     {
-      "slide_idx": 5,
+      "slide_idx": 4,
       "shape_id": 6,
       "where": [
         "cell",
@@ -879,7 +879,7 @@
       "role": "marsh_gwp_yoy"
     },
     {
-      "slide_idx": 5,
+      "slide_idx": 4,
       "shape_id": 6,
       "where": [
         "cell",
@@ -891,7 +891,7 @@
       "role": "carrier_gwp_yoy"
     },
     {
-      "slide_idx": 5,
+      "slide_idx": 4,
       "shape_id": 6,
       "where": [
         "cell",
@@ -903,7 +903,7 @@
       "role": "sow_yoy"
     },
     {
-      "slide_idx": 5,
+      "slide_idx": 4,
       "shape_id": 6,
       "where": [
         "cell",
@@ -915,7 +915,7 @@
       "role": "rank_yoy"
     },
     {
-      "slide_idx": 5,
+      "slide_idx": 4,
       "shape_id": 107,
       "where": [
         "chart"
@@ -925,7 +925,7 @@
       "role": "growth_bubble"
     },
     {
-      "slide_idx": 5,
+      "slide_idx": 4,
       "shape_id": 88,
       "where": [
         "para",
@@ -936,7 +936,7 @@
       "role": "country_name[3]"
     },
     {
-      "slide_idx": 5,
+      "slide_idx": 4,
       "shape_id": 89,
       "where": [
         "para",
@@ -947,7 +947,7 @@
       "role": "country_name[1]"
     },
     {
-      "slide_idx": 5,
+      "slide_idx": 4,
       "shape_id": 90,
       "where": [
         "para",
@@ -958,7 +958,7 @@
       "role": "country_name[0]"
     },
     {
-      "slide_idx": 5,
+      "slide_idx": 4,
       "shape_id": 91,
       "where": [
         "para",

@@ -282,6 +282,42 @@ def merge_to_file(paths: List[str], out_path: str) -> str:
     return out_path
 
 
+def _restore_slide_backgrounds(out_path: str, paths: List[str]) -> None:
+    """Re-apply each source slide's own ``<p:bg>`` background to the merged deck.
+
+    PowerPoint's ``InsertFromFile`` strips a slide-level background override from the
+    inserted slides (they fall back to the layout/master → the pale-blue pages came
+    out white/navy). The merged deck's slide order is exactly base + each deck's
+    slides in order, so the fix is a positional XML transplant. Backgrounds that
+    reference relationships (picture fills) are skipped — a missing rel is worse
+    than an inherited background.
+    """
+    from copy import deepcopy
+
+    from pptx.oxml.ns import qn
+
+    merged = Presentation(out_path)
+    src_slides = [s for p in paths for s in Presentation(p).slides]
+    if len(src_slides) != len(merged.slides._sldIdLst):
+        logger.warning("merge_pptx: slide count mismatch (%d vs %d) — backgrounds not restored",
+                       len(src_slides), len(merged.slides._sldIdLst))
+        return
+    restored = 0
+    for dst, src in zip(merged.slides, src_slides):
+        s_cSld = src._element.find(qn("p:cSld"))
+        s_bg = s_cSld.find(qn("p:bg")) if s_cSld is not None else None
+        d_cSld = dst._element.find(qn("p:cSld"))
+        if s_bg is None or d_cSld is None or d_cSld.find(qn("p:bg")) is not None:
+            continue
+        if "embed" in s_bg.xml or "r:link" in s_bg.xml:     # picture fill → rel id won't exist here
+            continue
+        d_cSld.insert(0, deepcopy(s_bg))
+        restored += 1
+    if restored:
+        merged.save(out_path)
+        logger.info("merge_pptx: restored %d slide background(s)", restored)
+
+
 def _merge_to_file_powerpoint(paths: List[str], out_path: str) -> str:
     """Append decks using local Microsoft PowerPoint COM automation."""
     try:
@@ -309,11 +345,31 @@ def _merge_to_file_powerpoint(paths: List[str], out_path: str) -> str:
         except Exception:
             pass
         prs = app.Presentations.Open(abs_paths[0], WithWindow=False)
-        for src in abs_paths[1:]:
-            prs.Slides.InsertFromFile(src, prs.Slides.Count)
+        for src_path in abs_paths[1:]:
+            # InsertFromFile RE-THEMES inserted slides onto the destination master
+            # (mapped by layout name) — a sub-template whose master differs from the
+            # base deck's came out with the base's background (light pages went navy)
+            # and shifted placeholders. Re-assigning each inserted slide's Design and
+            # ColorScheme from its source slide restores its own master formatting.
+            first_new = prs.Slides.Count + 1
+            prs.Slides.InsertFromFile(src_path, prs.Slides.Count)
+            src = app.Presentations.Open(src_path, WithWindow=False)
+            try:
+                for k in range(1, int(src.Slides.Count) + 1):
+                    try:
+                        dst_slide = prs.Slides(first_new + k - 1)
+                        dst_slide.Design = src.Slides(k).Design
+                        dst_slide.ColorScheme = src.Slides(k).ColorScheme
+                    except Exception as exc:  # noqa: BLE001 — best-effort per slide
+                        logger.warning("merge_pptx: design restore failed for slide %d of %s: %s",
+                                       k, src_path, exc)
+            finally:
+                try:
+                    src.Close()
+                except Exception:  # noqa: BLE001
+                    pass
         prs.SaveAs(str(out))
         logger.info("merge_pptx: PowerPoint merged %d deck(s) -> %s", len(paths), out)
-        return str(out)
     finally:
         try:
             if prs is not None:
@@ -326,3 +382,5 @@ def _merge_to_file_powerpoint(paths: List[str], out_path: str) -> str:
         except Exception:
             pass
         pythoncom.CoUninitialize()
+    _restore_slide_backgrounds(str(out), paths)
+    return str(out)
