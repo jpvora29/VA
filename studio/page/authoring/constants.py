@@ -3,13 +3,15 @@ from __future__ import annotations
 
 from typing import List, Mapping, Tuple
 
-# ── global product modes (blueprint §"Global Product Modes", trimmed to the
-#    three that drive real, working screens + Setup and Export) ────────────────
+# ── global product modes (blueprint §"Global Product Modes"). Setup is the
+#    entry point — its data-source choice routes to Data (upload → map → pivot)
+#    when the user brings their own dataset. Export is no longer a mode — its
+#    summary + download live in Review, and the top-bar button remains. ─────────
 MODES: List[Mapping[str, str]] = [
     {"id": "setup", "label": "Setup", "icon": "bi-sliders2", "hint": "Scope & data"},
+    {"id": "data", "label": "Data", "icon": "bi-table", "hint": "Upload & shape data"},
     {"id": "canvas", "label": "Canvas", "icon": "bi-grid-1x2", "hint": "Compose pages"},
-    {"id": "review", "label": "Review", "icon": "bi-patch-check", "hint": "Client-ready"},
-    {"id": "export", "label": "Export", "icon": "bi-filetype-pptx", "hint": "PowerPoint"},
+    {"id": "review", "label": "Review", "icon": "bi-patch-check", "hint": "Client-ready & export"},
 ]
 
 THEME_COLORS: Tuple[Tuple[str, str], ...] = (

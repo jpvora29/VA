@@ -23,12 +23,13 @@ def register_navigation(app):
         Input("qs-view", "data"),
         Input("qs-doc", "data"),
         Input("qs-tdoc", "data"),
+        Input("qs-dataset", "data"),
         State("qs-selection", "data"),
     )
-    def render(view, doc, tdoc, selection):
+    def render(view, doc, tdoc, dataset, selection):
         deck = _deck(doc)
         tdoc = usable_tdoc(tdoc)   # a persisted doc whose temp .pptx is gone must not crash the app
-        opts = _friendly_options()
+        opts = _friendly_options(dataset)
         fvals = (selection or {}).get("filters") or DEFAULT_FILTERS
         return A.authoring_shell(
             deck,
@@ -39,6 +40,7 @@ def register_navigation(app):
             filter_options=opts,
             filter_values=fvals,
             tdoc=tdoc,
+            dataset=dataset,
         )
 
     # ── mode switching ─────────────────────────────────────────────────────────

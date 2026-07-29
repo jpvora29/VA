@@ -38,7 +38,7 @@ from studio.content.report_plan import (
     decide_placement,
 )
 from studio.pipeline.async_utils import run_sync
-from studio.qa import QAReport, run_qbr_qa
+from studio.qa import QAReport, explain_qa_report, run_qbr_qa
 from studio.template_intelligence import (
     BindingMapV2,
     LayoutIntent,
@@ -87,6 +87,7 @@ class RenderPlan:
 class QBRPipelineResult:
     deck_path: Optional[str]
     qa_report: QAReport
+    qa_explanation: str = ""
     commentary: Tuple[SlideCommentary, ...] = ()
     render_plan: Optional[RenderPlan] = None
     evidence_pack: Optional[EvidencePack] = None
@@ -347,10 +348,17 @@ async def build_qbr_deck_pipeline(selection: StudioSelection) -> QBRPipelineResu
         hidden_slides=render_plan.hidden_slides, banned_names=banned,
     )
 
-    deck_path = await asyncio.to_thread(export_qbr_deck, render_plan, qa_report, selection)
+    # Explaining the report (deep agent, author-facing) and writing the deck are
+    # independent — the explanation never influences the export decision.
+    qa_explanation, deck_path = await asyncio.gather(
+        asyncio.to_thread(explain_qa_report, qa_report,
+                          subject=evidence_pack.subject, forbidden_names=banned),
+        asyncio.to_thread(export_qbr_deck, render_plan, qa_report, selection),
+    )
 
     return QBRPipelineResult(
-        deck_path=deck_path, qa_report=qa_report, commentary=commentary,
+        deck_path=deck_path, qa_report=qa_report,
+        qa_explanation=qa_explanation, commentary=commentary,
         render_plan=render_plan, evidence_pack=evidence_pack,
         evidence_graph=evidence_graph, report_plan=report_plan,
         layout_intent=layout_intent, binding_map=binding_map,

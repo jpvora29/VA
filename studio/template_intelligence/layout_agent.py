@@ -256,17 +256,34 @@ def _ai_payload(descriptor: TemplateDescriptor) -> str:
     return json.dumps({"slides": slides}, ensure_ascii=False)
 
 
-def _refine_with_ai(descriptor: TemplateDescriptor, base: LayoutIntent) -> LayoutIntent:
-    """Let the gated LLM re-label slide purposes; keep only validated output."""
+def _label_slides_with_ai(descriptor: TemplateDescriptor):
+    """AI slide labels via the deep-agent harness first, one-shot call second.
+
+    The harness (`studio.ai.deep_agent`) brings the ``template-layout`` skill,
+    planning and retry middleware; when it is off or fails, the plain structured
+    call keeps working exactly as before. Returns the pydantic labels or None.
+    """
     from studio.ai.client import llm_available, structured
+    from studio.ai.deep_agent import deep_agent_available, run_deep_agent
 
     if not llm_available():
-        return base
+        return None
     model = _ai_models()
-    result = structured(
-        model, _SYSTEM.format(purposes=", ".join(SLIDE_PURPOSES)),
-        _ai_payload(descriptor), tier="fast", node="template-layout",
-    )
+    system = _SYSTEM.format(purposes=", ".join(SLIDE_PURPOSES))
+    if deep_agent_available():
+        result = run_deep_agent(
+            _ai_payload(descriptor), system_prompt=system,
+            response_format=model, tier="fast", node="template-layout",
+        )
+        if result is not None:
+            return result
+    return structured(model, system, _ai_payload(descriptor),
+                      tier="fast", node="template-layout")
+
+
+def _refine_with_ai(descriptor: TemplateDescriptor, base: LayoutIntent) -> LayoutIntent:
+    """Let the gated LLM re-label slide purposes; keep only validated output."""
+    result = _label_slides_with_ai(descriptor)
     if result is None:
         return base
 

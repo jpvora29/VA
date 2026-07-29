@@ -5,9 +5,18 @@ Every agent is an *enhancement*: it runs only when an LLM is configured
 any failure the caller falls back to the deterministic narrator/planner — so the
 deck always generates, with or without a key. Agents: story, layout, selection,
 critic. Nothing here is imported by the chatbot graph.
+
+Two call shapes share the gate: one-shot calls (`client.generate` /
+`client.structured`) and the deepagents harness (`deep_agent.run_deep_agent`) for
+the multi-step semantic-judgment tasks — planning todos, skills from
+``studio/skills``, retry and summarization included.
 """
 from __future__ import annotations
 
 from studio.ai.client import generate, llm_available, run_or_fallback, structured
+from studio.ai.deep_agent import deep_agent_available, run_deep_agent
 
-__all__ = ["llm_available", "generate", "structured", "run_or_fallback"]
+__all__ = [
+    "llm_available", "generate", "structured", "run_or_fallback",
+    "deep_agent_available", "run_deep_agent",
+]

@@ -31,3 +31,6 @@ studio/_cache/
 
 # Studio template preview cache (generated from uploaded PPTX files)
 assets/studio_template_previews/
+
+# Studio uploaded-dataset store (user data; never committed)
+studio/dataset/_store/

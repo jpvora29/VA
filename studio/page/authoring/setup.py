@@ -97,6 +97,43 @@ def _ai_control() -> html.Div:
     )
 
 
+def _data_source_control(dataset_state: Optional[Mapping[str, Any]]) -> html.Div:
+    """DATA SOURCE — governed DB vs the user's own uploaded dataset.
+
+    Mutually exclusive, so segmented pills (not checkboxes). Choosing "My data"
+    routes to the Data page; once a dataset is submitted there, a status chip
+    names it here and every figure below derives from it."""
+    from studio.dataset.repository import get_repository
+
+    state = dataset_state or {}
+    source = state.get("source") or "governed"
+    record = get_repository().get(state.get("active") or "") if source == "custom" else None
+    if source != "custom":
+        status = None
+    elif record and record.status == "submitted":
+        status = html.Span(
+            [html.I(className="bi bi-check-circle-fill"),
+             f"Using “{record.name}” — {record.n_rows:,} rows. Filters and figures below come from your data."],
+            className="qs-source-status ok",
+        )
+    else:
+        status = html.Span(
+            [html.I(className="bi bi-arrow-right-circle"),
+             "Finish upload, mapping and submit on the Data page to use your data here."],
+            className="qs-source-status",
+        )
+    return html.Div(
+        [
+            _radio_field("DATA SOURCE", "studio-data-source", [
+                {"label": "Existing database", "value": "governed"},
+                {"label": "My uploaded data", "value": "custom"},
+            ], source),
+            status,
+        ],
+        className="qs-source-field",
+    )
+
+
 def scope_preview_empty(message: str = "Pick a carrier to preview this scope.") -> html.Div:
     return html.Div(
         [html.I(className="bi bi-binoculars"), html.Span(message)],
@@ -257,9 +294,16 @@ def setup_body(
     *,
     filter_options: Mapping[str, Any] | None = None,
     filter_values: Mapping[str, Any] | None = None,
+    dataset: Optional[Mapping[str, Any]] = None,
 ) -> html.Div:
     sections = html.Div(
         [
+            _setup_section(
+                "bi-database", "Data source",
+                "Build from the governed database, or bring your own dataset.",
+                _data_source_control(dataset),
+                span=True,
+            ),
             _setup_section(
                 "bi-funnel", "Scope & filters",
                 "Every list narrows to what the selection above it writes in.",
@@ -308,11 +352,22 @@ def setup_body(
         [
             html.Div(
                 [
-                    html.Div([html.I(className="bi bi-database"), "Deck setup"], className="qs-setup-title"),
-                    html.P(
-                        "Choose the client, period and scope. Figures are computed "
-                        "deterministically from the governed dataset — no LLM, no invented numbers.",
-                        className="qs-setup-sub",
+                    html.Div(
+                        [
+                            html.Div("QBR Studio", className="qs-setup-eyebrow"),
+                            html.Div([html.I(className="bi bi-database"), "Deck setup"], className="qs-setup-title"),
+                            html.P(
+                                "Choose the client, period and scope. Figures are computed "
+                                "deterministically from the governed dataset — no LLM, no invented numbers.",
+                                className="qs-setup-sub",
+                            ),
+                        ],
+                        className="qs-setup-head-text",
+                    ),
+                    html.Span(
+                        [html.I(className="bi bi-shield-check"), "Governed data"],
+                        className="qs-govern-chip",
+                        title="Every figure traces to the governed dataset; commentary is verified against it.",
                     ),
                 ],
                 className="qs-setup-head",

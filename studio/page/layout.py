@@ -50,15 +50,15 @@ BREAKDOWNS: List[Mapping[str, str]] = [
 
 
 def _report_type() -> html.Div:
+    # Executive summary was removed as a report choice — Full QBR is the one
+    # deliverable. The control stays a RadioItems so every callback reading
+    # ``studio-report-type`` keeps working unchanged.
     return html.Div(
         [
             html.Div("REPORT", className="studio-field-label"),
             dcc.RadioItems(
                 id="studio-report-type",
-                options=[
-                    {"label": "Full QBR", "value": "qbr"},
-                    {"label": "Executive summary", "value": "exec"},
-                ],
+                options=[{"label": "Full QBR", "value": "qbr"}],
                 value="qbr",
                 className="studio-report-radio",
                 inputClassName="studio-report-input",

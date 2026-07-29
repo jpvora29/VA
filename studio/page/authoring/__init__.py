@@ -16,11 +16,11 @@ and every ``A.<name>`` keep working unchanged:
     constants   modes, theme colors, zoom bounds
     derive      slide status, page counts, provenance flags
     chrome      mode rail + top bar
+    data        Data mode (upload, mapping, saved datasets, grid)
     setup       Setup mode form + scope preview
     inspector   the widget inspector (tabs, color picker, appearance)
     canvas      Canvas mode frame, zoom, pages panel, library modal
-    review      client-ready checklist
-    export      export preview grid
+    review      client-ready checklist + export card
     shell       body_for + authoring_shell assembly
 """
 from __future__ import annotations
@@ -59,7 +59,7 @@ from studio.page.authoring.derive import (
     deck_counts,
     slide_status,
 )
-from studio.page.authoring.export import export_body
+from studio.page.authoring.data import data_body
 from studio.page.authoring.inspector import (
     _chart_control,
     _color_picker,
@@ -113,8 +113,8 @@ __all__ = [
     "scope_preview_empty", "scope_preview_card", "template_sections_panel", "setup_body",
     # canvas
     "normalized_zoom", "adjusted_zoom", "zoom_scale", "canvas_body",
-    # review / export
-    "review_body", "export_body",
+    # data / review (review hosts the export card)
+    "data_body", "review_body",
     # shell
     "empty_canvas", "body_for", "authoring_shell",
 ]

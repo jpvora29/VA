@@ -1,7 +1,10 @@
 """Review mode — the client-ready checklist, computed from the materialized deck.
 
 Every check reflects user edits, reordering and hidden pages; none hard-codes a
-pass. ``review_body`` renders the checks plus the page-count stat cards.
+pass. ``review_body`` renders the checks, the page-count stat cards and the
+export card (Export is no longer its own mode — the summary and the download
+button live here; the PowerPoint itself is produced by the same ``qs-export``
+callback the top bar uses).
 """
 from __future__ import annotations
 
@@ -12,7 +15,7 @@ from dash import html
 from studio.deck.model import DeckSpec
 from studio.page import document as D
 
-from studio.page.authoring.derive import deck_counts
+from studio.page.authoring.derive import _hidden_ids, deck_counts
 
 
 def _overflow_slides(deck: DeckSpec) -> List[int]:
@@ -75,6 +78,33 @@ def _checks(deck: DeckSpec, doc: Optional[Mapping[str, Any]]) -> List[Tuple[str,
     ]
 
 
+def _export_card(deck: DeckSpec, doc: Optional[Mapping[str, Any]]) -> html.Div:
+    """The export summary + download button (folded in from the old Export mode)."""
+    hidden_n = len(_hidden_ids(doc))
+    total = len(deck.slides)
+    note = (
+        f"{total - hidden_n} of {total} pages export"
+        + (f" · {hidden_n} hidden page(s) excluded" if hidden_n else "")
+    )
+    return html.Div(
+        [
+            html.Div([html.I(className="bi bi-filetype-pptx"), "Export"], className="qs-panel-title"),
+            html.P(
+                "The PowerPoint is produced by materializing this exact document — your "
+                "edits, page order and hidden-page choices included. Nothing is regenerated.",
+                className="qs-exp-sub",
+            ),
+            html.Div(note, className="qs-exp-note"),
+            html.Button(
+                [html.I(className="bi bi-download"), "Download .pptx"],
+                id={"type": "qs-export", "loc": "review"},
+                className="qs-generate-btn",
+            ),
+        ],
+        className="qs-review-card qs-export-card",
+    )
+
+
 def review_body(deck: DeckSpec, doc: Optional[Mapping[str, Any]]) -> html.Div:
     checks = _checks(deck, doc)
     passed = sum(1 for _, ok, _ in checks if ok)
@@ -128,6 +158,7 @@ def review_body(deck: DeckSpec, doc: Optional[Mapping[str, Any]]) -> html.Div:
                 ],
                 className="qs-review-stats",
             ),
+            _export_card(deck, doc),
         ],
         className="qs-review",
     )

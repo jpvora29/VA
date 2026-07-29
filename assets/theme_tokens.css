@@ -1,0 +1,65 @@
+/* ============================================================================
+   Shared design tokens — the ONE source of truth for the chatbot app
+   (assets/style.css) and QBR Studio (assets/studio_authoring.css).
+
+   Both stylesheets alias their legacy variable names to these `--va-*` tokens
+   (style.css `:root`, studio_authoring.css `.qs-root`), so changing a value
+   here restyles BOTH apps, and a future merge into one app inherits an
+   identical brand, ink scale, elevation and motion language for free.
+
+   Load order does not matter: custom properties resolve at computed-value
+   time, and Dash serves every css file in /assets to every page.
+   ========================================================================== */
+
+:root {
+    /* ── brand ── */
+    --va-navy: #000F47;            /* Marsh navy — chrome, headings */
+    --va-navy-2: #0a1a52;
+    --va-blue: #0b4bff;            /* action blue — links, focus, CTAs */
+    --va-blue-soft: #eef3ff;       /* selected-state wash */
+    --va-cyan: #00a8e0;            /* data accent (charts, preview) */
+    --va-red: #c53532;             /* brand red — reserved for danger */
+
+    /* ── ink (text) scale ── */
+    --va-ink-900: #0b1320;
+    --va-ink-800: #1c2636;
+    --va-ink-700: #2b3647;
+    --va-ink-600: #424d61;
+    --va-ink-500: #5b6577;
+    --va-ink-400: #8a94a6;
+    --va-ink-300: #9aa3b2;
+
+    /* ── surfaces ── */
+    --va-surface-0: #ffffff;
+    --va-surface-1: #f5f7fb;
+    --va-surface-2: #eef2f8;
+
+    /* ── status (never colour-only: always paired with a label) ── */
+    --va-good: #1f9d55;
+    --va-warn: #b9810a;
+    --va-danger: #c53532;
+
+    /* ── lines & elevation ── */
+    --va-border-soft: rgba(12, 25, 58, 0.08);
+    --va-border-mid: rgba(12, 25, 58, 0.14);
+    --va-shadow-sm: 0 1px 2px rgba(10, 22, 54, 0.05);
+    --va-shadow-md: 0 8px 24px rgba(10, 22, 54, 0.08);
+    --va-shadow-lg: 0 20px 48px rgba(10, 22, 54, 0.12);
+
+    /* ── radii ── */
+    --va-radius-sm: 10px;
+    --va-radius-md: 14px;
+    --va-radius-lg: 20px;
+    --va-radius-pill: 999px;
+
+    /* ── motion ── */
+    --va-transition-fast: 160ms cubic-bezier(.4, .0, .2, 1);
+    --va-transition-med: 260ms cubic-bezier(.4, .0, .2, 1);
+
+    /* ── type ── */
+    --va-font: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+
+    /* ── primary action (one CTA look everywhere) ── */
+    --va-grad-cta: linear-gradient(135deg, var(--va-blue) 0%, #0838c9 55%, #001f52 140%);
+    --va-focus-ring: 0 0 0 3px rgba(11, 75, 255, 0.18);
+}

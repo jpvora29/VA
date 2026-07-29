@@ -48,6 +48,10 @@ def build_layout() -> html.Div:
             dcc.Store(id="qs-doc", data=None, storage_type="local"),
             # The filled-template document — the actual deliverable in template mode.
             dcc.Store(id="qs-tdoc", data=None, storage_type="local"),
+            # The active uploaded dataset — ONLY {"active": id, "rev": n}; the data
+            # itself lives server-side in the dataset repository, so it survives
+            # restarts without the stale-temp-file failure mode.
+            dcc.Store(id="qs-dataset", data=None, storage_type="local"),
             dcc.Download(id="studio-pptx-download"),
             # Hidden sink: the canvas JS writes select/move/resize actions here.
             dcc.Input(id="qs-cv-sink", style={"display": "none"}),

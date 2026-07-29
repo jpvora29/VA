@@ -452,17 +452,8 @@ def template_review_body(tdoc: Mapping[str, Any]) -> html.Div:
                 ],
                 className="qs-review-card",
             ),
-        ],
-        className="qs-review",
-    )
-
-
-def template_export_body(tdoc: Mapping[str, Any]) -> html.Div:
-    counts = TV.summary(dict(tdoc))
-    fields = materialize_fields(dict(tdoc))
-    filled = sum(1 for f in fields.values() if f["filled"])
-    return html.Div(
-        [
+            # Export folded into Review (Export is no longer its own mode): the
+            # summary + download button, served by the same ``qs-export`` callback.
             html.Div(
                 [
                     html.Div([html.I(className="bi bi-filetype-pptx"), "Export"], className="qs-panel-title"),
@@ -472,7 +463,7 @@ def template_export_body(tdoc: Mapping[str, Any]) -> html.Div:
                     html.Button([html.I(className="bi bi-download"), " Export PPTX"],
                                 id={"type": "qs-export", "loc": "panel"}, className="qs-review-cta"),
                 ],
-                className="qs-review-card",
+                className="qs-review-card qs-export-card",
             ),
         ],
         className="qs-review",

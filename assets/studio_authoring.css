@@ -6,38 +6,41 @@
    ========================================================================== */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
+/* Token values live in assets/theme_tokens.css, shared with the chatbot app
+   (assets/style.css) — these aliases keep the `qs-` names every rule below uses
+   while both apps draw from the same theme, so a future merge looks like one app. */
 .qs-root {
-    --navy: #000F47;
-    --navy-2: #0a1a52;
-    --blue: #0b4bff;
-    --blue-soft: #eef3ff;
-    --cyan: #00a8e0;
-    --ink: #1c2636;
-    --muted: #5b6577;
-    --faint: #8a94a6;
-    --good: #1f9d55;
-    --warn: #b9810a;
-    --danger: #c53532;
-    --line: rgba(12, 25, 58, 0.09);
-    --line-mid: rgba(12, 25, 58, 0.15);
-    --surface: #ffffff;
-    --work: #eef2f8;
-    --r-sm: 9px;
-    --r-md: 14px;
-    --r-lg: 20px;
-    --shadow-sm: 0 1px 2px rgba(10, 22, 54, 0.05);
-    --shadow-md: 0 10px 30px rgba(10, 22, 54, 0.09);
-    --shadow-lg: 0 24px 60px rgba(10, 22, 54, 0.16);
+    --navy: var(--va-navy);
+    --navy-2: var(--va-navy-2);
+    --blue: var(--va-blue);
+    --blue-soft: var(--va-blue-soft);
+    --cyan: var(--va-cyan);
+    --ink: var(--va-ink-800);
+    --muted: var(--va-ink-500);
+    --faint: var(--va-ink-400);
+    --good: var(--va-good);
+    --warn: var(--va-warn);
+    --danger: var(--va-danger);
+    --line: var(--va-border-soft);
+    --line-mid: var(--va-border-mid);
+    --surface: var(--va-surface-0);
+    --work: var(--va-surface-2);
+    --r-sm: var(--va-radius-sm);
+    --r-md: var(--va-radius-md);
+    --r-lg: var(--va-radius-lg);
+    --shadow-sm: var(--va-shadow-sm);
+    --shadow-md: var(--va-shadow-md);
+    --shadow-lg: var(--va-shadow-lg);
 
     display: grid;
     grid-template-columns: 76px minmax(0, 1fr);
     min-height: 100vh;
     background: var(--work);
     color: var(--ink);
-    font-family: 'Inter', Arial, Helvetica, sans-serif;
+    font-family: var(--va-font);
     -webkit-font-smoothing: antialiased;
 }
-.qs-root * { font-family: 'Inter', Arial, Helvetica, sans-serif; box-sizing: border-box; }
+.qs-root * { font-family: var(--va-font); box-sizing: border-box; }
 
 /* ── left mode rail ──────────────────────────────────────────────────────── */
 .qs-mode-rail {
@@ -1848,3 +1851,199 @@ body.qs-cv-dragging { user-select: none; cursor: grabbing; }
 .qs-gen-loader .dash-default-spinner-rect3,
 .qs-gen-loader .dash-default-spinner-rect4,
 .qs-gen-loader .dash-default-spinner-rect5 { background-color: #0b4bff !important; }
+
+/* ============================================================================
+   Alignment pass — one visual language with the chatbot app (theme_tokens.css).
+   Setup header, one CTA gradient everywhere, keyboard focus, scrollbars, motion.
+   ========================================================================== */
+
+/* ── Setup header: white hero band with brand eyebrow + governance chip ── */
+.qs-setup-head {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 18px;
+    background: var(--surface) !important;
+    border-bottom: 1px solid var(--line);
+    padding: 20px 28px 18px !important;
+}
+.qs-setup-head-text { min-width: 0; }
+.qs-setup-eyebrow {
+    font-size: 10px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--blue); margin-bottom: 4px;
+}
+.qs-govern-chip {
+    flex: none; display: inline-flex; align-items: center; gap: 7px; margin-top: 4px;
+    font-size: 11px; font-weight: 700; color: var(--good);
+    background: rgba(31, 157, 85, 0.1); border: 1px solid rgba(31, 157, 85, 0.22);
+    border-radius: var(--va-radius-pill); padding: 6px 12px; white-space: nowrap;
+}
+.qs-govern-chip i { font-size: 13px; }
+
+/* ── section titles: icon sits in a soft chip (matches aside + chatbot nav) ── */
+.qs-sec-title i {
+    display: inline-grid; place-items: center;
+    width: 26px; height: 26px; border-radius: 8px;
+    background: var(--blue-soft); color: var(--blue);
+}
+
+/* ── ONE primary-action look (same gradient as the chatbot CTA) ── */
+.qs-generate-btn,
+.qs-btn-primary,
+.qs-setup-aside .qs-generate-btn {
+    background: var(--va-grad-cta);
+    box-shadow: 0 10px 24px rgba(11, 75, 255, 0.32);
+}
+.qs-generate-btn:hover,
+.qs-setup-aside .qs-generate-btn:hover { box-shadow: 0 16px 34px rgba(11, 75, 255, 0.4); }
+
+/* ── numbers read as data: tabular figures in KPI tiles and counters ── */
+.qs-prev-value, .qs-rail-count-num, .qs-tchip-n, .qs-tsec-total b {
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── keyboard focus is always visible (chatbot blue ring) ── */
+.qs-root button:focus-visible,
+.qs-root .qs-tchip:focus-visible,
+.qs-root input:focus-visible,
+.qs-root .studio-report-radio .dash-options-list-option:focus-within {
+    outline: none;
+    box-shadow: var(--va-focus-ring);
+}
+.qs-root .qs-mode-rail .qs-mode-btn:focus-visible { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.35); }
+
+/* ── workspace scrollbars match the chatbot's ── */
+.qs-canvas-host::-webkit-scrollbar,
+.qs-root ::-webkit-scrollbar { width: 9px; height: 9px; }
+.qs-canvas-host::-webkit-scrollbar-thumb,
+.qs-root ::-webkit-scrollbar-thumb {
+    background: rgba(0, 44, 119, 0.18); border-radius: 10px;
+}
+.qs-canvas-host::-webkit-scrollbar-thumb:hover,
+.qs-root ::-webkit-scrollbar-thumb:hover { background: rgba(0, 44, 119, 0.32); }
+.qs-root ::-webkit-scrollbar-track { background: transparent; }
+
+/* ── quality floor: honour reduced-motion ── */
+@media (prefers-reduced-motion: reduce) {
+    .qs-root *, .qs-root *::before, .qs-root *::after {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+    }
+    .qs-generate-btn:hover, .qs-btn-primary:hover,
+    .qs-setup-aside .qs-generate-btn:hover { transform: none; }
+}
+
+@media (max-width: 720px) {
+    .qs-setup-head { flex-direction: column; }
+    .qs-govern-chip { margin-top: 0; }
+}
+
+/* ── Data mode (upload → map → preview) ──────────────────────────────────── */
+.qs-data-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.qs-data-active { display: flex; flex-direction: column; gap: 18px; }
+
+/* upload drop-zone */
+.qs-data-drop { border: 1.5px dashed var(--line-mid); border-radius: var(--r-md); cursor: pointer;
+    background: rgba(255,255,255,0.06); transition: border-color .15s ease, background .15s ease; }
+.qs-data-drop:hover { border-color: var(--cyan); background: rgba(255,255,255,0.12); }
+.qs-data-drop-inner { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 18px 10px; text-align: center; }
+.qs-data-drop-icon { font-size: 24px; color: #5cc8ff; }
+.qs-data-drop-title { font-size: 12.5px; font-weight: 700; color: #fff; }
+.qs-data-drop-sub { font-size: 11px; color: rgba(255,255,255,0.65); }
+.qs-data-upload-msg { margin-top: 8px; font-size: 11.5px; color: rgba(255,255,255,0.85); }
+.qs-data-upload-msg .warn { color: var(--warn); }
+
+/* saved datasets */
+.qs-ds-list { display: flex; flex-direction: column; gap: 6px; }
+.qs-ds-row { display: flex; align-items: stretch; gap: 6px; }
+.qs-ds-open { flex: 1; display: flex; align-items: center; gap: 10px; text-align: left; padding: 8px 10px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); cursor: pointer; min-width: 0; }
+.qs-ds-open:hover { border-color: var(--blue); }
+.qs-ds-row.active .qs-ds-open { border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue-soft); }
+.qs-ds-icon { color: var(--blue); font-size: 15px; }
+.qs-ds-name { font-size: 12.5px; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qs-ds-sub { font-size: 11px; color: var(--muted); }
+.qs-ds-delete { border: 1px solid var(--line); background: var(--surface); border-radius: var(--r-sm);
+    color: var(--muted); padding: 0 10px; cursor: pointer; }
+.qs-ds-delete:hover { color: var(--danger); border-color: var(--danger); }
+.qs-aside-card .qs-preview-empty, .qs-data-main .qs-preview-empty { color: var(--muted); }
+.qs-aside-card .qs-preview-empty i, .qs-data-main .qs-preview-empty i { color: var(--blue); }
+
+/* HITL mapping rows — a clean, scannable table with a mapped/unmapped state */
+.qs-map-rows { display: flex; flex-direction: column; gap: 6px; }
+.qs-map-row { display: grid;
+    grid-template-columns: 22px minmax(190px, 1.1fr) 18px minmax(190px, 1fr) minmax(220px, 1.4fr);
+    gap: 12px; align-items: center; padding: 10px 12px; background: var(--surface);
+    border: 1px solid var(--line); border-radius: var(--r-sm);
+    transition: border-color .15s ease, box-shadow .15s ease; }
+.qs-map-row:hover { border-color: var(--line-mid); box-shadow: var(--shadow-sm); }
+.qs-map-row.mapped { border-left: 3px solid var(--good); padding-left: 10px; }
+.qs-map-headrow { background: transparent; border: none; padding: 0 12px 0 12px; box-shadow: none !important; }
+.qs-map-h { font-size: 10.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.qs-map-state { font-size: 14px; color: var(--faint); }
+.qs-map-state.ok { color: var(--good); }
+.qs-map-src { min-width: 0; }
+.qs-map-colhead { display: flex; align-items: center; gap: 7px; }
+.qs-map-kind { color: var(--blue); font-size: 13px; }
+.qs-map-col { font-size: 12.5px; font-weight: 700; color: var(--ink); }
+.qs-map-colsub { font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; max-width: 340px; margin-top: 2px; }
+.qs-map-arrow { color: var(--faint); font-size: 13px; }
+.qs-map-dd .dash-dropdown-value, .qs-map-dd .dash-dropdown-placeholder { font-size: 12px; }
+.qs-map-desc { font-size: 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-sm);
+    background: var(--work); color: var(--ink); width: 100%; transition: border-color .15s ease, background .15s ease; }
+.qs-map-desc:focus { outline: none; border-color: var(--blue); background: var(--surface);
+    box-shadow: 0 0 0 3px var(--blue-soft); }
+.qs-map-desc::placeholder { color: var(--faint); }
+.qs-map-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+.qs-map-hint { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.qs-map-hint.warn { color: var(--warn); }
+.qs-map-hint.ok { color: var(--good); }
+.qs-map-submit { margin-top: 0; }
+
+/* primary measure + custom KPI capture */
+.qs-kpi-grid { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) minmax(220px, 1.6fr);
+    gap: 12px; align-items: end; }
+.qs-kpi-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.qs-kpi-field.grow { grid-column: auto; }
+.qs-kpi-row { display: grid;
+    grid-template-columns: minmax(140px, .9fr) minmax(170px, 1.1fr) 110px 110px minmax(200px, 1.4fr);
+    gap: 10px; align-items: center; padding: 9px 12px; background: var(--surface);
+    border: 1px solid var(--line); border-radius: var(--r-sm); }
+.qs-kpi-row.on { border-left: 3px solid var(--blue); padding-left: 10px; }
+.qs-kpi-dd .dash-dropdown-value, .qs-kpi-dd .dash-dropdown-placeholder { font-size: 12px; }
+
+/* shape & pivot */
+.qs-shape-stack { display: flex; flex-direction: column; gap: 14px; }
+.qs-colchip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.qs-colchip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px;
+    background: var(--work); border: 1px solid var(--line); border-radius: 999px;
+    font-size: 11.5px; font-weight: 600; color: var(--ink); }
+.qs-colchip.locked { color: var(--muted); }
+.qs-colchip-x { border: none; background: transparent; color: var(--muted); cursor: pointer;
+    padding: 0 4px; font-size: 12px; border-radius: 999px; line-height: 1; }
+.qs-colchip-x:hover { color: var(--danger); }
+.qs-colchip-lock { color: var(--faint); font-size: 12px; }
+.qs-addcol-bar { display: grid; grid-template-columns: minmax(140px, .8fr) minmax(220px, 1.6fr) auto minmax(120px, 1fr);
+    gap: 10px; align-items: center; }
+.qs-pivot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px; align-items: end; padding: 12px; background: var(--work);
+    border: 1px solid var(--line); border-radius: var(--r-sm); }
+.qs-pivot-apply { align-self: end; height: 36px; }
+
+/* grid preview */
+.qs-data-grid { border-radius: var(--r-sm); overflow: hidden; border: 1px solid var(--line); }
+
+/* Setup: data-source control + status */
+.qs-source-field { display: flex; flex-direction: column; gap: 8px; }
+.qs-source-status { display: inline-flex; align-items: center; gap: 7px; font-size: 12px;
+    font-weight: 600; color: var(--muted); }
+.qs-source-status i { font-size: 13px; }
+.qs-source-status.ok { color: var(--good); }
+
+/* review export card (folded in from the old Export mode) */
+.qs-export-card { margin-top: 4px; }
+.qs-export-card .qs-generate-btn { margin-top: 4px; }
+
+@media (max-width: 1100px) {
+    .qs-map-row, .qs-kpi-row, .qs-addcol-bar { grid-template-columns: 1fr; gap: 6px; }
+    .qs-map-arrow, .qs-map-headrow { display: none; }
+}

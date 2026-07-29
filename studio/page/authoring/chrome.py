@@ -12,17 +12,23 @@ from studio.page.authoring.derive import deck_counts
 
 
 def mode_rail(active: str, counts: Mapping[str, int]) -> html.Aside:
+    # The modes ARE a sequence (build pipeline: Setup → Data → Canvas → Review),
+    # so the rail renders as a numbered stepper — tile, step numeral, connector.
     items = [
         html.Button(
             [
-                html.I(className=f"bi {m['icon']}"),
+                html.Span(
+                    [html.I(className=f"bi {m['icon']}"),
+                     html.Span(str(i), className="qs-step-num")],
+                    className="qs-mode-tile",
+                ),
                 html.Span(m["label"], className="qs-mode-label"),
             ],
             id={"type": "qs-mode", "mode": m["id"]},
             className="qs-mode-btn" + (" active" if m["id"] == active else ""),
             title=m["hint"],
         )
-        for m in MODES
+        for i, m in enumerate(MODES, 1)
     ]
     return html.Aside(
         [

@@ -203,16 +203,26 @@ def _packet_json(plan: SlideCommentaryPlan, pack: EvidencePack,
 def _redraft_with_ai(
     plan: SlideCommentaryPlan, pack: EvidencePack, draft: Sequence[CommentarySentence]
 ) -> Optional[Tuple[CommentarySentence, ...]]:
+    """Redraft via the deep-agent harness (commentary-style skill) when on,
+    the one-shot structured call otherwise; the verifier gates both the same way.
+    """
     from studio.ai.client import llm_available, structured
+    from studio.ai.deep_agent import deep_agent_available, run_deep_agent
 
     if not llm_available() or not draft:
         return None
     cap = plan.contract.max_bullets * plan.contract.max_sentences_per_bullet
-    result = structured(
-        _ai_model(), _SYSTEM.format(max_sentences=cap),
-        _packet_json(plan, pack, draft), tier="fast",
-        node=f"commentary-{plan.purpose}",
-    )
+    model = _ai_model()
+    system = _SYSTEM.format(max_sentences=cap)
+    packet = _packet_json(plan, pack, draft)
+    node = f"commentary-{plan.purpose}"
+
+    result = None
+    if deep_agent_available():
+        result = run_deep_agent(packet, system_prompt=system, response_format=model,
+                                tier="fast", node=node)
+    if result is None:
+        result = structured(model, system, packet, tier="fast", node=node)
     if result is None or not result.sentences:
         return None
     return tuple(CommentarySentence(s.sentence, tuple(s.fact_ids)) for s in result.sentences)

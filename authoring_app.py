@@ -1,6 +1,6 @@
 """QBR Studio authoring workspace — runnable, wired to the real DB.
 
-A single hybrid workspace (Setup → Narrative → Canvas → Review → Export) built on
+A single hybrid workspace (Data → Setup → Canvas → Review) built on
 ONE shared, editable document (``studio.page.document``). Generate snapshots the
 deterministic ``DeckSpec`` into a document; every edit, reorder, hide, delete and
 widget-config change mutates that document; and BOTH the on-screen deck and the
@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from studio.authoring.data import register_data
 from studio.authoring.editing import register_editing
 from studio.authoring.export import register_export
 from studio.authoring.layout import build_layout, create_app
@@ -34,6 +35,7 @@ app = create_app()
 app.layout = build_layout()
 
 register_navigation(app)   # move between modes, slides, tabs, library panels
+register_data(app)         # upload datasets, map columns, manage saved datasets
 register_setup(app)        # Generate the deck, live scope preview
 register_editing(app)      # edit fields, pages, widgets, colors on the canvas
 register_export(app)       # fill/assemble the template and download the .pptx

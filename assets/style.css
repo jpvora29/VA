@@ -1,29 +1,31 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
+/* Values live in assets/theme_tokens.css (shared with QBR Studio) — these are
+   aliases so every existing rule keeps working while both apps share one theme. */
 :root {
-    --marsh-blue: #000F47;
-    --marsh-blue-2: #0b4bff;
-    --marsh-red: rgb(197, 53, 50);
-    --ink-900: #0b1320;
-    --ink-800: #1c2636;
-    --ink-700: #2b3647;
-    --ink-600: #424d61;
-    --ink-500: #5b6577;
-    --ink-300: #9aa3b2;
-    --surface-0: #ffffff;
-    --surface-1: #f5f7fb;
-    --surface-2: #eef2f8;
-    --border-soft: rgba(12, 25, 58, 0.08);
-    --border-mid: rgba(12, 25, 58, 0.14);
-    --shadow-sm: 0 1px 2px rgba(10, 22, 54, 0.05);
-    --shadow-md: 0 8px 24px rgba(10, 22, 54, 0.08);
-    --shadow-lg: 0 20px 48px rgba(10, 22, 54, 0.12);
-    --radius-sm: 10px;
-    --radius-md: 14px;
-    --radius-lg: 20px;
-    --radius-pill: 999px;
-    --transition-fast: 160ms cubic-bezier(.4, .0, .2, 1);
-    --transition-med: 260ms cubic-bezier(.4, .0, .2, 1);
+    --marsh-blue: var(--va-navy);
+    --marsh-blue-2: var(--va-blue);
+    --marsh-red: var(--va-red);
+    --ink-900: var(--va-ink-900);
+    --ink-800: var(--va-ink-800);
+    --ink-700: var(--va-ink-700);
+    --ink-600: var(--va-ink-600);
+    --ink-500: var(--va-ink-500);
+    --ink-300: var(--va-ink-300);
+    --surface-0: var(--va-surface-0);
+    --surface-1: var(--va-surface-1);
+    --surface-2: var(--va-surface-2);
+    --border-soft: var(--va-border-soft);
+    --border-mid: var(--va-border-mid);
+    --shadow-sm: var(--va-shadow-sm);
+    --shadow-md: var(--va-shadow-md);
+    --shadow-lg: var(--va-shadow-lg);
+    --radius-sm: var(--va-radius-sm);
+    --radius-md: var(--va-radius-md);
+    --radius-lg: var(--va-radius-lg);
+    --radius-pill: var(--va-radius-pill);
+    --transition-fast: var(--va-transition-fast);
+    --transition-med: var(--va-transition-med);
 }
 
 /* ---------- Base ---------- */

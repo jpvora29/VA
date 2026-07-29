@@ -13,6 +13,7 @@ from studio.qa.content_checks import (
     check_confidentiality,
     check_evidence_gaps,
 )
+from studio.qa.explain import explain_qa_report, summarize_qa_counts
 from studio.qa.report import CRITICAL, INFO, WARNING, QAIssue, QAReport, merge_reports
 from studio.qa.template_checks import (
     check_binding_health,
@@ -23,7 +24,7 @@ from studio.qa.template_checks import (
 
 __all__ = [
     "QAIssue", "QAReport", "CRITICAL", "WARNING", "INFO",
-    "merge_reports", "run_qbr_qa",
+    "merge_reports", "run_qbr_qa", "explain_qa_report", "summarize_qa_counts",
     "check_required_slots", "check_charts", "check_intentional_blanks",
     "check_binding_health", "check_commentary_citations",
     "check_commentary_verification", "check_confidentiality", "check_evidence_gaps",

@@ -31,10 +31,31 @@ log = get_logger(__name__)
 # ── small value helpers ───────────────────────────────────────────────────────
 
 
-def _friendly_options() -> Dict[str, Any]:
-    """DB filter options keyed back to the form's friendly ids (region, carrier…)."""
+def _friendly_options(dataset_store: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Filter options keyed back to the form's friendly ids (region, carrier…).
+
+    When a submitted custom dataset is in use, the options derive from ITS
+    materialized table — every dropdown reflects exactly what the user uploaded;
+    otherwise the governed DB's cached distincts."""
+    from studio.dataset.source import dataset_filter_options, dataset_in_use
+
+    record = dataset_in_use(dataset_store)
+    if record is not None:
+        return dataset_filter_options(record.dataset_id, FILTER_COLUMN)
     col_opts = cached_filter_options("gpr")
     return {fid: col_opts.get(col, []) for fid, col in FILTER_COLUMN.items()}
+
+
+def _engine_for(selection: Dict[str, Any]):
+    """The engine a selection computes against — the submitted dataset's SQLite
+    when the selection pins a ``dataset_id``, else the governed engine. The id
+    lives inside the selection JSON, so every lru_cache key already varies."""
+    dataset_id = (selection or {}).get("dataset_id")
+    if dataset_id:
+        from studio.dataset.source import dataset_engine
+
+        return dataset_engine(dataset_id)
+    return engine
 
 
 def _one(value):
@@ -85,7 +106,7 @@ def _deck_for(selection_json: str) -> Optional[DeckSpec]:
     result = compute_overall(
         filters=filters,
         breakdowns=sel.get("breakdowns") or BREAKDOWNS,
-        engine=engine,
+        engine=_engine_for(sel),
         peers=sel.get("peers") or None,
         style=sel.get("style") or "balanced",
     )
@@ -132,7 +153,7 @@ def _tdoc_for(selection_json: str) -> Optional[Dict[str, Any]]:
     result = compute_overall(
         filters=filters,
         breakdowns=sel.get("breakdowns") or BREAKDOWNS,
-        engine=engine,
+        engine=_engine_for(sel),
         peers=sel.get("peers") or None,
         style=sel.get("style") or "balanced",
     )
@@ -184,7 +205,7 @@ def _assembled_for(selection_json: str) -> Optional[str]:
     result = compute_overall(
         filters=filters,
         breakdowns=selection.get("breakdowns") or BREAKDOWNS,
-        engine=engine,
+        engine=_engine_for(selection),
         peers=selection.get("peers") or None,
         style=selection.get("style") or "balanced",
     )

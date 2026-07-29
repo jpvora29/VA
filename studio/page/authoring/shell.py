@@ -15,8 +15,8 @@ from studio.deck.model import DeckSpec
 from studio.page.authoring.canvas import canvas_body
 from studio.page.authoring.chrome import _placeholder_topbar, mode_rail, top_bar
 from studio.page.authoring.constants import ZOOM_FIT
+from studio.page.authoring.data import data_body
 from studio.page.authoring.derive import deck_counts
-from studio.page.authoring.export import export_body
 from studio.page.authoring.review import review_body
 from studio.page.authoring.setup import setup_body
 
@@ -51,11 +51,17 @@ def body_for(
     filter_options: Mapping[str, Any] | None = None,
     filter_values: Mapping[str, Any] | None = None,
     tdoc: Optional[Mapping[str, Any]] = None,
+    dataset: Optional[Mapping[str, Any]] = None,
 ) -> Any:
+    if mode == "data":
+        return data_body(dataset)
     if mode == "setup":
-        return setup_body(cut_groups, filter_options=filter_options, filter_values=filter_values)
+        return setup_body(
+            cut_groups, filter_options=filter_options, filter_values=filter_values,
+            dataset=dataset,
+        )
     # Template-faithful bodies: when a template doc exists it IS the deliverable —
-    # the canvas previews the filled template, Review validates it, Export fills it.
+    # the canvas previews the filled template, Review validates it (and hosts Export).
     if tdoc:
         from studio.page import template_preview as TP
 
@@ -63,8 +69,6 @@ def body_for(
             return TP.template_preview_body(tdoc, view)
         if mode == "review":
             return TP.template_review_body(tdoc)
-        if mode == "export":
-            return TP.template_export_body(tdoc)
     if deck is None or not deck.slides:
         return empty_canvas()
     idx = int(view.get("idx", 0))
@@ -86,8 +90,6 @@ def body_for(
         )
     if mode == "review":
         return review_body(deck, doc)
-    if mode == "export":
-        return export_body(deck, doc)
     return canvas_body(deck, idx, doc, view.get("sel"), view.get("zoom", ZOOM_FIT))
 
 
@@ -101,6 +103,7 @@ def authoring_shell(
     filter_options: Mapping[str, Any] | None = None,
     filter_values: Mapping[str, Any] | None = None,
     tdoc: Optional[Mapping[str, Any]] = None,
+    dataset: Optional[Mapping[str, Any]] = None,
 ) -> html.Div:
     view = view or {"idx": 0, "tab": "setup"}
     counts = deck_counts(deck, doc) if deck else {"total": 0}
@@ -113,7 +116,7 @@ def authoring_shell(
     body = body_for(
         mode, deck, view, doc,
         cut_groups=cut_groups, filter_options=filter_options, filter_values=filter_values,
-        tdoc=tdoc,
+        tdoc=tdoc, dataset=dataset,
     )
     return html.Div(
         [
