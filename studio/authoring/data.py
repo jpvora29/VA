@@ -221,11 +221,14 @@ def register_data(app):
         try:
             frame, truncated = read_upload(filename or "", _decode_upload(contents))
         except ValueError as exc:
+            # ``read_upload`` phrases every parse failure for the user (wrong type,
+            # empty OneDrive placeholder, missing engine, mislabelled file), so show it.
+            log.warning("upload rejected for %s: %s", filename, exc)
             return no_update, html.Span(str(exc), className="qs-map-hint warn")
         except Exception as exc:  # noqa: BLE001 — a broken file must not white-screen the app
             log.warning("upload parse failed for %s: %s", filename, exc)
             return no_update, html.Span(
-                f"Could not read {filename!r} — is it a valid spreadsheet?",
+                f"Could not read {filename!r}: {exc}",
                 className="qs-map-hint warn",
             )
         name = (filename or "dataset").rsplit(".", 1)[0]

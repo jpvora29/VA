@@ -55,6 +55,81 @@ def test_read_upload_rejects_unknown_extension():
         read_upload("notes.txt", b"hello")
 
 
+# ── the upload error message must name the real cause, not guess "wrong type" ──
+
+
+def _ooxml_bytes() -> bytes:
+    buf = io.BytesIO()
+    _frame().to_excel(buf, index=False)
+    return buf.getvalue()
+
+
+def test_macro_enabled_workbook_is_accepted():
+    """A .xlsm is the same OOXML zip as a .xlsx; rejecting it read as 'wrong type'."""
+    frame, _ = read_upload("book.xlsm", _ooxml_bytes())
+    assert list(frame.columns) == ["Insurer", "GWP", "Yr"]
+
+
+def test_extension_match_is_case_insensitive():
+    frame, _ = read_upload("BOOK.XLSX", _ooxml_bytes())
+    assert len(frame) == 4
+
+
+def test_legacy_xls_engine_is_installed():
+    """`.xls` is advertised as supported, so pandas' xlrd engine must be present —
+    without it a perfectly good workbook failed with 'is it a valid spreadsheet?'."""
+    import xlrd  # noqa: F401 — a declared dependency; the assert is the import
+
+    from studio.dataset.ingest import _READERS
+
+    assert _READERS[".xls"].__name__ == "_read_xlrd"
+
+
+def test_no_advertised_extension_fails_vaguely():
+    """SUPPORTED_EXTENSIONS drives the picker's `accept`, so every listed type must
+    either parse or explain exactly what is missing — never 'wrong file type'."""
+    from studio.dataset.ingest import SUPPORTED_EXTENSIONS
+
+    for ext in SUPPORTED_EXTENSIONS:
+        try:
+            read_upload(f"book{ext}", _ooxml_bytes())
+        except ValueError as exc:
+            message = str(exc)
+            assert "Unsupported file type" not in message, ext
+            # Either an engine is missing, or the bytes genuinely aren't that format.
+            assert "package" in message or "named" in message or "could not be" in message, (ext, message)
+
+
+def test_empty_upload_blames_the_cloud_placeholder_not_the_file_type():
+    with pytest.raises(ValueError, match="empty"):
+        read_upload("book.xlsx", b"")
+
+
+def test_mislabelled_workbook_says_what_it_actually_is():
+    """A legacy/encrypted workbook renamed .xlsx: the type IS wrong, so say so
+    precisely instead of 'is it a valid spreadsheet?'."""
+    with pytest.raises(ValueError, match="legacy .xls workbook, or a password-protected"):
+        read_upload("book.xlsx", b"\xd0\xcf\x11\xe0" + b"\x00" * 32)
+
+
+def test_html_saved_as_xlsx_is_named_as_such():
+    with pytest.raises(ValueError, match="HTML or XML"):
+        read_upload("book.xlsx", b"<html><table><tr><td>1</td></tr></table>")
+
+
+def test_missing_engine_names_the_package(monkeypatch):
+    """When an optional engine is absent the file is fine — we are not. Say which
+    package to install rather than implying the upload was the wrong type."""
+    from studio.dataset import ingest
+
+    def _no_engine(_data):
+        raise ImportError("Missing optional dependency 'pyxlsb'")
+
+    monkeypatch.setitem(ingest._READERS, ".xlsb", _no_engine)
+    with pytest.raises(ValueError, match="pyxlsb"):
+        read_upload("book.xlsb", b"PK\x03\x04")
+
+
 def test_read_upload_strips_header_whitespace():
     frame, _ = read_upload("x.csv", b" Carrier , Premium \nZurich,10\n")
     assert list(frame.columns) == ["Carrier", "Premium"]

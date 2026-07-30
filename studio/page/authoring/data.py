@@ -16,6 +16,7 @@ from typing import Any, List, Mapping, Optional, Sequence
 import dash_ag_grid as dag
 from dash import dcc, html
 
+from studio.dataset.ingest import SUPPORTED_EXTENSIONS
 from studio.dataset.model import (
     REQUIRED_TARGETS,
     ColumnMapping,
@@ -76,11 +77,17 @@ def _upload_zone() -> html.Div:
                 children=html.Div(
                     [
                         html.I(className="bi bi-file-earmark-spreadsheet qs-data-drop-icon"),
-                        html.Div("Drop a .csv or .xlsx here", className="qs-data-drop-title"),
-                        html.Div("or click to browse — up to 100k rows", className="qs-data-drop-sub"),
+                        html.Div("Drop a spreadsheet here", className="qs-data-drop-title"),
+                        html.Div(
+                            f"or click to browse — {', '.join(SUPPORTED_EXTENSIONS)}, up to 100k rows",
+                            className="qs-data-drop-sub",
+                        ),
                     ],
                     className="qs-data-drop-inner",
                 ),
+                # Filter the OS file picker to what we can actually parse, so a wrong
+                # type is caught before the round trip rather than after it.
+                accept=",".join(SUPPORTED_EXTENSIONS),
                 multiple=False,
                 className="qs-data-drop",
             ),
