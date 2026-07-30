@@ -91,9 +91,12 @@ from studio.page.authoring.setup import (
     _ai_control,
     _audience_length,
     _radio_field,
+    _peers_panel,
     _scope_preview,
     _setup_section,
     _template_control,
+    peer_set_body,
+    scope_axes,
     scope_preview_card,
     scope_preview_empty,
     setup_body,
@@ -111,6 +114,7 @@ __all__ = [
     "mode_rail", "top_bar",
     # setup
     "scope_preview_empty", "scope_preview_card", "template_sections_panel", "setup_body",
+    "peer_set_body", "scope_axes",
     # canvas
     "normalized_zoom", "adjusted_zoom", "zoom_scale", "canvas_body",
     # data / review (review hosts the export card)

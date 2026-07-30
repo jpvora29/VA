@@ -140,14 +140,14 @@ def test_submit_mappings_persists_user_choices(tmp_path):
     repo = DatasetRepository(tmp_path)
     record = repo.save(_frame(), name="book", filename="book.csv")
 
-    ok = submit_mappings(
+    error = submit_mappings(
         repo,
         record.dataset_id,
         ["Insurer", "GWP", "Yr"],
         ["Carrier_Group", "Premium", "Year"],
         ["Who wrote the business", "Gross written premium", "Billing year"],
     )
-    assert ok is True
+    assert error is None
 
     reloaded = repo.get(record.dataset_id)
     assert reloaded.status == "mapped"
@@ -161,8 +161,34 @@ def test_submit_mappings_rejects_missing_dataset(tmp_path):
     from studio.authoring.data import submit_mappings
 
     repo = DatasetRepository(tmp_path)
-    assert submit_mappings(repo, "0123456789ab", ["A"], ["Premium"], [""]) is False
-    assert submit_mappings(repo, None, [], [], []) is False
+    assert submit_mappings(repo, "0123456789ab", ["A"], ["Premium"], [""])
+    assert submit_mappings(repo, None, [], [], [])
+
+
+def test_submit_mappings_requires_description_when_unmapped(tmp_path):
+    """An unmapped column has nothing but its description to explain it."""
+    from studio.authoring.data import submit_mappings
+
+    repo = DatasetRepository(tmp_path)
+    record = repo.save(_frame(), name="book", filename="book.csv")
+
+    error = submit_mappings(
+        repo, record.dataset_id,
+        ["Insurer", "GWP", "Yr"],
+        ["Carrier_Group", "Premium", ""],   # Yr left unmapped…
+        ["who", "gross", "   "],            # …and only whitespace to explain it
+    )
+    assert error and "Yr" in error
+    assert repo.get(record.dataset_id).mappings == ()  # nothing persisted
+
+    # A description on the unmapped column clears the block.
+    assert submit_mappings(
+        repo, record.dataset_id,
+        ["Insurer", "GWP", "Yr"],
+        ["Carrier_Group", "Premium", ""],
+        ["who", "gross", "Reporting year, free text"],
+    ) is None
+    assert len(repo.get(record.dataset_id).mappings) == 3
 
 
 def test_submit_mappings_incomplete_saves_but_stays_unmapped(tmp_path):
@@ -173,8 +199,7 @@ def test_submit_mappings_incomplete_saves_but_stays_unmapped(tmp_path):
     repo = DatasetRepository(tmp_path)
     record = repo.save(_frame(), name="book", filename="book.csv")
 
-    ok = submit_mappings(repo, record.dataset_id, ["GWP"], ["Premium"], ["gross"])
-    assert ok is True
+    assert submit_mappings(repo, record.dataset_id, ["GWP"], ["Premium"], ["gross"]) is None
 
     reloaded = repo.get(record.dataset_id)
     assert reloaded.status == "uploaded"  # saved, but not complete

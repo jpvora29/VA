@@ -6,7 +6,7 @@ deterministic deck into a fresh document, and jumps to the canvas.
 """
 from __future__ import annotations
 
-from dash import ALL, Input, Output, State, ctx, no_update
+from dash import ALL, Input, Output, State, no_update
 
 from logger import get_logger
 from studio.compute import FILTER_COLUMN
@@ -44,6 +44,71 @@ def _scope_template_path(scope):
         return registry.active_template_path()
 
 
+def generation_block_reason(dataset_store, record) -> str:
+    """Why Generate must not run for this data source, or "" when it may.
+
+    A deck is premium-derived end to end (totals, YoY, rank, share of wallet),
+    so custom data without a money measure can't produce one. This also stops
+    the silent fallback where "My uploaded data" is selected but nothing has
+    been submitted — that used to build a governed-DB deck instead.
+    """
+    from studio.dataset.model import premium_mapped
+    from studio.dataset.repository import get_repository
+
+    if (dataset_store or {}).get("source") != "custom":
+        return ""
+    if record is not None:
+        return "" if premium_mapped(record) else (
+            "This dataset has no Premium column and no primary measure. "
+            "Map one on the Data page, then submit it."
+        )
+    active = (dataset_store or {}).get("active")
+    saved = get_repository().get(active or "")
+    if saved is None:
+        return "Upload a dataset on the Data page, or switch back to the existing database."
+    if not premium_mapped(saved):
+        return (
+            f"“{saved.name}” has no Premium column and no primary measure. "
+            "Map one on the Data page, then submit it."
+        )
+    return f"“{saved.name}” isn't in use yet — open the Data page and choose “Use this data for the deck”."
+
+
+# Filters that must NOT narrow the peer candidate list: the carrier is the subject
+# (never its own peer) and the year would drop a peer just for having a quiet year.
+_PEER_SCOPE_SKIP = ("carrier", "year")
+
+
+def carriers_in_scope(filters, record) -> list:
+    """`[{label, value}]` for every carrier that writes under the current filters.
+
+    This is what makes the peer choices *correct*: country, region, product line and
+    the rest all narrow the list, and the selected carrier is removed from it.
+    """
+    from studio.dataset.source import dataset_dependent_options
+
+    where = {
+        FILTER_COLUMN[c]: v
+        for c, v in (filters or {}).items()
+        if c not in _PEER_SCOPE_SKIP and c in FILTER_COLUMN
+    }
+    opts = (
+        dataset_dependent_options(record.dataset_id, "Carrier_Group", where)
+        if record is not None
+        else dependent_options("gpr", "Carrier_Group", where)
+    )
+    subject = str((filters or {}).get("carrier") or "").lower()
+    return [o for o in opts if str(o.get("value", "")).lower() != subject]
+
+
+def _generation_blocked(dataset_store, record):
+    """The block reason as a rendered warning, or None when generation may run."""
+    from dash import html
+
+    reason = generation_block_reason(dataset_store, record)
+    return html.Span(reason, className="qs-map-hint warn") if reason else None
+
+
 def register_setup(app):
     """Wire the Generate + scope-preview callbacks onto ``app``."""
 
@@ -53,8 +118,8 @@ def register_setup(app):
         Output("qs-tdoc", "data", allow_duplicate=True),
         Output("qs-view", "data", allow_duplicate=True),
         Output("qs-generating", "data"),
+        Output("studio-setup-msg", "children"),
         Input("studio-generate", "n_clicks"),
-        State("studio-report-type", "value"),
         State({"type": "studio-filter", "col": ALL}, "value"),
         State({"type": "studio-filter", "col": ALL}, "id"),
         State({"type": "studio-cut", "name": ALL}, "value"),
@@ -68,10 +133,10 @@ def register_setup(app):
         State("qs-dataset", "data"),
         prevent_initial_call=True,
     )
-    def generate(n, report, fvals, fids, cut_vals, cut_ids, peer_mode, custom_peers,
+    def generate(n, fvals, fids, cut_vals, cut_ids, peer_mode, custom_peers,
                  audience, style, ai, template_scope, dataset_store):
         if not n:
-            return no_update, no_update, no_update, no_update, no_update
+            return no_update, no_update, no_update, no_update, no_update, no_update
         from studio.dataset.source import dataset_in_use
 
         filters = {i["col"]: v for i, v in zip(fids or [], fvals or []) if v not in BLANK}
@@ -86,8 +151,12 @@ def register_setup(app):
         # A submitted custom dataset pins its id into the selection: every cached
         # build (deck / tdoc / assembled) then keys and computes on THAT data.
         record = dataset_in_use(dataset_store)
+        blocked = _generation_blocked(dataset_store, record)
+        if blocked:
+            return no_update, no_update, no_update, no_update, no_update, blocked
         selection = {
-            "report": report or "qbr",
+            # Full QBR is the only deliverable, so the Setup form no longer asks.
+            "report": "qbr",
             "filters": filters,
             # The breakdown control was removed from Setup; the deck keeps the deterministic
             # default breakdowns so the on-screen DeckSpec still has its sections.
@@ -107,7 +176,7 @@ def register_setup(app):
         # Preview the ASSEMBLED deck (overall + per product + per country); fall back to the
         # single-template doc only if assembly can't run.
         tdoc = _generated_assembled_tdoc(selection) or _generated_tdoc(selection)
-        return selection, doc, tdoc, {"mode": "canvas", "idx": 0, "tab": "setup"}, n
+        return selection, doc, tdoc, {"mode": "canvas", "idx": 0, "tab": "setup"}, n, ""
 
     @app.callback(
         Output({"type": "studio-filter", "col": ALL}, "options"),
@@ -148,39 +217,62 @@ def register_setup(app):
 
     @app.callback(
         Output("studio-peer-custom", "options"),
+        Output("studio-peer-custom-wrap", "style"),
         Output("studio-peer-msg", "children"),
-        Input({"type": "studio-filter", "col": "carrier"}, "value"),
-        Input({"type": "studio-filter", "col": "country"}, "value"),
+        Input({"type": "studio-filter", "col": ALL}, "value"),
         Input("studio-peer-mode", "value"),
+        State({"type": "studio-filter", "col": ALL}, "id"),
         State("qs-dataset", "data"),
-        prevent_initial_call=True,
     )
-    def peer_panel(carrier, country, mode, dataset_store):
-        """Populate custom-peer options and the existing-peers message.
+    def peer_panel(values, mode, ids, dataset_store):
+        """Populate the peer set for the current scope.
 
-        This callback existed only in the demo app, which left the authoring
-        Setup's peer panel dead. Options track the active data source; the
-        Peers table itself stays governed, so with custom data the existing-
-        peers mode explains that custom peers are the way."""
-        from studio.dataset.source import dataset_dependent_options, dataset_in_use
+        Existing mode shows ONLY the carrier's peer group from the Peers table, as
+        names — there is nothing to choose, so the custom dropdown is hidden. Custom
+        mode shows carriers that actually write under the current filters (country,
+        region, product line…), never the whole database and never the subject
+        itself. The Peers table is governed, so a custom dataset has no existing
+        group and is told to pin its own.
+        """
+        from studio.dataset.source import dataset_in_use
 
+        filters = {i["col"]: v for i, v in zip(ids or [], values or []) if v not in BLANK}
+        carrier = filters.get("carrier")
+        country = filters.get("country")
         record = dataset_in_use(dataset_store)
-        where = {"Country": country} if country not in (None, "", [], "all", "All") else None
-        if record is not None:
-            opts = dataset_dependent_options(record.dataset_id, "Carrier_Group", where)
-        else:
-            opts = dependent_options("gpr", "Carrier_Group", where)
+        opts = carriers_in_scope(filters, record)
+        shown = {str(o.get("value", "")).lower() for o in opts}
+
         if mode == "custom":
-            return opts, "Pick the peers to benchmark against — output shows the aggregate only."
+            return opts, {}, A.peer_set_body(
+                (), "Pick the carriers to benchmark against — the deck shows the aggregate only.",
+            )
+        hidden = {"display": "none"}
         if not carrier:
-            return opts, "Select a carrier to see its existing peers."
+            return opts, hidden, A.peer_set_body((), "Select a carrier to see its existing peers.")
         if record is not None:
-            return opts, "Your data has no governed peer group — switch to Custom peers to benchmark."
+            return opts, hidden, A.peer_set_body(
+                (), "Your data has no governed peer group — switch to Custom peers to benchmark.",
+                tone="warn",
+            )
         members = peer_members("gpr", carrier, country=country)
-        if members:
-            shown = ", ".join(members[:8]) + ("…" if len(members) > 8 else "")
-            return opts, f"Existing peers ({len(members)}): {shown}"
-        return opts, "No peers exist for this carrier — switch to Custom peers."
+        if not members:
+            return opts, hidden, A.peer_set_body(
+                (), f"No peer group exists for {carrier} — switch to Custom peers.", tone="warn",
+            )
+        # The Peers table is scope-free, so a listed peer may write nothing in the
+        # chosen country/product scope. Show who counts, and name who drops out.
+        in_scope = [m for m in members if str(m).lower() in shown]
+        absent = [m for m in members if str(m).lower() not in shown]
+        if not in_scope:
+            return opts, hidden, A.peer_set_body(
+                members, "None of these peers write in the current scope — widen the "
+                         "filters or switch to Custom peers.", tone="warn",
+            )
+        note = f"{len(in_scope)} peer{'s' if len(in_scope) > 1 else ''} from the Peers table."
+        if absent:
+            note += f" Not writing in this scope: {', '.join(absent)}."
+        return opts, hidden, A.peer_set_body(in_scope, note)
 
     @app.callback(
         Output("studio-scope-preview", "children"),

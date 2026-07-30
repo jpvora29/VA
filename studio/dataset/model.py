@@ -132,10 +132,31 @@ def mapping_complete(mappings: Tuple[ColumnMapping, ...]) -> bool:
     return all(t in covered for t in REQUIRED_TARGETS)
 
 
+def undescribed_unmapped(mappings: Tuple[ColumnMapping, ...]) -> Tuple[str, ...]:
+    """Unmapped columns that carry no description, in form order.
+
+    A column with no canonical target has nothing to explain it — the deck
+    can't infer meaning from the name alone — so a description is mandatory
+    before the mapping can be submitted."""
+    return tuple(
+        m.uploaded for m in mappings
+        if not m.target and not (m.description or "").strip()
+    )
+
+
+def premium_mapped(record: "DatasetRecord") -> bool:
+    """True when a money measure exists: a column mapped to Premium, or a
+    designated primary measure that materializes as Premium. Deck generation
+    is refused without one — every template analytic is premium-derived."""
+    if any(m.target == "Premium" for m in record.mappings):
+        return True
+    return bool(record.primary and (record.primary.column or record.primary.formula))
+
+
 def record_complete(record: "DatasetRecord") -> bool:
     """Like ``mapping_complete``, but a designated primary measure covers Premium."""
     covered = {m.target for m in record.mappings if m.target}
-    if record.primary and (record.primary.column or record.primary.formula):
+    if premium_mapped(record):
         covered.add("Premium")
     return all(t in covered for t in REQUIRED_TARGETS)
 

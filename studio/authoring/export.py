@@ -137,20 +137,13 @@ def register_export(app):
     def template_sections(scope):
         """Refresh the 'Deck sections' list when the assembly scope changes.
 
-        The control now carries an axis scope ("all"/"overall"/"product"/"country"); the
-        panel previews the representative template for that axis ("overall" for "all").
+        The scope carries an axis set ("all" → overall + product + country); the panel
+        lists EVERY axis that scope assembles. Previewing only the overall template
+        made switching back to "All" look like the panel had stopped updating.
         """
         if not scope:
             return no_update
-        from studio.template_fill.binding_map import available, template_path
-
-        axes = set(available())
-        axis = scope if scope in {"overall", "product", "country"} else "overall"
-        if axis not in axes:
-            axis = "overall" if "overall" in axes else (sorted(axes)[0] if axes else None)
-        if not axis:
-            return no_update
-        return A.template_sections_panel(template_path(axis))
+        return A.template_sections_panel(scope)
 
     @app.callback(
         Output("qs-view", "data", allow_duplicate=True),

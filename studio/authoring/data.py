@@ -24,6 +24,7 @@ from studio.dataset.model import (
     CustomMeasure,
     PivotSpec,
     record_complete,
+    undescribed_unmapped,
 )
 from studio.dataset.repository import get_repository
 
@@ -79,16 +80,17 @@ def _kpis_from_rows(columns, names, aggs, fmts, descs) -> tuple:
 def submit_mappings(
     repo, active_id, columns, targets, descriptions,
     *, primary: Optional[CustomMeasure] = None, kpis: Sequence[CustomMeasure] = (),
-) -> bool:
+) -> Optional[str]:
     """Persist the full HITL submission: mappings, primary measure, custom KPIs.
 
-    Partial work is always saved, but the record only reaches ``mapped`` once
+    Returns an error message, or None on success. Every unmapped column must
+    carry a description — with no canonical target, the description is the only
+    thing that says what the column means. The record reaches ``mapped`` once
     Premium (directly or via the primary measure), Carrier_Group and Year are
-    covered — the same rule the UI hints at. A submitted dataset that is edited
-    drops back to ``mapped`` until Use-for-deck re-materializes it."""
+    covered; otherwise the work is saved but stays ``uploaded``."""
     record = repo.get(active_id) if active_id else None
     if record is None:
-        return False
+        return "No active dataset."
     mappings = tuple(
         ColumnMapping(
             uploaded=col,
@@ -98,12 +100,16 @@ def submit_mappings(
         )
         for col, target, desc in zip(columns, targets, descriptions)
     )
+    missing = undescribed_unmapped(mappings)
+    if missing:
+        shown = ", ".join(missing[:4]) + ("…" if len(missing) > 4 else "")
+        return f"Describe every unmapped column before submitting: {shown}"
     updated = replace(
         record, mappings=mappings, primary=primary, custom_measures=tuple(kpis),
     )
     status = "mapped" if record_complete(updated) else "uploaded"
     repo.update_record(replace(updated, status=status))
-    return True
+    return None
 
 
 def add_column(repo, active_id, name, formula) -> Optional[str]:
@@ -256,6 +262,7 @@ def register_data(app):
 
     @app.callback(
         Output("qs-dataset", "data", allow_duplicate=True),
+        Output("qs-map-msg", "children"),
         Input("qs-map-submit", "n_clicks"),
         State({"type": "qs-map-target", "col": ALL}, "value"),
         State({"type": "qs-map-target", "col": ALL}, "id"),
@@ -276,96 +283,79 @@ def register_data(app):
                        primary_name, primary_col, primary_formula, store):
         active = (store or {}).get("active")
         if not n or not active:
-            return no_update
+            return no_update, no_update
         columns = [ident["col"] for ident in (target_ids or [])]
         kpis = _kpis_from_rows(
             [i["col"] for i in (kpi_ids or [])],
             kpi_names or [], kpi_aggs or [], kpi_fmts or [], kpi_descs or [],
         )
         primary = _primary_from_fields(primary_name, primary_col, primary_formula)
-        ok = submit_mappings(
+        error = submit_mappings(
             get_repository(), active, columns, targets or [], descriptions or [],
             primary=primary, kpis=kpis,
         )
-        return _bump(store, active) if ok else no_update
-
-    @app.callback(
-        Output("qs-dataset", "data", allow_duplicate=True),
-        Output("qs-col-msg", "children"),
-        Input("qs-col-add", "n_clicks"),
-        State("qs-col-name", "value"),
-        State("qs-col-formula", "value"),
-        State("qs-dataset", "data"),
-        prevent_initial_call=True,
-    )
-    def add_column_cb(n, name, formula, store):
-        active = (store or {}).get("active")
-        if not n or not active:
-            return no_update, no_update
-        error = add_column(get_repository(), active, name, formula)
         if error:
-            return no_update, error
+            return no_update, html.Span(error, className="qs-map-hint warn")
         return _bump(store, active), ""
 
-    @app.callback(
-        Output("qs-dataset", "data", allow_duplicate=True),
-        Input({"type": "qs-col-del", "col": ALL}, "n_clicks"),
-        State("qs-dataset", "data"),
-        prevent_initial_call=True,
-    )
-    def delete_column_cb(clicks, store):
-        active = (store or {}).get("active")
-        if not ctx.triggered_id or not any(clicks or []) or not active:
-            return no_update
-        if not delete_column(get_repository(), active, ctx.triggered_id["col"]):
-            return no_update
-        return _bump(store, active)
-
-    @app.callback(
-        Output("qs-dataset", "data", allow_duplicate=True),
-        Input("qs-pivot-apply", "n_clicks"),
-        State("qs-pivot-rows", "value"),
-        State("qs-pivot-cols", "value"),
-        State("qs-pivot-values", "value"),
-        State("qs-pivot-agg", "value"),
-        State("qs-pivot-fcol", "value"),
-        State("qs-pivot-fvals", "value"),
-        State("qs-dataset", "data"),
-        prevent_initial_call=True,
-    )
-    def apply_pivot_cb(n, rows, cols, values, agg, fcol, fvals, store):
-        active = (store or {}).get("active")
-        if not n or not active:
-            return no_update
-        if not apply_pivot(get_repository(), active, rows, cols, values, agg, fcol, fvals):
-            return no_update
-        return _bump(store, active)
-
-    @app.callback(
-        Output("qs-pivot-fvals", "options"),
-        Input("qs-pivot-fcol", "value"),
-        State("qs-dataset", "data"),
-        prevent_initial_call=True,
-    )
-    def pivot_filter_values(fcol, store):
-        """Populate the filter-values list for the chosen filter column."""
-        from studio.dataset.materialize import working_frame
-
-        active = (store or {}).get("active")
-        if not fcol or not active:
-            return []
-        repo = get_repository()
-        record = repo.get(active)
-        if record is None:
-            return []
-        try:
-            frame = working_frame(repo, record)
-        except ValueError:
-            return []
-        if fcol not in frame.columns:
-            return []
-        values = sorted(frame[fcol].dropna().astype(str).unique())
-        return [{"label": v, "value": v} for v in values]
+    # ── shape & pivot callbacks — PARKED ──────────────────────────────────────
+    # Column add/delete and the pivot builder are switched off for now
+    # (``SHAPE_TOOLS_ENABLED`` in studio/page/authoring/data.py hides their
+    # controls). The engine — transform.py, pivot.py, and the helpers above —
+    # is kept, tested and ready; re-registering these three callbacks and
+    # flipping the flag turns the feature back on.
+    #
+    # @app.callback(
+    #     Output("qs-dataset", "data", allow_duplicate=True),
+    #     Output("qs-col-msg", "children"),
+    #     Input("qs-col-add", "n_clicks"),
+    #     State("qs-col-name", "value"),
+    #     State("qs-col-formula", "value"),
+    #     State("qs-dataset", "data"),
+    #     prevent_initial_call=True,
+    # )
+    # def add_column_cb(n, name, formula, store):
+    #     active = (store or {}).get("active")
+    #     if not n or not active:
+    #         return no_update, no_update
+    #     error = add_column(get_repository(), active, name, formula)
+    #     if error:
+    #         return no_update, error
+    #     return _bump(store, active), ""
+    #
+    # @app.callback(
+    #     Output("qs-dataset", "data", allow_duplicate=True),
+    #     Input({"type": "qs-col-del", "col": ALL}, "n_clicks"),
+    #     State("qs-dataset", "data"),
+    #     prevent_initial_call=True,
+    # )
+    # def delete_column_cb(clicks, store):
+    #     active = (store or {}).get("active")
+    #     if not ctx.triggered_id or not any(clicks or []) or not active:
+    #         return no_update
+    #     if not delete_column(get_repository(), active, ctx.triggered_id["col"]):
+    #         return no_update
+    #     return _bump(store, active)
+    #
+    # @app.callback(
+    #     Output("qs-dataset", "data", allow_duplicate=True),
+    #     Input("qs-pivot-apply", "n_clicks"),
+    #     State("qs-pivot-rows", "value"),
+    #     State("qs-pivot-cols", "value"),
+    #     State("qs-pivot-values", "value"),
+    #     State("qs-pivot-agg", "value"),
+    #     State("qs-pivot-fcol", "value"),
+    #     State("qs-pivot-fvals", "value"),
+    #     State("qs-dataset", "data"),
+    #     prevent_initial_call=True,
+    # )
+    # def apply_pivot_cb(n, rows, cols, values, agg, fcol, fvals, store):
+    #     active = (store or {}).get("active")
+    #     if not n or not active:
+    #         return no_update
+    #     if not apply_pivot(get_repository(), active, rows, cols, values, agg, fcol, fvals):
+    #         return no_update
+    #     return _bump(store, active)
 
     @app.callback(
         Output("qs-dataset", "data", allow_duplicate=True),

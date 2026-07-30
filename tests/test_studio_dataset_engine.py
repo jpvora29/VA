@@ -45,7 +45,9 @@ def _frame() -> pd.DataFrame:
 
 
 def _mapped_record(repo: DatasetRepository, *, with_premium: bool = True):
-    """Save the frame and submit a mapping (Insurer/Yr/Market + Written→Premium)."""
+    """Save the frame and submit a mapping (Insurer/Yr/Market + Written→Premium).
+
+    Unmapped columns carry descriptions because the submit rule requires them."""
     record = repo.save(_frame(), name="book", filename="book.csv")
     targets = {
         "Insurer": "Carrier_Group",
@@ -54,10 +56,12 @@ def _mapped_record(repo: DatasetRepository, *, with_premium: bool = True):
         "Written": "Premium" if with_premium else "",
     }
     columns = ["Insurer", "Written", "Fees", "Commission", "Yr", "Market"]
-    submit_mappings(
+    error = submit_mappings(
         repo, record.dataset_id, columns,
-        [targets.get(c, "") for c in columns], [""] * len(columns),
+        [targets.get(c, "") for c in columns],
+        [f"{c} column" for c in columns],
     )
+    assert error is None, error
     return repo.get(record.dataset_id)
 
 
@@ -251,6 +255,55 @@ def test_use_for_deck_rejects_incomplete(tmp_path):
     error = use_for_deck(repo, record.dataset_id)
     assert error and "incomplete" in error.lower()
     assert repo.get(record.dataset_id).status != "submitted"
+
+
+def test_generation_blocked_without_a_money_measure(tmp_path, monkeypatch):
+    """No Premium (and no primary measure) → Generate is refused, with a reason."""
+    monkeypatch.setenv("STUDIO_DATASET_DIR", str(tmp_path))
+    from studio.dataset import repository as R
+
+    R.get_repository.cache_clear()
+    try:
+        repo = R.get_repository()
+        from studio.authoring.setup import generation_block_reason
+        from studio.dataset.source import dataset_in_use
+
+        no_premium = _mapped_record(repo, with_premium=False)
+        store = {"source": "custom", "active": no_premium.dataset_id}
+        reason = generation_block_reason(store, dataset_in_use(store))
+        assert "no Premium column" in reason
+
+        # Governed source is never blocked by dataset state.
+        assert generation_block_reason({"source": "governed"}, None) == ""
+
+        # Custom source with nothing uploaded must not silently use the DB.
+        assert "Upload a dataset" in generation_block_reason(
+            {"source": "custom", "active": None}, None)
+
+        # Mapped but not handed over yet.
+        good = _mapped_record(repo)
+        pending = {"source": "custom", "active": good.dataset_id}
+        assert "isn't in use yet" in generation_block_reason(pending, dataset_in_use(pending))
+
+        # Submitted with Premium → allowed.
+        assert use_for_deck(repo, good.dataset_id) is None
+        live = {"source": "custom", "active": good.dataset_id}
+        assert generation_block_reason(live, dataset_in_use(live)) == ""
+    finally:
+        R.get_repository.cache_clear()
+
+
+def test_premium_mapped_accepts_primary_measure(tmp_path):
+    from dataclasses import replace
+
+    from studio.dataset.model import premium_mapped
+
+    repo = DatasetRepository(tmp_path)
+    record = _mapped_record(repo, with_premium=False)
+    assert premium_mapped(record) is False
+
+    with_primary = replace(record, primary=_primary_from_fields("GR", "", "Written + Fees"))
+    assert premium_mapped(with_primary) is True
 
 
 def test_dataset_in_use_and_filter_options(tmp_path, monkeypatch):

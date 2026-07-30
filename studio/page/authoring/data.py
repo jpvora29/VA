@@ -22,7 +22,13 @@ from studio.dataset.model import (
     ColumnProfile,
     CustomMeasure,
     DatasetRecord,
+    premium_mapped,
 )
+
+# Column add/delete and the pivot builder are parked for now. The engine
+# (studio/dataset/transform.py, pivot.py) is kept and tested; flip this to True
+# and re-register the parked callbacks in studio/authoring/data.py to restore.
+SHAPE_TOOLS_ENABLED = False
 
 _PREVIEW_ROWS = 500  # grid preview cap — plenty to eyeball, cheap to ship to the browser
 
@@ -167,7 +173,12 @@ def _mapping_row(profile: ColumnProfile, mapping: Optional[ColumnMapping]) -> ht
     target = mapping.target if mapping else ""
     description = (mapping.description if mapping else "") or _target_description(target)
     sample = " · ".join(profile.sample[:3])
-    state_icon = "bi-check-circle-fill ok" if target else "bi-circle"
+    # An unmapped column has nothing but its description to explain it, so the
+    # description is mandatory there — flagged inline and enforced on submit.
+    needs_desc = not target and not description.strip()
+    state_icon = "bi-check-circle-fill ok" if target else (
+        "bi-exclamation-circle warn" if needs_desc else "bi-circle"
+    )
     return html.Div(
         [
             html.I(className=f"bi {state_icon} qs-map-state"),
@@ -199,12 +210,14 @@ def _mapping_row(profile: ColumnProfile, mapping: Optional[ColumnMapping]) -> ht
             dcc.Input(
                 id={"type": "qs-map-desc", "col": profile.name},
                 value=description,
-                placeholder="What this column means…",
+                placeholder="Required — what is this column?" if needs_desc
+                            else "What this column means…",
                 debounce=True,
-                className="qs-map-desc",
+                className="qs-map-desc" + (" required" if needs_desc else ""),
             ),
         ],
-        className="qs-map-row" + (" mapped" if target else ""),
+        className="qs-map-row" + (" mapped" if target else "")
+                  + (" needs-desc" if needs_desc else ""),
     )
 
 
@@ -224,7 +237,7 @@ def _mapping_header() -> html.Div:
 def _mapping_panel(record: DatasetRecord) -> html.Div:
     rows = [_mapping_row(p, _mapping_for(record, p.name)) for p in record.profile.columns]
     mapped_targets = {m.target for m in record.mappings if m.target}
-    if record.primary and (record.primary.column or record.primary.formula):
+    if premium_mapped(record):
         mapped_targets.add("Premium")
     missing = [t for t in REQUIRED_TARGETS if t not in mapped_targets]
     ready = not missing
@@ -235,14 +248,20 @@ def _mapping_panel(record: DatasetRecord) -> html.Div:
     )
     return _section(
         "bi-signpost-2", "Column mapping",
-        "Check what each uploaded column is, fix anything wrong, and edit the "
-        "descriptions — then submit to unlock pivots and deck generation.",
+        "Check what each uploaded column is and fix anything wrong. Columns you "
+        "leave unmapped need a description — that's all the deck has to go on.",
         html.Div(
             [
                 html.Div([_mapping_header(), *rows], className="qs-map-rows"),
                 html.Div(
                     [
-                        html.Div(hint, className="qs-map-hint" + ("" if ready else " warn")),
+                        html.Div(
+                            [
+                                html.Div(hint, className="qs-map-hint" + ("" if ready else " warn")),
+                                html.Div(id="qs-map-msg", className="qs-map-msg"),
+                            ],
+                            className="qs-map-hints",
+                        ),
                         html.Button(
                             [html.I(className="bi bi-check2-circle"), "Submit mapping"],
                             id="qs-map-submit",
@@ -478,20 +497,19 @@ def _pivot_preview(frame, record: DatasetRecord) -> Any:
     return _grid(table, grid_id="qs-pivot-grid-view", height=320)
 
 
-def _shape_pivot_section(record: DatasetRecord, frame) -> Optional[html.Div]:
+def _use_for_deck_section(record: DatasetRecord, frame) -> Optional[html.Div]:
+    """The hand-off to Setup. With ``SHAPE_TOOLS_ENABLED`` the column and pivot
+    builders appear above the CTA; parked for now, so this is the CTA alone."""
     if record.status not in ("mapped", "submitted") or frame is None:
         return None
-    from studio.dataset.materialize import pivot_frame
-
-    enriched = pivot_frame(record, frame)
     in_use = record.status == "submitted"
     cta = html.Div(
         [
             html.Div(
-                ("This data is live — Setup and Generate run on it (the pivot's filters scope the rows)."
+                ("This data is live — Setup and Generate run on it."
                  if in_use else
-                 "Ready when you are: this makes your data govern the deck — filters, figures and "
-                 "commentary all derive from it (the pivot's filters scope the rows)."),
+                 "Ready when you are: this makes your data govern the deck — filters, "
+                 "figures and commentary all derive from it."),
                 className="qs-map-hint" + (" ok" if in_use else ""),
             ),
             html.Button(
@@ -503,6 +521,16 @@ def _shape_pivot_section(record: DatasetRecord, frame) -> Optional[html.Div]:
         ],
         className="qs-map-actions",
     )
+    if not SHAPE_TOOLS_ENABLED:
+        return _section(
+            "bi-rocket-takeoff", "Use for the deck",
+            "Your mapping is saved. Hand this dataset to Setup and it takes "
+            "precedence over the governed database.",
+            html.Div([cta], className="qs-shape-stack"),
+        )
+    from studio.dataset.materialize import pivot_frame
+
+    enriched = pivot_frame(record, frame)
     return _section(
         "bi-bounding-box", "Shape & pivot",
         "Delete columns you don't need, add calculated ones, and build the pivot "
@@ -551,7 +579,7 @@ def _active_panel(record: DatasetRecord, frame) -> html.Div:
         _mapping_panel(record),
         _primary_measure_card(record),
         _custom_kpi_card(record),
-        _shape_pivot_section(record, frame),
+        _use_for_deck_section(record, frame),
         _section(
             "bi-grid-3x2", "Data preview",
             f"First {n_preview:,} of {n_rows:,} rows — sort and filter to explore.",

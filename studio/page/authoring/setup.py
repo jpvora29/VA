@@ -11,12 +11,7 @@ from typing import Any, List, Mapping, Optional, Sequence, Tuple
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
-from studio.page.layout import (
-    _filter_grid,
-    _peers_panel,
-    _report_type,
-    _scope_toggle,
-)
+from studio.page.layout import _filter_grid, _scope_toggle
 
 
 def _setup_section(icon: str, title: str, subtitle: str, children: Any, *, span: bool = False) -> html.Div:
@@ -50,11 +45,14 @@ def _radio_field(label: str, cid: str, options: Sequence[Mapping[str, str]], val
 
 
 def _setup_options() -> html.Div:
-    """The compact 'options bar' — report, assembly scope, audience and commentary voice
-    as segmented pills in one dense auto-fitting row (keeps the form short)."""
+    """The compact 'options bar' — assembly scope, audience and commentary voice
+    as segmented pills in one dense auto-fitting row (keeps the form short).
+
+    There is no REPORT control: Full QBR is the only deliverable, so offering a
+    one-option radio was pure noise. ``generate`` pins ``report="qbr"``.
+    """
     return html.Div(
         [
-            _report_type(),
             _template_control(),
             _radio_field("AUDIENCE", "studio-audience", [
                 {"label": "Executive", "value": "executive"},
@@ -79,12 +77,16 @@ def _audience_length() -> html.Div:  # pragma: no cover - legacy shim
 
 
 def _ai_control() -> html.Div:
+    """AI assist — ON by default; the narrative is the point of the deck.
+
+    It stays a checkbox so a user can still fall back to the purely deterministic
+    deck, but nobody should have to opt IN to the commentary."""
     return html.Div(
         [
             dbc.Checkbox(
                 id="studio-ai-toggle",
                 label="AI-assisted narrative & layout",
-                value=False,
+                value=True,
                 class_name="studio-check qs-ai-check",
             ),
             html.Div(
@@ -94,6 +96,68 @@ def _ai_control() -> html.Div:
             ),
         ],
         className="qs-ai-field",
+    )
+
+
+# ── peers ────────────────────────────────────────────────────────────────────
+
+
+def peer_set_body(names: Sequence[str], note: str = "", *, tone: str = "") -> html.Div:
+    """The peer-set read-out: the peer names as chips, plus one explanatory line.
+
+    Used for BOTH modes — in "existing" it shows the carrier's peer group from the
+    Peers table (names only, nothing to pick); in "custom" it shows the note that
+    tells the user to pick from the dropdown below."""
+    chips = [html.Span(str(n), className="qs-peer-chip") for n in names]
+    return html.Div(
+        [
+            html.Div(chips, className="qs-peer-chips") if chips else None,
+            html.Div(note, className="qs-peer-note" + (f" {tone}" if tone else "")) if note else None,
+        ],
+        className="qs-peer-body",
+    )
+
+
+def _peers_panel() -> html.Div:
+    """Peer-set chooser.
+
+    Existing peers are the carrier's group from the Peers table — names only, so the
+    custom dropdown is HIDDEN in that mode rather than sitting there full of every
+    carrier in the database. Custom peers pick carriers from the current scope.
+    Both lists are populated by ``studio.authoring.setup.peer_panel``.
+    """
+    return html.Div(
+        [
+            dcc.RadioItems(
+                id="studio-peer-mode",
+                options=[
+                    {"label": "Existing peers", "value": "existing"},
+                    {"label": "Custom peers", "value": "custom"},
+                ],
+                value="existing",
+                className="studio-report-radio",
+                inputClassName="studio-report-input",
+                labelClassName="studio-report-label",
+            ),
+            html.Div(
+                peer_set_body((), "Select a carrier to see its existing peers."),
+                id="studio-peer-msg",
+                className="studio-peer-msg",
+            ),
+            html.Div(
+                dcc.Dropdown(
+                    id="studio-peer-custom",
+                    options=[],
+                    value=[],
+                    multi=True,
+                    placeholder="Select peer carriers",
+                    className="studio-dd sm",
+                ),
+                id="studio-peer-custom-wrap",
+                style={"display": "none"},
+            ),
+        ],
+        className="studio-field qs-peer-field",
     )
 
 
@@ -236,33 +300,55 @@ _SECTION_META: Mapping[str, Tuple[str, str, str]] = {
 }
 
 
-def template_sections_panel(template_path: Optional[str] = None) -> html.Div:
-    """The sections THIS template will produce — selection driven by the deck itself,
-    not a static list. Grouped by section type in reading order, with page counts and
-    a note on how each is filled (data, commentary, or manual chart)."""
-    from studio.template_fill.registry import active_template_path, derive_manifest
+# Assembly axis → (label, icon, how often the sub-deck repeats). "all" builds all
+# three and merges them, which is why the panel below is per-axis rather than one
+# flat page count — the product/country sub-decks repeat per selected value.
+_AXIS_META: Mapping[str, Tuple[str, str, str]] = {
+    "overall": ("Overall", "bi-grid-1x2", "built once"),
+    "product": ("Product", "bi-box-seam", "repeats per product line"),
+    "country": ("Country", "bi-globe2", "repeats per country"),
+}
+
+# Scope choice → the axes it assembles, in deck order.
+_SCOPE_AXES: Mapping[str, Tuple[str, ...]] = {
+    "all": ("overall", "product", "country"),
+    "overall": ("overall",),
+    "product": ("product",),
+    "country": ("country",),
+}
+
+
+def scope_axes(scope: Optional[str]) -> Tuple[str, ...]:
+    """The registered axes a scope choice assembles (unregistered ones dropped)."""
+    from studio.template_fill.binding_map import available
+
+    registered = set(available())
+    wanted = _SCOPE_AXES.get(scope or "all", _SCOPE_AXES["all"])
+    return tuple(axis for axis in wanted if axis in registered)
+
+
+def _section_counts(axis: str) -> Optional[List[Tuple[str, int]]]:
+    """``[(section key, page count)]`` in reading order for an axis's template."""
+    from studio.template_fill.binding_map import template_path
+    from studio.template_fill.registry import derive_manifest
     from studio.template_fill.sections import classify_sections
 
-    path = template_path or active_template_path()
     try:
-        template, _ = derive_manifest(path)
+        template, _ = derive_manifest(template_path(axis))
         secs = classify_sections(template)
     except Exception:  # noqa: BLE001 — a missing/odd template must not break Setup
-        return html.Div(
-            [html.I(className="bi bi-exclamation-circle"), " Pick a template to see its sections."],
-            className="qs-preview-empty",
-        )
-    order: List[str] = []
+        return None
     counts: dict = {}
     for idx in sorted(secs):
         key = secs[idx].value
-        if key not in counts:
-            order.append(key)
         counts[key] = counts.get(key, 0) + 1
+    return list(counts.items())
+
+
+def _section_chips(counts: Sequence[Tuple[str, int]]) -> html.Div:
     chips = []
-    for key in order:
+    for key, n in counts:
         label, icon, _ = _SECTION_META.get(key, (key.title(), "bi-file-earmark", ""))
-        n = counts[key]
         chips.append(
             html.Span(
                 [
@@ -273,17 +359,61 @@ def template_sections_panel(template_path: Optional[str] = None) -> html.Div:
                 className="qs-tchip",
             )
         )
-    total = len(secs)
+    return html.Div(chips, className="qs-tchip-row")
+
+
+def _axis_block(axis: str, counts: Sequence[Tuple[str, int]]) -> html.Div:
+    label, icon, repeat = _AXIS_META.get(axis, (axis.title(), "bi-file-earmark", ""))
+    pages = sum(n for _, n in counts)
     return html.Div(
         [
             html.Div(
                 [
-                    html.Span([html.B(str(total)), " pages"], className="qs-tsec-total"),
-                    html.Span([html.B(str(len(order))), " section types"], className="qs-tsec-total alt"),
+                    html.I(className=f"bi {icon}"),
+                    html.Span(label, className="qs-tsec-axis-name"),
+                    html.Span(f"{pages} pages", className="qs-tsec-axis-n"),
+                ],
+                className="qs-tsec-axis-head",
+            ),
+            html.Div(repeat, className="qs-tsec-axis-note") if repeat else None,
+            _section_chips(counts),
+        ],
+        className="qs-tsec-axis",
+    )
+
+
+def template_sections_panel(scope: Optional[str] = "all") -> html.Div:
+    """The sections the CURRENT SCOPE will produce, one block per assembled axis.
+
+    Selection is driven by the templates themselves, not a static list. "All" builds
+    the overall, product and country sub-decks and merges them, so all three are
+    listed — previewing only the overall template (the old behaviour) made switching
+    Scope back to "All" look like nothing had happened.
+    """
+    axes = scope_axes(scope)
+    blocks, base_pages = [], 0
+    for axis in axes:
+        counts = _section_counts(axis)
+        if not counts:
+            continue
+        base_pages += sum(n for _, n in counts)
+        blocks.append(_axis_block(axis, counts))
+    if not blocks:
+        return html.Div(
+            [html.I(className="bi bi-exclamation-circle"), " No template registered for this scope."],
+            className="qs-preview-empty",
+        )
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.Span([html.B(str(base_pages)), " base pages"], className="qs-tsec-total"),
+                    html.Span([html.B(str(len(blocks))), " sub-deck" + ("s" if len(blocks) > 1 else "")],
+                              className="qs-tsec-total alt"),
                 ],
                 className="qs-tsec-summary",
             ),
-            html.Div(chips, className="qs-tchip-row"),
+            html.Div(blocks, className="qs-tsec-axes"),
         ],
         className="qs-tsec",
     )
@@ -311,8 +441,8 @@ def setup_body(
                 span=True,
             ),
             _setup_section(
-                "bi-sliders", "Report, scope & audience",
-                "",
+                "bi-sliders", "Scope, audience & voice",
+                "How much of the deck to assemble, and who it is written for.",
                 _setup_options(), span=True,
             ),
             _setup_section(
@@ -322,7 +452,7 @@ def setup_body(
             ),
             _setup_section(
                 "bi-stars", "AI assist",
-                "Optional, faithfulness-verified layer.",
+                "On by default; faithfulness-verified.",
                 _ai_control(),
             ),
         ],
@@ -336,12 +466,15 @@ def setup_body(
                 id="studio-generate",
                 className="qs-generate-btn",
             ),
+            # Why a Generate click was refused (no money measure, dataset not
+            # submitted). Written by the generate callback.
+            html.Div(id="studio-setup-msg", className="qs-setup-msg"),
             # Deck sections live in the aside so the main form stays a single screen.
             html.Div(
                 [
                     html.Div([html.I(className="bi bi-collection"), "Deck sections"],
                              className="qs-aside-card-head"),
-                    html.Div(template_sections_panel(), id="studio-template-sections"),
+                    html.Div(template_sections_panel("all"), id="studio-template-sections"),
                 ],
                 className="qs-aside-card",
             ),
