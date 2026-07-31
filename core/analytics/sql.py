@@ -119,3 +119,43 @@ def resolve_engine(engine: Optional[Any]) -> Any:
     from core.initialization import Initialization  # lazy: avoid LLM/init import
 
     return Initialization.engine
+
+
+# ── schema introspection (supporting tables) ─────────────────────────────────
+
+# Column names per (database, table). Schema, not data — a process pays once.
+_COLUMN_CACHE: Dict[Tuple[str, str], frozenset] = {}
+
+
+def table_columns(engine: Any, table: str) -> frozenset:
+    """The column names of ``table``, cached per (database, table).
+
+    Returns an empty set when the table is missing or unreadable — callers use
+    this to *degrade*, never to decide whether a query is safe.
+    """
+    key = (str(getattr(engine, "url", "")), table)
+    cached = _COLUMN_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        from sqlalchemy import inspect as sa_inspect
+
+        columns = frozenset(str(c["name"]) for c in sa_inspect(engine).get_columns(table))
+    except Exception:  # noqa: BLE001 — a missing/odd table must not break a query
+        columns = frozenset()
+    _COLUMN_CACHE[key] = columns
+    return columns
+
+
+def peer_country_column(spec: FlowSpec, engine: Any) -> Optional[str]:
+    """The Peers-table column that scopes a carrier's peer group by country.
+
+    ``None`` when the flow declares none, or when the actual Peers table has no
+    such column — so a database whose Peers table predates it still resolves the
+    (unscoped) peer group instead of silently finding nobody.
+    """
+    peer = spec.peer_columns or {}
+    column, table = peer.get("country"), peer.get("table")
+    if not column or not table:
+        return None
+    return column if column in table_columns(engine, table) else None

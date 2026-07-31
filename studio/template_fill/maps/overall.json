@@ -3,7 +3,18 @@
   "path": "template/overall_template.pptx",
   "bindings": [
     {
-      "slide_idx": 1,
+      "slide_idx": 0,
+      "shape_id": 4,
+      "where": [
+        "para",
+        0
+      ],
+      "value_kind": "text",
+      "token": "Carrier X",
+      "role": "subject_name"
+    },
+    {
+      "slide_idx": 2,
       "shape_id": 10,
       "where": [
         "para",
@@ -14,7 +25,7 @@
       "role": "carrier_gwp"
     },
     {
-      "slide_idx": 1,
+      "slide_idx": 2,
       "shape_id": 11,
       "where": [
         "para",
@@ -25,7 +36,7 @@
       "role": "carrier_gwp_yoy"
     },
     {
-      "slide_idx": 1,
+      "slide_idx": 2,
       "shape_id": 13,
       "where": [
         "para",
@@ -36,7 +47,7 @@
       "role": "spotlight_carrier_yoy"
     },
     {
-      "slide_idx": 1,
+      "slide_idx": 2,
       "shape_id": 16,
       "where": [
         "para",
@@ -47,7 +58,7 @@
       "role": "sow_pct"
     },
     {
-      "slide_idx": 1,
+      "slide_idx": 2,
       "shape_id": 17,
       "where": [
         "para",
@@ -58,7 +69,7 @@
       "role": "rank"
     },
     {
-      "slide_idx": 1,
+      "slide_idx": 2,
       "shape_id": 19,
       "where": [
         "para",
@@ -69,7 +80,7 @@
       "role": "marsh_gwp_yoy"
     },
     {
-      "slide_idx": 1,
+      "slide_idx": 2,
       "shape_id": 20,
       "where": [
         "para",
@@ -80,7 +91,7 @@
       "role": "marsh_gwp"
     },
     {
-      "slide_idx": 1,
+      "slide_idx": 2,
       "shape_id": 21,
       "where": [
         "para",
@@ -92,90 +103,24 @@
     },
     {
       "slide_idx": 2,
-      "shape_id": 10,
+      "shape_id": 35,
       "where": [
         "para",
         0
       ],
-      "value_kind": "text",
-      "token": "\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026..",
-      "role": null
+      "value_kind": "int",
+      "token": "x.x",
+      "role": "survey_score"
     },
     {
-      "slide_idx": 2,
-      "shape_id": 10,
-      "where": [
-        "para",
-        1
-      ],
-      "value_kind": "text",
-      "token": ".,\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026",
-      "role": null
-    },
-    {
-      "slide_idx": 2,
-      "shape_id": 10,
-      "where": [
-        "para",
-        2
-      ],
-      "value_kind": "text",
-      "token": "\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026.",
-      "role": null
-    },
-    {
-      "slide_idx": 2,
+      "slide_idx": 3,
       "shape_id": 16,
       "where": [
         "para",
         0
       ],
-      "value_kind": "text",
-      "token": "\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026.",
-      "role": null
-    },
-    {
-      "slide_idx": 2,
-      "shape_id": 16,
-      "where": [
-        "para",
-        1
-      ],
-      "value_kind": "text",
-      "token": "Property: \u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026",
-      "role": null
-    },
-    {
-      "slide_idx": 2,
-      "shape_id": 16,
-      "where": [
-        "para",
-        2
-      ],
-      "value_kind": "text",
-      "token": "Growth: \u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026.",
-      "role": null
-    },
-    {
-      "slide_idx": 2,
-      "shape_id": 20,
-      "where": [
-        "para",
-        0
-      ],
-      "value_kind": "text",
-      "token": "\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026",
-      "role": null
-    },
-    {
-      "slide_idx": 2,
-      "shape_id": 22,
-      "where": [
-        "para",
-        0
-      ],
-      "value_kind": "text",
-      "token": "\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026\u2026..",
+      "value_kind": "int",
+      "token": "xyz demonstrated strong growth by writing USD x.x million, representing a xx.x% increase year-over-year.",
       "role": null
     }
   ]

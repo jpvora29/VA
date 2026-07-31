@@ -305,6 +305,107 @@ def test_data_mode_renders_without_a_deck(tmp_path, monkeypatch):
         R.get_repository.cache_clear()
 
 
+# ── callbacks must never point at a component the page can hide ──────────────
+
+
+def _component_ids(node) -> set:
+    """Every plain-string component id in a rendered Dash tree."""
+    found, stack = set(), [node]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, (list, tuple)):
+            stack.extend(item)
+            continue
+        if isinstance(item, str) or item is None:
+            continue
+        cid = getattr(item, "id", None)
+        if isinstance(cid, str):
+            found.add(cid)
+        children = getattr(item, "children", None)
+        if children is not None:
+            stack.append(children)
+    return found
+
+
+def _output_ids(callback) -> list:
+    outputs = callback["output"]
+    outputs = outputs if isinstance(outputs, (list, tuple)) else [outputs]
+    return [o.component_id for o in outputs if isinstance(getattr(o, "component_id", None), str)]
+
+
+def _fixed(dependencies) -> list:
+    """Plain-string ids only — a pattern-matching id reads back as '{"…":["ALL"]}'."""
+    return [d["id"] for d in dependencies if not d["id"].startswith("{")]
+
+
+def test_data_callbacks_never_reference_a_component_the_page_hides(tmp_path, monkeypatch):
+    """Regression: the primary-measure card disappears once a column maps to
+    Premium, and Submit still declared ``State("qs-primary-name")`` — so Dash
+    refused the callback with "a nonexistent object was used in a State".
+
+    The invariant, for every Data callback and every page state: if the callback
+    CAN fire (its fixed Inputs are on the page) then its fixed States and Outputs
+    must be on that page too.
+    """
+    from dataclasses import replace
+
+    from studio.authoring.data import register_data
+    from studio.authoring.layout import build_layout, create_app
+    from studio.dataset import repository as R
+    from studio.page.authoring.data import data_body
+
+    monkeypatch.setenv("STUDIO_DATASET_DIR", str(tmp_path))
+    R.get_repository.cache_clear()
+    try:
+        repo = R.get_repository()
+        # (a) a column mapped to Premium → the primary-measure card is hidden
+        mapped = repo.save(_frame(), name="mapped", filename="a.csv")
+        repo.update_record(replace(mapped, mappings=(
+            ColumnMapping(uploaded="GWP", target="Premium", description="premium", source="user"),
+        )))
+        # (b) nothing maps to Premium → the card is shown
+        unmapped = repo.save(_frame(), name="unmapped", filename="b.csv")
+
+        app = create_app()
+        register_data(app)
+        layout_ids = _component_ids(build_layout())
+
+        states = [
+            {"active": mapped.dataset_id},
+            {"active": unmapped.dataset_id},
+            None,                                    # no dataset selected
+        ]
+        for state in states:
+            page_ids = layout_ids | _component_ids(data_body(state))
+            for callback in app.callback_map.values():
+                if not set(_fixed(callback["inputs"])) <= page_ids:
+                    continue                          # can't fire on this page
+                missing = [
+                    dep for dep in _fixed(callback["state"]) + _output_ids(callback)
+                    if dep not in page_ids
+                ]
+                assert not missing, (state, missing)
+    finally:
+        R.get_repository.cache_clear()
+
+
+def test_primary_measure_fields_survive_the_card_being_hidden():
+    """The three fields carry pattern-matching ids so an absent card reads back
+    as an empty list instead of breaking the Submit callback."""
+    import json
+
+    from studio.dataset.model import DatasetRecord
+    from studio.page.authoring.data import _primary_measure_card
+
+    record = DatasetRecord(
+        dataset_id="d", name="n", filename="f.csv", created="2026-07-30", n_rows=1, n_cols=1,
+    )
+    rendered = json.dumps(_primary_measure_card(record), default=lambda o: getattr(o, "__dict__", str(o)))
+    for field in ("name", "column", "formula"):
+        assert f"'field': '{field}'" in rendered or f'"field": "{field}"' in rendered
+    assert "qs-primary-name" not in rendered
+
+
 def test_review_body_carries_export_download():
     """Export folded into Review: the download button must live in review_body."""
     import json

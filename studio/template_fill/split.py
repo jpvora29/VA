@@ -29,6 +29,7 @@ logger = get_logger(__name__)
 # Section types that belong to a per-country block (filled once per selected country).
 _COUNTRY_BLOCK = {
     Section.COUNTRY_DIVIDER,
+    Section.GWP_PERFORMANCE,
     Section.BREAKDOWN,
     Section.CARRIER_TITLE,
     Section.GROWTH,

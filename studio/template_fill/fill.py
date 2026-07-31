@@ -46,23 +46,38 @@ def _index_by_id(slide) -> Dict[int, Any]:
 # ── run-preserving text writes (never delete <a:r> elements) ─────────────────
 
 
+_SOFT_BREAK = "\v"
+
+
 def _set_paragraph_text(paragraph, text: str) -> None:
+    """Write ``text`` into ``paragraph``, keeping its formatting.
+
+    Fast path: reuse the existing runs (set run 0, blank the rest) so think-cell field
+    references and run formatting survive. Two cases need the paragraph rebuilt instead:
+
+      * the paragraph has NO ``<a:r>`` runs — its visible text (and all its formatting)
+        lives in ``<a:fld>`` elements;
+      * the new text carries a soft line break, which ``run.text`` would escape into a
+        literal ``_x000B_`` instead of a ``<a:br>``.
+
+    Both rebuild via ``paragraph.text`` and graft the original ``rPr`` onto the new runs,
+    so nothing falls back to the theme default (product names keep their white bold, rank
+    changes their green).
+    """
     runs = list(paragraph.runs)
-    if runs:
+    if runs and _SOFT_BREAK not in text:
         runs[0].text = text
         for r in runs[1:]:
             r.text = ""
         return
-    # No <a:r> runs — the visible text (and ALL its formatting) lives in <a:fld>
-    # elements. ``paragraph.text`` drops the fld together with its rPr, so the new run
-    # fell back to the theme default (product names lost their white bold, rank
-    # changes their green). Capture the fld's rPr and graft it onto the new run.
+
     from copy import deepcopy
 
     from pptx.oxml.ns import qn
 
-    fld = paragraph._p.find(qn("a:fld"))
-    rPr = fld.find(qn("a:rPr")) if fld is not None else None
+    source = runs[0]._r if runs else paragraph._p.find(qn("a:fld"))
+    rPr = source.find(qn("a:rPr")) if source is not None else None
+    rPr = deepcopy(rPr) if rPr is not None else None
     paragraph.text = text
     if rPr is not None:
         for run in paragraph.runs:
@@ -273,6 +288,17 @@ def _label_subs(values: Dict[str, Any]) -> List[Any]:
 
     carrier = str(values.get("subject_name", "")).strip()
     if carrier:
+        # The cover's "Carrier X" title placeholder → the carrier. MUST precede the bare
+        # "Carrier" rule below, which would otherwise leave a dangling " X".
+        subs.append((re.compile(r"\bCarrier\s+X\b"), carrier))
+        # The template's authored example carrier (e.g. "QBE GWP rank") → this deck's
+        # subject. Longest names first so a multi-word carrier isn't half-matched. Also
+        # upholds the no-named-peer rule: no other carrier's name survives the fill.
+        authored = {str(c).strip() for c in (values.get("carrier_vocab") or []) if str(c).strip()}
+        for name in sorted(authored, key=len, reverse=True):
+            if name.casefold() != carrier.casefold():
+                subs.append((re.compile(rf"\b{re.escape(name)}\b"), carrier))
+
         # Carrier / Carrier's / Carriers's (template typo) → the carrier (possessive kept).
         def _carrier(m, _c=carrier):
             return f"{_c}’s" if ("'" in m.group(0) or "’" in m.group(0)) else _c
@@ -290,7 +316,11 @@ def _apply_subs(slide, subs: List[Any]) -> None:
     """Apply label substitutions at PARAGRAPH granularity — a phrase like
     ``Country xyz`` is usually split across runs, so per-run replacement would leave
     the leading word behind. We rewrite a paragraph only when a sub actually changes
-    it, writing into run 0 and blanking the rest (run formatting of run 0 survives)."""
+    it, writing into run 0 and blanking the rest (run formatting of run 0 survives).
+
+    The text is read via ``paragraph.text`` rather than by joining runs, so a paragraph
+    whose text lives in ``<a:fld>`` elements — think-cell writes whole table rows that way —
+    is substituted too instead of being silently skipped."""
     if not subs:
         return
     for sh in _iter_leaves(slide.shapes):
@@ -301,7 +331,7 @@ def _apply_subs(slide, subs: List[Any]) -> None:
             frames.extend(cell.text_frame for row in sh.table.rows for cell in row.cells)
         for tf in frames:
             for para in tf.paragraphs:
-                original = "".join(r.text for r in para.runs)
+                original = para.text
                 if not original:
                     continue
                 new = original
@@ -427,12 +457,34 @@ def _blank_stale_point_labels(slide, chart_shape, points: List[Dict[str, Any]]) 
             sh.text_frame.text = ""
 
 
+def _write_bar_chart(chart, series: Dict[str, Any]) -> None:
+    """Write a CY-vs-PY category chart (``{categories, cy, py}``) into a clustered bar.
+
+    The series NAMES come from the template's own authored series (``CY``/``PY``) so the
+    legend, colours and ordering the author chose are preserved.
+    """
+    from pptx.chart.data import CategoryChartData
+
+    authored = [str(s.name or "") for s in chart.series][:2]
+    names = (authored + ["CY", "PY"])[:2]
+    data = CategoryChartData()
+    data.categories = [str(c) for c in series["categories"]]
+    for name, key in zip(names, ("cy", "py")):
+        data.add_series(name, [float(v) for v in series[key]])
+    chart.replace_data(data)
+
+
 def _fill_charts(prs, values: Dict[str, Any]) -> None:
-    """Best-effort: write the computed carrier-vs-Marsh growth data into the deck's
-    scatter/bubble charts. Bubble charts that are think-cell/externally linked are
-    first detached from the link (native PowerPoint supports bubble charts, so the
-    refilled chart stands alone); externally-linked scatter charts (the LC-ranking
-    think-cell visual, whose semantics aren't growth) are left untouched.
+    """Best-effort: write the computed data into the deck's charts.
+
+      * **bubble** — the carrier-vs-Marsh growth scatter. Think-cell/externally linked
+        bubbles are first detached from the link (native PowerPoint supports bubble
+        charts, so the refilled chart stands alone);
+      * **scatter** — the same growth data, but only when NOT externally linked (the
+        LC-ranking think-cell visual's semantics aren't growth, so it is left alone);
+      * **clustered bars** — the GWP-performance page's CY-vs-PY breakdowns, addressed by
+        ``slide:shape`` from the ``gwp_bars`` payload
+        (:mod:`studio.template_fill.gwp_page` decides which chart is which dimension).
 
     Off-switch: ``STUDIO_FILL_CHARTS=off``. Any per-chart failure is swallowed so a
     chart never breaks the export.
@@ -440,18 +492,26 @@ def _fill_charts(prs, values: Dict[str, Any]) -> None:
     if os.getenv("STUDIO_FILL_CHARTS", "auto").strip().lower() in {"off", "0", "false", "no"}:
         return
     points = _bubble_points((values.get("growth_bubble") or {}).get("points") or [])
-    if not points:
+    bars = values.get("gwp_bars") or {}
+    if not points and not bars:
         return
     from pptx.chart.data import XyChartData
 
-    for slide in prs.slides:
+    for sidx, slide in enumerate(prs.slides):
         for sh in _iter_leaves(slide.shapes):
             if not getattr(sh, "has_chart", False):
                 continue
             chart = sh.chart
             ctype = str(chart.chart_type)
+            series = bars.get(f"{sidx}:{int(sh.shape_id)}")
             try:
-                if "BUBBLE" in ctype:
+                if series:
+                    if not _detach_external_data(chart):
+                        continue
+                    _write_bar_chart(chart, series)
+                elif not points:
+                    continue
+                elif "BUBBLE" in ctype:
                     if not _detach_external_data(chart):
                         continue
                     _write_bubble_chart(chart, points)
@@ -505,6 +565,10 @@ def fill_template(doc: Dict[str, Any], *, out_path: Optional[str] = None) -> str
             by_slide.setdefault(fld["slide_idx"], []).append(fld)
 
     for sidx, slide in enumerate(prs.slides):
+        # Labels first, values second: a slot's own write is already fully resolved, so the
+        # literal substitutions must not run over it afterwards (a written "TTM April 2025"
+        # would otherwise be shifted again by the template-year rule).
+        _apply_subs(slide, subs)
         index = _index_by_id(slide)
         for fld in by_slide.get(sidx, []):
             shape = index.get(int(fld["shape_id"]))
@@ -520,7 +584,6 @@ def fill_template(doc: Dict[str, Any], *, out_path: Optional[str] = None) -> str
                 _style_commentary(shape, where)
             elif role.endswith(_SIGNED_ROLE_SUFFIXES) and str(fld["text"]).strip():
                 _recolor_by_sign(shape, where, str(fld["text"]))
-        _apply_subs(slide, subs)
         _add_elements(slide, doc.get("added", {}).get(str(sidx), []), width_emu, height_emu)
 
     _fill_charts(prs, values)

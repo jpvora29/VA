@@ -132,15 +132,21 @@ def dependent_options(
 def peer_members(flow: str, carrier: str, *, country=None) -> List[str]:
     """The carrier's existing peers from the flow's Peers table (empty if none).
 
-    Powers the custom-peers dialog: an empty list means "no peers exist for this
-    carrier — pick custom peers instead"."""
+    Scoped to ``country`` when the Peers table carries a country column, so Setup
+    lists the peer group for the selected market — the same membership the deck's
+    benchmark resolves (``core.analytics.library._peer_clauses``).
+
+    Powers the peers panel: an empty list means "no peers exist for this carrier
+    — pick custom peers instead"."""
+    from core.analytics.sql import peer_country_column
+
     spec = get_flow_registry().get(flow)
     peer = getattr(spec, "peer_columns", None) if spec else None
     if not spec or not peer or not carrier:
         return []
     params: Dict[str, Any] = {"subject": carrier}
     where = [f'LOWER("{peer["key"]}") = LOWER(:subject)']
-    ccol = peer.get("country")
+    ccol = peer_country_column(spec, get_engine())
     if ccol and country:
         cvals = list(country) if isinstance(country, (list, tuple, set)) else [country]
         cvals = [v for v in cvals if v not in (None, "", "all", "All")]

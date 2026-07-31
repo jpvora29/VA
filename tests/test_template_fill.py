@@ -133,14 +133,48 @@ def test_render_token_matches_placeholder_style():
     assert render_token("PY (-x.x%▼)", 9.9, "pct") == "PY (+9.9%▲)"   # sign + arrow follow data
 
 
-def test_single_country_hides_second_country_block(tmp_path):
-    # One country selected → the "Country (2)" divider block is dropped from export.
+def _divider_template(blocks: int, *, slides_per_block: int = 2):
+    """A synthetic template of ``blocks`` enumerated "Country (n)" divider blocks.
+
+    Built in memory rather than read off a .pptx so the pruning rule is tested on its own
+    terms — the shipped templates carry ONE country block each (the split pipeline fills it
+    once per country), so they can no longer exercise a surplus block.
+    """
+    from studio.template_fill.analyze import Shape, Slide, Template
+
+    def text_slide(index: int, text: str) -> Slide:
+        return Slide(index=index, layout="Blank",
+                     shapes=[Shape(shape_id=2, name="Title 1", kind="text", paragraphs=[text])])
+
+    slides, i = [], 0
+    for block in range(1, blocks + 1):
+        slides.append(text_slide(i, f"Country ({block})"))
+        i += 1
+        for _ in range(slides_per_block):
+            slides.append(text_slide(i, "Carrier breakdown"))
+            i += 1
+    return Template(path="<memory>", width_emu=12192000, height_emu=6858000, slides=slides)
+
+
+@pytest.mark.parametrize("selected,expected_hidden", [
+    (["Singapore"], [3, 4, 5]),                    # 1 country → the "Country (2)" block goes
+    (["Singapore", "Japan"], []),                  # 2 countries → both blocks stay
+])
+def test_surplus_country_blocks_are_hidden(selected, expected_hidden):
+    from studio.template_fill.model import _hidden_blocks
+
+    res = compute_overall(filters={"carrier": "Zurich", "country": selected, "year": 2025})
+    assert _hidden_blocks(_divider_template(2), res) == expected_hidden
+
+
+def test_hidden_blocks_are_dropped_from_the_export(tmp_path):
+    # Whatever the doc marks hidden must actually leave the exported deck.
     res = compute_overall(filters={"carrier": "Zurich", "country": ["Singapore"], "year": 2025})
     doc = new_template_doc(res, template_path=TEMPLATE)
-    assert doc["hidden"], "expected a hidden second-country block"
     full = len(analyze(TEMPLATE).slides)
+    doc["hidden"] = [full - 1]
     out = fill_template(doc, out_path=str(tmp_path / "pruned.pptx"))
-    assert len(Presentation(out).slides) == full - len(doc["hidden"])
+    assert len(Presentation(out).slides) == full - 1
 
 
 def test_country_token_substituted_in_labels(tmp_path):
@@ -237,13 +271,16 @@ def test_external_charts_are_flagged_and_not_rewritten(tmp_path):
     assert len([sh for s in analyze(out).slides for sh in s.shapes if sh.kind == "chart"]) == len(charts)
 
 
-def test_breakdown_slides_are_scoped_to_their_own_country():
+def test_breakdown_slide_is_scoped_to_its_own_country():
     from studio.template_fill import grids
     from studio.template_fill.registry import derive_manifest
 
     template, _ = derive_manifest(TEMPLATE)
     values = grids.grid_values(template, _result())
     subtitles = [v for k, v in values.items() if k.endswith(":subtitle")]
-    # Two breakdown slides → two subtitles, each naming a DIFFERENT country.
-    assert len(subtitles) >= 2
+    # Each breakdown slide re-resolves its hard-coded "Country (n)" to a real country, and
+    # names the carrier rather than the template's literal "Carrier".
+    assert subtitles
     assert len(set(subtitles)) == len(subtitles)
+    assert all("(1)" not in s and "Carrier" not in s for s in subtitles)
+    assert all("Zurich" in s for s in subtitles)

@@ -5,8 +5,9 @@ The split-template pipeline (axis name → its .pptx, e.g. ``overall`` → ``ove
     overall   filled once (subject-level roles)
     product   filled once per selected product
     country   filled once per selected country
+    end       appended once (the closing back cover; nothing to fill)
         ↓
-    merge_pptx([overall, product₁ … productₙ, country₁ … countryₘ])  → one .pptx
+    merge_pptx([overall, product₁ … productₙ, country₁ … countryₘ, end])  → one .pptx
 
 Each sub-deck is filled by the *existing* :func:`studio.template_fill.fill.fill_template`
 driven by a **static** :class:`~studio.template_fill.binding_map.BindingMap` (no inference),
@@ -18,17 +19,18 @@ and their curated maps.
 from __future__ import annotations
 
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from logger import get_logger
-from studio.template_fill import commentary, feedback, grids, prune
+from studio.template_fill import commentary, feedback, grids, gwp_page, prune
 from studio.template_fill import roles as R
 from studio.template_fill.analyze import analyze
 from studio.template_fill.binding_map import BindingMap, available, get_binding_map
 from studio.template_fill.bindings import (
     carrier_countries,
+    carrier_vocab,
     product_vocab,
     resolve_roles,
     resolve_roles_for_country,
@@ -48,19 +50,40 @@ logger = get_logger(__name__)
 OVERALL = "overall"
 PRODUCT = "product"
 COUNTRY = "country"
+END = "end"
 
-# Which sub-deck axes each Setup "scope" choice assembles. "all" is the full deck; the
-# single-axis choices let the author generate just the overall, product or country pages.
+# Which sub-deck axes each Setup "scope" choice assembles, in deck order. "all" is the full
+# deck; the single-axis choices let the author generate just the overall, product or country
+# pages. Every choice still gets the closing back cover.
 _SCOPE_AXES: Dict[str, Tuple[str, ...]] = {
-    "all": (OVERALL, PRODUCT, COUNTRY),
-    OVERALL: (OVERALL,),
-    PRODUCT: (OVERALL, PRODUCT),
-    COUNTRY: (OVERALL, COUNTRY),
+    "all": (OVERALL, PRODUCT, COUNTRY, END),
+    OVERALL: (OVERALL, END),
+    PRODUCT: (OVERALL, PRODUCT, END),
+    COUNTRY: (OVERALL, COUNTRY, END),
 }
 
 
 def _axes_for(scope: Optional[str]) -> Tuple[str, ...]:
     return _SCOPE_AXES.get((scope or "all"), _SCOPE_AXES["all"])
+
+
+def _buildable() -> set:
+    """Registered axes whose ``.pptx`` is actually on disk.
+
+    A map is registered by filename, so an axis survives in the registry after its template
+    is removed from ``template/``. Checking the file here means a partial template set (say
+    no back cover yet) simply produces a shorter deck instead of failing the export.
+    """
+    names = set()
+    for name in available():
+        try:
+            if Path(get_binding_map(name).path).exists():
+                names.add(name)
+            else:
+                logger.warning("assemble: axis %r skipped — template file missing", name)
+        except KeyError:                    # noqa: PERF203 — a broken map must not stop the rest
+            logger.warning("assemble: axis %r skipped — no binding map", name)
+    return names
 
 
 @dataclass(frozen=True)
@@ -88,7 +111,7 @@ def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], la
     hidden: Tuple[int, ...] = ()
     try:
         template = analyze(get_binding_map(template_name).path)
-        for provider in (grids.grid_values, feedback.values, commentary.values):
+        for provider in (grids.grid_values, gwp_page.values, feedback.values, commentary.values):
             try:
                 extra = provider(template, scoped_result)
             except Exception as exc:  # noqa: BLE001 — one provider must not sink the rest
@@ -110,8 +133,8 @@ def plan_subdecks(result, *, scope: Optional[str] = None) -> List[SubDeck]:
     """The ordered sub-decks for ``result``: overall, then per product, then per country.
 
     ``scope`` (from the Setup "scope" control) selects which axes to build — the full deck
-    ("all"), or just the overall / product / country pages. Product/country axes are also
-    gated on their template being registered. The product/country entities are the user's
+    ("all"), or just the overall / product / country pages. Every axis is also gated on its
+    template being registered AND present on disk. The product/country entities are the user's
     selection when they pin any, ELSE every product/country the carrier writes in (so an
     unfiltered run produces the carrier's full book, one block each).
 
@@ -122,24 +145,37 @@ def plan_subdecks(result, *, scope: Optional[str] = None) -> List[SubDeck]:
     surplus per-country pages are pruned to the country count.
     """
     axes = _axes_for(scope)
-    names = set(available())
+    names = _buildable()
     vocab = product_vocab(result) if PRODUCT in names else ()
     want_products = PRODUCT in axes and PRODUCT in names
     want_countries = COUNTRY in axes and COUNTRY in names
     products = (selected_products(result) or vocab) if want_products else ()
     countries = (selected_countries(result) or carrier_countries(result)) if want_countries else ()
 
+    # Every sub-deck sees the run's whole country set, so a page can tell a single-country
+    # run from a multi-country one even after its filters are narrowed to one country.
+    result = replace(result, scope_countries=tuple(str(c) for c in countries))
+    carriers = carrier_vocab(result)
+
+    def with_context(values: Dict[str, Any]) -> Dict[str, Any]:
+        """Fold in the vocabulary the fill engine rewrites authored example names from."""
+        return {**values, "carrier_vocab": carriers}
+
     decks: List[SubDeck] = []
     if OVERALL in axes and OVERALL in names:
         overall_result = scope_overall(result)
-        decks.append(_build_subdeck(OVERALL, overall_result, resolve_roles(overall_result), "overall"))
+        decks.append(_build_subdeck(OVERALL, overall_result,
+                                    with_context(resolve_roles(overall_result)), "overall"))
     for product in products:
-        values = resolve_roles_for_product(result, product)
+        values = with_context(resolve_roles_for_product(result, product))
         values["product_vocab"] = vocab
         decks.append(_build_subdeck(PRODUCT, scope_to_product(result, product), values, str(product)))
     for country in countries:
         decks.append(_build_subdeck(COUNTRY, scope_to_country(result, country),
-                                    resolve_roles_for_country(result, country), str(country)))
+                                    with_context(resolve_roles_for_country(result, country)),
+                                    str(country)))
+    if END in axes and END in names:
+        decks.append(SubDeck(END, {}, label="end"))
     return decks
 
 
@@ -149,17 +185,21 @@ _manifest_cache: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
 def _augmented_manifest(bmap: BindingMap) -> List[Dict[str, Any]]:
     """The static map's manifest + the dynamic re-binders (cached per template file).
 
-    ``commentary.augment`` binds the ellipsis prose slots (Trading Summary etc.) and
-    ``feedback.augment`` the feedback/quadrant/highlight table cells — so the curated
-    maps stay about scalar KPIs while narrative slots are recognised generically.
+    The curated maps stay about scalar KPIs; everything positional or narrative is
+    recognised generically, in this order:
+
+      * ``grids.augment`` — the per-product breakdown grid's cells (one row per product);
+      * ``gwp_page.augment`` — the GWP-performance page's TTM table and panel totals;
+      * ``commentary.augment`` — the prose slots (Trading Summary etc.);
+      * ``feedback.augment`` — the feedback/quadrant/highlight cells and panels.
     """
     key = (bmap.name, bmap.path)
     cached = _manifest_cache.get(key)
     if cached is None:
         template = analyze(bmap.path)
         bindings = R.manifest_from_dicts(bmap.manifest())
-        bindings = commentary.augment(template, bindings)
-        bindings = feedback.augment(template, bindings)
+        for augment in (grids.augment, gwp_page.augment, commentary.augment, feedback.augment):
+            bindings = augment(template, bindings)
         cached = _manifest_cache[key] = R.manifest_to_dicts(bindings)
     return cached
 

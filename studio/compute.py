@@ -80,6 +80,10 @@ class OverallResult:
     engine: Any = None
     # User-pinned custom peer set (Carrier_Group values); None → resolve from Peers table.
     peers: Optional[Tuple[str, ...]] = None
+    # Every country the whole RUN covers, carried unchanged into each per-country sub-deck
+    # so a page can tell a single-country run from a multi-country one (the country-vs-country
+    # chart on the GWP-performance page needs several countries to mean anything).
+    scope_countries: Tuple[str, ...] = ()
     # Commentary voice, chosen in Setup and applied when prose is written (see
     # ``studio.template_fill.commentary`` / ``studio.narrate.commentary``).
     style: str = "balanced"
@@ -381,7 +385,9 @@ def product_breakdown_rows(
       • ``rank``        — the carrier's rank among carriers in that product line;
       • ``rank_change`` — rank improvement vs the prior year (+ = moved up);
       • ``runway``      — own premium − the TOP-5 carriers' AVERAGE premium in that
-                          product line (negative = behind the top-5 average).
+                          product line (negative = behind the top-5 average);
+      • ``peer_gwp``    — that TOP-5 carrier AVERAGE itself (the confidential peer
+                          benchmark the breakdown table's "Peer GWP" column shows).
     Everything is premium-derived — no LLM, no random values.
     """
     if not subject:
@@ -420,9 +426,9 @@ def product_breakdown_rows(
                                              filters=scoped(base, cur)), engine=engine):
         per_carrier.setdefault(str(x.dims.get(dim)), []).append(x.value)
     runway: Dict[str, float] = {}
+    peer_avg: Dict[str, float] = {}
     for p, vals in per_carrier.items():
-        top5 = sorted(vals, reverse=True)[:5]
-        avg = sum(top5) / len(top5) if top5 else 0.0
+        peer_avg[p] = avg = _top_average(vals)
         runway[p] = (gwp.get(p, 0.0) or 0.0) - avg
 
     rows: List[Dict[str, Any]] = []
@@ -433,8 +439,54 @@ def product_breakdown_rows(
         rows.append({
             "name": p, "gwp": gwp.get(p), "var": var, "sow": sow.get(p),
             "rank": rank_cur.get(p), "rank_change": rc, "runway": runway.get(p),
+            "peer_gwp": peer_avg.get(p),
         })
     return rows
+
+
+_PEER_TOP_N = 5
+
+
+def _top_average(values: List[float], *, top: int = _PEER_TOP_N) -> float:
+    """Mean of the ``top`` largest values (0.0 when empty) — the peer benchmark."""
+    head = sorted((v or 0.0 for v in values), reverse=True)[:top]
+    return (sum(head) / len(head)) if head else 0.0
+
+
+def peer_average_totals(flow, filters, engine, *, top: int = _PEER_TOP_N) -> Optional[Dict[str, Any]]:
+    """The TOP-``top`` carriers' AVERAGE premium in scope, current vs prior year.
+
+    The confidential benchmark behind the templates' "Peer average GWP 1-5" row and
+    "Peer GWP" columns: never a named competitor, just the mean of the largest carriers
+    in the same scope. ``sow`` is that average as a share of the whole Marsh book, so the
+    peer share-of-wallet row is computed on exactly the same basis as the carrier's own.
+
+    Returns ``None`` without a year filter (there is no period to compare).
+    """
+    cur = _current_year(filters)
+    if cur is None:
+        return None
+    base = {k: v for k, v in filters.items() if k != _CARRIER_COL}
+
+    def avg_at(year: int) -> Tuple[float, float]:
+        scoped = {**base, _YEAR_COL: year}
+        facts = compute_breakdown(
+            PrimitiveArgs(flow=flow, metric="premium", group_by=(_CARRIER_COL,), filters=scoped),
+            engine=engine,
+        )
+        values = [f.value or 0.0 for f in facts]
+        return _top_average(values, top=top), sum(values)
+
+    c, c_total = avg_at(cur)
+    p, p_total = avg_at(cur - 1)
+    sow = (c / c_total * 100) if c_total else None
+    sow_prior = (p / p_total * 100) if p_total else None
+    return {
+        "current_year": cur, "prior_year": cur - 1, "current": c, "prior": p,
+        "delta": c - p, "pct": ((c - p) / p * 100) if p else None,
+        "sow": sow, "sow_prior": sow_prior,
+        "sow_delta": None if (sow is None or sow_prior is None) else (sow - sow_prior),
+    }
 
 
 def near_rank_gap(flow, filters, engine, subject, *, dim="Product_Line", top=8) -> Optional[Dict[str, Any]]:

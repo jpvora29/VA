@@ -292,7 +292,14 @@ def _numeric_unmapped(record: DatasetRecord) -> List[ColumnProfile]:
 
 
 def _primary_measure_card(record: DatasetRecord) -> Optional[html.Div]:
-    """Shown when nothing maps to Premium: designate or calculate the primary measure."""
+    """Shown when nothing maps to Premium: designate or calculate the primary measure.
+
+    The three fields carry PATTERN-MATCHING ids on purpose: this whole card
+    disappears once a column maps to Premium, and a plain ``State("qs-primary-…")``
+    on a component that has left the layout makes Dash refuse the Submit callback
+    ("a nonexistent object was used in a State"). With ``{"type": "qs-primary"}``
+    the absent card simply reads back as an empty list.
+    """
     if any(m.target == "Premium" for m in record.mappings):
         return None
     numeric = [{"label": p.name, "value": p.name}
@@ -308,7 +315,7 @@ def _primary_measure_card(record: DatasetRecord) -> Optional[html.Div]:
                     [
                         html.Div("NAME", className="studio-field-label"),
                         dcc.Input(
-                            id="qs-primary-name",
+                            id={"type": "qs-primary", "field": "name"},
                             value=(primary.name if primary else ""),
                             placeholder="e.g. Gross Revenue",
                             debounce=True, className="qs-map-desc",
@@ -320,7 +327,7 @@ def _primary_measure_card(record: DatasetRecord) -> Optional[html.Div]:
                     [
                         html.Div("COLUMN", className="studio-field-label"),
                         dcc.Dropdown(
-                            id="qs-primary-col", options=numeric,
+                            id={"type": "qs-primary", "field": "column"}, options=numeric,
                             value=(primary.column or None) if primary else None,
                             placeholder="Pick a numeric column…",
                             className="studio-dd",
@@ -332,7 +339,7 @@ def _primary_measure_card(record: DatasetRecord) -> Optional[html.Div]:
                     [
                         html.Div("OR CALCULATION", className="studio-field-label"),
                         dcc.Input(
-                            id="qs-primary-formula",
+                            id={"type": "qs-primary", "field": "formula"},
                             value=(primary.formula if primary else ""),
                             placeholder="e.g. Written_Premium + Fees",
                             debounce=True, className="qs-map-desc",

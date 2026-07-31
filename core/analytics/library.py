@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.analytics.sql import (
     flow_spec,
+    peer_country_column,
     resolve_engine,
     resolve_measure,
     run_rows,
@@ -242,7 +243,7 @@ def compute_market_presence(
 
 
 def _peer_clauses(
-    spec, args: PrimitiveArgs, params: Dict[str, Any]
+    spec, args: PrimitiveArgs, params: Dict[str, Any], engine: Optional[Any] = None
 ) -> Optional[Tuple[str, List[str]]]:
     """Build the SQL clauses selecting the subject's peer set under the args' filters.
 
@@ -251,6 +252,10 @@ def _peer_clauses(
     peer average so both resolve the SAME peer membership the same way. A pinned
     custom peer set overrides the Peers-table lookup; the subject's own carrier
     filter is always excluded (we want the peers, not the subject).
+
+    When the flow declares a peer country column AND the Peers table really has
+    one, the group is scoped to the selected country so the benchmark is
+    like-for-like in that market.
     """
     peer = spec.peer_columns
     carrier_col = spec.entity_columns.get("carrier")
@@ -269,7 +274,7 @@ def _peer_clauses(
         member_clause = f'LOWER("{carrier_col}") IN ({", ".join(ph)})'
     else:
         peer_where = [f'LOWER("{peer["key"]}") = LOWER(:subject)']
-        country_col = peer.get("country")
+        country_col = peer_country_column(spec, engine) if engine is not None else peer.get("country")
         country_val = args.filters.get(spec.entity_columns.get("country"))
         if country_col and country_val:
             # Honour a multi-select country filter (IN) as well as a single value.
@@ -312,7 +317,7 @@ def compute_peer_average(args: PrimitiveArgs, *, engine: Optional[Any] = None) -
     agg = "AVG"
     cuts = _cut_columns(spec, args.group_by)
     params: Dict[str, Any] = {}
-    parts = _peer_clauses(spec, args, params)
+    parts = _peer_clauses(spec, args, params, eng)
     if parts is None:
         return []
     _carrier_col, clauses = parts
@@ -352,7 +357,7 @@ def compute_peer_average_total(args: PrimitiveArgs, *, engine: Optional[Any] = N
     eng = resolve_engine(engine)
     column, agg = resolve_measure(spec, args.metric)  # SUM for premium
     params: Dict[str, Any] = {}
-    parts = _peer_clauses(spec, args, params)
+    parts = _peer_clauses(spec, args, params, eng)
     if parts is None:
         return []
     carrier_col, clauses = parts

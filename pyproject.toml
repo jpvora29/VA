@@ -36,3 +36,10 @@ dependencies = [
 dev = [
     "pytest>=9.1.1",
 ]
+
+[tool.pytest.ini_options]
+# ``studio``/``core`` are imported as top-level packages from the repo root.
+pythonpath = ["."]
+markers = [
+    "e2e: end-to-end run over the real templates (slow; deselect with -m 'not e2e')",
+]

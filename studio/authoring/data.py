@@ -275,15 +275,14 @@ def register_data(app):
         State({"type": "qs-kpi-agg", "col": ALL}, "value"),
         State({"type": "qs-kpi-fmt", "col": ALL}, "value"),
         State({"type": "qs-kpi-desc", "col": ALL}, "value"),
-        State("qs-primary-name", "value"),
-        State("qs-primary-col", "value"),
-        State("qs-primary-formula", "value"),
+        State({"type": "qs-primary", "field": ALL}, "value"),
+        State({"type": "qs-primary", "field": ALL}, "id"),
         State("qs-dataset", "data"),
         prevent_initial_call=True,
     )
     def submit_mapping(n, targets, target_ids, descriptions,
                        kpi_names, kpi_ids, kpi_aggs, kpi_fmts, kpi_descs,
-                       primary_name, primary_col, primary_formula, store):
+                       primary_values, primary_ids, store):
         active = (store or {}).get("active")
         if not n or not active:
             return no_update, no_update
@@ -292,7 +291,12 @@ def register_data(app):
             [i["col"] for i in (kpi_ids or [])],
             kpi_names or [], kpi_aggs or [], kpi_fmts or [], kpi_descs or [],
         )
-        primary = _primary_from_fields(primary_name, primary_col, primary_formula)
+        # Empty when the primary-measure card isn't on screen — which is exactly
+        # when a column maps to Premium, so there is no primary measure to declare.
+        fields = {i["field"]: v for i, v in zip(primary_ids or [], primary_values or [])}
+        primary = _primary_from_fields(
+            fields.get("name"), fields.get("column"), fields.get("formula"),
+        )
         error = submit_mappings(
             get_repository(), active, columns, targets or [], descriptions or [],
             primary=primary, kpis=kpis,

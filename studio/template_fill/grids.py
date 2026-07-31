@@ -1,19 +1,28 @@
 """Per-product breakdown-grid detection and binding — the 'Carrier breakdown' table.
 
-The generic slot/role path fills one scalar per slot, so a per-product table (one row
-per product line: GWP · Var % · SoW · Rank · Rank change · Runway to Top 5) ends up
-with the SAME carrier total repeated down every row. This module recognises that grid
-by geometry and binds each *cell* to a positional, per-slide role
+The generic slot/role path fills one scalar per slot, so a per-product grid (one row
+per product line: GWP · Var % · SoW · Rank · Rank change · Peer GWP · Runway to Top 5)
+ends up with the SAME carrier total repeated down every row. This module recognises that
+grid and binds each *cell* to a positional, per-slide role
 ``grid:<slide_idx>:<row>:<metric>`` so each row carries its own product's numbers.
 
-Detection is generic (header text + column geometry), so it fires only on a slide that
-actually has the GWP/Var/SoW/Rank header set — never on unrelated slides. Each breakdown
-slide is scoped to one country (``Carrier breakdown – Country (1)``/(2)…), matched
-positionally to the carrier's countries so the table agrees with the slide's own label.
+Two authoring shapes are supported, tried in that order by :func:`_detect`:
+
+  * a real PowerPoint **table** (the current templates) — columns come straight from the
+    header row, so the mapping is exact;
+  * loose **text placeholders** laid out as a grid (the earlier templates) — columns and
+    rows are recovered from geometry.
+
+Either way detection is generic (it fires only on a slide that actually has the
+GWP/Var/SoW/Rank header set — never on unrelated slides), so a template edit that
+reorders columns, adds a column, or converts the grid to a table keeps working. Each
+breakdown slide is scoped to one country (``Carrier breakdown – Country (1)``/(2)…),
+matched positionally to the carrier's countries so the table agrees with its own label.
 """
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from logger import get_logger
@@ -29,10 +38,26 @@ _COUNTRY_COL = "Country"
 # Normalised header text → metric key. "rank" must be exact so "rank change" is its own.
 _HEADER_METRIC = {
     "product": "name", "gwp": "gwp", "var %": "var", "var": "var", "sow": "sow",
-    "rank": "rank", "rank change": "rank_change",
+    "rank": "rank", "rank change": "rank_change", "peer gwp": "peer_gwp",
 }
 _METRIC_COLS = ("name", "gwp", "var", "sow", "rank", "rank_change")
 _REQUIRED = {"name", "gwp", "var", "sow", "rank"}
+# Every metric a grid row can carry — the keys ``grid_values`` emits and ``augment`` binds.
+_ROW_METRICS = ("name", "gwp", "var", "sow", "rank", "rank_change", "peer_gwp", "runway")
+
+
+@dataclass(frozen=True)
+class Grid:
+    """One breakdown grid: how many product rows, and where each cell lives.
+
+    ``cells`` are ``(shape_id, where, metric, row)`` — ``where`` is a ``['cell', r, c]``
+    for a table grid or a ``['para', 0]`` for a placeholder grid, so the same binding and
+    fill code serves both authoring shapes.
+    """
+
+    row_count: int
+    cells: Tuple[Tuple[int, List[Any], str, int], ...] = ()
+    subtitle_id: Optional[int] = None
 
 # A subtitle like "Carrier breakdown – Country (1)" — its (n) is hard-coded on EVERY
 # breakdown slide, so it must be re-resolved per slide to the slide's own country.
@@ -72,24 +97,89 @@ def _headers(slide: Slide) -> Tuple[Dict[str, float], Optional[float], float]:
     return cols, runway_x, header_y
 
 
-def _detect(slide: Slide) -> Optional[Dict[str, Any]]:
-    """Map the breakdown grid on ``slide`` → cell assignments, or None if not a grid.
+def _norm(text: str) -> str:
+    return " ".join((text or "").split()).strip().lower()
 
-    Returns ``{row_count, cells}`` where ``cells`` is a list of
-    ``(shape_id, where, metric, row)`` plus synthesised text cells for the static
+
+def _subtitle_id(slide: Slide, above_y: float) -> Optional[int]:
+    """The hard-coded ``… – Country (n)`` subtitle sitting above the grid, if any."""
+    for sh in slide.shapes:
+        if (sh.kind == "text" and _cy(sh) < above_y and _PAREN_NUM.search(sh.text)
+                and re.search(r"country|region|breakdown", sh.text, re.I)):
+            return sh.shape_id
+    return None
+
+
+def _table_columns(header: List[str]) -> Tuple[Dict[str, int], Optional[int]]:
+    """``{metric: column index}`` from a grid table's header row, plus the runway column."""
+    cols: Dict[str, int] = {}
+    runway_col: Optional[int] = None
+    for c, cell in enumerate(header):
+        text = _norm(cell)
+        if "runway" in text:
+            runway_col = c
+            continue
+        metric = _HEADER_METRIC.get(text)
+        if metric and metric not in cols:
+            cols[metric] = c
+    return cols, runway_col
+
+
+def _runway_label_ids(slide: Slide) -> List[int]:
+    """Shape ids of the runway bar value labels, top to bottom.
+
+    On a TABLE grid the rows live inside the table, so any *shape-level* money
+    placeholder left on the slide is a runway bar label (the runway is drawn as a bar
+    chart picture with its values as free text boxes, one per product row).
+    """
+    labels = [sh for sh in slide.shapes
+              if sh.kind == "text" and sh.paragraphs
+              and classify(sh.paragraphs[0]) == "money"]
+    return [sh.shape_id for sh in sorted(labels, key=_cy)]
+
+
+def _detect_table(slide: Slide) -> Optional[Grid]:
+    """The breakdown grid authored as a real PowerPoint table, or None."""
+    for sh in slide.shapes:
+        table = sh.table if sh.kind == "table" else None
+        if not table or len(table) < 2:
+            continue
+        cols, runway_col = _table_columns(table[0])
+        if not _REQUIRED <= set(cols):
+            continue
+
+        data_rows = list(range(1, len(table)))
+        cells: List[Tuple[int, List[Any], str, int]] = []
+        for row, r in enumerate(data_rows):
+            for metric, c in cols.items():
+                if c < len(table[r]):
+                    cells.append((sh.shape_id, ["cell", r, c], metric, row))
+
+        # The runway column is authored empty (its values are free text boxes over the
+        # bar picture); bind those, positionally, when the column exists at all.
+        if runway_col is not None:
+            for row, shape_id in enumerate(_runway_label_ids(slide)[:len(data_rows)]):
+                cells.append((shape_id, ["para", 0], "runway", row))
+
+        return Grid(row_count=len(data_rows), cells=tuple(cells),
+                    subtitle_id=_subtitle_id(slide, sh.y))
+    return None
+
+
+def _detect(slide: Slide) -> Optional[Grid]:
+    """The breakdown grid on ``slide`` (table first, then a placeholder layout), or None."""
+    return _detect_table(slide) or _detect_placeholders(slide)
+
+
+def _detect_placeholders(slide: Slide) -> Optional[Grid]:
+    """The breakdown grid authored as loose text placeholders, recovered by geometry.
+
+    Returns a :class:`Grid` whose ``cells`` include synthesised entries for the static
     product-name and rank-change boxes (which are not ``x``-placeholder slots).
     """
     cols, runway_x, header_y = _headers(slide)
     if not _REQUIRED <= set(cols):
         return None
-
-    # The country subtitle sits above the header and carries a hard-coded "(n)".
-    subtitle_id: Optional[int] = None
-    for sh in slide.shapes:
-        if (sh.kind == "text" and _cy(sh) < header_y and _PAREN_NUM.search(sh.text)
-                and re.search(r"country|region|breakdown", sh.text, re.I)):
-            subtitle_id = sh.shape_id
-            break
 
     spacing = abs(cols["gwp"] - cols["name"]) or 1.0
     col_tol = spacing * 0.6
@@ -130,7 +220,8 @@ def _detect(slide: Slide) -> Optional[Dict[str, Any]]:
             continue
         cells.append((sh.shape_id, ["para", 0], metric, cy_row))
 
-    return {"row_count": len(anchors), "cells": cells, "subtitle_id": subtitle_id}
+    return Grid(row_count=len(anchors), cells=tuple(cells),
+                subtitle_id=_subtitle_id(slide, header_y))
 
 
 def _role(slide_idx: int, row: int, metric: str) -> str:
@@ -145,39 +236,43 @@ def augment(template: Template, bindings: List[R.Binding]) -> List[R.Binding]:
     """
     by_key = {b.slot.key: b for b in bindings}
     extra: List[R.Binding] = []
+
+    def bind(slide_idx: int, shape_id: int, where: List[Any], role: str) -> None:
+        """Point ``slide/shape/where`` at ``role`` — remapping an existing binding or
+        adding one, keeping the template's own text as the token."""
+        existing = by_key.get(Slot(slide_idx, shape_id, where, "", "text", "").key)
+        if existing is not None:
+            existing.role, existing.placeholder = role, False
+            return
+        extra.append(R.Binding(
+            slot=Slot(slide_idx, shape_id, where, _token_at(template, slide_idx, shape_id, where),
+                      "text", ""),
+            role=role, placeholder=False))
+
     for slide in template.slides:
         grid = _detect(slide)
-        if not grid:
+        if grid is None:
             continue
-        for shape_id, where, metric, row in grid["cells"]:
-            slot = Slot(slide.index, shape_id, where, "", "text", "")
-            existing = by_key.get(slot.key)
-            role = _role(slide.index, row, metric)
-            if existing is not None:
-                existing.role = role
-                existing.placeholder = False
-            else:
-                sh = template.shape(slide.index, shape_id)
-                token = sh.paragraphs[0] if (sh and sh.paragraphs) else ""
-                extra.append(R.Binding(
-                    slot=Slot(slide.index, shape_id, where, token, "text", ""),
-                    role=role, placeholder=False))
-        sub_id = grid.get("subtitle_id")
-        if sub_id is not None:
-            slot = Slot(slide.index, sub_id, ["para", 0], "", "text", "")
-            sh = template.shape(slide.index, sub_id)
-            token = sh.paragraphs[0] if (sh and sh.paragraphs) else ""
-            role = f"grid:{slide.index}:subtitle"
-            existing = by_key.get(slot.key)
-            if existing is not None:
-                existing.role, existing.placeholder = role, False
-            else:
-                extra.append(R.Binding(
-                    slot=Slot(slide.index, sub_id, ["para", 0], token, "text", ""),
-                    role=role, placeholder=False))
+        for shape_id, where, metric, row in grid.cells:
+            bind(slide.index, shape_id, where, _role(slide.index, row, metric))
+        if grid.subtitle_id is not None:
+            bind(slide.index, grid.subtitle_id, ["para", 0], f"grid:{slide.index}:subtitle")
         logger.info("grids: slide %d breakdown grid -> %d cells, %d rows",
-                    slide.index, len(grid["cells"]), grid["row_count"])
+                    slide.index, len(grid.cells), grid.row_count)
     return bindings + extra
+
+
+def _token_at(template: Template, slide_idx: int, shape_id: int, where: List[Any]) -> str:
+    """The template's own text at a cell/paragraph — the placeholder token to render into."""
+    sh = template.shape(slide_idx, shape_id)
+    if sh is None:
+        return ""
+    if where and where[0] == "cell" and sh.table:
+        r, c = int(where[1]), int(where[2])
+        if r < len(sh.table) and c < len(sh.table[r]):
+            return sh.table[r][c]
+        return ""
+    return sh.paragraphs[0] if sh.paragraphs else ""
 
 
 # ── value resolution ─────────────────────────────────────────────────────────
@@ -223,9 +318,9 @@ def grid_values(template: Template, result) -> Dict[str, Any]:
     breakdown_idx = 0
     for slide in template.slides:
         grid = _detect(slide)
-        if not grid:
+        if grid is None:
             continue
-        n = grid["row_count"]
+        n = grid.row_count
         country = countries[breakdown_idx] if breakdown_idx < len(countries) else None
         breakdown_idx += 1
         filters = dict(result.resolved_filters)
@@ -233,9 +328,8 @@ def grid_values(template: Template, result) -> Dict[str, Any]:
             filters[_COUNTRY_COL] = country
 
         # Re-resolve the hard-coded "(n)" subtitle to THIS slide's country.
-        sub_id = grid.get("subtitle_id")
-        if sub_id is not None and country is not None:
-            sh = template.shape(slide.index, sub_id)
+        if grid.subtitle_id is not None and country is not None:
+            sh = template.shape(slide.index, grid.subtitle_id)
             token = sh.paragraphs[0] if (sh and sh.paragraphs) else ""
             text = _COUNTRY_TOKEN.sub(country, token)
             text = _CARRIER_TOKEN.sub(str(subject), text)
@@ -247,14 +341,9 @@ def grid_values(template: Template, result) -> Dict[str, Any]:
             rows = []
         for i in range(n):
             r = rows[i] if i < len(rows) else None
-            def val(key, default=""):
-                return default if (r is None or r.get(key) is None) else r[key]
-            out[_role(slide.index, i, "name")] = val("name")
-            out[_role(slide.index, i, "gwp")] = val("gwp")
-            out[_role(slide.index, i, "var")] = val("var")
-            out[_role(slide.index, i, "sow")] = val("sow")
-            out[_role(slide.index, i, "rank")] = val("rank")
-            out[_role(slide.index, i, "runway")] = val("runway")
+            for metric in _ROW_METRICS:
+                value = None if r is None else r.get(metric)
+                out[_role(slide.index, i, metric)] = "" if value is None else value
             out[_role(slide.index, i, "rank_change")] = _fmt_rank_change(
                 None if r is None else r.get("rank_change"))
     return out

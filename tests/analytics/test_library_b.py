@@ -65,8 +65,11 @@ def engine():
             text('INSERT INTO Peers (Carrier_Group, Overall_Peer_Group, Carrier, Country, Peers) '
                  'VALUES (:cg, :opg, :c, :co, :p)'),
             [
-                {"cg": "Zurich", "opg": "AIG", "c": None, "co": None, "p": None},      # GPR peers
-                {"cg": "Zurich", "opg": "Chubb", "c": None, "co": None, "p": None},
+                # GPR peers — Country scopes the group, same as the live table.
+                {"cg": "Zurich", "opg": "AIG", "c": None, "co": "Canada", "p": None},
+                {"cg": "Zurich", "opg": "Chubb", "c": None, "co": "Canada", "p": None},
+                # A different market gets a different group — proves the scoping.
+                {"cg": "Zurich", "opg": "Allianz", "c": None, "co": "Mexico", "p": None},
                 {"cg": None, "opg": None, "c": "Zurich", "co": "Singapore", "p": "AIG"},   # survey peers
                 {"cg": None, "opg": None, "c": "Zurich", "co": "Singapore", "p": "Chubb"},
             ],
@@ -85,6 +88,20 @@ def test_peer_average_gpr_premium(engine):
     assert {f.dims["Product_Line"]: f.value for f in facts} == {
         "Property": 150.0, "Cyber": 300.0, "Marine": 200.0,
     }
+
+
+def test_peer_average_gpr_is_scoped_by_country(engine):
+    """`peer_columns.country` scopes the group per market, so the same subject
+    benchmarks against a DIFFERENT peer set in a different country."""
+    def peers_for(country):
+        args = PrimitiveArgs(flow="gpr", metric="premium", group_by=("Product_Line",),
+                             filters={"Country": country, "Carrier_Group": "Zurich", "Year": 2024})
+        return {f.dims["Product_Line"]: f.value for f in compute_peer_average(args, engine=engine)}
+
+    # Canada peers = AIG, Chubb (rows exist). Mexico's peer is Allianz, who writes
+    # nothing in the fixture — so the scoped lookup returns no peer rows at all.
+    assert peers_for("Canada")
+    assert peers_for("Mexico") == {}
 
 
 def test_peer_average_survey_score(engine):

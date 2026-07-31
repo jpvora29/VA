@@ -15,7 +15,7 @@ produces the keyed text — both fold into the same doc the preview and fill con
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from logger import get_logger
 from studio.template_fill import roles as R
@@ -54,8 +54,26 @@ def _cx(sh: Shape) -> float:
     return sh.x + sh.w / 2.0
 
 
+# A prose box the author left filled with EXAMPLE commentary rather than ellipses reads as
+# a sentence — several words of running text. Headers, captions and KPI tokens never do.
+_MIN_PROSE_WORDS = 8
+
+
+def _reads_as_prose(text: str) -> bool:
+    return len((text or "").split()) >= _MIN_PROSE_WORDS
+
+
 def _is_prose_slot(sh: Shape) -> bool:
-    return sh.kind == "text" and bool(sh.paragraphs) and bool(_ELLIPSIS.search(sh.paragraphs[0] or ""))
+    """True for a commentary box: an ellipsis "fill me", or authored example prose.
+
+    Templates mark a prose slot either way — ``…………`` in the earlier decks, a paragraph of
+    sample commentary in the current ones. Both must be recognised, or a deck ships the
+    author's example narrative as if it were this carrier's story.
+    """
+    if sh.kind != "text" or not sh.paragraphs:
+        return False
+    first = sh.paragraphs[0] or ""
+    return bool(_ELLIPSIS.search(first)) or _reads_as_prose(first)
 
 
 def _column_topic(slide: Slide, shape: Shape) -> str:
@@ -68,29 +86,41 @@ def _column_topic(slide: Slide, shape: Shape) -> str:
     return min(headers, key=lambda s: abs(_cx(s) - _cx(shape))).text.strip()
 
 
-def _topic_key(header: str) -> str:
+# A prose box whose column header names no known topic falls back to its SECTION's topic:
+# a highlights/summary page wants the headline, a four-column page its key messages.
+_SECTION_DEFAULT_TOPIC: Dict[Section, str] = {
+    Section.HIGHLIGHTS: "reflections",
+    Section.SUMMARY: "reflections",
+}
+
+_HEADER_TOPICS: Tuple[Tuple[Tuple[str, ...], str], ...] = (
+    (("reflection",), "reflections"),
+    (("performance", "ytd"), "performance"),
+    (("priorit",), "priorities"),
+    (("message",), "key_messages"),
+    (("strength",), "strengths"),
+    (("weak",), "weaknesses"),
+    (("opportun",), "opportunities"),
+    (("threat",), "threats"),
+)
+
+
+def _topic_key(header: str, section: Section = Section.OTHER) -> str:
     low = header.lower()
-    if "reflection" in low:
-        return "reflections"
-    if "performance" in low or "ytd" in low:
-        return "performance"
-    if "priorit" in low:
-        return "priorities"
-    if "message" in low:
-        return "key_messages"
-    if "strength" in low:
-        return "strengths"
-    if "weak" in low:
-        return "weaknesses"
-    if "opportun" in low:
-        return "opportunities"
-    if "threat" in low:
-        return "threats"
-    return "key_messages"
+    for keywords, topic in _HEADER_TOPICS:
+        if any(k in low for k in keywords):
+            return topic
+    return _SECTION_DEFAULT_TOPIC.get(section, "key_messages")
 
 
-def _ellipsis_paras(sh: Shape) -> List[int]:
-    return [i for i, p in enumerate(sh.paragraphs) if _ELLIPSIS.search(p or "")]
+def _prose_paras(sh: Shape) -> List[int]:
+    """The paragraph indices this box's commentary replaces.
+
+    Paragraph 0 carries the written commentary; the rest are blanked, so neither a stale
+    ``………`` line nor a leftover line of the author's example prose survives.
+    """
+    ellipsis = [i for i, p in enumerate(sh.paragraphs) if _ELLIPSIS.search(p or "")]
+    return ellipsis or [i for i, p in enumerate(sh.paragraphs) if (p or "").strip()]
 
 
 def _prose_targets(template: Template) -> List[Dict[str, Any]]:
@@ -99,13 +129,14 @@ def _prose_targets(template: Template) -> List[Dict[str, Any]]:
     column is one commentary (paragraph 0 carries it; the rest are blanked)."""
     out: List[Dict[str, Any]] = []
     for slide in template.slides:
-        if section_of(slide) not in _COMMENTARY_SECTIONS:
+        section = section_of(slide)
+        if section not in _COMMENTARY_SECTIONS:
             continue
         for sh in slide.shapes:
             if _is_prose_slot(sh):
                 out.append({"slide_idx": slide.index, "shape_id": sh.shape_id,
-                            "paras": _ellipsis_paras(sh),
-                            "topic": _topic_key(_column_topic(slide, sh))})
+                            "paras": _prose_paras(sh),
+                            "topic": _topic_key(_column_topic(slide, sh), section)})
     return out
 
 
@@ -114,20 +145,33 @@ def _role(slide_idx: int, shape_id: int, para: int) -> str:
 
 
 def augment(template: Template, bindings: List[R.Binding]) -> List[R.Binding]:
-    """Re-bind commentary prose slots to ``note:<slide>:<shape>:<para>`` roles.
+    """Re-bind (or add) commentary prose slots as ``note:<slide>:<shape>:<para>`` roles.
 
-    Paragraph 0 carries the column's commentary; the box's remaining ellipsis
-    paragraphs are bound too so they get blanked (no leftover ``………`` lines)."""
+    Paragraph 0 carries the column's commentary; the box's remaining paragraphs are bound
+    too so they get blanked (no leftover ``………`` line, and no leftover line of the author's
+    example prose). A box the slot detector never saw — authored prose carries no ``x``
+    placeholder — is ADDED here, so it fills rather than shipping the example narrative.
+    """
     from studio.template_fill.slots import Slot
 
     by_key = {b.slot.key: b for b in bindings}
+    extra: List[R.Binding] = []
     for t in _prose_targets(template):
+        shape = template.shape(t["slide_idx"], t["shape_id"])
         for i in t["paras"]:
-            slot = Slot(t["slide_idx"], t["shape_id"], ["para", i], "", "text", "")
-            b = by_key.get(slot.key)
+            role = _role(t["slide_idx"], t["shape_id"], i)
+            where = ["para", i]
+            b = by_key.get(Slot(t["slide_idx"], t["shape_id"], where, "", "text", "").key)
             if b is not None:
-                b.role, b.placeholder = _role(t["slide_idx"], t["shape_id"], i), False
-    return bindings
+                b.role, b.placeholder = role, False
+                continue
+            token = shape.paragraphs[i] if (shape and i < len(shape.paragraphs)) else ""
+            extra.append(R.Binding(
+                slot=Slot(t["slide_idx"], t["shape_id"], where, token, "text", ""),
+                role=role, placeholder=False))
+    if extra:
+        logger.info("commentary: added %d prose slot(s) the token scan could not see", len(extra))
+    return bindings + extra
 
 
 # ── text generation ──────────────────────────────────────────────────────────

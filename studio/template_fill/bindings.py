@@ -67,6 +67,33 @@ def _country_breakdown(result) -> List[Dict[str, Any]]:
     return rows
 
 
+# The broker-survey flow: a different table (Carriers) and a different carrier column from
+# the premium book, so the survey tile is looked up on its own terms.
+_SURVEY_FLOW = "survey"
+_SURVEY_CARRIER_COL = "Carrier"
+
+
+def _survey_score(result) -> Optional[float]:
+    """The carrier's average broker-survey score — the "Overall Carrier Survey" tile.
+
+    Lives in the ``survey`` flow, not the premium book, so it is queried separately and is
+    simply ABSENT when that flow's table is not in the deck's database. The tile then keeps
+    the template's own placeholder rather than showing an unrelated premium-derived number.
+    """
+    from core.analytics.library import compute_breakdown
+    from core.analytics.types import PrimitiveArgs
+
+    if not result.subject:
+        return None
+    facts = _safe(
+        compute_breakdown,
+        PrimitiveArgs(flow=_SURVEY_FLOW, metric="score", group_by=(),
+                      filters={_SURVEY_CARRIER_COL: result.subject}),
+        engine=result.engine,
+    ) or []
+    return facts[0].value if facts and facts[0].value is not None else None
+
+
 def _spotlight(result) -> Optional[Dict[str, Any]]:
     """The single entity to feature in the "… Country xyz YoY change" highlights.
 
@@ -176,6 +203,18 @@ def resolve_roles(result) -> Dict[str, Any]:
         if rankm.get("delta") is not None:
             out["rank_yoy"] = int(rankm["delta"])
 
+    survey = _survey_score(result)
+    if survey is not None:
+        out["survey_score"] = survey
+
+    # Confidential peer benchmark: the top-5 carriers' AVERAGE premium and share of wallet.
+    # Never a named competitor — the templates head these "Peer GWP" / "Peer SoW".
+    peer = _safe(C.peer_average_totals, result.flow, fy, result.engine) or {}
+    for role, key in (("peer_gwp", "current"), ("peer_gwp_yoy", "pct"),
+                      ("peer_sow", "sow"), ("peer_sow_yoy", "sow_delta")):
+        if peer.get(key) is not None:
+            out[role] = peer[key]
+
     # Country labels (positional).
     for i, row in enumerate(_country_breakdown(result)):
         out[f"country_name[{i}]"] = row["name"]
@@ -278,6 +317,27 @@ def resolve_roles_for_product(result, product: Any) -> Dict[str, Any]:
 def resolve_roles_for_country(result, country: Any) -> Dict[str, Any]:
     """Role → value map scoped to a single country (for one ``country`` sub-deck)."""
     return resolve_roles(scope_to_country(result, country))
+
+
+def carrier_vocab(result) -> Tuple[str, ...]:
+    """Every carrier name in scope — the words a deck may need rewritten to its subject.
+
+    Templates are authored with an example carrier baked into row labels ("QBE GWP rank",
+    "QBE GWP Share %"). Rewriting those to the deck's subject keeps the label honest AND
+    upholds the no-named-peer rule: no other carrier's name may survive into carrier-facing
+    output. Ignores the pinned ``Carrier_Group`` filter so the full vocabulary is returned.
+    """
+    from core.analytics.library import compute_breakdown
+    from core.analytics.types import PrimitiveArgs
+
+    base = {k: v for k, v in (getattr(result, "resolved_filters", None) or {}).items()
+            if k != _CARRIER_COL}
+    facts = _safe(
+        compute_breakdown,
+        PrimitiveArgs(flow=result.flow, metric="premium", group_by=(_CARRIER_COL,), filters=base),
+        engine=result.engine,
+    ) or []
+    return tuple(str(f.dims.get(_CARRIER_COL)) for f in facts if f.dims.get(_CARRIER_COL))
 
 
 def product_vocab(result) -> Tuple[str, ...]:

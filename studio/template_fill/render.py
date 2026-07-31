@@ -89,3 +89,50 @@ def render_token(token: str, value: Any, value_kind: str = "") -> str:
         arrow = "▲" if value > 0 else ("▼" if value < 0 else "►")
         result = re.sub(f"[{_ARROWS}]", arrow, result)
     return result
+
+
+# A REAL example number the author typed rather than an x-placeholder: an optional sign,
+# digits (comma-grouped, optionally with decimals), an optional M/B/K scale and %. The
+# scale/% must be ADJACENT to the digits, so a separated unit ("+0.3 pp") stays in the
+# surrounding text and keeps its spacing.
+_EXAMPLE_NUM = re.compile(
+    r"(?P<sign>[+-])?(?P<num>\d[\d,]*(?:\.(?P<dec>\d+))?)(?P<scale>[MmBbKk])?(?P<pct>%)?"
+)
+_SCALE_DIVISOR = {"m": 1e6, "b": 1e9, "k": 1e3}
+
+
+def render_example(token: str, value: Any) -> str:
+    """Render ``value`` in the style of an *example* ``token`` (not an x-placeholder).
+
+    Some slots carry a real figure the author typed — ``€106.5m``, ``-1.0%``,
+    ``+6.1%▲``, ``+0.3 pp``, ``+3``. There is no ``x`` to key off, so the style comes
+    from the example itself: its surrounding text (currency symbol, ``pp`` suffix), its
+    decimals, its M/B/K scale, whether it was written with a forced ``+``, and any trend
+    arrow (re-pointed by the real value's own sign). Non-numeric values pass through.
+    """
+    if value is None:
+        return token
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return str(value)
+
+    m = _EXAMPLE_NUM.search(token or "")
+    if m is None:
+        return str(value)
+
+    decimals = len(m.group("dec") or "")
+    scale = m.group("scale") or ""
+    pct = bool(m.group("pct"))
+    val = float(value)
+    if not pct and scale:
+        val /= _SCALE_DIVISOR[scale.lower()]
+
+    grouped = "," in m.group("num")
+    digits = f"{abs(val):,.{decimals}f}" if grouped else f"{abs(val):.{decimals}f}"
+    sign = "-" if val < 0 else ("+" if m.group("sign") == "+" else "")
+    body = sign + digits + scale + ("%" if pct else "")
+
+    out = token[: m.start()] + body + token[m.end():]
+    if any(a in out for a in _ARROWS):
+        arrow = "▲" if val > 0 else ("▼" if val < 0 else "►")
+        out = re.sub(f"[{_ARROWS}]", arrow, out)
+    return out

@@ -28,10 +28,13 @@ _PLACEHOLDER_NUM = re.compile(
     r"(?<![A-Za-z$])\$?[xX]+(?:[.,][xX]+)*(?:[MBKmbk])?%?(?![A-Za-z])"
 )
 _ELLIPSIS = re.compile(r"(?:…+|\.{3,})")
-# An enumerated entity label is the WHOLE string — "Country (1)", "Region (2)", or
-# a bare "Carrier"/"Carrier:" title slot. It must full-match so a phrase that merely
-# contains those words (e.g. "Carrier's overall rank") is NOT mistaken for a slot.
-_ENUM_LABEL = re.compile(r"(?:Country|Region)\s*\(\s*\d+\s*\)|Carrier\s*:?", re.I)
+# An enumerated entity label is the WHOLE string — "Country (1)", "Region (2)", the
+# cover's "Carrier X" title, or a bare "Carrier"/"Carrier:" title slot. It must
+# full-match so a phrase that merely contains those words (e.g. "Carrier's overall
+# rank") is NOT mistaken for a slot.
+_ENUM_LABEL = re.compile(
+    r"(?:Country|Region)\s*\(\s*\d+\s*\)|Carrier\s+X|Carrier\s*:?", re.I
+)
 _HAS_X = re.compile(r"[xX]")
 
 
@@ -70,6 +73,11 @@ class Slot:
         )
 
 
+# "rank" must match as a WHOLE WORD: a slide titled "Portfolio and LC ranking" otherwise
+# stamps every placeholder on it as a rank.
+_RANK_WORD = re.compile(r"\brank\b", re.I)
+
+
 def _num_kind(token: str, context: str) -> str:
     """Refine a numeric placeholder into money | pct | rank | int by its shape."""
     t = token.strip()
@@ -77,8 +85,7 @@ def _num_kind(token: str, context: str) -> str:
         return "pct"
     if "$" in t or re.search(r"[MBKmbk]\b|[MBKmbk]$", t):
         return "money"
-    ctx = context.lower()
-    if "rank" in ctx:
+    if _RANK_WORD.search(context or ""):
         return "rank"
     # A short bare placeholder (just x / xx) with no scale → an integer (often rank).
     return "int"
@@ -111,13 +118,25 @@ def _para_context(shape: Shape, para_idx: int, slide_title: str) -> str:
     return " · ".join(parts)
 
 
+# A row label that is itself a placeholder can still name the PERIOD its row reports
+# ("PY (+x.x%▲)" heads the prior-year row) — the cue that tells a YoY cell from a
+# current-value one, so it is kept even though the label is a slot.
+_PERIOD_PREFIX = re.compile(r"^\s*(PY|CY|prior|current)\b", re.I)
+
+
 def _cell_context(table: List[List[str]], r: int, c: int, slide_title: str) -> str:
     """Header cell above + row label left + slide title — the cell's meaning."""
     parts: List[str] = []
     if table and table[0] and c < len(table[0]) and classify(table[0][c]) is None:
         parts.append(table[0][c].strip())
-    if c > 0 and classify(table[r][0]) is None and table[r][0].strip():
-        parts.append(table[r][0].strip())
+    label = table[r][0].strip() if (c > 0 and table[r]) else ""
+    if label:
+        if classify(label) is None:
+            parts.append(label)
+        else:
+            period = _PERIOD_PREFIX.match(label)
+            if period:
+                parts.append(period.group(1))
     if slide_title:
         parts.append(slide_title)
     return " · ".join(p for p in parts if p)

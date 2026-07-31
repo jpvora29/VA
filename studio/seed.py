@@ -18,6 +18,10 @@ from typing import Dict, List
 
 from sqlalchemy import create_engine
 
+from logger import get_logger
+
+logger = get_logger(__name__)
+
 _SEED_PATH = Path(__file__).resolve().parent / "_seed" / "studio_seed.db"
 _RNG_SEED = 20260619
 
@@ -86,6 +90,35 @@ def _monthly_split(annual: float) -> List[float]:
     return [round(annual * w / weight_total, 2) for w in _SEASON]
 
 
+# The subject's peer group PER COUNTRY — the real Peers table scopes membership by
+# market, so the benchmark is like-for-like. Japan is deliberately a different set
+# (the domestic carriers), which is what makes the country scoping observable.
+_SUBJECT_PEERS: Dict[str, List[str]] = {
+    "Singapore": ["AXA XL", "Allianz", "Chubb", "AIG"],
+    "Hong Kong": ["AXA XL", "Allianz", "Chubb", "AIG"],
+    "Australia": ["QBE", "Allianz", "Chubb", "AIG"],
+    "Japan": ["Tokio Marine", "MS&AD", "Sompo", "AIG"],
+}
+
+
+def _peer_rows(rng: random.Random) -> List[dict]:
+    """The Peers table: one row per (carrier, country, peer).
+
+    Mirrors the production shape — ``Country`` scopes a carrier's peer group, so
+    ``peer_columns.country`` in ``flows.yaml`` resolves against real data here too.
+    """
+    rows: List[dict] = []
+    for country in COUNTRIES:
+        for peer in _SUBJECT_PEERS[country]:
+            rows.append({"Carrier_Group": SUBJECT, "Country": country, "Overall_Peer_Group": peer})
+        for carrier in CARRIERS:  # a small generic mapping for the rest
+            if carrier == SUBJECT:
+                continue
+            for peer in rng.sample([c for c in CARRIERS if c != carrier], 4):
+                rows.append({"Carrier_Group": carrier, "Country": country, "Overall_Peer_Group": peer})
+    return rows
+
+
 def build_seed(path: Path = _SEED_PATH) -> Path:
     """(Re)build the seed DB at ``path`` and return it."""
     import pandas as pd
@@ -133,17 +166,7 @@ def build_seed(path: Path = _SEED_PATH) -> Path:
                             )
     gpr = pd.DataFrame(rows)
 
-    # Peers: subject's peer set = nearest-strength carriers (aggregate-only use).
-    peer_rows = [
-        {"Carrier_Group": SUBJECT, "Overall_Peer_Group": p}
-        for p in ["AXA XL", "Allianz", "Chubb", "AIG"]
-    ]
-    for c in CARRIERS:  # a small generic mapping for the rest
-        if c == SUBJECT:
-            continue
-        for p in rng.sample([x for x in CARRIERS if x != c], 4):
-            peer_rows.append({"Carrier_Group": c, "Overall_Peer_Group": p})
-    peers = pd.DataFrame(peer_rows)
+    peers = pd.DataFrame(_peer_rows(rng))
 
     engine = create_engine(f"sqlite:///{path}")
     gpr.to_sql("GPR", engine, index=False, if_exists="replace")
@@ -152,10 +175,41 @@ def build_seed(path: Path = _SEED_PATH) -> Path:
     return path
 
 
+def _matches_current_schema(path: Path) -> bool:
+    """Whether an existing seed has the schema this module now builds.
+
+    Peers gained a ``Country`` column (peer groups are per-market). An older seed
+    would resolve NO peers at all under a country filter, which looks like missing
+    data rather than a stale file — so detect it and rebuild.
+    """
+    from sqlalchemy import inspect
+
+    engine = None
+    try:
+        engine = create_engine(f"sqlite:///{path}")
+        return "Country" in {c["name"] for c in inspect(engine).get_columns("Peers")}
+    except Exception:  # noqa: BLE001 — an unreadable seed is simply rebuilt
+        return False
+    finally:
+        if engine is not None:
+            engine.dispose()
+
+
 def ensure_seed_db(path: Path = _SEED_PATH) -> str:
-    """Return the seed DB path, building it once if absent."""
-    if not path.exists():
+    """Return the seed DB path, building it if absent or out of date.
+
+    A rebuild can fail when another process (a Studio app left running) holds the
+    file open. That must not take the caller down: keep the older seed and carry
+    on — the country-scoped peer lookup degrades to unscoped on it.
+    """
+    if path.exists() and _matches_current_schema(path):
+        return str(path)
+    try:
         build_seed(path)
+    except OSError as exc:
+        if not path.exists():
+            raise
+        logger.warning("studio: could not rebuild the seed DB (%s); using the existing one", exc)
     return str(path)
 
 

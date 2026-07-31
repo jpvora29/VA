@@ -37,6 +37,21 @@ ROLE_GROWTH_BUBBLE = "growth_bubble"
 # blended overall YoY. Kept distinct so these slots don't duplicate carrier/marsh_gwp_yoy.
 ROLE_SPOTLIGHT_CARRIER_YOY = "spotlight_carrier_yoy"
 ROLE_SPOTLIGHT_MARSH_YOY = "spotlight_marsh_yoy"
+# Confidential peer benchmark — the AVERAGE of the top-5 carriers in scope, never a
+# named competitor. The templates head these columns/rows "Peer GWP" / "Peer SoW" /
+# "Peer average GWP 1-5".
+# The broker-survey score tile ("x.x | Overall Carrier Survey") — a survey-flow figure, so
+# it must NEVER be filled from a premium metric.
+ROLE_SURVEY_SCORE = "survey_score"
+ROLE_PEER_GWP = "peer_gwp"
+ROLE_PEER_GWP_YOY = "peer_gwp_yoy"
+ROLE_PEER_SOW = "peer_sow"
+ROLE_PEER_SOW_YOY = "peer_sow_yoy"
+
+# Context words that mark a figure as the confidential peer benchmark rather than the
+# carrier's or Marsh's own number. Checked BEFORE carrier/Marsh so a "Peer GWP" column
+# is never mistaken for the carrier's premium.
+_PEER_MARKERS = ("peer",)
 
 
 @dataclass
@@ -56,6 +71,10 @@ class Binding:
 
 def _has(ctx: str, *words: str) -> bool:
     return any(w in ctx for w in words)
+
+
+# "rank" as a whole word — see ``slots._RANK_WORD``.
+_RANK_WORD = re.compile(r"\brank\b", re.I)
 
 
 # Phrases that mark a premium figure as the SUBJECT carrier's own book intermediated
@@ -90,6 +109,9 @@ def _infer_role(slot: Slot) -> Optional[str]:
         return f"{ROLE_COUNTRY_NAME}[{idx}]" if idx is not None else None
     if kind == "text" and tok.lower() == "carrier":
         return ROLE_SUBJECT
+    # The deck cover's title placeholder ("Carrier X") names the carrier the deck is for.
+    if re.fullmatch(r"Carrier\s+X", tok, re.I):
+        return ROLE_SUBJECT
     if kind == "text" and "carrier:" in ctx:        # slide-10 "Carrier:" title slot
         return ROLE_SUBJECT
 
@@ -99,7 +121,13 @@ def _infer_role(slot: Slot) -> Optional[str]:
 
     is_prior = "py" in ctx or "yoy" in ctx or "change" in ctx or "prior" in ctx
 
+    # A survey score is not a premium figure — claim it before any premium rule can.
+    if _has(ctx, "survey") and kind in ("int", "pct", "rank"):
+        return ROLE_SURVEY_SCORE
+
     if kind == "money":
+        if _has(ctx, *_PEER_MARKERS):
+            return ROLE_PEER_GWP_YOY if is_prior else ROLE_PEER_GWP
         # The subject carrier's own premium (incl. "written with Marsh") comes first,
         # so a carrier figure is never swallowed by the Marsh-book branch.
         if _is_carrier_premium(ctx):
@@ -112,6 +140,10 @@ def _infer_role(slot: Slot) -> Optional[str]:
         return None
 
     if kind == "pct":
+        if _has(ctx, *_PEER_MARKERS):
+            if _has(ctx, "sow", "share of wallet", "share"):
+                return ROLE_PEER_SOW_YOY if is_prior else ROLE_PEER_SOW
+            return ROLE_PEER_GWP_YOY
         if _has(ctx, "sow", "share of wallet", "share"):
             return ROLE_SOW_YOY if is_prior else ROLE_SOW_PCT
         # Spotlight YoY slots ("Carrier/Marsh Country xyz YoY change"): the "xyz" marks a
@@ -127,7 +159,9 @@ def _infer_role(slot: Slot) -> Optional[str]:
         return None
 
     if kind in ("rank", "int"):
-        if _has(ctx, "rank"):
+        # Whole-word "rank" only — a slide titled "… LC ranking" must not make every
+        # integer on it a rank.
+        if _RANK_WORD.search(ctx):
             # Only an explicit PY/prior row is the rank *change*; a plain "overall
             # rank" box wants the current rank even if a YoY tile sits nearby.
             prior_rank = _has(ctx, "py", "prior")

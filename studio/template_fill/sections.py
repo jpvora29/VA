@@ -22,9 +22,11 @@ _DIVIDER_TITLE = re.compile(r"^\s*(?:country|region|product)\s*\(\s*\d+\s*\)\s*$
 
 
 class Section(str, Enum):
+    COVER = "cover"
     SUMMARY = "summary"
     HIGHLIGHTS = "highlights"
     TRADING_SUMMARY = "trading_summary"
+    GWP_PERFORMANCE = "gwp_performance"
     PORTFOLIO = "portfolio"
     FEEDBACK = "feedback"
     RANKING = "ranking"
@@ -33,23 +35,32 @@ class Section(str, Enum):
     COUNTRY_DIVIDER = "country_divider"
     BREAKDOWN = "breakdown"
     CARRIER_TITLE = "carrier_title"
+    BACK_COVER = "back_cover"
     OTHER = "other"
 
 
 # Ordered (title keyword(s) → Section); first match wins, so specific phrases precede
 # generic ones ("trading summary" before "summary"; "portfolio and lc"/"ranking" before
-# "portfolio analysis").
+# "portfolio analysis"; "gwp yoy growth" before the bare "growth rate" cue).
 _TITLE_RULES: List[tuple] = [
     (("swot",), Section.SWOT),
     (("trading summary",), Section.TRADING_SUMMARY),
     (("feedback",), Section.FEEDBACK),
     (("breakdown",), Section.BREAKDOWN),
     (("lc ranking", "portfolio and lc", "ranking"), Section.RANKING),
+    (("gwp yoy growth", "gwp performance", "yoy gwp growth"), Section.GWP_PERFORMANCE),
     (("growth rate", "vs marsh growth"), Section.GROWTH),
     (("highlight",), Section.HIGHLIGHTS),
     (("portfolio analysis", "portfolio"), Section.PORTFOLIO),
     (("carrier:",), Section.CARRIER_TITLE),
     (("summary",), Section.SUMMARY),
+]
+
+# Layout-name cues for the slides that carry no meaningful title text: the deck cover
+# (whose only text IS the carrier placeholder) and the closing back cover.
+_LAYOUT_RULES: List[tuple] = [
+    (("title slide",), Section.COVER),
+    (("back cover",), Section.BACK_COVER),
 ]
 
 
@@ -61,6 +72,10 @@ def section_of(slide: Slide) -> Section:
         return Section.COUNTRY_DIVIDER
     for keywords, section in _TITLE_RULES:
         if any(k in low for k in keywords):
+            return section
+    layout = str(getattr(slide, "layout", "") or "").lower()
+    for keywords, section in _LAYOUT_RULES:
+        if any(k in layout for k in keywords):
             return section
     return Section.OTHER
 

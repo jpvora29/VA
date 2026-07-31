@@ -92,6 +92,10 @@ gpr:
     table: Peers
     key: Carrier_Group
     members: Overall_Peer_Group
+    # The shared Peers table scopes a carrier's peer group by country, so the
+    # benchmark is like-for-like in the selected market. Ignored automatically
+    # on a Peers table that has no such column (see peer_country_column).
+    country: Country
   metrics:
     premium:
       columns: [Premium]
