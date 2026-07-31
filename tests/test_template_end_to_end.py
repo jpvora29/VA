@@ -111,6 +111,63 @@ def test_commentary_is_written_and_cites_figures(assembled):
     assert re.search(r"\$\d", text), "commentary should carry real currency figures"
 
 
+def _commentary_boxes(path):
+    """Every multi-point commentary box in the deck, as ``[(bullet, text)]`` per paragraph."""
+    from pptx import Presentation
+    from pptx.oxml.ns import qn
+
+    def bullet(paragraph):
+        pPr = paragraph._p.find(qn("a:pPr"))
+        if pPr is None:
+            return "inherit"
+        for tag in ("a:buChar", "a:buAutoNum", "a:buNone"):
+            el = pPr.find(qn(tag))
+            if el is not None:
+                return el.get("char") or tag.split(":")[1]
+        return "inherit"
+
+    boxes = []
+    for slide in Presentation(path).slides:
+        for shape in slide.shapes:
+            if not shape.has_text_frame:
+                continue
+            paras = [p for p in shape.text_frame.paragraphs if p.text.strip()]
+            if len(paras) > 1 and any(len(p.text.split()) > 6 for p in paras):
+                boxes.append([(bullet(p), p.text) for p in paras])
+    return boxes
+
+
+def test_commentary_is_written_as_bullet_points(assembled):
+    path, _ = assembled
+    boxes = _commentary_boxes(path)
+    assert boxes, "expected multi-point commentary boxes in the deck"
+    for box in boxes:
+        bullets = [b for b, _ in box]
+        # Every point carries a visible bullet — the author's own, or the standard one.
+        assert all(b not in ("buNone", "inherit") for b in bullets), box
+        # A box uses ONE marker throughout rather than mixing styles.
+        assert len(set(bullets)) == 1, box
+        # And no point is a run-on paragraph of several sentences joined together.
+        assert all(txt.count(". ") <= 1 for _, txt in box), box
+
+
+def test_no_empty_bullet_is_left_behind(assembled):
+    """A box authored with four example lines but filled with two points must end up with
+    two paragraphs — a blanked-but-kept paragraph would render as an empty bullet."""
+    from pptx import Presentation
+
+    path, _ = assembled
+    for slide in Presentation(path).slides:
+        for shape in slide.shapes:
+            if not shape.has_text_frame:
+                continue
+            paras = list(shape.text_frame.paragraphs)
+            if len(paras) < 2 or not any(len(p.text.split()) > 6 for p in paras):
+                continue
+            assert all(p.text.strip() for p in paras), \
+                f"blank paragraph left in {shape.name!r}: {[p.text for p in paras]}"
+
+
 def test_every_chart_carries_real_categories(assembled):
     path, _ = assembled
     charts = [sh for slide in analyze(path).slides for sh in slide.shapes if sh.kind == "chart"]

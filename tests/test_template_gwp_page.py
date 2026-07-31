@@ -208,6 +208,58 @@ def test_real_page_values_populate_from_the_warehouse(country_template):
     assert values[f"gwp:{s}:marsh_gwp:chg"][-1] in "▲▼►"
 
 
+def test_the_panel_and_title_report_the_CARRIER_gwp_not_the_marsh_book(country_template):
+    """The page is captioned "GWP Performance YoY" on a carrier QBR, so its panel totals,
+    its YoY box and its title are the CARRIER's book. Only the row the author labels
+    "Marsh GWP" reports the whole Marsh book."""
+    result = _country_result(["Singapore", "Japan"], "Singapore")
+    values = G.values(country_template, result)
+    s = G.pages(country_template)[0].slide_idx
+    readings = G._readings(result, G._reporting_filters(result))
+    carrier, marsh = readings["carrier_gwp"], readings["marsh_gwp"]
+
+    # A carrier is a fraction of the book, so the two are genuinely different numbers.
+    assert carrier.current < marsh.current
+    assert carrier.change != marsh.change
+
+    # The panel renders the carrier's totals, in the template's own €/millions style.
+    assert values[f"gwp:{s}:panel:cy"] == render_example("€106.5m", carrier.current)
+    assert values[f"gwp:{s}:panel:py"] == render_example("€106.5m", carrier.prior)
+    assert values[f"gwp:{s}:panel:yoy"] == render_example("-1.0%", carrier.change)
+    # …and the title quotes the same growth figure as the panel.
+    assert values[f"gwp:{s}:panel:yoy"].lstrip("+") in values[f"gwp:{s}:title"]
+    # The explicitly-labelled Marsh row still reports the whole book.
+    assert values[f"gwp:{s}:marsh_gwp:cy"] == marsh.current
+
+
+def test_bar_values_are_scaled_to_the_unit_the_caption_declares(country_template):
+    # The page states its unit — "GWP Performance YoY (€M)" — so the bars are in millions.
+    result = _country_result(["Singapore", "Japan"], "Singapore")
+    values = G.values(country_template, result)
+    readings = G._readings(result, G._reporting_filters(result))
+    carrier = readings["carrier_gwp"]
+
+    country = next(v for v in values["gwp_bars"].values()
+                   if set(v["categories"]) <= {"Singapore", "Japan"})
+    singapore = country["cy"][country["categories"].index("Singapore")]
+    assert singapore == pytest.approx(carrier.current / 1e6, rel=1e-6)
+    # Every bar is a sane millions figure, not raw currency.
+    for series in values["gwp_bars"].values():
+        assert all(0 < v < 100_000 for v in series["cy"] + series["py"] if v)
+
+
+@pytest.mark.parametrize("caption,divisor", [
+    ("GWP Performance YoY (€M)", 1e6),
+    ("GWP Performance YoY ($B)", 1e9),
+    ("GWP Performance YoY (K)", 1e3),
+    ("GWP Performance YoY", 1e6),          # no unit stated → millions
+])
+def test_chart_scale_follows_the_pages_caption(caption, divisor):
+    slide = _gwp_page_slide()
+    slide.shapes.append(_text(133, caption, x=0.52, y=1.65, w=3.08, name="TextBox 132"))
+    assert G._chart_divisor(slide) == divisor
+
+
 def test_country_chart_is_filled_across_the_selected_countries(country_template):
     values = G.values(country_template, _country_result(["Singapore", "Japan"], "Singapore"))
     page = G.pages(country_template, vocab={"Product_Line": [], "Country": []})[0]

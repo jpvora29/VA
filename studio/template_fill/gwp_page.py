@@ -327,15 +327,23 @@ class Reading:
 
 
 def _readings(result, filters: Dict[str, Any]) -> Dict[str, Reading]:
-    """Every TTM-table metric for one filter scope, from the deterministic compute layer."""
+    """Every metric the page reports, for one filter scope, from the deterministic layer.
+
+    ``carrier_gwp`` is the page's own subject — the "GWP Performance YoY" panel, its YoY box
+    and the page title are all the CARRIER's book (as are both bar charts). ``marsh_gwp`` is
+    the whole Marsh book, used only by the TTM row the author explicitly labels "Marsh GWP".
+    """
     subject = result.subject
     marsh_filters = {k: v for k, v in filters.items() if k != _CARRIER_COL}
 
+    carrier = _safe(C.period_totals, result.flow, filters, result.engine) or {}
     marsh = _safe(C.period_totals, result.flow, marsh_filters, result.engine) or {}
     sow = _safe(C.sow_movement, result.flow, filters, result.engine, subject) or {}
     rank = _safe(C.rank_movement, result.flow, filters, result.engine, subject) or {}
     peer = _safe(C.peer_average_totals, result.flow, filters, result.engine) or {}
     return {
+        "carrier_gwp": Reading(carrier.get("current"), carrier.get("prior"), carrier.get("pct"),
+                               carrier.get("current_year"), carrier.get("prior_year")),
         "marsh_gwp": Reading(marsh.get("current"), marsh.get("prior"), marsh.get("pct"),
                              marsh.get("current_year"), marsh.get("prior_year")),
         "sow": Reading(sow.get("current"), sow.get("prior"), sow.get("delta")),
@@ -379,11 +387,14 @@ def _scope_label(result) -> str:
 # ── bar-chart series ─────────────────────────────────────────────────────────
 
 
-def _cy_py_by_dim(result, filters: Dict[str, Any], column: str) -> Optional[Dict[str, Any]]:
+def _cy_py_by_dim(result, filters: Dict[str, Any], column: str,
+                  *, divisor: float = 1e6) -> Optional[Dict[str, Any]]:
     """``{categories, cy, py}`` — premium by ``column`` for the current and prior year.
 
-    Categories are ordered by current-year premium, biggest first, so the chart reads
-    like every other breakdown in the deck.
+    Values are scaled by ``divisor`` (millions by default) because the page states its unit
+    in the caption — "GWP Performance YoY (€M)" — so the bars must be in that unit, not raw
+    currency. Categories are ordered by current-year premium, biggest first, so the chart
+    reads like every other breakdown in the deck.
     """
     moves = _safe(C.movement_by_dim, result.flow, column, filters, result.engine, top=12) or []
     moves = [m for m in moves if str(m.get("name") or "").strip()]
@@ -392,12 +403,13 @@ def _cy_py_by_dim(result, filters: Dict[str, Any], column: str) -> Optional[Dict
     moves.sort(key=lambda m: m.get("current") or 0.0, reverse=True)
     return {
         "categories": [str(m["name"]) for m in moves],
-        "cy": [float(m.get("current") or 0.0) for m in moves],
-        "py": [float(m.get("prior") or 0.0) for m in moves],
+        "cy": [float(m.get("current") or 0.0) / divisor for m in moves],
+        "py": [float(m.get("prior") or 0.0) / divisor for m in moves],
     }
 
 
-def _country_series(result, filters: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _country_series(result, filters: Dict[str, Any],
+                    *, divisor: float = 1e6) -> Optional[Dict[str, Any]]:
     """The country bar chart's data — or a single bar when the run covers one country.
 
     A country-by-country comparison needs several countries. When the run is scoped to one
@@ -407,17 +419,36 @@ def _country_series(result, filters: Dict[str, Any]) -> Optional[Dict[str, Any]]
     """
     scope = tuple(getattr(result, "scope_countries", ()) or ())
     if len(scope) == 1:
-        return _cy_py_by_dim(result, {**filters, _COUNTRY_COL: scope[0]}, _COUNTRY_COL)
+        return _cy_py_by_dim(result, {**filters, _COUNTRY_COL: scope[0]}, _COUNTRY_COL,
+                             divisor=divisor)
     wide = dict(filters)
     if scope:
         wide[_COUNTRY_COL] = scope
-    return _cy_py_by_dim(result, wide, _COUNTRY_COL)
+    return _cy_py_by_dim(result, wide, _COUNTRY_COL, divisor=divisor)
 
 
 _SERIES_BUILDERS = {
-    _PRODUCT_COL: lambda result, filters: _cy_py_by_dim(result, filters, _PRODUCT_COL),
-    _COUNTRY_COL: _country_series,
+    _PRODUCT_COL: lambda result, filters, divisor: _cy_py_by_dim(
+        result, filters, _PRODUCT_COL, divisor=divisor),
+    _COUNTRY_COL: lambda result, filters, divisor: _country_series(
+        result, filters, divisor=divisor),
 }
+
+# The unit a caption declares, e.g. "GWP Performance YoY (€M)" → millions. Millions is the
+# default: it is what the shipped templates say, and raw currency would dwarf the axis.
+_UNIT_DIVISOR = {"K": 1e3, "M": 1e6, "B": 1e9}
+_UNIT_CAPTION = re.compile(r"\(\s*[^\w\s]?\s*([KMB])\s*\)", re.I)
+
+
+def _chart_divisor(slide: Slide) -> float:
+    """The scale the page's own caption asks the bars to be plotted in (default millions)."""
+    for sh in slide.shapes:
+        if sh.kind != "text":
+            continue
+        m = _UNIT_CAPTION.search(sh.text or "")
+        if m:
+            return _UNIT_DIVISOR[m.group(1).upper()]
+    return _UNIT_DIVISOR["M"]
 
 
 def _vocab(result) -> Dict[str, Sequence[str]]:
@@ -454,13 +485,15 @@ def values(template: Template, result) -> Dict[str, Any]:
     readings = _readings(result, fy)
     found = pages(template, vocab=_vocab(result))
 
+    by_index = {s.index: s for s in template.slides}
     out: Dict[str, Any] = {}
     bars: Dict[str, Any] = {}
     for page in found:
         out.update(_table_values(template, page, readings))
         out.update(_panel_values(template, page, readings, scope))
+        divisor = _chart_divisor(by_index[page.slide_idx])
         for shape_id, column in page.charts:
-            series = _SERIES_BUILDERS[column](result, fy)
+            series = _SERIES_BUILDERS[column](result, fy, divisor)
             if series:
                 bars[f"{page.slide_idx}:{shape_id}"] = series
     if bars:
@@ -480,9 +513,9 @@ def _table_values(template: Template, page: Page,
     if table is None:
         return {}
     out: Dict[str, Any] = {}
-    marsh = readings.get("marsh_gwp", Reading())
-    for col, when, year in ((table.current_col, "cy", marsh.current_year),
-                            (table.prior_col, "py", marsh.prior_year)):
+    periods = readings.get("carrier_gwp", Reading())
+    for col, when, year in ((table.current_col, "cy", periods.current_year),
+                            (table.prior_col, "py", periods.prior_year)):
         if year is None:
             continue
         token = _token_at(template, page.slide_idx, table.shape_id, ["cell", 0, col])
@@ -502,21 +535,25 @@ def _table_values(template: Template, page: Page,
 
 def _panel_values(template: Template, page: Page, readings: Dict[str, Reading],
                   scope: str) -> Dict[str, Any]:
-    """The waterfall panel totals + the page title, rendered against their examples."""
-    marsh = readings.get("marsh_gwp", Reading())
+    """The waterfall panel totals + the page title, rendered against their examples.
+
+    All three report the CARRIER's GWP — the panel is captioned "GWP Performance YoY" on a
+    carrier QBR page, so the whole Marsh book would be the wrong number here.
+    """
+    carrier = readings.get("carrier_gwp", Reading())
     out: Dict[str, Any] = {}
-    for name, value in (("cy", marsh.current), ("py", marsh.prior)):
+    for name, value in (("cy", carrier.current), ("py", carrier.prior)):
         shape_id = page.panel.current_id if name == "cy" else page.panel.prior_id
         if shape_id is None or value is None:
             continue
         token = _token_at(template, page.slide_idx, shape_id, ["para", 0])
         out[_role(page.slide_idx, "panel", name)] = render_example(token, value)
-    if page.panel.yoy_id is not None and marsh.change is not None:
+    if page.panel.yoy_id is not None and carrier.change is not None:
         token = _token_at(template, page.slide_idx, page.panel.yoy_id, ["para", 0])
-        out[_role(page.slide_idx, "panel", "yoy")] = render_example(token, marsh.change)
-    if page.title_id is not None and marsh.change is not None:
+        out[_role(page.slide_idx, "panel", "yoy")] = render_example(token, carrier.change)
+    if page.title_id is not None and carrier.change is not None:
         token = _token_at(template, page.slide_idx, page.title_id, ["para", 0])
-        title = _retitle(token, scope, marsh.change)
+        title = _retitle(token, scope, carrier.change)
         if title:
             out[_role(page.slide_idx, "title")] = title
     return out

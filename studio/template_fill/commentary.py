@@ -32,10 +32,19 @@ _COMMENTARY_SECTIONS = {
 # The commentary voice chosen in Setup → the instruction appended to the polish prompt.
 # Every style keeps the same faithfulness guardrails; only the tone/length shifts.
 _STYLE_DIRECTIVE: Dict[str, str] = {
-    "concise": "Be terse and punchy — one short sentence, only the headline figure.",
-    "balanced": "Reply with 1–2 short sentences only.",
-    "detailed": "Give 2–3 sentences with the supporting figures and the 'so what'.",
+    "concise": "Keep each bullet to one short clause — the headline figure and nothing else.",
+    "balanced": "Keep each bullet to one short sentence.",
+    "detailed": "Allow each bullet up to two sentences: the figure and its 'so what'.",
 }
+
+# Commentary is written as BULLET POINTS, one per line, so the polish must preserve the line
+# structure exactly — the deck renders each line as its own bulleted paragraph.
+_BULLET_RULES = (
+    "The draft is a bullet list, ONE BULLET PER LINE. Return exactly the same number of "
+    "lines, in the same order, one polished bullet per line. Never merge, split, reorder or "
+    "add lines. Do not write any bullet character, dash or number at the start of a line — "
+    "the slide adds the bullet itself. "
+)
 
 
 def _style_system(style: Optional[str]) -> str:
@@ -44,10 +53,10 @@ def _style_system(style: Optional[str]) -> str:
         "Rewrite the draft so it reads board-ready: lead with the 'so what', use active voice, "
         "and keep every claim anchored to the figures provided. "
         "HARD RULES: keep EVERY number, currency amount, percentage and rank EXACTLY as written — "
-        "never invent, recalculate or round a figure; never name a competitor carrier; "
-        "no bullet characters or headings — plain sentences only. "
+        "never invent, recalculate or round a figure; never name a competitor carrier. "
     )
-    return base + _STYLE_DIRECTIVE.get((style or "balanced").lower(), _STYLE_DIRECTIVE["balanced"])
+    return base + _BULLET_RULES + _STYLE_DIRECTIVE.get(
+        (style or "balanced").lower(), _STYLE_DIRECTIVE["balanced"])
 
 
 def _cx(sh: Shape) -> float:
@@ -113,20 +122,14 @@ def _topic_key(header: str, section: Section = Section.OTHER) -> str:
     return _SECTION_DEFAULT_TOPIC.get(section, "key_messages")
 
 
-def _prose_paras(sh: Shape) -> List[int]:
-    """The paragraph indices this box's commentary replaces.
-
-    Paragraph 0 carries the written commentary; the rest are blanked, so neither a stale
-    ``………`` line nor a leftover line of the author's example prose survives.
-    """
-    ellipsis = [i for i, p in enumerate(sh.paragraphs) if _ELLIPSIS.search(p or "")]
-    return ellipsis or [i for i, p in enumerate(sh.paragraphs) if (p or "").strip()]
-
-
 def _prose_targets(template: Template) -> List[Dict[str, Any]]:
-    """``[{slide_idx, shape_id, paras, topic}]`` for every fillable prose box in a
-    commentary section. ``paras`` are the box's ellipsis paragraph indices — the whole
-    column is one commentary (paragraph 0 carries it; the rest are blanked)."""
+    """``[{slide_idx, shape_id, topic}]`` for every fillable prose box in a commentary section.
+
+    One target per BOX, not per paragraph: the whole box is one bullet list, and the fill
+    engine's commentary writer lays the bullets out over the box's paragraphs (appending and
+    blanking as needed), so neither a stale ``………`` line nor a leftover line of the author's
+    example prose survives.
+    """
     out: List[Dict[str, Any]] = []
     for slide in template.slides:
         section = section_of(slide)
@@ -135,53 +138,65 @@ def _prose_targets(template: Template) -> List[Dict[str, Any]]:
         for sh in slide.shapes:
             if _is_prose_slot(sh):
                 out.append({"slide_idx": slide.index, "shape_id": sh.shape_id,
-                            "paras": _prose_paras(sh),
                             "topic": _topic_key(_column_topic(slide, sh), section)})
     return out
 
 
-def _role(slide_idx: int, shape_id: int, para: int) -> str:
+def _role(slide_idx: int, shape_id: int, para: int = 0) -> str:
     return f"note:{slide_idx}:{shape_id}:{para}"
 
 
 def augment(template: Template, bindings: List[R.Binding]) -> List[R.Binding]:
-    """Re-bind (or add) commentary prose slots as ``note:<slide>:<shape>:<para>`` roles.
+    """Re-bind (or add) each commentary prose box as a ``note:<slide>:<shape>:0`` role.
 
-    Paragraph 0 carries the column's commentary; the box's remaining paragraphs are bound
-    too so they get blanked (no leftover ``………`` line, and no leftover line of the author's
-    example prose). A box the slot detector never saw — authored prose carries no ``x``
-    placeholder — is ADDED here, so it fills rather than shipping the example narrative.
+    A box the slot detector never saw — authored prose carries no ``x`` placeholder — is
+    ADDED here, so it fills rather than shipping the author's example narrative.
     """
     from studio.template_fill.slots import Slot
 
     by_key = {b.slot.key: b for b in bindings}
     extra: List[R.Binding] = []
+    stale: List[R.Binding] = []
     for t in _prose_targets(template):
         shape = template.shape(t["slide_idx"], t["shape_id"])
-        for i in t["paras"]:
-            role = _role(t["slide_idx"], t["shape_id"], i)
-            where = ["para", i]
-            b = by_key.get(Slot(t["slide_idx"], t["shape_id"], where, "", "text", "").key)
-            if b is not None:
-                b.role, b.placeholder = role, False
-                continue
-            token = shape.paragraphs[i] if (shape and i < len(shape.paragraphs)) else ""
+        role = _role(t["slide_idx"], t["shape_id"])
+        where = ["para", 0]
+        b = by_key.get(Slot(t["slide_idx"], t["shape_id"], where, "", "text", "").key)
+        if b is not None:
+            b.role, b.placeholder = role, False
+        else:
+            token = shape.paragraphs[0] if (shape and shape.paragraphs) else ""
             extra.append(R.Binding(
                 slot=Slot(t["slide_idx"], t["shape_id"], where, token, "text", ""),
                 role=role, placeholder=False))
+        # The box's LATER paragraphs are the writer's to lay out; any binding on them (from a
+        # token scan, or an earlier augment pass) would fight it, so they are released.
+        stale += [x for x in bindings
+                  if x.slot.slide_idx == t["slide_idx"] and x.slot.shape_id == t["shape_id"]
+                  and list(x.slot.where)[:1] == ["para"] and int(x.slot.where[1]) > 0]
+    for b in stale:
+        b.role, b.placeholder = None, True
     if extra:
-        logger.info("commentary: added %d prose slot(s) the token scan could not see", len(extra))
+        logger.info("commentary: added %d prose box(es) the token scan could not see", len(extra))
     return bindings + extra
 
 
 # ── text generation ──────────────────────────────────────────────────────────
 
 
+# A bullet character the model may prefix a line with despite being told not to.
+_LEADING_BULLET = re.compile(r"^\s*(?:[-•▪◦*·]|\d+[.)])\s+")
+
+
 def _polish(text: str, *, node: str, style: Optional[str] = None) -> str:
     """LLM-polish ``text`` if available, keeping only verifier-faithful output.
 
-    ``style`` (from Setup) tunes the tone/length of the rewrite; the faithfulness
-    guardrails are identical across styles."""
+    ``style`` (from Setup) tunes the tone/length of the rewrite; the faithfulness guardrails
+    are identical across styles. ``text`` is a newline-separated BULLET LIST, so a rewrite is
+    only accepted when it comes back with the same number of lines — a model that merges or
+    invents bullets would silently change the slide's structure, and the deterministic draft
+    is already correct.
+    """
     if not text:
         return text
     from studio.ai import client
@@ -189,19 +204,31 @@ def _polish(text: str, *, node: str, style: Optional[str] = None) -> str:
 
     allowed = allowed_numbers(text)
     system = _style_system(style)
+    wanted = len(text.split("\n"))
 
     def call() -> Optional[str]:
         out = client.generate(system, text, tier="fast", node=node)
         if not out:
             return None
         clean, _ = verify_text(out, allowed)
-        return clean or None
+        if not clean:
+            return None
+        lines = [_LEADING_BULLET.sub("", ln).strip() for ln in clean.split("\n") if ln.strip()]
+        if len(lines) != wanted:
+            logger.info("commentary: %s polish returned %d line(s) for %d bullet(s) — keeping "
+                        "the deterministic draft", node, len(lines), wanted)
+            return None
+        return "\n".join(lines)
 
     return client.run_or_fallback(call, lambda: text)
 
 
-def _topic_text(result, topic: str) -> str:
-    """Deterministic, fact-grounded commentary for a column/quadrant topic."""
+def _topic_points(result, topic: str) -> List[str]:
+    """Deterministic, fact-grounded commentary POINTS for a column/quadrant topic.
+
+    One point per bullet — the deck renders each as its own bulleted paragraph, so they are
+    kept as separate strings all the way through rather than joined into a paragraph.
+    """
     from studio.narrate.commentary import build_commentary, build_initiatives, build_swot
 
     headline, points, actions = build_commentary(result)
@@ -210,26 +237,33 @@ def _topic_text(result, topic: str) -> str:
         return [p["text"] for p in points if p["label"].rstrip(".") in labels]
 
     if topic == "reflections":
-        return headline
+        return [headline] + by_label("Momentum", "Soft spots")[:2]
     if topic == "performance":
-        txt = by_label("Momentum", "Soft spots", "Penetration")
-        return " ".join(txt[:2]) or headline
+        return by_label("Momentum", "Soft spots", "Penetration")[:3] or [headline]
     if topic == "priorities":
         cards = build_initiatives(result)
         if cards:
-            return " ".join(f"{c['title']} — {c['body']}" for c in cards[:2])
-        return " ".join(actions[:2])
+            return [f"{c['title']} — {c['body']}" for c in cards[:3]]
+        return actions[:3]
     if topic == "key_messages":
-        return " ".join(actions[:3]) or " ".join(p["text"] for p in points[:2]) or headline
+        return actions[:3] or [p["text"] for p in points[:2]] or [headline]
     if topic in ("strengths", "weaknesses", "opportunities", "threats"):
         swot = build_swot(result)
-        items = getattr(swot, topic, []) or []
-        return "; ".join(items[:3])
-    return headline
+        return list(getattr(swot, topic, []) or [])[:3]
+    return [headline]
+
+
+def bullet_list(points: List[str]) -> str:
+    """Fold commentary points into the one-bullet-per-LINE form the fill engine renders."""
+    return "\n".join(p.strip() for p in points if p and p.strip())
 
 
 def values(template: Template, result) -> Dict[str, Any]:
-    """``{note-role: text}`` for every commentary prose slot in the deck."""
+    """``{note-role: bullet list}`` for every commentary prose box in the deck.
+
+    Each value is newline-separated — one bullet per line; the fill engine turns each line
+    into its own bulleted paragraph.
+    """
     out: Dict[str, Any] = {}
     targets = _prose_targets(template)
     if not targets:
@@ -240,16 +274,12 @@ def values(template: Template, result) -> Dict[str, Any]:
         topic = t["topic"]
         if topic not in cache:
             try:
-                base = _topic_text(result, topic)
+                base = bullet_list(_topic_points(result, topic))
                 cache[topic] = _polish(base, node=f"commentary-{topic}", style=style) if base else ""
             except Exception as exc:  # noqa: BLE001 — commentary must never break the doc
                 logger.warning("commentary: topic %s failed: %s", topic, exc)
                 cache[topic] = ""
-        if not cache[topic]:
-            continue
-        paras = t["paras"] or [0]
-        out[_role(t["slide_idx"], t["shape_id"], paras[0])] = cache[topic]
-        for i in paras[1:]:  # blank the box's other ellipsis lines
-            out[_role(t["slide_idx"], t["shape_id"], i)] = ""
-    logger.info("commentary: filled %d prose slot(s) across %d topic(s)", len(out), len(cache))
+        if cache[topic]:
+            out[_role(t["slide_idx"], t["shape_id"])] = cache[topic]
+    logger.info("commentary: filled %d prose box(es) across %d topic(s)", len(out), len(cache))
     return out

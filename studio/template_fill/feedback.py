@@ -349,6 +349,15 @@ def _kpi_cell(kind: str, f: Dict[str, Any]) -> str:
     return ""
 
 
+# Commentary cells are BULLET LISTS: each composer returns its points, one per line, and the
+# fill engine renders each line as its own bulleted paragraph.
+_MAX_BULLETS = 3
+
+
+def _bullets(parts: List[str]) -> str:
+    return "\n".join(p for p in parts[:_MAX_BULLETS] if p)
+
+
 def _working_text(f: Dict[str, Any]) -> str:
     parts: List[str] = []
     c, r, s = f["carrier"], f["rank"], f["sow"]
@@ -360,7 +369,7 @@ def _working_text(f: Dict[str, Any]) -> str:
         parts.append(f"Share of wallet rose {s['delta']:+.1f}% to {s['current']:.1f}%.")
     if not parts and c.get("current"):
         parts.append(f"Book held at {_money(c['current'])} with Marsh.")
-    return " ".join(parts[:2])
+    return _bullets(parts)
 
 
 def _challenges_text(f: Dict[str, Any]) -> str:
@@ -377,7 +386,7 @@ def _challenges_text(f: Dict[str, Any]) -> str:
         parts.append(
             f"Growth of {c['pct']:+.1f}% trails the Marsh book ({f['marsh']['pct']:+.1f}%)."
         )
-    return " ".join(parts[:2])
+    return _bullets(parts)
 
 
 def _growth_text(f: Dict[str, Any]) -> str:
@@ -392,7 +401,7 @@ def _growth_text(f: Dict[str, Any]) -> str:
             )
     if (m.get("pct") or 0) > 0 and (c.get("pct") is not None) and m["pct"] > c["pct"]:
         parts.append(f"Marsh demand is growing {m['pct']:+.1f}% YoY — capture more of the flow.")
-    return " ".join(parts[:2])
+    return _bullets(parts)
 
 
 def _key_messages_text(f: Dict[str, Any]) -> str:
@@ -408,15 +417,14 @@ def _key_messages_text(f: Dict[str, Any]) -> str:
         pos.append(f"{s['current']:.1f}% share of wallet")
     if pos:
         parts.append("Position: " + ", ".join(pos) + ".")
-    return " ".join(parts[:2])
+    return _bullets(parts)
 
 
 def _highlights_text(f: Dict[str, Any]) -> str:
-    lines: List[str] = []
-    for text in (_working_text(f), _challenges_text(f), _growth_text(f)):
-        if text:
-            lines.append(text)
-    return "Key Highlights:\n" + "\n".join(lines[:3]) if lines else ""
+    """The one-cell "Key Highlights:" table — its heading line, then one bullet per point."""
+    points = [line for text in (_working_text(f), _challenges_text(f), _growth_text(f))
+              for line in text.split("\n") if line]
+    return "Key Highlights:\n" + "\n".join(points[:_MAX_BULLETS]) if points else ""
 
 
 _COMPOSERS: Dict[str, Callable[[Dict[str, Any]], str]] = {

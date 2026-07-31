@@ -178,6 +178,116 @@ def test_commentary_written_in_consistent_arial_11(tmp_path):
         assert run.font.name == "Arial" and run.font.size.pt == 11
 
 
+# ── bullet-point commentary ──────────────────────────────────────────────────
+
+
+def _bullet_char(paragraph):
+    """The bullet a paragraph will actually show: its char, ``None``, or inherited."""
+    from pptx.oxml.ns import qn
+
+    pPr = paragraph._p.find(qn("a:pPr"))
+    if pPr is None:
+        return "inherit"
+    for tag in ("a:buChar", "a:buAutoNum", "a:buNone"):
+        el = pPr.find(qn(tag))
+        if el is not None:
+            return el.get("char") or tag.split(":")[1]
+    return "inherit"
+
+
+def _fill_commentary(tmp_path, text, *, authored=("…………",), bullet_char=None):
+    """Fill one text box with ``text`` as commentary; return its exported paragraphs."""
+    from pptx import Presentation
+    from pptx.oxml.ns import qn
+    from pptx.util import Inches
+
+    from studio.template_fill.fill import fill_template
+    from studio.template_fill.slots import Slot
+
+    src = str(tmp_path / "src.pptx")
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    tb = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(6), Inches(3))
+    tb.text_frame.text = authored[0]
+    for line in authored[1:]:
+        tb.text_frame.add_paragraph().text = line
+    if bullet_char:                                   # the author's own bullet
+        for p in tb.text_frame.paragraphs:
+            pPr = p._p.get_or_add_pPr()
+            pPr.append(pPr.makeelement(qn("a:buChar"), {"char": bullet_char}))
+    shape_id = tb.shape_id
+    prs.save(src)
+
+    role = f"note:0:{shape_id}:0"
+    doc = {"template_path": src,
+           "manifest": [R.Binding(Slot(0, shape_id, ["para", 0], authored[0], "text", ""),
+                                  role, False).to_dict()],
+           "values": {role: text}, "overrides": {}, "map_overrides": {}, "added": {}}
+    out = fill_template(doc, out_path=str(tmp_path / "out.pptx"))
+    shape = next(sh for sh in Presentation(out).slides[0].shapes
+                 if sh.shape_id == shape_id)
+    return list(shape.text_frame.paragraphs)
+
+
+def test_commentary_is_written_one_bullet_per_line(tmp_path):
+    paras = _fill_commentary(tmp_path, "First point.\nSecond point.\nThird point.")
+    assert [p.text for p in paras] == ["First point.", "Second point.", "Third point."]
+    assert [_bullet_char(p) for p in paras] == ["•", "•", "•"]
+
+
+def test_surplus_authored_paragraphs_are_removed_not_left_empty(tmp_path):
+    # Four authored lines, two real points → no empty bulleted paragraph may survive.
+    paras = _fill_commentary(tmp_path, "One point.\nTwo points.",
+                             authored=("…", "…", "…", "…"))
+    assert [p.text for p in paras] == ["One point.", "Two points."]
+
+
+def test_the_authors_own_bullet_is_kept(tmp_path):
+    # The Trading Summary columns are bulleted with a Wingdings "§" — the deck's look wins.
+    paras = _fill_commentary(tmp_path, "First point.\nSecond point.", bullet_char="§")
+    assert [_bullet_char(p) for p in paras] == ["§", "§"]
+
+
+def test_a_heading_line_is_not_bulleted(tmp_path):
+    # "Key Highlights:" introduces the bullets rather than being one of them.
+    paras = _fill_commentary(tmp_path, "Key Highlights:\nFirst point.\nSecond point.")
+    assert [_bullet_char(p) for p in paras] == ["buNone", "•", "•"]
+
+
+_GROWING = {"carrier": {"current": 48e6, "pct": 52.5}, "marsh": {"current": 411e6, "pct": 9.8},
+            "rank": {"current": 2, "delta": 4}, "sow": {"current": 11.6, "delta": 3.2},
+            "peer": {"current": 45e6, "pct": 7.6, "sow": 10.8, "sow_delta": -0.2}}
+_SHRINKING = {"carrier": {"current": 30e6, "pct": -12.0}, "marsh": {"current": 100e6, "pct": 2.0},
+              "rank": {"current": 6, "delta": -2}, "sow": {"current": 4.0, "delta": -1.1},
+              "peer": {"current": 20e6, "pct": 1.0, "sow": 5.0, "sow_delta": 0.1}}
+
+
+# Marsh outgrowing the carrier gives the Growth column its second point ("capture the flow").
+_LAGGING = {**_GROWING, "carrier": {"current": 48e6, "pct": 2.0}}
+
+
+@pytest.mark.parametrize("composer,facts", [
+    ("working", _GROWING), ("growth", _LAGGING), ("key_messages", _GROWING),
+    ("challenges", _SHRINKING),
+])
+def test_composers_return_one_point_per_line(composer, facts):
+    lines = F._COMPOSERS[composer](facts).split("\n")
+    assert len(lines) > 1, "a commentary cell should carry several points, not one paragraph"
+    assert all(line.strip() for line in lines)
+
+
+def test_a_composer_with_nothing_to_say_returns_no_bullets():
+    # Nothing negative in a growing book → the Challenges column must stay empty rather
+    # than invent a point (the template's own fill-me cue then shows through).
+    assert F._challenges_text(_GROWING) == ""
+
+
+def test_highlights_keeps_its_heading_then_bullets():
+    lines = F._highlights_text(_GROWING).split("\n")
+    assert lines[0] == "Key Highlights:"
+    assert len(lines) > 1 and all(lines[1:])
+
+
 # ── the real bubble chart (native fill after detaching the think-cell link) ───
 
 

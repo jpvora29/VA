@@ -228,21 +228,116 @@ def _recolor_by_sign(shape, where: List[Any], text: str) -> None:
         logger.warning("template_fill: sign recolor skipped: %s", exc)
 
 
-def _style_commentary(shape, where: List[Any]) -> None:
-    """Force the standard commentary font on the paragraphs a write just touched."""
+# ── bullet-point commentary ──────────────────────────────────────────────────
+
+# Commentary is written as a BULLET LIST — one point per ``\n``-separated line, each becoming
+# its own bulleted paragraph. Where the author already bulleted the box we reuse THEIR bullet
+# (the Trading Summary columns use a Wingdings "§"); where they turned bullets off we apply
+# this standard one, because a point-wise list needs a visible marker.
+_DEFAULT_BULLET_CHAR = "•"
+_DEFAULT_BULLET_FONT = "Arial"
+_BULLET_INDENT_EMU = 171450          # ~0.19", a conventional hanging indent
+# A heading line inside a commentary block ("Key Highlights:") introduces the bullets rather
+# than being one, so it keeps its own paragraph unbulleted.
+_HEADING_LINE = re.compile(r":\s*$")
+
+
+# `<a:pPr>`'s children are a SEQUENCE: the bullet-font slot precedes the bullet-character
+# slot, which precedes tabLst/defRPr/extLst. Appending at the end instead produces invalid
+# OOXML that PowerPoint silently discards on save — which is exactly what happened before
+# these successor lists were used to insert each element in its proper place.
+_AFTER_BU_FONT = ("a:buNone", "a:buAutoNum", "a:buChar", "a:tabLst", "a:defRPr", "a:extLst")
+_AFTER_BU_CHAR = ("a:tabLst", "a:defRPr", "a:extLst")
+
+
+def _drop(pPr, *tags: str) -> None:
+    from pptx.oxml.ns import qn
+
+    for tag in tags:
+        el = pPr.find(qn(tag))
+        if el is not None:
+            pPr.remove(el)
+
+
+def _set_bullet(paragraph, *, bulleted: bool) -> None:
+    """Give ``paragraph`` a visible bullet, or explicitly none.
+
+    Any bullet the author chose is left exactly as it is — only a paragraph with no bullet
+    (or an explicit ``<a:buNone>``) gets the default one, so the deck keeps its own look.
+    """
+    from pptx.oxml.ns import qn
+
+    pPr = paragraph._p.get_or_add_pPr()
+    if not bulleted:
+        _drop(pPr, "a:buChar", "a:buAutoNum")
+        if pPr.find(qn("a:buNone")) is None:
+            pPr.insert_element_before(pPr.makeelement(qn("a:buNone"), {}), *_AFTER_BU_CHAR)
+        return
+
+    if pPr.find(qn("a:buChar")) is not None or pPr.find(qn("a:buAutoNum")) is not None:
+        return                                      # the author already bulleted this box
+    _drop(pPr, "a:buNone", "a:buFontTx")
+    if pPr.find(qn("a:buFont")) is None:
+        font = pPr.makeelement(qn("a:buFont"), {"typeface": _DEFAULT_BULLET_FONT})
+        pPr.insert_element_before(font, *_AFTER_BU_FONT)
+    char = pPr.makeelement(qn("a:buChar"), {"char": _DEFAULT_BULLET_CHAR})
+    pPr.insert_element_before(char, *_AFTER_BU_CHAR)
+    pPr.set("marL", str(_BULLET_INDENT_EMU))
+    pPr.set("indent", str(-_BULLET_INDENT_EMU))
+
+
+def _write_bullets(frame, text: str, *, template_paragraph=None) -> None:
+    """Lay ``text``'s lines out over ``frame``'s paragraphs, one bulleted point per line.
+
+    The frame's own paragraphs are reused first (so the author's formatting is inherited);
+    extra points are appended as clones of ``template_paragraph`` — the first authored
+    paragraph — so an appended bullet looks like the ones above it rather than falling back
+    to the theme default. Surplus authored paragraphs are removed, not just blanked, so no
+    empty bullet is left hanging.
+    """
+    from copy import deepcopy
+
+    lines = [ln for ln in str(text).split("\n")]
+    paras = list(frame.paragraphs)
+    source = template_paragraph if template_paragraph is not None else (paras[0] if paras else None)
+
+    for i, line in enumerate(lines):
+        if i < len(paras):
+            target = paras[i]
+        elif source is not None:
+            clone = deepcopy(source._p)
+            source._p.getparent().append(clone)
+            target = frame.paragraphs[-1]
+        else:
+            target = frame.add_paragraph()
+        _set_paragraph_text(target, line)
+        _set_bullet(target, bulleted=not _HEADING_LINE.search(line))
+
+    for extra in paras[len(lines):]:
+        extra._p.getparent().remove(extra._p)
+    _style_commentary_paragraphs(frame.paragraphs)
+
+
+def _write_commentary(shape, where: List[Any], text: str) -> None:
+    """Write bullet-point commentary into a text shape or a table cell."""
     try:
+        frame = None
         if where and where[0] == "para" and shape.has_text_frame:
-            idx = int(where[1])
-            paras = shape.text_frame.paragraphs
-            if 0 <= idx < len(paras):
-                _style_commentary_paragraphs([paras[idx]])
+            frame = shape.text_frame
         elif where and where[0] == "cell" and shape.has_table:
             r, c = int(where[1]), int(where[2])
             rows = shape.table.rows
             if 0 <= r < len(rows) and 0 <= c < len(rows[r].cells):
-                _style_commentary_paragraphs(rows[r].cells[c].text_frame.paragraphs)
-    except Exception as exc:  # noqa: BLE001 — styling must never break the fill
-        logger.warning("template_fill: commentary styling skipped: %s", exc)
+                frame = rows[r].cells[c].text_frame
+        if frame is None:
+            return
+        _write_bullets(frame, text)
+    except Exception as exc:  # noqa: BLE001 — commentary layout must never break the fill
+        logger.warning("template_fill: commentary write fell back to a plain paragraph: %s", exc)
+        if where and where[0] == "para":
+            _write_text_shape(shape, where, str(text).replace("\n", " "))
+        elif where and where[0] == "cell":
+            _write_table(shape, where, str(text))
 
 
 # ── literal label substitution (Country (n) / Region (n) / xyz) ──────────────
@@ -574,16 +669,19 @@ def fill_template(doc: Dict[str, Any], *, out_path: Optional[str] = None) -> str
             shape = index.get(int(fld["shape_id"]))
             if shape is None:
                 continue
-            where = fld["where"]
-            if where and where[0] == "para":
-                _write_text_shape(shape, where, str(fld["text"]))
-            elif where and where[0] == "cell":
-                _write_table(shape, where, str(fld["text"]))
+            where, text = fld["where"], str(fld["text"])
             role = str(fld.get("role") or "")
+            # Commentary owns its whole box/cell: it lays its points out as bulleted
+            # paragraphs, so it replaces the single-paragraph write rather than following it.
             if _is_commentary_role(role):
-                _style_commentary(shape, where)
-            elif role.endswith(_SIGNED_ROLE_SUFFIXES) and str(fld["text"]).strip():
-                _recolor_by_sign(shape, where, str(fld["text"]))
+                _write_commentary(shape, where, text)
+                continue
+            if where and where[0] == "para":
+                _write_text_shape(shape, where, text)
+            elif where and where[0] == "cell":
+                _write_table(shape, where, text)
+            if role.endswith(_SIGNED_ROLE_SUFFIXES) and text.strip():
+                _recolor_by_sign(shape, where, text)
         _add_elements(slide, doc.get("added", {}).get(str(sidx), []), width_emu, height_emu)
 
     _fill_charts(prs, values)
