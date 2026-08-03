@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from logger import get_logger
-from studio.template_fill import commentary, feedback, grids, gwp_page, prune
+from studio.template_fill import commentary, feedback, grids, gwp_page, lc_page, prune
 from studio.template_fill import roles as R
 from studio.template_fill.analyze import analyze
 from studio.template_fill.binding_map import BindingMap, available, get_binding_map
@@ -111,7 +111,8 @@ def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], la
     hidden: Tuple[int, ...] = ()
     try:
         template = analyze(get_binding_map(template_name).path)
-        for provider in (grids.grid_values, gwp_page.values, feedback.values, commentary.values):
+        for provider in (grids.grid_values, gwp_page.values, lc_page.values,
+                         feedback.values, commentary.values):
             try:
                 extra = provider(template, scoped_result)
             except Exception as exc:  # noqa: BLE001 — one provider must not sink the rest
