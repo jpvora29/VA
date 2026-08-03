@@ -115,15 +115,14 @@ def _filter_grid(
         )
         for f in GPR_FILTERS
     ]
+    # NO dcc.Loading here. The cascade is answered from the cached filter cube
+    # (``studio.filter_cube``), so re-deriving the options is a couple of milliseconds — a
+    # spinner over the whole grid only made an instant update *look* like a wait, and it
+    # blanked the dropdowns the user was mid-way through choosing from.
     return html.Div(
         [
             html.Div("FILTERS", className="studio-field-label"),
-            dcc.Loading(
-                html.Div(cells, className="studio-filter-grid"),
-                type="dot",
-                color="#1f5fbf",
-                className="studio-loading",
-            ),
+            html.Div(cells, className="studio-filter-grid"),
         ],
         className="studio-field",
     )

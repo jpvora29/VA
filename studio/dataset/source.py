@@ -8,7 +8,7 @@ options derive from it. Everything resolves lazily from the browser store's
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import pandas as pd
 
@@ -61,6 +61,38 @@ def dataset_filter_options(
         values = sorted(frame[column].dropna().unique(), key=str)
         options[fid] = [{"label": str(v), "value": _plain(v)} for v in values]
     return options
+
+
+def dataset_cascade_options(
+    dataset_id: str, columns: Sequence[str], selected: Optional[Mapping[str, Any]] = None
+) -> Dict[str, List[Dict[str, Any]]]:
+    """``{column: [{label, value}]}`` for a whole cascade over an uploaded dataset.
+
+    The pandas twin of :func:`studio.data.cascade_options`: one cached distinct-combination
+    cube answers every column, instead of re-filtering the frame once per column. Like the
+    SQL twin the cube spans the FULL filter vocabulary, so asking for one column still
+    honours the constraints on the others.
+    """
+    from studio import filter_cube
+    from studio.data import cube_columns
+
+    frame = _mapped_frame(dataset_id)
+    if frame is None:
+        return {}
+    spanned = tuple(c for c in cube_columns("gpr") if c in frame.columns)
+    cube = filter_cube.frame_cube(dataset_id, frame, spanned)
+    selected = {c: v for c, v in (selected or {}).items() if c in spanned}
+    cascaded = filter_cube.cascade(cube, selected)
+
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for column in columns:
+        values = cascaded.get(column)
+        if values is None:
+            where = {c: v for c, v in selected.items() if c != column}
+            out[column] = dataset_dependent_options(dataset_id, column, where)
+        else:
+            out[column] = [{"label": str(v), "value": _plain(v)} for v in values]
+    return out
 
 
 def dataset_dependent_options(

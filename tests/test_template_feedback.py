@@ -133,7 +133,7 @@ def test_values_commentary_carries_figures(_stub_compute):
 def test_declines_flow_to_challenges():
     facts = {"carrier": {"current": 30e6, "pct": -12.0}, "marsh": {"current": 100e6, "pct": 2.0},
              "rank": {"current": 6, "delta": -2}, "sow": {"current": 4.0, "delta": -1.1}}
-    text = F._challenges_text(facts)
+    text = F._compose("challenges", facts, F._PANEL_BULLETS)
     assert "-12.0%" in text and "slipped" in text
     assert F._kpi_cell("rank", facts) == "6 (-2▼)\nCarrier Rank"
 
@@ -176,6 +176,51 @@ def test_commentary_written_in_consistent_arial_11(tmp_path):
     assert note_runs and cell_runs
     for run in note_runs + cell_runs:
         assert run.font.name == "Arial" and run.font.size.pt == 11
+
+
+def test_commentary_columns_are_laid_out_alike_across_a_page(tmp_path):
+    # The quadrant's four panels are authored inconsistently — one left-aligned and top
+    # anchored with real navy text, the rest centred, middle anchored and carrying the
+    # white run colour of the example text the author deleted. Filled, they must read as
+    # four columns of one slide.
+    from pptx import Presentation
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+    from pptx.util import Inches
+
+    from studio.template_fill.fill import fill_template
+    from studio.template_fill.slots import Slot
+
+    navy = RGBColor(0x00, 0x0F, 0x47)
+    src = str(tmp_path / "quad.pptx")
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    authored = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(3), Inches(4))
+    authored.text_frame.text = "Performance"
+    authored.text_frame.paragraphs[0].runs[0].font.color.rgb = navy
+    blank = slide.shapes.add_textbox(Inches(5), Inches(1), Inches(3), Inches(4))
+    blank.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+    blank.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
+    a_id, b_id = authored.shape_id, blank.shape_id
+    prs.save(src)
+
+    roles = {a_id: f"note:0:{a_id}:0", b_id: f"note:0:{b_id}:0"}
+    doc = {"template_path": src,
+           "manifest": [R.Binding(Slot(0, sid, ["para", 0], "", "text", ""), role, False).to_dict()
+                        for sid, role in roles.items()],
+           "values": {roles[a_id]: "Successes point.", roles[b_id]: "Opportunity point."},
+           "overrides": {}, "map_overrides": {}, "added": {}}
+    out = fill_template(doc, out_path=str(tmp_path / "quad_out.pptx"))
+
+    shapes = {sh.shape_id: sh for sh in Presentation(out).slides[0].shapes}
+    for sid in (a_id, b_id):
+        frame = shapes[sid].text_frame
+        assert frame.vertical_anchor == MSO_ANCHOR.TOP
+        for p in frame.paragraphs:
+            assert p.alignment == PP_ALIGN.LEFT
+            # The emptied panel takes the ink of the column the author actually wrote,
+            # not the leftover colour of the text deleted from it.
+            assert all(r.font.color.rgb == navy for r in p.runs)
 
 
 # ── bullet-point commentary ──────────────────────────────────────────────────
@@ -271,19 +316,48 @@ _LAGGING = {**_GROWING, "carrier": {"current": 48e6, "pct": 2.0}}
     ("challenges", _SHRINKING),
 ])
 def test_composers_return_one_point_per_line(composer, facts):
-    lines = F._COMPOSERS[composer](facts).split("\n")
+    lines = F._compose(composer, facts, F._PANEL_BULLETS).split("\n")
     assert len(lines) > 1, "a commentary cell should carry several points, not one paragraph"
     assert all(line.strip() for line in lines)
 
 
 def test_a_composer_with_nothing_to_say_returns_no_bullets():
-    # Nothing negative in a growing book → the Challenges column must stay empty rather
-    # than invent a point (the template's own fill-me cue then shows through).
-    assert F._challenges_text(_GROWING) == ""
+    # A book that grew, climbed the rank and already writes above the peer share average has
+    # no evidenced challenge — the column must stay empty rather than invent one (the
+    # template's own fill-me cue then shows through).
+    assert F._compose("challenges", _GROWING, F._PANEL_BULLETS) == ""
+
+
+def test_a_growing_book_below_peer_share_still_reports_a_challenge():
+    # Growth alone is not success: writing 7.1% of the wallet against a 10.8% peer average
+    # is a real, evidenced gap, and the quadrant must say so.
+    behind = {**_GROWING, "sow": {"current": 7.1, "delta": 3.2}}
+    text = F._compose("challenges", behind, F._PANEL_BULLETS)
+    assert "3.7pp below the top-5 peer average of 10.8%" in text
+    assert "$15M" in text                       # 3.7pp of the $411M Marsh book in scope
+
+
+def test_a_panel_carries_more_of_the_argument_than_a_table_cell():
+    facts = {**_GROWING, "carrier": {"current": 48e6, "pct": 52.5, "delta": 16e6},
+             "movers": [{"name": "Cyber", "delta": 12e6, "pct": 40.0},
+                        {"name": "Marine", "delta": -1e6, "pct": -4.0}]}
+    panel = F._compose("working", facts, F._PANEL_BULLETS).split("\n")
+    cell = F._compose("working", facts, F._CELL_BULLETS).split("\n")
+    assert len(panel) > len(cell) and panel[:len(cell)] == cell
+
+
+def test_a_single_value_dimension_does_not_restate_the_headline():
+    # A product page scoped to one country decomposes into that country and nothing else —
+    # "the increase was led by Singapore" on a Singapore row says nothing.
+    facts = {**_GROWING, "carrier": {"current": 48e6, "pct": 52.5, "delta": 16e6},
+             "movers": [{"name": "Singapore", "delta": 16e6, "pct": 52.5}],
+             "pool": [{"name": "Singapore", "delta": 40e6, "pct": 9.8}]}
+    assert "led by" not in F._compose("working", facts, F._PANEL_BULLETS)
+    assert "capture gap" not in F._compose("growth", facts, F._PANEL_BULLETS)
 
 
 def test_highlights_keeps_its_heading_then_bullets():
-    lines = F._highlights_text(_GROWING).split("\n")
+    lines = F._compose("highlights", _GROWING, F._PANEL_BULLETS).split("\n")
     assert lines[0] == "Key Highlights:"
     assert len(lines) > 1 and all(lines[1:])
 
@@ -313,7 +387,13 @@ def test_bubble_chart_filled_from_growth_points(tmp_path):
     bubble = next(c for c in charts if "BUBBLE" in str(c.chart_type))
     assert [s.name for s in bubble.plots[0].series] == ["Property", "Cyber"]
     assert list(bubble.plots[0].series[0].values) == [12.0 / 100.0]
-    assert bubble.has_legend
+    # Every bubble is cloned from one authored series, so they share a colour: a legend of
+    # identical keys names nothing. Each bubble carries its own line of business instead,
+    # and both axes read as percentages rather than the source data's raw fractions.
+    assert not bubble.has_legend
+    xml = bubble._chartSpace.xml
+    assert '<c:showSerName val="1"/>' in xml
+    assert xml.count('<c:numFmt formatCode="0.0%" sourceLinked="0"/>') == 2
     # The hand-placed labels for the authored dummy bubbles are blanked.
     slide = next(s for s in prs.slides
                  for sh in s.shapes if getattr(sh, "has_chart", False) and sh.chart is bubble)

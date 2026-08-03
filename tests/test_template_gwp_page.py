@@ -287,3 +287,30 @@ def test_product_chart_is_unaffected_by_the_country_rule(country_template):
                       if "Property" in v["categories"] or "Cyber" in v["categories"]]
     assert product_series, "the product breakdown chart must still fill"
     assert len(product_series[0]["categories"]) > 1
+
+
+def test_written_bars_carry_a_millions_format_not_the_raw_source_code(tmp_path):
+    # The regression: `replace_data` resets a chart's cached format code to "General", and
+    # the templates' labels are sourceLinked — so bars scaled to millions printed as
+    # "207.8838507" under a caption that says (€M). The write states its own format.
+    import re
+
+    from pptx import Presentation
+
+    from studio.template_fill.fill import fill_template
+
+    page = G.pages(analyze(COUNTRY_TEMPLATE))[0]
+    charts = [sh for s in analyze(COUNTRY_TEMPLATE).slides if s.index == page.slide_idx
+              for sh in s.shapes if sh.kind == "chart" and "CLUSTERED" in (sh.chart_type or "")]
+    assert charts, "the GWP page authors two clustered bar charts"
+    bars = {f"{page.slide_idx}:{charts[0].shape_id}":
+            {"categories": ["Property", "Cyber"], "cy": [207.884, 44.32], "py": [161.7, 22.4]}}
+    doc = {"template_path": COUNTRY_TEMPLATE, "manifest": [], "values": {"gwp_bars": bars},
+           "overrides": {}, "map_overrides": {}, "added": {}}
+    out = fill_template(doc, out_path=str(tmp_path / "bars.pptx"))
+
+    chart = next(sh.chart for sh in Presentation(out).slides[page.slide_idx].shapes
+                 if getattr(sh, "has_chart", False) and int(sh.shape_id) == charts[0].shape_id)
+    xml = chart._chartSpace.xml
+    assert re.findall(r"<c:formatCode>(.*?)</c:formatCode>", xml) == ["#,##0.0", "#,##0.0"]
+    assert list(chart.plots[0].series[0].values) == [207.884, 44.32]

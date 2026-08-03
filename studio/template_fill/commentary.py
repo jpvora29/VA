@@ -33,8 +33,10 @@ _COMMENTARY_SECTIONS = {
 # Every style keeps the same faithfulness guardrails; only the tone/length shifts.
 _STYLE_DIRECTIVE: Dict[str, str] = {
     "concise": "Keep each bullet to one short clause — the headline figure and nothing else.",
-    "balanced": "Keep each bullet to one short sentence.",
-    "detailed": "Allow each bullet up to two sentences: the figure and its 'so what'.",
+    "balanced": "Give each bullet up to two sentences: the figure, then what it means for "
+                "the account.",
+    "detailed": "Give each bullet two or three sentences: the figure, what drove it, and "
+                "what it means for the account next year.",
 }
 
 # Commentary is written as BULLET POINTS, one per line, so the polish must preserve the line
@@ -49,9 +51,13 @@ _BULLET_RULES = (
 
 def _style_system(style: Optional[str]) -> str:
     base = (
-        "You are a senior Marsh broking analyst polishing commentary for a carrier QBR slide. "
-        "Rewrite the draft so it reads board-ready: lead with the 'so what', use active voice, "
-        "and keep every claim anchored to the figures provided. "
+        "You are a Marsh broking analyst with twenty years in carrier portfolio management, "
+        "polishing commentary for a carrier QBR slide. Write the way an experienced analyst "
+        "briefs a client executive: lead with the 'so what', use active voice, distinguish "
+        "market movement from share movement, and say what each figure means for the account "
+        "rather than restating it. Use the trade's own vocabulary — GWP, share of wallet, "
+        "rank, renewal book, capture rate, headroom — and never hedge a point the figures "
+        "support. "
         "HARD RULES: keep EVERY number, currency amount, percentage and rank EXACTLY as written — "
         "never invent, recalculate or round a figure; never name a competitor carrier. "
     )

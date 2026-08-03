@@ -184,20 +184,62 @@ def _is_commentary_role(role: Optional[str]) -> bool:
     return bool(role) and str(role).startswith(_COMMENTARY_ROLE_PREFIXES)
 
 
-def _style_commentary_paragraphs(paragraphs) -> None:
+def _style_commentary_paragraphs(paragraphs, ink=None) -> None:
+    from pptx.enum.text import PP_ALIGN
     from pptx.oxml.ns import qn
     from pptx.util import Pt
 
     for p in paragraphs:
+        # A bullet list reads left-aligned. The author's EMPTY panels carry whatever
+        # alignment happened to be on them (the quadrant's four columns are authored
+        # centred, left, centred, centred), so inherited alignment makes one page's four
+        # commentary columns look like four different slides.
+        p.alignment = PP_ALIGN.LEFT
         for r in p.runs:
             r.font.name = _COMMENTARY_FONT_NAME
             r.font.size = Pt(_COMMENTARY_FONT_PT)
+            if ink is not None:
+                r.font.color.rgb = ink
             # Some template placeholders carry a yellow <a:highlight> — real
             # commentary must not inherit the author's "fill me" marker.
             rPr = r._r.find(qn("a:rPr"))
             hl = rPr.find(qn("a:highlight")) if rPr is not None else None
             if hl is not None:
                 rPr.remove(hl)
+
+
+def _authored_ink(frames) -> Optional[Any]:
+    """The colour the author used for the commentary they actually WROTE on this page.
+
+    An emptied prose box keeps the run colour of the text that was deleted from it — the
+    quadrant's blank columns carry a leftover white, which is invisible the moment real
+    commentary lands on their pale panel. The one column the author did write in is the
+    honest source of the page's commentary ink, and using it everywhere keeps the four
+    columns looking like one slide.
+    """
+    for frame in frames:
+        for p in frame.paragraphs:
+            for r in p.runs:
+                if r.text.strip() and r.font.color.type is not None:
+                    try:
+                        return r.font.color.rgb
+                    except AttributeError:      # a theme colour — already renders correctly
+                        return None
+    return None
+
+
+def _anchor_commentary_top(frame) -> None:
+    """Start commentary at the top of its box, never floating in the middle of it.
+
+    A quadrant panel is as tall as the slide; middle-anchored bullets end up marooned in
+    the centre of the column while the neighbouring column starts at the top.
+    """
+    from pptx.enum.text import MSO_ANCHOR
+
+    try:
+        frame.vertical_anchor = MSO_ANCHOR.TOP
+    except (AttributeError, ValueError):        # a frame that cannot be anchored
+        pass
 
 
 # Grid metrics whose colour must follow the SIGN of the real value — the template
@@ -286,7 +328,19 @@ def _set_bullet(paragraph, *, bulleted: bool) -> None:
     pPr.set("indent", str(-_BULLET_INDENT_EMU))
 
 
-def _write_bullets(frame, text: str, *, template_paragraph=None) -> None:
+def _commentary_frame(shape, where: List[Any]):
+    """The text frame a commentary role writes into — a shape's own, or a table cell's."""
+    if where and where[0] == "para" and getattr(shape, "has_text_frame", False):
+        return shape.text_frame
+    if where and where[0] == "cell" and getattr(shape, "has_table", False):
+        r, c = int(where[1]), int(where[2])
+        rows = shape.table.rows
+        if 0 <= r < len(rows) and 0 <= c < len(rows[r].cells):
+            return rows[r].cells[c].text_frame
+    return None
+
+
+def _write_bullets(frame, text: str, *, template_paragraph=None, ink=None) -> None:
     """Lay ``text``'s lines out over ``frame``'s paragraphs, one bulleted point per line.
 
     The frame's own paragraphs are reused first (so the author's formatting is inherited);
@@ -315,23 +369,17 @@ def _write_bullets(frame, text: str, *, template_paragraph=None) -> None:
 
     for extra in paras[len(lines):]:
         extra._p.getparent().remove(extra._p)
-    _style_commentary_paragraphs(frame.paragraphs)
+    _style_commentary_paragraphs(frame.paragraphs, ink)
+    _anchor_commentary_top(frame)
 
 
-def _write_commentary(shape, where: List[Any], text: str) -> None:
+def _write_commentary(shape, where: List[Any], text: str, ink=None) -> None:
     """Write bullet-point commentary into a text shape or a table cell."""
     try:
-        frame = None
-        if where and where[0] == "para" and shape.has_text_frame:
-            frame = shape.text_frame
-        elif where and where[0] == "cell" and shape.has_table:
-            r, c = int(where[1]), int(where[2])
-            rows = shape.table.rows
-            if 0 <= r < len(rows) and 0 <= c < len(rows[r].cells):
-                frame = rows[r].cells[c].text_frame
+        frame = _commentary_frame(shape, where)
         if frame is None:
             return
-        _write_bullets(frame, text)
+        _write_bullets(frame, text, ink=ink)
     except Exception as exc:  # noqa: BLE001 — commentary layout must never break the fill
         logger.warning("template_fill: commentary write fell back to a plain paragraph: %s", exc)
         if where and where[0] == "para":
@@ -502,30 +550,68 @@ def _bubble_points(points: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             if p.get("carrier_yoy") is not None and p.get("marsh_yoy") is not None]
 
 
-def _write_bubble_chart(chart, points: List[Dict[str, Any]]) -> None:
-    """One series per line of business (x = Marsh YoY, y = carrier YoY, size = carrier
-    GWP) so every bubble gets its own colour and legend entry."""
-    from pptx.chart.data import BubbleChartData
-    from pptx.enum.chart import XL_LEGEND_POSITION
+# ── chart number formats ─────────────────────────────────────────────────────
 
-    data = BubbleChartData()
+# ``replace_data`` rewrites a chart's cached values and, with them, their FORMAT CODE —
+# which python-pptx sets to "General". Every axis and data label in the shipped templates
+# is ``sourceLinked``, i.e. renders whatever the source data says, so a refilled chart
+# prints ``207.8838507`` where the author had ``$207.9M`` and plots ``0.02`` where the axis
+# reads ``2.0%``. Each writer therefore states the format its own numbers are in, and
+# unlinks the axes that must not follow the source.
+_MILLIONS_FORMAT = "#,##0.0"        # bars — already scaled to the unit the caption declares
+_PERCENT_FORMAT = "0.0%"            # bubble axes — growth rates are written as fractions
+
+
+def _pin_value_axis_format(chart, fmt: str) -> None:
+    """Pin every value axis of ``chart`` to ``fmt``, unlinked from the source data."""
+    from pptx.oxml.ns import qn
+
+    for ax in chart._chartSpace.iter(qn("c:valAx")):
+        numFmt = ax.find(qn("c:numFmt"))
+        if numFmt is None:                      # an axis the author left unformatted
+            continue
+        numFmt.set("formatCode", fmt)
+        numFmt.set("sourceLinked", "0")
+
+
+def _name_bubbles_without_a_legend(chart) -> None:
+    """Name each bubble on the chart itself rather than in a legend.
+
+    Every series is cloned from the author's single authored one, so all the bubbles share
+    one colour — a legend of six identical keys names nothing, and it steals a band of the
+    plot area. The line of business goes on its own bubble as a data label instead.
+    """
+    from pptx.oxml.ns import qn
+
+    chart.has_legend = False
+    flags = {"c:showSerName": "1", "c:showVal": "0", "c:showCatName": "0",
+             "c:showPercent": "0", "c:showBubbleSize": "0", "c:showLegendKey": "0"}
+    for dLbls in chart._chartSpace.iter(qn("c:dLbls")):
+        for tag, val in flags.items():
+            el = dLbls.find(qn(tag))
+            if el is not None:
+                el.set("val", val)
+
+
+def _write_bubble_chart(chart, points: List[Dict[str, Any]]) -> None:
+    """One series per line of business (x = Marsh YoY, y = carrier YoY, size = carrier GWP),
+    each bubble labelled with its own line and the axes pinned to percentages."""
+    from pptx.chart.data import BubbleChartData
+
+    data = BubbleChartData(number_format=_PERCENT_FORMAT)
     for p in points:
         ser = data.add_series(str(p.get("lob") or ""))
         ser.add_data_point(p["marsh_yoy"] / 100.0, p["carrier_yoy"] / 100.0,
                            abs(p.get("size") or 0.0) or 1.0)
     chart.replace_data(data)
-    try:
-        chart.has_legend = True
-        chart.legend.position = XL_LEGEND_POSITION.BOTTOM
-        chart.legend.include_in_layout = False
-    except Exception:  # noqa: BLE001 — a legend is nice-to-have, never fatal
-        pass
+    _pin_value_axis_format(chart, _PERCENT_FORMAT)
+    _name_bubbles_without_a_legend(chart)
 
 
 def _blank_stale_point_labels(slide, chart_shape, points: List[Dict[str, Any]]) -> None:
     """Blank the hand-placed point-label textboxes over a refilled bubble chart —
-    they were positioned for the template's authored dummy bubbles, and the legend
-    now names each bubble instead.
+    they were positioned for the template's authored dummy bubbles, and each bubble
+    now carries its own line of business as a data label.
 
     A stale label is a text *placeholder* whose text matches a plotted name, or a
     short placeholder sitting wholly inside the chart frame (the authored labels for
@@ -556,17 +642,21 @@ def _write_bar_chart(chart, series: Dict[str, Any]) -> None:
     """Write a CY-vs-PY category chart (``{categories, cy, py}``) into a clustered bar.
 
     The series NAMES come from the template's own authored series (``CY``/``PY``) so the
-    legend, colours and ordering the author chose are preserved.
+    legend, colours and ordering the author chose are preserved. The values arrive already
+    scaled to the unit the page's caption declares ("GWP LoB (€M)"), so the labels state
+    that unit's own plain format rather than the raw-currency scaling code the author's
+    example data carried.
     """
     from pptx.chart.data import CategoryChartData
 
     authored = [str(s.name or "") for s in chart.series][:2]
     names = (authored + ["CY", "PY"])[:2]
-    data = CategoryChartData()
+    data = CategoryChartData(number_format=_MILLIONS_FORMAT)
     data.categories = [str(c) for c in series["categories"]]
     for name, key in zip(names, ("cy", "py")):
         data.add_series(name, [float(v) for v in series[key]])
     chart.replace_data(data)
+    _pin_value_axis_format(chart, _MILLIONS_FORMAT)
 
 
 def _fill_charts(prs, values: Dict[str, Any]) -> None:
@@ -665,7 +755,12 @@ def fill_template(doc: Dict[str, Any], *, out_path: Optional[str] = None) -> str
         # would otherwise be shifted again by the template-year rule).
         _apply_subs(slide, subs)
         index = _index_by_id(slide)
-        for fld in by_slide.get(sidx, []):
+        fields = by_slide.get(sidx, [])
+        ink = _authored_ink(
+            frame for fld in fields if _is_commentary_role(str(fld.get("role") or ""))
+            for frame in [_commentary_frame(index.get(int(fld["shape_id"])), fld["where"])]
+            if frame is not None)
+        for fld in fields:
             shape = index.get(int(fld["shape_id"]))
             if shape is None:
                 continue
@@ -674,7 +769,7 @@ def fill_template(doc: Dict[str, Any], *, out_path: Optional[str] = None) -> str
             # Commentary owns its whole box/cell: it lays its points out as bulleted
             # paragraphs, so it replaces the single-paragraph write rather than following it.
             if _is_commentary_role(role):
-                _write_commentary(shape, where, text)
+                _write_commentary(shape, where, text, ink)
                 continue
             if where and where[0] == "para":
                 _write_text_shape(shape, where, text)

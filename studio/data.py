@@ -13,7 +13,7 @@ import json
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List, Sequence
 
 from sqlalchemy import create_engine, text
 
@@ -101,6 +101,59 @@ def _distinct_where(table: str, column: str, where_key: tuple, limit: int = _OPT
         return ()
 
 
+def _options(values: Iterable[Any]) -> List[Dict[str, Any]]:
+    return [{"label": str(v), "value": v} for v in values]
+
+
+def cube_columns(flow: str) -> Tuple[str, ...]:
+    """The columns the filter cube spans — exactly the ones the form filters on.
+
+    NOT every entity/temporal column: ``CLIENT_NAME`` and ``Billing_Date`` are entity and
+    temporal too, and either would make the cube as big as the fact table. The cube exists to
+    serve the filter cascade, so the filter vocabulary is its definition.
+    """
+    from studio.compute import FILTER_COLUMN          # lazy: keeps this module's imports thin
+
+    spec = get_flow_registry().get(flow)
+    if spec is None:
+        return ()
+    return tuple(c for c in FILTER_COLUMN.values() if c in spec.columns)
+
+
+def cascade_options(
+    flow: str, columns: Sequence[str], selected: Dict[str, Any] | None = None
+) -> Dict[str, List[Dict[str, Any]]]:
+    """``{column: [{label, value}]}`` for a cascade — every requested column at once.
+
+    Served from the cached filter cube (:mod:`studio.filter_cube`), so the ten Setup
+    dropdowns cost one in-memory pass instead of ten ``SELECT DISTINCT … WHERE`` scans.
+
+    The cube always spans the FULL filter vocabulary (:func:`cube_columns`), never just the
+    requested columns — one cube is shared by every caller, and asking for one column must
+    still honour constraints on the others. A column the cube cannot answer falls back to
+    :func:`dependent_options`, so a source too wide to cube still works, just at the old speed.
+    """
+    from studio import filter_cube
+
+    spec = get_flow_registry().get(flow)
+    if spec is None:
+        return {}
+    wanted = [c for c in columns if c in spec.columns]
+    selected = {c: v for c, v in (selected or {}).items() if c in spec.columns}
+    cube = filter_cube.sql_cube(get_engine(), spec.primary_table, cube_columns(flow))
+    cascaded = filter_cube.cascade(cube, selected) if cube is not None else {}
+
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for column in wanted:
+        values = cascaded.get(column)
+        if values is None:
+            where = {c: v for c, v in selected.items() if c != column}
+            out[column] = dependent_options(flow, column, where)
+        else:
+            out[column] = _options(values)
+    return out
+
+
 def dependent_options(
     flow: str, column: str, where: Dict[str, Any] | None = None
 ) -> List[Dict[str, Any]]:
@@ -108,7 +161,11 @@ def dependent_options(
 
     Columns are validated against the flow registry (injection guard). With no
     constraint this is the full (cached) distinct list — so it also serves the
-    "give me the entire carrier list" case."""
+    "give me the entire carrier list" case.
+
+    One column at a time. For a whole form use :func:`cascade_options`, which answers
+    every column from one cached pass instead of a query each.
+    """
     spec = get_flow_registry().get(flow)
     if spec is None or column not in spec.columns:
         return []
@@ -126,10 +183,26 @@ def dependent_options(
         if key
         else _distinct_cached(spec.primary_table, column)
     )
-    return [{"label": str(v), "value": v} for v in values]
+    return _options(values)
 
 
 def peer_members(flow: str, carrier: str, *, country=None) -> List[str]:
+    """The carrier's peers — see :func:`_peer_members`, cached (it is on the Setup hot path).
+
+    The cache key carries the DATABASE signature, not just the arguments: the engine is
+    resolved at call time, so a different (or refreshed) database must not be answered from
+    another one's cache.
+    """
+    key = tuple(country) if isinstance(country, (list, tuple, set)) else country
+    return list(_peer_members_cached(_db_signature(), flow, carrier, key))
+
+
+@lru_cache(maxsize=512)
+def _peer_members_cached(db_signature: str, flow: str, carrier: str, country) -> tuple:
+    return tuple(_peer_members(flow, carrier, country=country))
+
+
+def _peer_members(flow: str, carrier: str, *, country=None) -> List[str]:
     """The carrier's existing peers from the flow's Peers table (empty if none).
 
     Scoped to ``country`` when the Peers table carries a country column, so Setup
@@ -251,10 +324,17 @@ def cached_filter_options(flow: str) -> Dict[str, List[Dict[str, Any]]]:
 
 
 def warm_filter_cache(flow: str = "gpr") -> str:
-    """Build the on-disk filter cache now so the next app launch is instant.
+    """Build the on-disk filter caches now so the next app launch is instant.
 
-    Run offline once (see ``python -m studio.warm_cache``)."""
+    Warms BOTH tiers: the per-column option lists (the page's initial render) and the
+    filter cube (every subsequent cascade). Run offline once — see
+    ``python -m studio.warm_cache``."""
+    from studio import filter_cube
+
     cached_filter_options(flow)
+    spec = get_flow_registry().get(flow)
+    if spec is not None:
+        filter_cube.sql_cube(get_engine(), spec.primary_table, cube_columns(flow))
     return str(_cache_file(flow))
 
 

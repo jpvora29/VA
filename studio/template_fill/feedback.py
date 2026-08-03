@@ -33,6 +33,7 @@ logger = get_logger(__name__)
 
 _CARRIER_COL = "Carrier_Group"
 _COUNTRY_COL = "Country"
+_PRODUCT_COL = "Product_Line"
 _YEAR_COL = "Year"
 
 _COUNTRY_TOKEN = re.compile(r"(?:Country\s*/\s*)?(?:Country|Region)\s*\(\s*(\d+)\s*\)", re.I)
@@ -284,16 +285,38 @@ def _safe(fn, *a, **k):
         return None
 
 
+def _is_pinned(filters: Dict[str, Any], column: str) -> bool:
+    value = filters.get(column)
+    values = tuple(value) if isinstance(value, (list, tuple, set)) else ((value,) if value else ())
+    return len(values) == 1
+
+
+def _driver_dim(filters: Dict[str, Any]) -> str:
+    """The dimension a YoY move is best decomposed by IN THIS SCOPE.
+
+    A product sub-deck is already one line of business, so its drivers are countries;
+    every other scope decomposes by line of business, which is how the deck reads
+    everywhere else.
+    """
+    return _COUNTRY_COL if _is_pinned(filters, _PRODUCT_COL) else _PRODUCT_COL
+
+
 def _facts(result, filters: Dict[str, Any]) -> Dict[str, Any]:
-    """Carrier/Marsh totals + YoY, rank, SoW movement and the peer benchmark for one scope."""
+    """Carrier/Marsh totals + YoY, rank, SoW movement, the peer benchmark, and the
+    per-dimension decomposition of both books — the carrier's own movers and the Marsh
+    pool they were won from, which is what turns a headline percentage into an argument."""
     subject = result.subject
     base = {k: v for k, v in filters.items() if k != _CARRIER_COL}
+    dim = _driver_dim(filters)
     carrier = _safe(C.period_totals, result.flow, filters, result.engine) or {}
     marsh = _safe(C.period_totals, result.flow, base, result.engine) or {}
     rank = _safe(C.rank_movement, result.flow, filters, result.engine, subject) or {}
     sow = _safe(C.sow_movement, result.flow, filters, result.engine, subject) or {}
     peer = _safe(C.peer_average_totals, result.flow, filters, result.engine) or {}
-    return {"carrier": carrier, "marsh": marsh, "rank": rank, "sow": sow, "peer": peer}
+    movers = _safe(C.movement_by_dim, result.flow, dim, filters, result.engine, top=8) or []
+    pool = _safe(C.movement_by_dim, result.flow, dim, base, result.engine, top=8) or []
+    return {"carrier": carrier, "marsh": marsh, "rank": rank, "sow": sow, "peer": peer,
+            "movers": movers, "pool": pool}
 
 
 # ── deterministic text composition (every claim carries its figure) ──────────
@@ -349,91 +372,231 @@ def _kpi_cell(kind: str, f: Dict[str, Any]) -> str:
     return ""
 
 
-# Commentary cells are BULLET LISTS: each composer returns its points, one per line, and the
-# fill engine renders each line as its own bulleted paragraph.
-_MAX_BULLETS = 3
+# Commentary cells are BULLET LISTS: each composer returns its points MOST MATERIAL FIRST,
+# one per line, and the fill engine renders each line as its own bulleted paragraph.
+#
+# How many of those points survive depends on the surface. A quadrant panel is a whole
+# column of the slide and can carry the argument — the movement, what drove it, how it
+# reads against the peer benchmark, and what it is worth. A feedback-table cell is one row
+# of a table alongside five KPI callouts, so it keeps the headlines only.
+_PANEL_BULLETS = 4
+_CELL_BULLETS = 3
 
 
-def _bullets(parts: List[str]) -> str:
-    return "\n".join(p for p in parts[:_MAX_BULLETS] if p)
+def _bullets(parts: List[str], limit: int = _PANEL_BULLETS) -> str:
+    return "\n".join(p for p in parts[:limit] if p)
 
 
-def _working_text(f: Dict[str, Any]) -> str:
+def _signed_money(raw: float) -> str:
+    """A movement, with its direction — ``_money`` is unsigned by design."""
+    return ("-" if raw < 0 else "+") + _money(raw)
+
+
+def _rank_of(r: Dict[str, Any]) -> str:
+    """``#5 of 41`` where the field size is known, else ``#5``."""
+    return f"#{int(r['current'])}" + (f" of {int(r['of_n'])}" if r.get("of_n") else "")
+
+
+def _places(n: int) -> str:
+    return "1 place" if abs(n) == 1 else f"{abs(n)} places"
+
+
+def _named_moves(rows: List[Dict[str, Any]], *, rising: bool, top: int = 2) -> str:
+    """``Cyber +$22M (+97.3%) and Financial Lines +$16M (+57.1%)`` — the movers, named.
+
+    A scope with one value on the driver dimension (a product page's own line of business)
+    cannot decompose into anything: naming it would only restate the headline.
+    """
+    if len(rows) < 2:
+        return ""
+    picked = [x for x in rows
+              if ((x.get("delta") or 0.0) > 0) is rising and (x.get("delta") or 0.0)][:top]
+    parts = [f"{x['name']} {_signed_money(x['delta'])}"
+             + (f" ({x['pct']:+.1f}%)" if x.get("pct") is not None else "")
+             for x in picked]
+    return " and ".join(parts)
+
+
+def _point_of_share(f: Dict[str, Any]) -> Optional[float]:
+    """What one percentage point of share of wallet is worth, in premium."""
+    total = (f.get("marsh") or {}).get("current")
+    return (total / 100.0) if total else None
+
+
+def _peer_share_gap(f: Dict[str, Any]) -> Optional[float]:
+    """How far the carrier's share of wallet sits BELOW the top-5 peer average, in points."""
+    mine = (f.get("sow") or {}).get("current")
+    theirs = (f.get("peer") or {}).get("sow")
+    if mine is None or theirs is None or theirs <= mine:
+        return None
+    return theirs - mine
+
+
+def _working_points(f: Dict[str, Any]) -> List[str]:
+    """Successes: what grew, what drove it, and what the growth bought."""
+    c, m, r, s = f["carrier"], f.get("marsh") or {}, f["rank"], f["sow"]
     parts: List[str] = []
-    c, r, s = f["carrier"], f["rank"], f["sow"]
     if (c.get("pct") or 0) > 0:
-        parts.append(f"GWP with Marsh grew {c['pct']:+.1f}% YoY to {_money(c['current'])}.")
+        line = f"GWP with Marsh grew {c['pct']:+.1f}% YoY to {_money(c['current'])}"
+        if m.get("pct") is not None and m["pct"] < c["pct"]:
+            line += (f", well ahead of the {m['pct']:+.1f}% the wider Marsh book moved — "
+                     f"the growth was won on share, not carried by the market")
+        elif m.get("pct") is not None:
+            line += f", against a Marsh book up {m['pct']:+.1f}%"
+        parts.append(line + ".")
+    risers = _named_moves(f.get("movers") or [], rising=True)
+    if risers and (c.get("delta") or 0) > 0:
+        parts.append(f"The increase was led by {risers}, on a total book movement of "
+                     f"{_signed_money(c['delta'])}.")
     if (r.get("delta") or 0) > 0:
-        parts.append(f"Market rank improved {int(r['delta'])} place(s) to #{int(r['current'])}.")
+        parts.append(f"Market rank improved {_places(int(r['delta']))} to {_rank_of(r)} — "
+                     f"the gain came at competitors' expense, not from a growing pool.")
     if (s.get("delta") or 0) > 0:
-        parts.append(f"Share of wallet rose {s['delta']:+.1f}% to {s['current']:.1f}%.")
+        line = f"Share of wallet rose {s['delta']:+.1f}pp to {s['current']:.1f}%"
+        peer_sow = (f.get("peer") or {}).get("sow")
+        if peer_sow is not None:
+            line += (f", now {s['current'] - peer_sow:+.1f}pp against the top-5 peer "
+                     f"average of {peer_sow:.1f}%")
+        parts.append(line + ".")
     if not parts and c.get("current"):
         parts.append(f"Book held at {_money(c['current'])} with Marsh.")
-    return _bullets(parts)
+    return parts
 
 
-def _challenges_text(f: Dict[str, Any]) -> str:
+def _challenges_points(f: Dict[str, Any]) -> List[str]:
+    """Challenges: where the book lost ground, in absolute terms and against the market.
+
+    A growing book can still be losing: trailing the Marsh book, sitting below the peer
+    share benchmark and giving premium back on individual lines are all real, evidenced
+    challenges — nothing here is written without a figure behind it.
+    """
+    c, m, r, s = f["carrier"], f.get("marsh") or {}, f["rank"], f["sow"]
     parts: List[str] = []
-    c, r, s = f["carrier"], f["rank"], f["sow"]
     if (c.get("pct") or 0) < 0:
-        parts.append(f"GWP with Marsh declined {c['pct']:+.1f}% YoY to {_money(c['current'])}.")
+        line = f"GWP with Marsh declined {c['pct']:+.1f}% YoY to {_money(c['current'])}"
+        if m.get("pct") is not None and m["pct"] > c["pct"]:
+            line += f", while the Marsh book moved {m['pct']:+.1f}% — this is lost share"
+        parts.append(line + ".")
     if (r.get("delta") or 0) < 0:
-        parts.append(f"Market rank slipped {abs(int(r['delta']))} place(s) to #{int(r['current'])}.")
+        parts.append(f"Market rank slipped {_places(int(r['delta']))} to {_rank_of(r)}.")
     if (s.get("delta") or 0) < 0:
-        parts.append(f"Share of wallet fell {s['delta']:+.1f}% to {s['current']:.1f}%.")
-    if not parts and (f["marsh"].get("pct") is not None) and (c.get("pct") is not None) \
-            and f["marsh"]["pct"] > c["pct"]:
-        parts.append(
-            f"Growth of {c['pct']:+.1f}% trails the Marsh book ({f['marsh']['pct']:+.1f}%)."
-        )
-    return _bullets(parts)
+        parts.append(f"Share of wallet fell {s['delta']:+.1f}pp to {s['current']:.1f}%.")
+    if (c.get("pct") is not None) and (m.get("pct") is not None) and m["pct"] > c["pct"] \
+            and (c.get("pct") or 0) >= 0:
+        parts.append(f"Growth of {c['pct']:+.1f}% trails the Marsh book ({m['pct']:+.1f}%) — "
+                     f"the account is growing but losing ground.")
+    fallers = _named_moves(f.get("movers") or [], rising=False)
+    if fallers:
+        parts.append(f"Premium was given back on {fallers}, offsetting the gains elsewhere.")
+    gap = _peer_share_gap(f)
+    point = _point_of_share(f)
+    if gap is not None:
+        line = (f"At {s['current']:.1f}% share of wallet the book sits {gap:.1f}pp below the "
+                f"top-5 peer average of {f['peer']['sow']:.1f}%")
+        if point:
+            line += f" — about {_money(gap * point)} of premium in scope"
+        parts.append(line + ".")
+    return parts
 
 
-def _growth_text(f: Dict[str, Any]) -> str:
-    c, m, s = f["carrier"], f["marsh"], f["sow"]
+def _growth_points(f: Dict[str, Any]) -> List[str]:
+    """Opportunities: the headroom, what closing it is worth, and where to go for it."""
+    c, m, s = f["carrier"], f.get("marsh") or {}, f["sow"]
     parts: List[str] = []
     if c.get("current") is not None and m.get("current"):
         headroom = m["current"] - c["current"]
         if headroom > 0:
             share = f" at {s['current']:.1f}% share of wallet" if s.get("current") is not None else ""
-            parts.append(
-                f"{_money(headroom)} of the {_money(m['current'])} Marsh book is placed elsewhere{share} — headroom to grow."
-            )
+            point = _point_of_share(f)
+            worth = f" — every point of share is worth about {_money(point)}" if point else ""
+            parts.append(f"{_money(headroom)} of the {_money(m['current'])} Marsh book is "
+                         f"placed elsewhere{share}{worth}.")
+    gap, point = _peer_share_gap(f), _point_of_share(f)
+    if gap is not None and point:
+        parts.append(f"Closing the {gap:.1f}pp gap to the top-5 peer average would add roughly "
+                     f"{_money(gap * point)} of GWP at today's market size.")
+    capture = _capture_gap(f)
+    if capture:
+        parts.append(capture)
     if (m.get("pct") or 0) > 0 and (c.get("pct") is not None) and m["pct"] > c["pct"]:
-        parts.append(f"Marsh demand is growing {m['pct']:+.1f}% YoY — capture more of the flow.")
-    return _bullets(parts)
+        parts.append(f"Marsh demand is growing {m['pct']:+.1f}% YoY — holding share flat still "
+                     f"leaves premium on the table; capture rate is the lever.")
+    return parts
 
 
-def _key_messages_text(f: Dict[str, Any]) -> str:
-    c, r, s = f["carrier"], f["rank"], f["sow"]
+def _capture_gap(f: Dict[str, Any]) -> Optional[str]:
+    """Where Marsh demand grew hardest and the carrier took least of it.
+
+    A comparison needs something to compare: a scope holding one value on the driver
+    dimension has no widest gap, only its own total again.
+    """
+    rows = f.get("pool") or []
+    pool = [x for x in rows if (x.get("delta") or 0) > 0]
+    if len(rows) < 2 or not pool:
+        return None
+    mine = {x["name"]: (x.get("delta") or 0.0) for x in (f.get("movers") or [])}
+    worst = max(pool, key=lambda x: x["delta"] - mine.get(x["name"], 0.0))
+    if worst["name"] not in mine:
+        return None
+    captured = mine[worst["name"]]
+    if captured >= worst["delta"]:
+        return None
+    took = (f"the account took only {_money(captured)} of it" if captured > 0
+            else f"the account gave back {_money(captured)}")
+    return (f"{worst['name']} added {_money(worst['delta'])} of Marsh premium year on year "
+            f"while {took} — the widest capture gap in the portfolio.")
+
+
+def _key_messages_points(f: Dict[str, Any]) -> List[str]:
+    """Key messages: the four lines the account team should be able to say from memory."""
+    c, r, s, peer = f["carrier"], f["rank"], f["sow"], f.get("peer") or {}
+    m = f.get("marsh") or {}
     parts: List[str] = []
     if c.get("current") is not None:
+        year = f" in {int(c['current_year'])}" if c.get("current_year") else ""
         yoy = f" ({c['pct']:+.1f}% YoY)" if c.get("pct") is not None else ""
-        parts.append(f"{_money(c['current'])} written with Marsh{yoy}.")
+        market = f", against a Marsh book up {m['pct']:+.1f}%" if m.get("pct") is not None else ""
+        parts.append(f"{_money(c['current'])} written with Marsh{year}{yoy}{market}.")
     pos: List[str] = []
     if r.get("current") is not None:
-        pos.append(f"rank #{int(r['current'])}")
+        pos.append(f"rank {_rank_of(r)}")
     if s.get("current") is not None:
-        pos.append(f"{s['current']:.1f}% share of wallet")
+        moved = f" ({s['delta']:+.1f}pp)" if s.get("delta") is not None else ""
+        pos.append(f"{s['current']:.1f}% share of wallet{moved}")
+    if peer.get("sow") is not None:
+        pos.append(f"top-5 peer average {peer['sow']:.1f}%")
     if pos:
         parts.append("Position: " + ", ".join(pos) + ".")
-    return _bullets(parts)
+    risers = _named_moves(f.get("movers") or [], rising=True)
+    if risers:
+        parts.append(f"Momentum sits with {risers} — protect the renewal book there first.")
+    gap, point = _peer_share_gap(f), _point_of_share(f)
+    if gap is not None and point:
+        parts.append(f"The ask: {gap:.1f}pp of share to reach peer parity, worth about "
+                     f"{_money(gap * point)} of GWP.")
+    return parts
 
 
-def _highlights_text(f: Dict[str, Any]) -> str:
-    """The one-cell "Key Highlights:" table — its heading line, then one bullet per point."""
-    points = [line for text in (_working_text(f), _challenges_text(f), _growth_text(f))
-              for line in text.split("\n") if line]
-    return "Key Highlights:\n" + "\n".join(points[:_MAX_BULLETS]) if points else ""
+def _highlights_points(f: Dict[str, Any]) -> List[str]:
+    """The one-cell "Key Highlights:" table — its heading line, then one point per theme."""
+    themes = (_working_points(f), _challenges_points(f), _growth_points(f))
+    points = [t[0] for t in themes if t]
+    return ["Key Highlights:"] + points if points else []
 
 
-_COMPOSERS: Dict[str, Callable[[Dict[str, Any]], str]] = {
-    "working": _working_text,
-    "challenges": _challenges_text,
-    "growth": _growth_text,
-    "key_messages": _key_messages_text,
-    "highlights": _highlights_text,
+_COMPOSERS: Dict[str, Callable[[Dict[str, Any]], List[str]]] = {
+    "working": _working_points,
+    "challenges": _challenges_points,
+    "growth": _growth_points,
+    "key_messages": _key_messages_points,
+    "highlights": _highlights_points,
 }
+
+
+def _compose(kind: str, f: Dict[str, Any], limit: int) -> str:
+    """One commentary cell's bullet list — the composer's points, trimmed to ``limit``."""
+    composer = _COMPOSERS.get(kind)
+    return _bullets(composer(f), limit) if composer else _kpi_cell(kind, f)
 
 
 # ── value resolution ─────────────────────────────────────────────────────────
@@ -505,9 +668,10 @@ def values(template: Template, result) -> Dict[str, Any]:
             country = countries[ordn - 1]
         key = (country, t["kind"])
         if key not in text_cache:
-            f = facts_for(country)
-            composer = _COMPOSERS.get(t["kind"])
-            text = composer(f) if composer else _kpi_cell(t["kind"], f)
+            # A feedback-table row shares its cell with five KPI callouts; a quadrant panel
+            # owns a whole column of the slide and can carry the fuller argument.
+            limit = _CELL_BULLETS if ordn is not None else _PANEL_BULLETS
+            text = _compose(t["kind"], facts_for(country), limit)
             text_cache[key] = _polish(text, t["kind"], style)
         # KPI callouts always write (a blank beats a stale "$xx.xM" placeholder);
         # an empty commentary keeps the template's ellipsis as a visible fill-me cue.

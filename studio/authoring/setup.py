@@ -6,11 +6,13 @@ deterministic deck into a fresh document, and jumps to the canvas.
 """
 from __future__ import annotations
 
+from functools import lru_cache
+
 from dash import ALL, Input, Output, State, no_update
 
 from logger import get_logger
 from studio.compute import FILTER_COLUMN
-from studio.data import dependent_options, peer_members
+from studio.data import cascade_options, peer_members
 from studio.page import authoring as A
 from studio.page import document as D
 from studio.template_fill import registry
@@ -85,20 +87,152 @@ def carriers_in_scope(filters, record) -> list:
     This is what makes the peer choices *correct*: country, region, product line and
     the rest all narrow the list, and the selected carrier is removed from it.
     """
-    from studio.dataset.source import dataset_dependent_options
-
     where = {
         FILTER_COLUMN[c]: v
         for c, v in (filters or {}).items()
         if c not in _PEER_SCOPE_SKIP and c in FILTER_COLUMN
     }
-    opts = (
-        dataset_dependent_options(record.dataset_id, "Carrier_Group", where)
-        if record is not None
-        else dependent_options("gpr", "Carrier_Group", where)
-    )
+    opts = _cascade(record, ("Carrier_Group",), where).get("Carrier_Group", [])
     subject = str((filters or {}).get("carrier") or "").lower()
     return [o for o in opts if str(o.get("value", "")).lower() != subject]
+
+
+# ── the three things a filter change re-derives ──────────────────────────────
+
+# The GPR columns the Setup form filters on, in form order.
+_FILTER_COLUMNS = tuple(FILTER_COLUMN.values())
+
+
+def _cascade(record, columns, selected) -> dict:
+    """``{column: options}`` from whichever source is in use (dataset wins over the DB)."""
+    from studio.dataset.source import dataset_cascade_options
+
+    if record is not None:
+        return dataset_cascade_options(record.dataset_id, columns, selected)
+    return cascade_options("gpr", columns, selected)
+
+
+def cascade_filter_options(selected: dict, record) -> dict:
+    """``{form filter id: options}`` — every dropdown narrowed to what the others allow.
+
+    Pick a region and only its countries/carriers remain; pick a carrier and only the
+    products, cover lines, industries and segments it writes in remain; and so on. One
+    cached pass over the filter cube answers all ten columns
+    (:func:`studio.data.cascade_options`).
+    """
+    where = {FILTER_COLUMN[c]: v for c, v in (selected or {}).items() if c in FILTER_COLUMN}
+    by_column = _cascade(record, _FILTER_COLUMNS, where)
+    return {fid: by_column[col] for fid, col in FILTER_COLUMN.items() if col in by_column}
+
+
+def peer_panel_state(selected: dict, mode, record, options: dict):
+    """``(dropdown options, wrapper style, message)`` for the peer panel.
+
+    Existing mode shows ONLY the carrier's peer group from the Peers table, as names —
+    there is nothing to choose, so the custom dropdown is hidden. Custom mode shows
+    carriers that actually write under the current filters (country, region, product
+    line…), never the whole database and never the subject itself. The Peers table is
+    governed, so a custom dataset has no existing group and is told to pin its own.
+    """
+    carrier = (selected or {}).get("carrier")
+    country = (selected or {}).get("country")
+    opts = carriers_in_scope(selected, record)
+    shown = {str(o.get("value", "")).lower() for o in opts}
+    hidden = {"display": "none"}
+
+    if mode == "custom":
+        return opts, {}, A.peer_set_body(
+            (), "Pick the carriers to benchmark against — the deck shows the aggregate only.",
+        )
+    if not carrier:
+        return opts, hidden, A.peer_set_body((), "Select a carrier to see its existing peers.")
+    if record is not None:
+        return opts, hidden, A.peer_set_body(
+            (), "Your data has no governed peer group — switch to Custom peers to benchmark.",
+            tone="warn",
+        )
+    members = peer_members("gpr", carrier, country=_hashable(country))
+    if not members:
+        return opts, hidden, A.peer_set_body(
+            (), f"No peer group exists for {carrier} — switch to Custom peers.", tone="warn",
+        )
+    # The Peers table is scope-free, so a listed peer may write nothing in the
+    # chosen country/product scope. Show who counts, and name who drops out.
+    in_scope = [m for m in members if str(m).lower() in shown]
+    absent = [m for m in members if str(m).lower() not in shown]
+    if not in_scope:
+        return opts, hidden, A.peer_set_body(
+            members, "None of these peers write in the current scope — widen the "
+                     "filters or switch to Custom peers.", tone="warn",
+        )
+    note = f"{len(in_scope)} peer{'s' if len(in_scope) > 1 else ''} from the Peers table."
+    if absent:
+        note += f" Not writing in this scope: {', '.join(absent)}."
+    return opts, hidden, A.peer_set_body(in_scope, note)
+
+
+def _hashable(value):
+    """A selection in a form a cache key accepts (Dash hands multi-selects over as lists)."""
+    return tuple(value) if isinstance(value, list) else value
+
+
+def scope_preview_body(selected: dict, record):
+    """The live headline tiles for the current filters (empty until a carrier is picked)."""
+    if not (selected or {}).get("carrier"):
+        return A.scope_preview_empty()
+    key = tuple(sorted((c, _hashable(v)) for c, v in selected.items()))
+    try:
+        items = _scope_figures(key, record.dataset_id if record else None)
+    except Exception as exc:  # noqa: BLE001 — preview is best-effort, never blocks Setup
+        log.warning("scope preview failed: %s", exc)
+        return A.scope_preview_empty("Preview unavailable for this scope.")
+    return A.scope_preview_card(items) if items else A.scope_preview_empty()
+
+
+@lru_cache(maxsize=256)
+def _scope_figures(key: tuple, dataset_id):
+    """The preview's four figures, cached per scope.
+
+    Two aggregate queries (a total and a market rank) that are pure functions of the
+    selection, so revisiting a scope — which happens constantly while a user tries filter
+    combinations — costs nothing the second time.
+    """
+    from core.analytics.library import compute_breakdown, compute_rank
+    from core.analytics.types import PrimitiveArgs
+    from studio.compute import _CARRIER_COL, _resolve_filters
+    from studio.dataset.source import dataset_engine
+    from studio.page.format import money
+
+    filters = {c: (list(v) if isinstance(v, tuple) else v) for c, v in key}
+    eng = dataset_engine(dataset_id) if dataset_id else engine
+    resolved = _resolve_filters(filters)
+    subject = resolved.get(_CARRIER_COL)
+
+    total_facts = compute_breakdown(
+        PrimitiveArgs(flow="gpr", metric="premium", group_by=(), filters=resolved), engine=eng
+    )
+    total = total_facts[0].value if total_facts else 0.0
+    rank_filters = {k: v for k, v in resolved.items() if k != _CARRIER_COL}
+    rank_facts = compute_rank(
+        PrimitiveArgs(flow="gpr", metric="premium", group_by=(), filters=rank_filters), engine=eng
+    )
+    mine = next((f for f in rank_facts
+                 if str(f.dims.get("entity", "")).lower() == str(subject).lower()), None)
+
+    country = filters.get("country")
+    n_countries = len(country) if isinstance(country, (list, tuple)) else (1 if country else "All")
+    year_val = filters.get("year")
+    if isinstance(year_val, (list, tuple, set)):
+        years = sorted(str(y) for y in year_val if str(y).strip())
+        year_disp = ", ".join(years) if years else "All"
+    else:
+        year_disp = str(year_val) if year_val else "All"
+    return (
+        {"label": "Total GWP", "value": money(total), "sub": str(subject)},
+        {"label": "Market rank", "value": (mine.rendered if mine else "—")},
+        {"label": "Countries", "value": str(n_countries)},
+        {"label": "Year", "value": year_disp},
+    )
 
 
 def _generation_blocked(dataset_store, record):
@@ -178,44 +312,17 @@ def register_setup(app):
         tdoc = _generated_assembled_tdoc(selection) or _generated_tdoc(selection)
         return selection, doc, tdoc, {"mode": "canvas", "idx": 0, "tab": "setup"}, n, ""
 
+    # A filter change used to fire THREE callbacks that each re-queried the warehouse. They
+    # are now split by COST, not by panel:
+    #
+    #   * the form itself — options + peer panel — is answered from the cached filter cube,
+    #     so it is a couple of milliseconds and needs no spinner;
+    #   * the scope preview runs two real aggregates (a total and a market rank), which no
+    #     cube can shortcut, so it stays a SEPARATE callback. The browser runs the two
+    #     concurrently, and the slow one can never hold up the fast one — merging them made
+    #     every dropdown wait on the rank query.
     @app.callback(
         Output({"type": "studio-filter", "col": ALL}, "options"),
-        Input({"type": "studio-filter", "col": ALL}, "value"),
-        State({"type": "studio-filter", "col": ALL}, "id"),
-        State("qs-dataset", "data"),
-    )
-    def cascade_filters(values, ids, dataset_store):
-        """Narrow every filter's options to what the OTHER selections allow.
-
-        Pick a region and only its countries/carriers remain; pick a carrier and only the
-        products, cover lines, industries and segments it writes in remain; and so on.
-        Governed source: cached DB distincts (``dependent_options``). Custom source: the
-        same cascade computed on the submitted dataset's materialized table.
-        """
-        from studio.dataset.source import dataset_dependent_options, dataset_in_use
-
-        ids = ids or []
-        selected = {i["col"]: v for i, v in zip(ids, values or []) if v not in BLANK}
-        record = dataset_in_use(dataset_store)
-        out = []
-        for i in ids:
-            col = i["col"]
-            gcol = FILTER_COLUMN.get(col)
-            if not gcol:
-                out.append(no_update)
-                continue
-            where = {
-                FILTER_COLUMN[c]: v
-                for c, v in selected.items()
-                if c != col and c in FILTER_COLUMN
-            }
-            if record is not None:
-                out.append(dataset_dependent_options(record.dataset_id, gcol, where))
-            else:
-                out.append(dependent_options("gpr", gcol, where))
-        return out
-
-    @app.callback(
         Output("studio-peer-custom", "options"),
         Output("studio-peer-custom-wrap", "style"),
         Output("studio-peer-msg", "children"),
@@ -224,55 +331,16 @@ def register_setup(app):
         State({"type": "studio-filter", "col": ALL}, "id"),
         State("qs-dataset", "data"),
     )
-    def peer_panel(values, mode, ids, dataset_store):
-        """Populate the peer set for the current scope.
-
-        Existing mode shows ONLY the carrier's peer group from the Peers table, as
-        names — there is nothing to choose, so the custom dropdown is hidden. Custom
-        mode shows carriers that actually write under the current filters (country,
-        region, product line…), never the whole database and never the subject
-        itself. The Peers table is governed, so a custom dataset has no existing
-        group and is told to pin its own.
-        """
+    def refresh_form(values, mode, ids, dataset_store):
+        """Re-derive every dropdown's options and the peer panel — one cube pass."""
         from studio.dataset.source import dataset_in_use
 
-        filters = {i["col"]: v for i, v in zip(ids or [], values or []) if v not in BLANK}
-        carrier = filters.get("carrier")
-        country = filters.get("country")
+        ids = ids or []
+        selected = {i["col"]: v for i, v in zip(ids, values or []) if v not in BLANK}
         record = dataset_in_use(dataset_store)
-        opts = carriers_in_scope(filters, record)
-        shown = {str(o.get("value", "")).lower() for o in opts}
-
-        if mode == "custom":
-            return opts, {}, A.peer_set_body(
-                (), "Pick the carriers to benchmark against — the deck shows the aggregate only.",
-            )
-        hidden = {"display": "none"}
-        if not carrier:
-            return opts, hidden, A.peer_set_body((), "Select a carrier to see its existing peers.")
-        if record is not None:
-            return opts, hidden, A.peer_set_body(
-                (), "Your data has no governed peer group — switch to Custom peers to benchmark.",
-                tone="warn",
-            )
-        members = peer_members("gpr", carrier, country=country)
-        if not members:
-            return opts, hidden, A.peer_set_body(
-                (), f"No peer group exists for {carrier} — switch to Custom peers.", tone="warn",
-            )
-        # The Peers table is scope-free, so a listed peer may write nothing in the
-        # chosen country/product scope. Show who counts, and name who drops out.
-        in_scope = [m for m in members if str(m).lower() in shown]
-        absent = [m for m in members if str(m).lower() not in shown]
-        if not in_scope:
-            return opts, hidden, A.peer_set_body(
-                members, "None of these peers write in the current scope — widen the "
-                         "filters or switch to Custom peers.", tone="warn",
-            )
-        note = f"{len(in_scope)} peer{'s' if len(in_scope) > 1 else ''} from the Peers table."
-        if absent:
-            note += f" Not writing in this scope: {', '.join(absent)}."
-        return opts, hidden, A.peer_set_body(in_scope, note)
+        options = cascade_filter_options(selected, record)
+        peer_opts, peer_style, peer_msg = peer_panel_state(selected, mode, record, options)
+        return [options.get(i["col"], no_update) for i in ids], peer_opts, peer_style, peer_msg
 
     @app.callback(
         Output("studio-scope-preview", "children"),
@@ -281,44 +349,8 @@ def register_setup(app):
         State("qs-dataset", "data"),
     )
     def scope_preview(values, ids, dataset_store):
-        filters = {i["col"]: v for i, v in zip(ids or [], values or []) if v not in BLANK}
-        if not filters.get("carrier"):
-            return A.scope_preview_empty()
-        try:
-            from core.analytics.library import compute_breakdown, compute_rank
-            from core.analytics.types import PrimitiveArgs
-            from studio.compute import _CARRIER_COL, _resolve_filters
-            from studio.dataset.source import dataset_engine, dataset_in_use
-            from studio.page.format import money
+        """The live headline figures — the one panel that genuinely queries on each change."""
+        from studio.dataset.source import dataset_in_use
 
-            record = dataset_in_use(dataset_store)
-            eng = dataset_engine(record.dataset_id) if record else engine
-            resolved = _resolve_filters(filters)
-            subject = resolved.get(_CARRIER_COL)
-            total_facts = compute_breakdown(
-                PrimitiveArgs(flow="gpr", metric="premium", group_by=(), filters=resolved), engine=eng
-            )
-            total = total_facts[0].value if total_facts else 0.0
-            rank_filters = {k: v for k, v in resolved.items() if k != _CARRIER_COL}
-            rank_facts = compute_rank(
-                PrimitiveArgs(flow="gpr", metric="premium", group_by=(), filters=rank_filters), engine=eng
-            )
-            mine = next((f for f in rank_facts if str(f.dims.get("entity", "")).lower() == str(subject).lower()), None)
-            country = filters.get("country")
-            n_countries = len(country) if isinstance(country, (list, tuple)) else (1 if country else "All")
-            year_val = filters.get("year")
-            if isinstance(year_val, (list, tuple, set)):
-                years = sorted(str(y) for y in year_val if str(y).strip())
-                year_disp = ", ".join(years) if years else "All"
-            else:
-                year_disp = str(year_val) if year_val else "All"
-            items = [
-                {"label": "Total GWP", "value": money(total), "sub": str(subject)},
-                {"label": "Market rank", "value": (mine.rendered if mine else "—")},
-                {"label": "Countries", "value": str(n_countries)},
-                {"label": "Year", "value": year_disp},
-            ]
-            return A.scope_preview_card(items)
-        except Exception as exc:  # noqa: BLE001 — preview is best-effort, never blocks Setup
-            log.warning("scope preview failed: %s", exc)
-            return A.scope_preview_empty("Preview unavailable for this scope.")
+        selected = {i["col"]: v for i, v in zip(ids or [], values or []) if v not in BLANK}
+        return scope_preview_body(selected, dataset_in_use(dataset_store))
