@@ -95,6 +95,12 @@ from studio.page.authoring.setup import (
     _scope_preview,
     _setup_section,
     _template_control,
+    BUSY_FLAG_CLASS,
+    BUSY_FLAG_ON,
+    BUSY_FORM,
+    BUSY_PREVIEW,
+    BUSY_SECTIONS,
+    busy_overlay,
     peer_set_body,
     scope_axes,
     scope_preview_card,
@@ -114,7 +120,8 @@ __all__ = [
     "mode_rail", "top_bar",
     # setup
     "scope_preview_empty", "scope_preview_card", "template_sections_panel", "setup_body",
-    "peer_set_body", "scope_axes",
+    "peer_set_body", "scope_axes", "busy_overlay",
+    "BUSY_FLAG_CLASS", "BUSY_FLAG_ON", "BUSY_FORM", "BUSY_PREVIEW", "BUSY_SECTIONS",
     # canvas
     "normalized_zoom", "adjusted_zoom", "zoom_scale", "canvas_body",
     # data / review (review hosts the export card)

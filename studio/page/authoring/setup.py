@@ -13,6 +13,42 @@ from dash import dcc, html
 
 from studio.page.layout import _filter_grid, _scope_toggle
 
+# ── the Setup busy overlay ───────────────────────────────────────────────────
+#
+# Every control on this page re-derives something server-side — the option cascade, the
+# peer panel, the scope figures, the deck-section list — and a single change is answered by
+# several callbacks at once. The overlay is raised while ANY of them is in flight and drops
+# when the last one settles.
+#
+# Each callback owns its own FLAG, and the overlay watches all of them (see the
+# ``:has(.qs-busy-flag.is-busy)`` rule). One shared flag would race: the fastest callback's
+# "finished" would lower the overlay while a slower sibling was still running.
+#
+# `dcc.Loading` was the obvious tool and does not work here: it decides on its own whether a
+# subtree is loading, and it consistently missed the FIRST change after a page load — the
+# one a user is least sure about. `running` is declared per callback, so it always fires.
+BUSY_FLAG_CLASS = "qs-busy-flag"
+BUSY_FLAG_ON = f"{BUSY_FLAG_CLASS} is-busy"
+
+# The flag each Setup callback raises. Named for the panel it re-derives, so a new panel
+# adds a name here and a `running=` on its own callback — nothing else changes.
+BUSY_FORM = "qs-busy-form"              # option cascade + peer panel
+BUSY_PREVIEW = "qs-busy-preview"        # the live scope figures
+BUSY_SECTIONS = "qs-busy-sections"      # the deck-section list
+
+
+def busy_overlay() -> html.Div:
+    """The full-page spinner, plus the per-callback flags that raise it."""
+    return html.Div(
+        [
+            *(html.Div(id=flag, className=BUSY_FLAG_CLASS)
+              for flag in (BUSY_FORM, BUSY_PREVIEW, BUSY_SECTIONS)),
+            html.Div(html.Div(className="qs-page-spinner"), className="qs-page-loader",
+                     id="qs-setup-busy"),
+        ],
+        className="qs-busy-host",
+    )
+
 
 def _setup_section(icon: str, title: str, subtitle: str, children: Any, *, span: bool = False) -> html.Div:
     return html.Div(
@@ -228,10 +264,9 @@ def _scope_preview() -> html.Div:
         [
             html.Div([html.I(className="bi bi-eye"), "Scope preview"], className="qs-preview-head"),
             html.P("Live headline figures for the current filters.", className="qs-preview-note"),
-            dcc.Loading(
-                html.Div(scope_preview_empty(), id="studio-scope-preview"),
-                type="dot", color="#1f5fbf", className="studio-loading",
-            ),
+            # No spinner of its own: the page-level one already covers this panel, and two
+            # spinners for one change read as two things happening.
+            html.Div(scope_preview_empty(), id="studio-scope-preview"),
         ],
         className="qs-scope-preview",
     )
@@ -509,4 +544,4 @@ def setup_body(
         ],
         className="qs-setup-card",
     )
-    return html.Div(form, className="qs-setup-wrap")
+    return html.Div([busy_overlay(), form], className="qs-setup-wrap")

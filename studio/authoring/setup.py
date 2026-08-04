@@ -235,6 +235,16 @@ def _scope_figures(key: tuple, dataset_id):
     )
 
 
+def _busy(flag: str):
+    """``running=`` for a Setup callback: raise ``flag`` while it works, drop it after.
+
+    The full-page overlay watches every flag at once, so a change answered by several
+    callbacks stays covered until the last of them finishes
+    (:func:`studio.page.authoring.setup.busy_overlay`).
+    """
+    return [(Output(flag, "className"), A.BUSY_FLAG_ON, A.BUSY_FLAG_CLASS)]
+
+
 def _generation_blocked(dataset_store, record):
     """The block reason as a rendered warning, or None when generation may run."""
     from dash import html
@@ -243,8 +253,27 @@ def _generation_blocked(dataset_store, record):
     return html.Span(reason, className="qs-map-hint warn") if reason else None
 
 
+def _register_busy_overlay(app):
+    """Follow every Setup busy flag at once and drive the full-page spinner from them.
+
+    Clientside because the only job is holding the overlay up for a minimum time
+    (``assets/studio_busy.js``); a round trip to the server to decide whether to show a
+    "we are talking to the server" spinner would be self-defeating.
+    """
+    from dash import ClientsideFunction
+
+    app.clientside_callback(
+        ClientsideFunction(namespace="qsBusy", function_name="track"),
+        Output("qs-setup-busy", "data-busy"),
+        Input(A.BUSY_FORM, "className"),
+        Input(A.BUSY_PREVIEW, "className"),
+        Input(A.BUSY_SECTIONS, "className"),
+    )
+
+
 def register_setup(app):
     """Wire the Generate + scope-preview callbacks onto ``app``."""
+    _register_busy_overlay(app)
 
     @app.callback(
         Output("qs-selection", "data"),
@@ -330,6 +359,7 @@ def register_setup(app):
         Input("studio-peer-mode", "value"),
         State({"type": "studio-filter", "col": ALL}, "id"),
         State("qs-dataset", "data"),
+        running=_busy(A.BUSY_FORM),
     )
     def refresh_form(values, mode, ids, dataset_store):
         """Re-derive every dropdown's options and the peer panel — one cube pass."""
@@ -347,6 +377,7 @@ def register_setup(app):
         Input({"type": "studio-filter", "col": ALL}, "value"),
         State({"type": "studio-filter", "col": ALL}, "id"),
         State("qs-dataset", "data"),
+        running=_busy(A.BUSY_PREVIEW),
     )
     def scope_preview(values, ids, dataset_store):
         """The live headline figures — the one panel that genuinely queries on each change."""

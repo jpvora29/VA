@@ -306,3 +306,61 @@ def test_pinned_custom_peers_reach_the_deck():
     from_table = peer_gap("gpr", filters, get_engine())
     assert from_table["n_peers"] == 4
     assert pinned["peer_avg"] != from_table["peer_avg"]
+
+
+# ── the busy overlay: every filter/selection change is acknowledged ───────────
+
+
+def test_the_form_carries_the_busy_overlay_and_one_flag_per_callback():
+    from studio.page.authoring import setup as P
+
+    form = _form()
+    for flag in (P.BUSY_FORM, P.BUSY_PREVIEW, P.BUSY_SECTIONS):
+        assert flag in form, f"{flag} must exist for its callback's running= to target it"
+    assert "qs-page-loader" in form and "qs-page-spinner" in form
+
+
+def test_every_setup_callback_raises_a_flag_while_it_works():
+    """A change answered by several callbacks must stay covered until the LAST finishes,
+    so each one owns its own flag rather than sharing one that races."""
+    import inspect
+
+    from studio.authoring import export as E
+    from studio.authoring import setup as S
+
+    src = inspect.getsource(S.register_setup) + inspect.getsource(E.register_export)
+    assert src.count("running=") >= 3, "the option cascade, scope preview and deck sections"
+    for flag in ("BUSY_FORM", "BUSY_PREVIEW", "BUSY_SECTIONS"):
+        assert flag in src, f"no callback raises {flag}"
+
+
+def test_a_busy_flag_is_raised_for_the_call_and_dropped_after():
+    from dash import Output
+
+    from studio.authoring.setup import _busy
+    from studio.page.authoring import setup as P
+
+    [(target, during, after)] = _busy(P.BUSY_FORM)
+    assert target == Output(P.BUSY_FORM, "className")
+    assert "is-busy" in during and "is-busy" not in after
+    assert after == P.BUSY_FLAG_CLASS      # back to the resting class, not blank
+
+
+def test_the_overlay_never_swallows_a_click():
+    """It is a progress cue, not a modal: a change made while it is up must still land."""
+    from pathlib import Path
+
+    css = Path("assets/studio_authoring.css").read_text(encoding="utf-8")
+    block = css.split(".qs-page-loader {", 1)[1].split("}", 1)[0]
+    assert "pointer-events: none" in block
+
+
+def test_the_overlay_is_shown_by_display_not_by_a_fade():
+    """Reduced motion and background tabs suppress transitions; the overlay must still
+    appear the moment work starts."""
+    from pathlib import Path
+
+    css = Path("assets/studio_authoring.css").read_text(encoding="utf-8")
+    assert ".qs-page-loader.is-on {" in css
+    on_block = css.split(".qs-page-loader.is-on {", 1)[1].split("}", 1)[0]
+    assert "display: flex" in on_block

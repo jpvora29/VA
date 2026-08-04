@@ -132,6 +132,9 @@ def register_export(app):
     @app.callback(
         Output("studio-template-sections", "children"),
         Input("studio-template", "value"),
+        # Same full-page cue as the other Setup controls: changing the scope re-derives
+        # the section list, and the user should see that it is happening.
+        running=[(Output(A.BUSY_SECTIONS, "className"), A.BUSY_FLAG_ON, A.BUSY_FLAG_CLASS)],
         prevent_initial_call=True,
     )
     def template_sections(scope):

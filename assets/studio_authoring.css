@@ -1868,6 +1868,44 @@ body.qs-cv-dragging { user-select: none; cursor: grabbing; }
 .qs-gen-loader .dash-default-spinner-rect4,
 .qs-gen-loader .dash-default-spinner-rect5 { background-color: #0b4bff !important; }
 
+/* ── Setup busy overlay ──────────────────────────────────────────────────────
+   A filter or selection change re-derives the option cascade, the peer panel, the scope
+   figures and the deck-section list. Each of those callbacks raises its own flag
+   (`running=` in studio/authoring/setup.py); the overlay is up while ANY of them is set,
+   so it never lifts early on the fastest one. Same frosted glass as the Generate spinner:
+   the form stays readable behind it, so the user keeps their place. */
+.qs-busy-flag { display: none; }
+/* `is-on` is written by assets/studio_busy.js, which follows every flag at once and holds
+   the overlay up for a minimum time so a change answered in 95ms does not just blink. */
+.qs-page-loader {
+    /* `display` rather than a fade: the overlay must appear the moment work starts, even
+       where transitions are suppressed (reduced motion, a backgrounded tab). */
+    display: none;
+    position: fixed; inset: 0; z-index: 1200;
+    align-items: center; justify-content: center;
+    background: rgba(233, 239, 249, 0.45);
+    -webkit-backdrop-filter: blur(6px) saturate(108%);
+    backdrop-filter: blur(6px) saturate(108%);
+    /* A progress cue, not a control: a change made while it is up must still land. */
+    pointer-events: none;
+}
+.qs-page-loader.is-on {
+    display: flex;
+    animation: qs-page-loader-in 120ms ease both;
+}
+.qs-page-spinner {
+    width: 46px; height: 46px; border-radius: 50%;
+    border: 3px solid var(--blue-soft, rgba(11, 75, 255, 0.18));
+    border-top-color: var(--blue);
+    animation: qs-page-spin 800ms linear infinite;
+}
+@keyframes qs-page-spin { to { transform: rotate(360deg); } }
+@keyframes qs-page-loader-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+    .qs-page-spinner { animation: none; border-top-color: var(--blue); }
+    .qs-page-loader.is-on { animation: none; }
+}
+
 /* ============================================================================
    Alignment pass — one visual language with the chatbot app (theme_tokens.css).
    Setup header, one CTA gradient everywhere, keyboard focus, scrollbars, motion.
