@@ -641,25 +641,24 @@ def _blank_stale_point_labels(slide, chart_shape, points: List[Dict[str, Any]]) 
             sh.text_frame.text = ""
 
 
-# ── the LC-ranking quadrant scatter ──────────────────────────────────────────
+# ── the LC-ranking pool bars ─────────────────────────────────────────────────
 
-# The author's own quadrant palette, read off the painted bands the template draws behind
-# the panel. Those bands go; the colour moves onto the markers, so a point states its own
-# position instead of being read off the background it happens to sit on.
-_LC_QUADRANT_FILL = {
-    "lead": "B0DC92",       # top-5 rank, large Marsh pool — the position to defend
-    "solid": "DFECD7",      # top-5 rank, small pool
-    "minor": "F0C3C2",      # outside the top 5, small pool
-    "gap": "E6A09E",        # outside the top 5, large pool — the opportunity
+# The author's own palette, read off the quadrant bands they painted behind the panel.
+# Those bands go: the colour moves onto the bars, where it says where the CARRIER ranks in
+# the pool the bar measures — greens for a top-5 position, reds for one being chased.
+_LC_BAND_FILL = {
+    "lead": "6FBF56",       # #1–2  — the position to defend
+    "strong": "B0DC92",     # #3–5  — inside the top 5
+    "chasing": "F0C3C2",    # #6–8  — outside it, within reach
+    "behind": "E6A09E",     # #9+   — the ground to make up
 }
-_LC_MARKER_EDGE = "000F47"
-_LC_MARKER_SIZE = 11
-_LC_SIZE_FORMAT = '$#,##0,,"M"'
+_LC_LABEL_PT = 9
+_LC_CATEGORY_PT = 9
+_LC_GAP_WIDTH = 45          # slim gap: the bars carry the page, not the whitespace
 # The panel furniture the template hand-draws for its authored dummy points: the painted
-# quadrant bands (a group of four freeforms), the two dashed threshold lines, the point
-# labels, and the text shapes faking a broken axis. All of it is positioned for data that
-# is about to be replaced, so all of it comes off — the chart draws its own axis, its own
-# threshold lines (as axis crossings) and its own point labels.
+# quadrant bands (a group of four freeforms), the dashed threshold lines, the point labels
+# and the text shapes faking a broken axis. All of it is positioned for data that is about
+# to be replaced, so all of it comes off — the bars carry their own labels and axis.
 _SHAPE_TYPE_FREEFORM, _SHAPE_TYPE_LINE, _SHAPE_TYPE_GROUP = 5, 9, 6
 _LC_FURNITURE_SHAPES = {_SHAPE_TYPE_FREEFORM, _SHAPE_TYPE_LINE}
 
@@ -699,21 +698,29 @@ def _panel_owner(shape, charts):
     return min(reachable, key=lambda r: r[0])[1] if reachable else None
 
 
+# The caption for an axis the pool bars no longer draw. The template's panel plots rank up
+# the side; the bars put lines of business there and state the rank on each label instead,
+# so a rotated "Carrier Rank" down the left edge would be labelling nothing.
+_LC_RETIRED_CAPTION = re.compile(r"\brank\b", re.I)
+
+
 def _is_stale_furniture(shape) -> bool:
     """True for a shape drawn to serve the template's authored dummy points.
 
     The painted quadrant bands, the dashed threshold lines and the break marks are
     freeforms and connectors; the point labels and the text faking a broken axis are
-    *placeholders*. The two axis CAPTIONS are plain text boxes that describe the panel
-    rather than its data, so they read just as truly once the chart is refilled.
+    *placeholders*. A plain text box describes the panel rather than its data, so it
+    survives — unless it captions the axis the bars replaced.
     """
     kind = getattr(shape, "shape_type", None)
     if kind == _SHAPE_TYPE_GROUP:
         return all(_is_stale_furniture(child) for child in shape.shapes)
     if kind in _LC_FURNITURE_SHAPES:
         return True
-    return (getattr(shape, "has_text_frame", False)
-            and "placeholder" in (shape.name or "").lower())
+    if not getattr(shape, "has_text_frame", False):
+        return False
+    return ("placeholder" in (shape.name or "").lower()
+            or bool(_LC_RETIRED_CAPTION.search(shape.text_frame.text or "")))
 
 
 def _strip_quadrant_furniture(slide, charts, *, blank: set) -> None:
@@ -735,133 +742,148 @@ def _strip_quadrant_furniture(slide, charts, *, blank: set) -> None:
             sh._element.getparent().remove(sh._element)
 
 
-# Room past the biggest point, so its data label has somewhere to sit inside the frame.
-_LC_SIZE_HEADROOM = 1.18
+def _reanchor(box, old_frame, new_frame) -> Tuple[int, int, int, int]:
+    """Re-place a shape laid out around ``old_frame`` to suit ``new_frame``.
 
+    Each axis keeps the relationship the author gave it: a caption centred on the panel
+    stays centred, a rule spanning the panel spans the new one, and a caption hugging an
+    edge keeps its distance from that edge. That is what lets a panel grow to half or all
+    of the page and take its title and axis captions with it.
 
-def _pin_axis_crossing(chart, *, at_rank: float, at_size: float, max_size: float) -> None:
-    """Draw the two quadrant thresholds as the axes themselves.
-
-    PowerPoint draws each axis line where it CROSSES the other one, so crossing the rank
-    axis at the median portfolio size and the size axis at the top-5 rank puts a vertical
-    and a horizontal divider exactly on the thresholds — no hand-placed line to drift when
-    the data changes. Tick labels move to the frame's edge so they do not sit on those
-    crossings.
-
-    Only the SIZE axis is rescaled. The rank axis keeps the range the author set, which
-    both preserves the panel's layout (the rotated "Carrier Rank" caption is placed against
-    it) and keeps every country's panel on one scale, so the page can be read across.
+    ``box`` and both frames are ``(x, y, w, h)`` in EMU; so is the result.
     """
-    from pptx.oxml.ns import qn
-
-    for ax in chart._chartSpace.iter(qn("c:valAx")):
-        pos = ax.find(qn("c:axPos"))
-        bottom = pos is not None and pos.get("val") == "b"
-        if bottom:
-            scaling = ax.find(qn("c:scaling"))
-            for tag, val in (("c:min", "0"), ("c:max", f"{max_size * _LC_SIZE_HEADROOM:.0f}")):
-                el = scaling.find(qn(tag))
-                if el is None:
-                    scaling.append(scaling.makeelement(qn(tag), {}))
-                    el = scaling.find(qn(tag))
-                el.set("val", val)
-            _set_axis_child(ax, "c:numFmt",
-                            {"formatCode": _LC_SIZE_FORMAT, "sourceLinked": "0"})
-        _set_axis_child(ax, "c:tickLblPos", {"val": "high" if bottom else "low"})
-        crosses = ax.find(qn("c:crosses"))
-        if crosses is not None:
-            ax.remove(crosses)
-        _set_axis_child(ax, "c:crossesAt",
-                        {"val": f"{(at_rank if bottom else at_size):g}"})
+    x, w = _reanchor_axis((box[0], box[2]), (old_frame[0], old_frame[2]),
+                          (new_frame[0], new_frame[2]))
+    y, h = _reanchor_axis((box[1], box[3]), (old_frame[1], old_frame[3]),
+                          (new_frame[1], new_frame[3]))
+    return x, y, w, h
 
 
-def _set_axis_child(ax, tag: str, attrs: Optional[Dict[str, str]]) -> None:
-    """Set (or add) one axis element's attributes, keeping the schema's element order."""
-    from pptx.oxml.ns import qn
-
-    if attrs is None:
-        return
-    el = ax.find(qn(tag))
-    if el is None:
-        el = ax.makeelement(qn(tag), {})
-        ax.insert_element_before(el, *_AFTER_AXIS.get(tag, ()))
-    for k, v in attrs.items():
-        el.set(k, v)
+# A shape covering this much of the panel is a rule or a full-width caption: it stretches
+# with the panel. One whose centre sits this close to the panel's stays centred on it.
+_SPAN_SHARE, _CENTRED_SHARE = 0.60, 0.15
 
 
-# `c:valAx`'s children are a SEQUENCE; each new element must be inserted before the ones
-# that legally follow it, or PowerPoint discards the whole axis.
-_AFTER_AXIS = {
-    "c:numFmt": ("c:majorTickMark", "c:minorTickMark", "c:tickLblPos", "c:spPr", "c:txPr",
-                 "c:crossAx", "c:crosses", "c:crossesAt", "c:crossBetween", "c:majorUnit",
-                 "c:minorUnit", "c:dispUnits", "c:extLst"),
-    "c:tickLblPos": ("c:spPr", "c:txPr", "c:crossAx", "c:crosses", "c:crossesAt",
-                     "c:crossBetween", "c:majorUnit", "c:minorUnit", "c:dispUnits", "c:extLst"),
-    "c:crossesAt": ("c:crossBetween", "c:majorUnit", "c:minorUnit", "c:dispUnits", "c:extLst"),
-}
+def _reanchor_axis(box, old, new) -> Tuple[int, int]:
+    """One axis of :func:`_reanchor`: ``(lo, size)`` for the shape in the new frame."""
+    lo, size = box
+    o_lo, o_size = old
+    n_lo, n_size = new
+    d_lo, d_hi = lo - o_lo, (lo + size) - (o_lo + o_size)
+    if size >= _SPAN_SHARE * o_size:            # spans the panel → stretches with it
+        return n_lo + d_lo, max(1, (n_lo + n_size + d_hi) - (n_lo + d_lo))
+    off = (lo + size / 2) - (o_lo + o_size / 2)
+    if abs(off) <= _CENTRED_SHARE * o_size:     # centred on the panel → stays centred
+        return int(n_lo + n_size / 2 + off - size / 2), size
+    if abs(d_lo) <= abs(d_hi):                  # hugs the near edge → keeps its distance
+        return n_lo + d_lo, size
+    return n_lo + n_size + d_hi - size, size
 
 
-def _write_quadrant_scatter(chart, panel: Dict[str, Any]) -> None:
-    """Write one country's lines of business into an LC-ranking quadrant scatter.
+def _build_pool_bars(slide, panel: Dict[str, Any], rect: Dict[str, int]):
+    """Add one country's pool-bar panel at ``rect`` and return the new graphic frame.
 
-    One SERIES per line, so each point carries its own name as a data label and its
-    quadrant colour as a plain marker fill — no per-point override to keep in step with the
-    data, and no legend of identical keys.
+    A bar rather than the template's scatter: the authored panel is a 3.4:1 letterbox, and
+    a bar takes its category labels from the axis, so they can never collide however many
+    lines a country writes. Bars run biggest pool at the TOP (PowerPoint plots the first
+    category at the bottom, so the data goes in reversed), each coloured by the band the
+    carrier's rank falls in and labelled with both the pool and the position.
     """
-    from pptx.chart.data import XyChartData
+    from pptx.chart.data import CategoryChartData
     from pptx.dml.color import RGBColor
-    from pptx.enum.chart import XL_MARKER_STYLE
+    from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION
+    from pptx.util import Pt
 
-    points = panel["points"]
-    data = XyChartData(number_format=_LC_SIZE_FORMAT)
-    for p in points:
-        series = data.add_series(str(p["name"]))
-        series.add_data_point(float(p["size"]), float(p["rank"]))
-    chart.replace_data(data)
-
-    for series, p in zip(chart.plots[0].series, points):
-        marker = series.marker
-        marker.style = XL_MARKER_STYLE.CIRCLE
-        marker.size = _LC_MARKER_SIZE
-        marker.format.fill.solid()
-        marker.format.fill.fore_color.rgb = RGBColor.from_string(
-            _LC_QUADRANT_FILL.get(str(p.get("quadrant")), _LC_QUADRANT_FILL["minor"]))
-        marker.format.line.color.rgb = RGBColor.from_string(_LC_MARKER_EDGE)
-        series.format.line.fill.background()     # markers only — nothing joins the points
+    rows = list(reversed(panel["bars"]))
+    data = CategoryChartData()
+    data.categories = [str(b["name"]) for b in rows]
+    data.add_series("Marsh portfolio", [float(b["size"]) for b in rows])
+    frame = slide.shapes.add_chart(XL_CHART_TYPE.BAR_CLUSTERED, rect["x"], rect["y"],
+                                   rect["w"], rect["h"], data)
+    chart = frame.chart
     chart.has_legend = False
-    _show_series_names(chart)
-    _pin_axis_crossing(chart, at_rank=float(panel["rank_cut"]), at_size=float(panel["size_cut"]),
-                       max_size=max(float(p["size"]) for p in points))
+    chart.has_title = False                     # the panel's own title names the country
+    chart.font.size = Pt(_LC_LABEL_PT)
+
+    plot = chart.plots[0]
+    plot.gap_width = _LC_GAP_WIDTH
+    plot.has_data_labels = True
+    plot.data_labels.position = XL_LABEL_POSITION.OUTSIDE_END
+    for point, row in zip(plot.series[0].points, rows):
+        point.format.fill.solid()
+        point.format.fill.fore_color.rgb = RGBColor.from_string(
+            _LC_BAND_FILL.get(str(row["band"]), _LC_BAND_FILL["chasing"]))
+        # The bar states both numbers itself, so no value axis is needed to read it.
+        point.data_label.text_frame.text = str(row["label"])
+        point.data_label.text_frame.paragraphs[0].font.size = Pt(_LC_LABEL_PT)
+
+    value_axis = chart.value_axis
+    value_axis.visible = False
+    value_axis.has_major_gridlines = False
+    value_axis.maximum_scale = max(float(b["size"]) for b in rows) * _LC_LABEL_HEADROOM
+    category = chart.category_axis
+    category.has_major_gridlines = False
+    category.tick_labels.font.size = Pt(_LC_CATEGORY_PT)
+    return frame
 
 
-def _fill_quadrant_panels(slide, sidx: int, quadrants: Dict[str, Any]) -> set:
-    """Fill (or blank) every LC-ranking panel on one slide; return the shape ids handled.
+# Room past the longest bar for its label to sit outside the bar end without clipping.
+_LC_LABEL_HEADROOM = 1.45
+
+
+def _box(shape) -> Tuple[int, int, int, int]:
+    return int(shape.left or 0), int(shape.top or 0), int(shape.width or 0), int(shape.height or 0)
+
+
+def _move_panel_furniture(slide, chart_shape, charts, old, new) -> None:
+    """Carry a panel's title and axis captions across to its new frame."""
+    if old == new:
+        return
+    for sh in list(slide.shapes):
+        if getattr(sh, "has_chart", False) or _panel_owner(sh, charts) is not chart_shape:
+            continue
+        try:
+            sh.left, sh.top, sh.width, sh.height = _reanchor(_box(sh), old, new)
+        except (TypeError, ValueError):         # a shape that cannot be placed → leave it
+            continue
+
+
+def _fill_ranking_panels(slide, sidx: int, panels: Dict[str, Any]) -> set:
+    """Rebuild every LC-ranking panel on one slide; return the chart shape ids handled.
 
     Done a slide at a time rather than a chart at a time because the panels share the page:
-    a loose shape belongs to whichever panel is nearest, which can only be decided with all
-    of them in hand.
+    which loose shape belongs to which panel — and how much of the page each panel gets
+    once the empty ones are dropped — can only be decided with all of them in hand.
+
+    The template's scatter is REPLACED rather than refilled: a chart cannot change type in
+    place, and nothing of the authored one survives the change anyway.
     """
     charts = [sh for sh in _iter_leaves(slide.shapes)
-              if getattr(sh, "has_chart", False) and f"{sidx}:{int(sh.shape_id)}" in quadrants]
+              if getattr(sh, "has_chart", False) and f"{sidx}:{int(sh.shape_id)}" in panels]
     if not charts:
         return set()
+    handled = {int(sh.shape_id) for sh in charts}
     blank = {int(sh.shape_id) for sh in charts
-             if not quadrants[f"{sidx}:{int(sh.shape_id)}"]["points"]}
+             if not panels[f"{sidx}:{int(sh.shape_id)}"]["bars"]}
     _strip_quadrant_furniture(slide, charts, blank=blank)
     for sh in charts:
-        panel = quadrants[f"{sidx}:{int(sh.shape_id)}"]
+        panel = panels[f"{sidx}:{int(sh.shape_id)}"]
         try:
             if int(sh.shape_id) in blank:
                 # No country left to report: the panel comes off whole, rather than
                 # shipping the template's example book under a title that has been erased.
                 sh._element.getparent().remove(sh._element)
-            elif _detach_external_data(sh.chart):
-                _write_quadrant_scatter(sh.chart, panel)
+                continue
+            rect = panel["rect"]
+            new = (rect["x"], rect["y"], rect["w"], rect["h"])
+            _move_panel_furniture(slide, sh, charts, _box(sh), new)
+            sh._element.getparent().remove(sh._element)
+            _build_pool_bars(slide, panel, rect)
         except Exception as exc:  # noqa: BLE001 — a panel must never break the export
-            logger.warning("template_fill: quadrant panel skipped: %s", exc)
-    logger.info("template_fill: %d quadrant panel(s) on slide %d (%d blanked)",
+            logger.warning("template_fill: ranking panel skipped: %s", exc)
+    logger.info("template_fill: %d ranking panel(s) on slide %d (%d blanked)",
                 len(charts), sidx, len(blank))
-    return {int(sh.shape_id) for sh in charts}
+    return handled
 
 
 def _write_bar_chart(chart, series: Dict[str, Any]) -> None:
@@ -891,10 +913,11 @@ def _fill_charts(prs, values: Dict[str, Any]) -> None:
       * **bubble** — the carrier-vs-Marsh growth scatter. Think-cell/externally linked
         bubbles are first detached from the link (native PowerPoint supports bubble
         charts, so the refilled chart stands alone);
-      * **quadrant scatter** — the LC-ranking page's per-country panels, addressed by
-        ``slide:shape`` from the ``lc_quadrant`` payload
-        (:mod:`studio.template_fill.lc_page` decides which panel is which country). The
-        template's painted quadrant bands and hand-placed axis come off with it;
+      * **pool bars** — the LC-ranking page's per-country panels, addressed by
+        ``slide:shape`` from the ``lc_ranking`` payload
+        (:mod:`studio.template_fill.lc_page` decides which panel is which country, and how
+        much of the page each gets). The authored scatter is replaced outright, and the
+        painted quadrant bands and hand-placed axis come off with it;
       * **scatter** — the growth data, but only when NOT externally linked and not an
         LC-ranking panel;
       * **clustered bars** — the GWP-performance page's CY-vs-PY breakdowns, addressed by
@@ -908,15 +931,15 @@ def _fill_charts(prs, values: Dict[str, Any]) -> None:
         return
     points = _bubble_points((values.get("growth_bubble") or {}).get("points") or [])
     bars = values.get("gwp_bars") or {}
-    quadrants = values.get("lc_quadrant") or {}
-    if not points and not bars and not quadrants:
+    ranking = values.get("lc_ranking") or {}
+    if not points and not bars and not ranking:
         return
     from pptx.chart.data import XyChartData
 
     for sidx, slide in enumerate(prs.slides):
-        # The quadrant panels rewrite the slide (their own furniture, and the chart itself
-        # when blank), so they run first and the plain per-chart pass skips what they took.
-        done = _fill_quadrant_panels(slide, sidx, quadrants) if quadrants else set()
+        # The ranking panels rewrite the slide (their own furniture, and the chart shape
+        # itself), so they run first and the plain per-chart pass skips what they took.
+        done = _fill_ranking_panels(slide, sidx, ranking) if ranking else set()
         for sh in list(_iter_leaves(slide.shapes)):
             if not getattr(sh, "has_chart", False) or int(sh.shape_id) in done:
                 continue

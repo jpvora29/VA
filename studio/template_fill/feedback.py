@@ -381,6 +381,9 @@ def _kpi_cell(kind: str, f: Dict[str, Any]) -> str:
 # of a table alongside five KPI callouts, so it keeps the headlines only.
 _PANEL_BULLETS = 4
 _CELL_BULLETS = 3
+# "Key Highlights" is a ONE-ROW table across the top of a page, not a column: its heading
+# plus two points is what fits before the text overflows the cell's own border.
+_HIGHLIGHT_BULLETS = 3
 
 
 def _bullets(parts: List[str], limit: int = _PANEL_BULLETS) -> str:
@@ -671,6 +674,8 @@ def values(template: Template, result) -> Dict[str, Any]:
             # A feedback-table row shares its cell with five KPI callouts; a quadrant panel
             # owns a whole column of the slide and can carry the fuller argument.
             limit = _CELL_BULLETS if ordn is not None else _PANEL_BULLETS
+            if t["kind"] == "highlights":
+                limit = _HIGHLIGHT_BULLETS
             text = _compose(t["kind"], facts_for(country), limit)
             text_cache[key] = _polish(text, t["kind"], style)
         # KPI callouts always write (a blank beats a stale "$xx.xM" placeholder);

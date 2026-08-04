@@ -123,9 +123,38 @@ def _chart_manual_cue() -> Any:
     )
 
 
-def _chart_svg(shape, values, w_px, h_px) -> Any:
-    """A populated mini chart: the per-LoB growth quadrant for scatter/bubble, else a
-    small bar of the template's own series — so the preview shows DATA, not a stub."""
+def _pool_bars(panel, cue) -> Any:
+    """The LC-ranking panel: one row per line of business, longest Marsh pool first.
+
+    Mirrors what the deck now exports (:mod:`studio.template_fill.lc_page`) — bar length is
+    the Marsh pool, its colour is the band the carrier's rank falls in, and the row states
+    both numbers. A panel with no country left in scope is dropped from the deck, so the
+    preview shows it as empty rather than as the template's authored example book.
+    """
+    rows = panel.get("bars") or []
+    if not rows:
+        return html.Div(className="qs-tf-poolempty")
+    widest = max(float(r["size"]) for r in rows) or 1.0
+    return html.Div([
+        html.Div([
+            html.Span(str(r["name"]), className="qs-tf-poolname"),
+            html.Div(className=f"qs-tf-poolbar is-{r['band']}",
+                     style={"width": f"{float(r['size']) / widest * 100:.0f}%"}),
+            html.Span(str(r["label"]), className="qs-tf-poollabel"),
+        ], className="qs-tf-poolrow") for r in rows
+    ] + list(cue), className="qs-tf-pool")
+
+
+def _chart_svg(shape, values, w_px, h_px, slide_idx: int = 0) -> Any:
+    """A populated mini chart: the LC-ranking pool bars, the per-LoB growth quadrant for
+    the remaining scatter/bubble charts, else a small bar of the template's own series —
+    so the preview shows DATA, not a stub."""
+    # The LC-ranking panels are scatters in the template but are EXPORTED as pool bars, so
+    # they are matched by their own payload first — reading them as the growth quadrant
+    # drew four copies of the wrong chart from the wrong numbers.
+    panel = (values.get("lc_ranking") or {}).get(f"{slide_idx}:{shape.shape_id}")
+    if panel is not None:
+        return _pool_bars(panel, [])            # the engine fills these now: no manual cue
     is_quadrant = any(k in (shape.chart_type or "") for k in ("XY_SCATTER", "BUBBLE"))
     cue = [_chart_manual_cue()] if getattr(shape, "chart_external", False) else []
     pts = (values.get("growth_bubble") or {}).get("points", []) if is_quadrant else []
@@ -191,7 +220,7 @@ def _render_shape(shape, fields_by_target, scale, slide_idx, values, subs, *, re
         if inner is None:
             return None
     elif shape.kind == "chart":
-        inner = _chart_svg(shape, values, w_px, h_px)
+        inner = _chart_svg(shape, values, w_px, h_px, slide_idx)
         cls += " is-chart"
     elif shape.kind == "text":
         inner = _text_shape(shape, fields_by_target, subs)

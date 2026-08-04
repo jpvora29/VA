@@ -1,16 +1,15 @@
-"""The "Marsh Portfolio and LC ranking" page — one quadrant scatter per country.
+"""The "Marsh Portfolio and LC ranking" page — one pool-bar panel per country.
 
-Each panel plots, for one country, every line of business as a point:
+Each panel ranks the lines of business in one country by the size of the *Marsh* portfolio
+in them, and colours each bar by where the *carrier* ranks in that pool: the greens are the
+top-5 positions, the reds are the ones being chased. Every bar is labelled with both
+numbers, so the page answers "where is the money, and where do we stand in it" in one read.
 
-  * **x** — the size of the *Marsh* portfolio in that country × line (the pool available);
-  * **y** — the *carrier's* rank in it (axis reversed, so #1 sits at the top).
-
-Two thresholds cut the panel into four quadrants: the top-5 rank line the template already
-draws, and the MEDIAN portfolio size of the lines plotted (so the split stays meaningful
-whatever a country's scale). The quadrant a point lands in is the page's whole message —
-a large Marsh pool the carrier does not lead is the gap worth talking about — so it is
-carried on the marker itself; :mod:`studio.template_fill.fill` paints it and strips the
-template's painted bands.
+The template authors this as a 2×2 grid of hand-drawn quadrant scatters. A scatter needs
+area, and the authored panel is a 3.4:1 letterbox, so rank collapses into overlapping bands
+of dots; a bar takes its labels from the category axis and cannot collide. The panel COUNT
+adapts too — one country gets the whole page rather than a quarter of it, two share it side
+by side, three or four keep the author's grid (:func:`plan_layout`).
 
 Mirrors :mod:`studio.template_fill.gwp_page`: detection is section/geometry driven (never a
 slide index), ``values`` emits one payload per panel keyed ``slide:shape``, and the fill
@@ -19,12 +18,12 @@ engine consumes it alongside the other chart payloads.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from statistics import median
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from logger import get_logger
 from studio import compute as C
 from studio.template_fill.analyze import Slide, Template
+from studio.template_fill.render import _money
 from studio.template_fill.sections import Section, section_of
 
 logger = get_logger(__name__)
@@ -34,73 +33,114 @@ _COUNTRY_COL = "Country"
 _PRODUCT_COL = "Product_Line"
 _YEAR_COL = "Year"
 
-# The rank that separates a led book from a chased one — the same top-5 the deck benchmarks
-# every carrier against ("Peer average GWP 1-5"), and the line the template already draws.
-RANK_CUT = 5
-# More lines than a small panel can label without collapsing into overlapping text.
+# More lines than a panel can carry as readable rows.
 _MAX_POINTS = 8
+
+# Rank → the band its bar is coloured by. Ordered best first; the split at 5 is the same
+# top-5 the deck benchmarks every carrier against ("Peer average GWP 1-5"), so the greens
+# are exactly the positions the rest of the deck calls a top-5 position.
+LEAD = "lead"            # #1–2  — the position to defend
+STRONG = "strong"        # #3–5  — inside the top 5
+CHASING = "chasing"      # #6–8  — outside it, within reach
+BEHIND = "behind"        # #9+   — the ground to make up
+_BANDS: Tuple[Tuple[int, str], ...] = ((2, LEAD), (5, STRONG), (8, CHASING))
+
+
+def band_of(rank: int) -> str:
+    """Which rank band a position falls in."""
+    for limit, band in _BANDS:
+        if rank <= limit:
+            return band
+    return BEHIND
+
+
+@dataclass(frozen=True)
+class Rect:
+    """A panel's frame in absolute EMU."""
+
+    x: int
+    y: int
+    w: int
+    h: int
+
+    def to_dict(self) -> Dict[str, int]:
+        return {"x": self.x, "y": self.y, "w": self.w, "h": self.h}
 
 
 @dataclass(frozen=True)
 class Panel:
-    """One quadrant scatter on the page, and the country it reports."""
+    """One panel on the page: the chart that holds it and the frame it occupies."""
 
     slide_idx: int
     shape_id: int
+    frame: Rect
 
 
 @dataclass(frozen=True)
-class QuadrantPoint:
-    """One line of business: the Marsh pool, the carrier's rank in it, and the verdict."""
+class PoolBar:
+    """One line of business: the Marsh pool, the carrier's rank in it, and its band."""
 
     name: str
     size: float
     rank: int
-    quadrant: str
+    band: str
+
+    @property
+    def label(self) -> str:
+        """What the bar says: the pool it represents, and the position held in it."""
+        return f"{_money(self.size)}  ·  #{self.rank}"
 
     def to_dict(self) -> Dict[str, Any]:
         return {"name": self.name, "size": self.size, "rank": self.rank,
-                "quadrant": self.quadrant}
-
-
-# Quadrant names say what the position MEANS, so the palette (a rendering concern) stays in
-# the fill engine and this module stays about the book.
-LEAD = "lead"         # top-5 rank, large pool — the position to defend
-SOLID = "solid"       # top-5 rank, small pool — won, but not much at stake
-MINOR = "minor"       # outside the top 5, small pool — least material
-GAP = "gap"           # outside the top 5, large pool — the opportunity
-
-
-def quadrant_of(size: float, rank: int, *, size_cut: float, rank_cut: int = RANK_CUT) -> str:
-    """Which quadrant a point falls in. Ties count as the stronger/larger side."""
-    large = size >= size_cut
-    if rank <= rank_cut:
-        return LEAD if large else SOLID
-    return GAP if large else MINOR
+                "band": self.band, "label": self.label}
 
 
 # ── page anatomy ─────────────────────────────────────────────────────────────
 
 
-def _scatters(slide: Slide) -> List[Any]:
-    """The panel scatters on ``slide``, in reading order (top row left-to-right).
+def _panel_charts(slide: Slide) -> List[Any]:
+    """The panel charts on ``slide``, in reading order (top row left-to-right).
 
-    Sorted by band rather than raw ``y``: the two panels of a row are authored a hair
-    apart vertically, which a plain ``(y, x)`` sort would read as four rows of one.
+    Sorted by BAND rather than raw ``y``: the two panels of a row are authored a hair apart
+    vertically, which a plain ``(y, x)`` sort would read as four rows of one.
     """
     charts = [sh for sh in slide.shapes
               if sh.kind == "chart" and "SCATTER" in (sh.chart_type or "").upper()]
     if not charts:
         return []
-    band = min(sh.h for sh in charts) or 1.0
+    band = min(sh.h for sh in charts) or 1
     return sorted(charts, key=lambda sh: (round(sh.y / band), sh.x))
 
 
 def panels(template: Template) -> List[Panel]:
-    """Every quadrant-scatter panel in ``template``, in the order the countries fill them."""
-    return [Panel(slide.index, sh.shape_id)
+    """Every panel in ``template``, in the order the countries fill them."""
+    return [Panel(slide.index, sh.shape_id, Rect(sh.x, sh.y, sh.w, sh.h))
             for slide in template.slides if section_of(slide) is Section.RANKING
-            for sh in _scatters(slide)]
+            for sh in _panel_charts(slide)]
+
+
+def _union(frames: Sequence[Rect]) -> Rect:
+    left, top = min(f.x for f in frames), min(f.y for f in frames)
+    right = max(f.x + f.w for f in frames)
+    bottom = max(f.y + f.h for f in frames)
+    return Rect(left, top, right - left, bottom - top)
+
+
+def plan_layout(frames: Sequence[Rect], live: int) -> List[Rect]:
+    """Where the ``live`` panels sit, given the frames the author drew.
+
+    One country deserves the whole page rather than a quarter of it; two share it side by
+    side at full height; three or four keep the author's own grid. Derived from the frames
+    themselves — the author's column split and margins survive a re-laid-out template.
+    """
+    if live <= 0 or live > len(frames):
+        return list(frames)
+    if live == 1:
+        return [_union(frames)]
+    if live == 2:
+        whole = _union(frames)
+        return [Rect(f.x, whole.y, f.w, whole.h) for f in frames[:2]]
+    return list(frames[:live])
 
 
 # ── facts ────────────────────────────────────────────────────────────────────
@@ -117,9 +157,10 @@ def _safe(fn, *a, **k):
 def _reporting_filters(result) -> Dict[str, Any]:
     """The result's filters with the reporting year pinned, and the product pin dropped.
 
-    The page is a PORTFOLIO view: its panels break a country down BY line of business, so a
-    per-product sub-deck's own pin would collapse every panel to a single point. Same rule
-    the overall block already applies (:func:`studio.template_fill.bindings.scope_overall`).
+    The page is a PORTFOLIO view: its panels rank a country's lines of business against
+    each other, so a per-product sub-deck's own pin would leave every panel a single bar.
+    Same rule the overall block already applies
+    (:func:`studio.template_fill.bindings.scope_overall`).
     """
     from studio.template_fill.bindings import _latest_year_in_scope
 
@@ -135,7 +176,7 @@ def _reporting_filters(result) -> Dict[str, Any]:
 
 
 def _marsh_pool(result, filters: Dict[str, Any]) -> Dict[str, float]:
-    """``{line of business: the whole Marsh premium in it}`` — the x axis of the panel."""
+    """``{line of business: the whole Marsh premium in it}`` — the length of each bar."""
     from core.analytics.library import compute_breakdown
     from core.analytics.types import PrimitiveArgs
 
@@ -150,20 +191,19 @@ def _marsh_pool(result, filters: Dict[str, Any]) -> Dict[str, float]:
             for f in facts if f.dims.get(_PRODUCT_COL)}
 
 
-def points(result, filters: Dict[str, Any]) -> List[QuadrantPoint]:
-    """Every line of business in one country, placed against both thresholds.
+def bars(result, filters: Dict[str, Any]) -> List[PoolBar]:
+    """One country's lines of business, biggest Marsh pool first.
 
-    Ranked lines only: a point needs a rank to have a vertical position at all.
+    Ranked lines only: a bar with no rank has no colour to carry, and the page is about
+    where the carrier stands.
     """
     rows = _safe(C.product_breakdown_rows, result.flow, filters, result.engine,
                  result.subject, top=_MAX_POINTS) or []
     pool = _marsh_pool(result, filters)
     placed = [(str(r["name"]), pool.get(str(r["name"])), r.get("rank")) for r in rows]
     placed = [(n, s, int(k)) for n, s, k in placed if s and k is not None]
-    if not placed:
-        return []
-    cut = median(s for _, s, _ in placed)
-    return [QuadrantPoint(n, s, k, quadrant_of(s, k, size_cut=cut)) for n, s, k in placed]
+    placed.sort(key=lambda row: row[1], reverse=True)
+    return [PoolBar(n, s, k, band_of(k)) for n, s, k in placed]
 
 
 def _countries(result) -> List[str]:
@@ -177,27 +217,29 @@ def _countries(result) -> List[str]:
 
 
 def values(template: Template, result) -> Dict[str, Any]:
-    """``{"lc_quadrant": {"slide:shape": panel payload}}`` for EVERY panel on the page.
+    """``{"lc_ranking": {"slide:shape": panel payload}}`` for EVERY panel on the page.
 
-    A panel beyond the countries in scope gets a payload with no points, which tells the
-    fill engine to blank it — a deck with three countries must not ship a fourth panel of
-    the template's authored example book under a title that has been rubbed out.
+    A panel beyond the countries in scope gets a payload with no bars, which tells the fill
+    engine to blank it — and the panels that remain are re-laid-out to take the space back,
+    so a two-country deck shows two half-page panels rather than two quarters and a void.
     """
     found = panels(template)
     if not found:
         return {}
     filters = _reporting_filters(result)
-    countries = _countries(result)
+    countries = _countries(result)[:len(found)]
+    drawn = [bars(result, {**filters, _COUNTRY_COL: c}) for c in countries]
+    drawn = [d for d in drawn if d]
+    rects = plan_layout([p.frame for p in found], len(drawn))
+
     out: Dict[str, Any] = {}
     for i, panel in enumerate(found):
-        country = countries[i] if i < len(countries) else None
-        placed = points(result, {**filters, _COUNTRY_COL: country}) if country else []
+        live = drawn[i] if i < len(drawn) else []
         out[f"{panel.slide_idx}:{panel.shape_id}"] = {
-            "country": country,
-            "points": [p.to_dict() for p in placed],
-            "rank_cut": RANK_CUT,
-            "size_cut": median(p.size for p in placed) if placed else 0.0,
+            "country": countries[i] if i < len(drawn) else None,
+            "bars": [b.to_dict() for b in live],
+            "rect": (rects[i] if i < len(rects) else panel.frame).to_dict(),
         }
-    filled = sum(1 for p in out.values() if p["points"])
-    logger.info("lc_page: resolved %d of %d quadrant panel(s)", filled, len(found))
-    return {"lc_quadrant": out}
+    logger.info("lc_page: %d of %d panel(s) filled, laid out %d-up",
+                len(drawn), len(found), max(len(drawn), 1))
+    return {"lc_ranking": out}
