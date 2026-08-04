@@ -10,7 +10,7 @@ leaves their slots as the template's placeholder. Keyed by the role vocabulary i
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from logger import get_logger
 from studio import compute as C
@@ -49,6 +49,33 @@ def _latest_year_in_scope(result, base: Dict[str, Any]) -> Optional[int]:
     years = [int(f.dims.get(_YEAR_COL)) for f in facts
              if str(f.dims.get(_YEAR_COL) or "").strip().isdigit()]
     return max(years) if years else None
+
+
+def reporting_filters(result, *, drop: Iterable[str] = ()) -> Dict[str, Any]:
+    """``result``'s filters with the reporting year pinned — what every page reports on.
+
+    The deterministic compute layer is year-anchored: ``compute.period_totals``,
+    ``rank_movement``, ``sow_movement``, ``peer_average_totals`` and
+    ``product_breakdown_rows`` all need a reference year to know what "current" and "prior"
+    mean, and return nothing (or silently sum EVERY year into one current value) without
+    one. So a run that leaves the year filter on "All" must still resolve a year: the max of
+    a multi-select pin, else the latest year present in scope.
+
+    ``drop`` removes columns the page must not be narrowed by — e.g. a portfolio page that
+    ranks lines of business against each other drops the product pin, or it would have a
+    single line to rank.
+    """
+    dropped = set(drop)
+    f = {k: v for k, v in (getattr(result, "resolved_filters", None) or {}).items()
+         if k not in dropped}
+    year = f.get(_YEAR_COL)
+    if isinstance(year, (list, tuple, set)):
+        year = max(int(y) for y in year) if year else None
+    if year is None:
+        year = _latest_year_in_scope(result, {k: v for k, v in f.items() if k != _YEAR_COL})
+    if year is not None:
+        f[_YEAR_COL] = int(year)
+    return f
 
 
 def _country_breakdown(result) -> List[Dict[str, Any]]:
@@ -94,18 +121,23 @@ def _survey_score(result) -> Optional[float]:
     return facts[0].value if facts and facts[0].value is not None else None
 
 
-def _spotlight(result) -> Optional[Dict[str, Any]]:
+def _spotlight(result, filters: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """The single entity to feature in the "… Country xyz YoY change" highlights.
 
     Significance = largest current premium in scope. When several countries are in scope the
     spotlight is the top COUNTRY; when exactly one country is in scope the country dimension is
     fixed, so we drill down and spotlight the top PRODUCT instead. Returns the entity name plus
     its carrier and Marsh YoY (both scoped to that entity), or ``None`` if it can't resolve.
+
+    ``filters`` must carry the REPORTING YEAR (:func:`reporting_filters`): both YoY numbers
+    are period comparisons, and ``period_totals`` returns nothing at all without a year — so
+    passing the raw selection left the two callouts on their ``+xx.x%`` placeholder whenever
+    the user had not pinned a year.
     """
     from core.analytics.library import compute_breakdown
     from core.analytics.types import PrimitiveArgs
 
-    f = result.resolved_filters
+    f = filters
     pinned = f.get(_COUNTRY_COL)
     n_countries = len(set(pinned)) if isinstance(pinned, (list, tuple, set)) else (1 if pinned else 0)
     dim = _PRODUCT_COL if n_countries == 1 else _COUNTRY_COL
@@ -154,26 +186,17 @@ def resolve_roles(result) -> Dict[str, Any]:
     box it lands in. Text/structured roles (names, the growth bubble) stay as-is.
     """
     out: Dict[str, Any] = {}
-    f = result.resolved_filters
     subject = result.subject
 
     if subject:
         out["subject_name"] = str(subject)
 
-    # Reporting year: the pinned year (max of a multi-select), else the latest year in
-    # scope. Resolving it here means the corner KPIs still populate when no year is pinned
-    # (the period comparisons below need a reference year to compute current vs prior).
-    year = f.get(_YEAR_COL)
-    if isinstance(year, (list, tuple, set)):
-        year = max(int(y) for y in year) if year else None
-    if year is None:
-        year = _latest_year_in_scope(result, {k: v for k, v in f.items() if k != _YEAR_COL})
+    # Every value below is a period comparison, so they all report on the SAME resolved
+    # reporting year — the pinned year, else the latest in scope.
+    fy = reporting_filters(result)
+    year = fy.get(_YEAR_COL)
     if year is not None:
         out["period_year"] = int(year)
-
-    # Scope the period comparisons to the reporting year so the current-value KPIs always
-    # have a year to land on, even when the user left the year filter on "All".
-    fy = {**f, _YEAR_COL: int(year)} if year is not None else dict(f)
 
     # Carrier (subject) total + YoY, and the whole Marsh book total + YoY (raw).
     carrier_tot = _safe(C.period_totals, result.flow, fy, result.engine)
@@ -221,7 +244,7 @@ def resolve_roles(result) -> Dict[str, Any]:
 
     # Spotlight YoY (a significant single country, or a product when one country is in scope)
     # for the "… Country xyz YoY change" highlights — distinct from the blended overall YoY.
-    spot = _spotlight(result)
+    spot = _spotlight(result, fy)
     if spot:
         out["spotlight_name"] = spot["name"]
         if spot.get("carrier_yoy") is not None:

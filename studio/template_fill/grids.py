@@ -305,15 +305,20 @@ def _fmt_rank_change(rc: Optional[int]) -> str:
 def grid_values(template: Template, result) -> Dict[str, Any]:
     """Per-slide, per-row breakdown values keyed identically to ``augment``.
 
-    Each breakdown slide is scoped to the k-th carrier country; rows beyond the data
-    are blanked so no stale ``$xx.xm`` placeholder survives.
+    Each breakdown slide is scoped to the k-th carrier country and to the deck's REPORTING
+    YEAR — the same year every other page reports on. Without that year ``product_breakdown_rows``
+    sums every year in the book into one "GWP" (so the column disagreed with the GWP-performance
+    page), and has no prior year to compare against (so Var % and Rank change stayed empty).
+    Rows beyond the data are blanked so no stale ``$xx.xm`` placeholder survives.
     """
     from studio.compute import product_breakdown_rows
+    from studio.template_fill.bindings import reporting_filters
 
     subject = result.subject
     if not subject:
         return {}
     countries = _carrier_countries(result)
+    reporting = reporting_filters(result)
     out: Dict[str, Any] = {}
     breakdown_idx = 0
     for slide in template.slides:
@@ -323,7 +328,7 @@ def grid_values(template: Template, result) -> Dict[str, Any]:
         n = grid.row_count
         country = countries[breakdown_idx] if breakdown_idx < len(countries) else None
         breakdown_idx += 1
-        filters = dict(result.resolved_filters)
+        filters = dict(reporting)
         if country is not None:
             filters[_COUNTRY_COL] = country
 

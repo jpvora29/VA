@@ -1648,21 +1648,21 @@ body.qs-cv-dragging { user-select: none; cursor: grabbing; }
 .qs-tf-chartwrap .qs-tf-diag { z-index: 2; }
 .qs-tf-chartwrap .qs-tf-dot { z-index: 3; }
 
-/* LC-ranking pool bars: one row per line of business, coloured by the carrier's rank
-   band. Mirrors the exported panel, so the preview reads like the slide it stands for. */
-.qs-tf-pool { display: flex; flex-direction: column; justify-content: center; gap: 2px;
-  width: 100%; height: 100%; padding: 3px 4px; box-sizing: border-box; overflow: hidden; }
-.qs-tf-poolrow { display: flex; align-items: center; gap: 4px; min-height: 0; flex: 1; }
-.qs-tf-poolname { flex: 0 0 27%; font-size: 8px; line-height: 1.1; color: var(--va-ink, #12253f);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.qs-tf-poolbar { height: 62%; min-height: 3px; border-radius: 0 2px 2px 0; }
-.qs-tf-poolbar.is-lead { background: #6FBF56; }
-.qs-tf-poolbar.is-strong { background: #B0DC92; }
-.qs-tf-poolbar.is-chasing { background: #F0C3C2; }
-.qs-tf-poolbar.is-behind { background: #E6A09E; }
-.qs-tf-poollabel { font-size: 8px; line-height: 1.1; white-space: nowrap;
-  color: var(--va-ink-muted, #5a6b82); }
-.qs-tf-poolempty { width: 100%; height: 100%; }
+/* LC-ranking priority matrix: one point per line of business over the four bands the
+   template paints — big pool + poor rank is the red corner, big pool + top-5 the green
+   one. Mirrors the exported panel, so the preview reads like the slide it stands for. */
+.qs-tf-lcpanel { position: relative; width: 100%; height: 100%; overflow: hidden; }
+.qs-tf-lcband { position: absolute; width: 50%; }
+.qs-tf-lcband.is-tl { left: 0; top: 0; background: #DFECD7; }   /* small pool, top 5 */
+.qs-tf-lcband.is-tr { left: 50%; top: 0; background: #B0DC92; } /* big pool, top 5 */
+.qs-tf-lcband.is-bl { left: 0; bottom: 0; background: #F0C3C2; }
+.qs-tf-lcband.is-br { left: 50%; bottom: 0; background: #E6A09E; }
+.qs-tf-lcdot { position: absolute; width: 7px; height: 7px; margin: -3px 0 0 -3px; z-index: 2;
+  border-radius: 50%; background: #1f5fbf; box-shadow: 0 0 0 1.5px rgba(255,255,255,.85); }
+.qs-tf-lclabel { position: absolute; left: 9px; top: -4px; font-size: 8px; line-height: 1.1;
+  white-space: nowrap; color: var(--va-ink, #12253f); }
+.qs-tf-lclabel.is-left { left: auto; right: 9px; }
+.qs-tf-lcempty { width: 100%; height: 100%; }
 
 /* manual-chart cue: chart can't be auto-filled (think-cell / linked data) */
 .qs-tf-chart-cue { position: absolute; top: 3px; right: 3px; z-index: 5;

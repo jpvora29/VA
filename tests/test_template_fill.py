@@ -105,6 +105,25 @@ def test_spotlight_drills_to_a_product_when_single_country():
     assert v.get("spotlight_name") not in (None, "Singapore")
 
 
+@pytest.mark.parametrize("countries", [["Singapore"], ["Singapore", "Hong Kong"], None])
+def test_spotlight_yoy_resolves_with_no_year_pinned(countries):
+    """Both callouts must populate when the user leaves the year filter on "All".
+
+    They are period comparisons, and ``compute.period_totals`` returns nothing at all
+    without a reference year — so scoping them to the raw selection instead of the resolved
+    reporting year left "Carrier/Marsh Country xyz YoY change" on its ``+xx.x%`` placeholder.
+    """
+    from studio.template_fill.bindings import resolve_roles
+
+    filters = {"carrier": "Zurich"}
+    if countries:
+        filters["country"] = countries
+    v = resolve_roles(compute_overall(filters=filters))
+    assert v.get("spotlight_name")
+    assert isinstance(v.get("spotlight_carrier_yoy"), float)
+    assert isinstance(v.get("spotlight_marsh_yoy"), float)
+
+
 def test_fill_replaces_mapped_tokens_and_keeps_placeholders(tmp_path):
     doc = new_template_doc(_result(), template_path=TEMPLATE)
     out = fill_template(doc, out_path=str(tmp_path / "filled.pptx"))
@@ -223,6 +242,35 @@ def test_breakdown_grid_fills_distinct_rows_per_product():
     gwp = {k: v for k, v in values.items() if k.endswith(":gwp") and v not in ("", None)}
     assert len(gwp) >= 4
     assert len(set(gwp.values())) > 1, "breakdown rows must differ per product"
+
+
+def test_breakdown_grid_reports_the_same_year_as_the_rest_of_the_deck():
+    """The grid must be year-scoped, or it disagrees with every other page.
+
+    Without a resolved reporting year ``product_breakdown_rows`` sums EVERY year in the book
+    into one "GWP" (so the column read far higher than the GWP-performance page's bars) and
+    has no prior year to compare against (so Var % and Rank change stayed empty).
+    """
+    from studio.template_fill import grids
+    from studio.template_fill.bindings import resolve_roles_for_country, scope_to_country
+    from studio.template_fill.registry import derive_manifest
+
+    # No year pinned — the failing case.
+    run = compute_overall(filters={"carrier": "Zurich"})
+    template, _ = derive_manifest(TEMPLATE)
+    country = "Singapore"
+    values = grids.grid_values(template, scope_to_country(run, country))
+
+    def column(metric):
+        return [v for k, v in values.items() if k.endswith(f":{metric}") and v not in ("", None)]
+
+    assert column("var"), "Var % must populate"
+    assert [c for c in column("rank_change") if c], "Rank change must populate"
+    # The GWP column reports the same book as the country's headline KPI: its rows are a
+    # subset of that year's lines of business (the all-year sum would run far past it).
+    total = resolve_roles_for_country(run, country)["carrier_gwp"]
+    assert 0 < sum(column("gwp")) <= total * (1 + 1e-9)
+    assert max(column("gwp")) < total
 
 
 def test_sections_classify_known_slides():

@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from logger import get_logger
-from studio.template_fill import commentary, feedback, grids, gwp_page, lc_page, prune
+from studio.template_fill import commentary, feedback, grids, gwp_page, kpi_band, lc_page, prune
 from studio.template_fill import roles as R
 from studio.template_fill.analyze import analyze
 from studio.template_fill.binding_map import BindingMap, available, get_binding_map
@@ -191,6 +191,7 @@ def _augmented_manifest(bmap: BindingMap) -> List[Dict[str, Any]]:
 
       * ``grids.augment`` — the per-product breakdown grid's cells (one row per product);
       * ``gwp_page.augment`` — the GWP-performance page's TTM table and panel totals;
+      * ``kpi_band.augment`` — the headline "Marsh GWP · Carrier GWP · SoW% · Rank" band;
       * ``commentary.augment`` — the prose slots (Trading Summary etc.);
       * ``feedback.augment`` — the feedback/quadrant/highlight cells and panels.
     """
@@ -199,7 +200,8 @@ def _augmented_manifest(bmap: BindingMap) -> List[Dict[str, Any]]:
     if cached is None:
         template = analyze(bmap.path)
         bindings = R.manifest_from_dicts(bmap.manifest())
-        for augment in (grids.augment, gwp_page.augment, commentary.augment, feedback.augment):
+        for augment in (grids.augment, gwp_page.augment, kpi_band.augment,
+                        commentary.augment, feedback.augment):
             bindings = augment(template, bindings)
         cached = _manifest_cache[key] = R.manifest_to_dicts(bindings)
     return cached

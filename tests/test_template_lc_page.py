@@ -1,11 +1,12 @@
-"""The LC-ranking page: panel detection, responsive layout, and the written pool bars.
+"""The LC-ranking page: panel detection, responsive layout, and the refilled quadrants.
 
 Two layers:
-  * unit — panel ordering, rank bands, the layout plan and the re-anchoring rule, on
-    in-memory objects, so the logic is pinned independently of any .pptx;
-  * integration — the real ``template/product_template.pptx`` valued from the seed DB and
-    then filled, proving a panel populates end-to-end and that the template's hand-drawn
-    quadrant bands, fake axis and dummy point labels do not survive it.
+  * unit — panel ordering, rank bands, the layout plan, the re-anchoring rule and the label
+    placement, on in-memory objects, so the logic is pinned independently of any .pptx;
+  * integration — the real ``template/overall_template.pptx`` valued from the seed DB and
+    then filled, proving a panel populates end-to-end, that the author's painted quadrant
+    bands survive onto the new frame, and that the deck STILL OPENS (these charts are
+    authored off binary workbooks, which a naive ``replace_data`` corrupts).
 
 Deterministic: seed DB, no LLM.
 """
@@ -21,7 +22,7 @@ from studio.compute import compute_overall
 from studio.template_fill import lc_page as L
 from studio.template_fill.analyze import Shape, Slide, Template, analyze
 
-PRODUCT_TEMPLATE = "template/product_template.pptx"
+OVERALL_TEMPLATE = "template/overall_template.pptx"
 IN = 914400                                     # EMU per inch
 
 
@@ -123,6 +124,41 @@ def test_furniture_keeps_the_relationship_the_author_gave_it():
     assert _reanchor((10, -10, 580, 4), old, (0, 0, 1200, 400)) == (10, -10, 1180, 4)
 
 
+def test_the_painted_bands_follow_the_plot_area_not_the_chart_frame():
+    # The plot's insets are a FRACTION of the chart, so a panel grown to the whole page
+    # moves its plot area further in — bands scaled off the frame would sit adrift of the
+    # points they belong behind.
+    from studio.template_fill.fill import _move_panel_furniture
+
+    class _Box:
+        left, top, width, height = 100, 100, 600, 180
+
+    band = _Box()
+    _move_panel_furniture([band], (100, 100, 600, 180), (100, 100, 1200, 400),
+                          old_plot=(100, 100, 600, 180), new_plot=(160, 110, 1080, 380))
+    assert (band.left, band.top, band.width, band.height) == (160, 110, 1080, 380)
+
+
+# ── label placement ──────────────────────────────────────────────────────────
+
+
+def test_labels_stay_inside_the_plot_and_off_each_other():
+    from pptx.enum.chart import XL_LABEL_POSITION as POS
+
+    points = [{"name": "Property", "size": 900.0, "rank": 6},   # near the right edge
+              {"name": "Casualty", "size": 800.0, "rank": 6},   # …sharing its row
+              {"name": "Marine", "size": 300.0, "rank": 6},     # …and a third
+              {"name": "Cyber", "size": 200.0, "rank": 1}]
+    assert L.band_of(1) == L.LEAD                # sanity: the fixture is a real ranking
+    assert _sides(points) == [POS.LEFT, POS.ABOVE, POS.BELOW, POS.RIGHT]
+
+
+def _sides(points):
+    from studio.template_fill.fill import _label_sides
+
+    return _label_sides(points, 1000.0)
+
+
 # ── integration: the real template, valued from the seed DB ──────────────────
 
 
@@ -135,78 +171,75 @@ def _result(countries, product=None):
 
 
 @pytest.fixture(scope="module")
-def product_template():
-    if not Path(PRODUCT_TEMPLATE).exists():
-        pytest.skip("product template not present")
-    return analyze(PRODUCT_TEMPLATE)
+def overall_template():
+    if not Path(OVERALL_TEMPLATE).exists():
+        pytest.skip("overall template not present")
+    return analyze(OVERALL_TEMPLATE)
 
 
-def test_every_panel_gets_a_payload_and_the_ones_in_scope_get_bars(product_template):
-    panels = L.values(product_template, _result(["Singapore", "Japan"]))["lc_ranking"]
-    assert len(panels) == len(L.panels(product_template)) == 4
-    filled = [p for p in panels.values() if p["bars"]]
+def test_every_panel_gets_a_payload_and_the_ones_in_scope_get_points(overall_template):
+    panels = L.values(overall_template, _result(["Singapore", "Japan"]))["lc_ranking"]
+    assert len(panels) == len(L.panels(overall_template)) == 4
+    filled = [p for p in panels.values() if p["points"]]
     assert len(filled) == 2 and all(p["country"] for p in filled)
-    # The panels past the countries in scope carry no bars — the fill engine drops them
+    # The panels past the countries in scope carry no points — the fill engine drops them
     # rather than shipping the template's authored example book under an erased title.
-    assert [p["bars"] for p in panels.values() if not p["country"]] == [[], []]
+    assert [p["points"] for p in panels.values() if not p["country"]] == [[], []]
 
 
-def test_two_live_panels_are_re_laid_out_to_take_the_page_back(product_template):
-    panels = list(L.values(product_template, _result(["Singapore", "Japan"]))["lc_ranking"].values())
-    authored = L.panels(product_template)[0].frame
-    live = [p["rect"] for p in panels if p["bars"]]
+def test_two_live_panels_are_re_laid_out_to_take_the_page_back(overall_template):
+    panels = list(L.values(overall_template, _result(["Singapore", "Japan"]))["lc_ranking"].values())
+    authored = L.panels(overall_template)[0].frame
+    live = [p["rect"] for p in panels if p["points"]]
     assert len(live) == 2
     for rect in live:
         assert rect["h"] > authored.h * 1.9      # full height, not a quarter of the page
 
 
-def test_bars_run_biggest_pool_first_and_carry_both_numbers(product_template):
-    panel = next(p for p in L.values(product_template, _result(["Singapore"]))["lc_ranking"].values()
-                 if p["bars"])
-    sizes = [b["size"] for b in panel["bars"]]
+def test_points_run_biggest_pool_first_and_carry_a_rank(overall_template):
+    panel = next(p for p in L.values(overall_template, _result(["Singapore"]))["lc_ranking"].values()
+                 if p["points"])
+    sizes = [p["size"] for p in panel["points"]]
     assert sizes == sorted(sizes, reverse=True) and len(sizes) > 1
-    for bar in panel["bars"]:
-        assert bar["size"] > 0 and bar["rank"] >= 1
-        assert bar["band"] in {L.LEAD, L.STRONG, L.CHASING, L.BEHIND}
-        assert bar["label"].startswith("$") and f"#{bar['rank']}" in bar["label"]
+    for point in panel["points"]:
+        assert point["size"] > 0 and point["rank"] >= 1
+        assert point["band"] in {L.LEAD, L.STRONG, L.CHASING, L.BEHIND}
 
 
-def test_a_product_subdeck_still_ranks_the_whole_line_of_business_mix(product_template):
+def test_a_product_subdeck_still_ranks_the_whole_line_of_business_mix(overall_template):
     # The page is a PORTFOLIO view: a per-product sub-deck's own pin must not leave every
-    # panel with the single bar of the product the sub-deck happens to be about.
+    # panel with the single point of the product the sub-deck happens to be about.
     scoped = _result(["Singapore"], product="Property")
-    panel = next(p for p in L.values(product_template, scoped)["lc_ranking"].values() if p["bars"])
-    names = {b["name"] for b in panel["bars"]}
+    panel = next(p for p in L.values(overall_template, scoped)["lc_ranking"].values() if p["points"])
+    names = {p["name"] for p in panel["points"]}
     assert len(names) > 1 and "Property" in names
 
 
 # ── integration: the written panel ───────────────────────────────────────────
 
 
-_BARS = [{"name": "Property", "size": 545e6, "rank": 6, "band": L.CHASING,
-          "label": "$545M  ·  #6"},
-         {"name": "Financial Lines", "size": 414e6, "rank": 3, "band": L.STRONG,
-          "label": "$414M  ·  #3"},
-         {"name": "Cyber", "size": 300e6, "rank": 1, "band": L.LEAD, "label": "$300M  ·  #1"}]
+_POINTS = [{"name": "Property", "size": 545e6, "rank": 6, "band": L.CHASING},
+           {"name": "Financial Lines", "size": 414e6, "rank": 3, "band": L.STRONG},
+           {"name": "Cyber", "size": 300e6, "rank": 1, "band": L.LEAD}]
 
 
 @pytest.fixture(scope="module")
 def filled_page(tmp_path_factory):
-    if not Path(PRODUCT_TEMPLATE).exists():
-        pytest.skip("product template not present")
+    if not Path(OVERALL_TEMPLATE).exists():
+        pytest.skip("overall template not present")
     from studio.template_fill.fill import fill_template
 
-    panels = L.panels(analyze(PRODUCT_TEMPLATE))
+    panels = L.panels(analyze(OVERALL_TEMPLATE))
     whole = L.plan_layout([p.frame for p in panels], 1)[0]
-    payload = {f"{p.slide_idx}:{p.shape_id}": {"country": None, "bars": [],
+    payload = {f"{p.slide_idx}:{p.shape_id}": {"country": None, "points": [],
                                                "rect": p.frame.to_dict()}
                for p in panels}
     payload[f"{panels[0].slide_idx}:{panels[0].shape_id}"] = {
-        "country": "Singapore", "bars": _BARS, "rect": whole.to_dict()}
-    doc = {"template_path": PRODUCT_TEMPLATE, "manifest": [],
+        "country": "Singapore", "points": _POINTS, "rect": whole.to_dict()}
+    doc = {"template_path": OVERALL_TEMPLATE, "manifest": [],
            "values": {"lc_ranking": payload}, "overrides": {}, "map_overrides": {}, "added": {}}
     out = fill_template(doc, out_path=str(tmp_path_factory.mktemp("lc") / "lc.pptx"))
-    return Presentation(out).slides[0], panels, whole
+    return Presentation(out).slides[panels[0].slide_idx], panels, whole
 
 
 def _only_chart(slide):
@@ -215,50 +248,61 @@ def _only_chart(slide):
     return charts[0]
 
 
-def test_the_panel_is_rebuilt_as_a_bar_chart_at_its_planned_rect(filled_page):
+def test_the_panel_stays_the_authored_scatter_at_its_planned_rect(filled_page):
     slide, _, whole = filled_page
     frame = _only_chart(slide)
-    assert "BAR_CLUSTERED" in str(frame.chart.chart_type)
+    assert "SCATTER" in str(frame.chart.chart_type)
     assert (frame.left, frame.top, frame.width, frame.height) == (whole.x, whole.y,
                                                                   whole.w, whole.h)
 
 
-def test_each_bar_is_coloured_by_the_carriers_rank_band(filled_page):
-    from pptx.dml.color import RGBColor
-
+def test_each_point_is_a_line_of_business_named_on_the_authored_axes(filled_page):
     chart = _only_chart(filled_page[0]).chart
-    plot = chart.plots[0]
-    # PowerPoint plots the first category at the BOTTOM, so the biggest pool is written last.
-    assert list(plot.categories) == [b["name"] for b in reversed(_BARS)]
-    expected = {"lead": "6FBF56", "strong": "B0DC92", "chasing": "F0C3C2", "behind": "E6A09E"}
-    for point, bar in zip(plot.series[0].points, reversed(_BARS)):
-        assert point.format.fill.fore_color.rgb == RGBColor.from_string(expected[bar["band"]])
-        assert point.data_label.text_frame.text == bar["label"]
-    # The bars state both numbers themselves: no legend, no chart title, no value axis.
+    series = chart.plots[0].series[0]
+    assert [round(v) for v in series.iter_values()] == [p["rank"] for p in _POINTS]
+    assert [pt.data_label.text_frame.text for pt in series.points] == [p["name"] for p in _POINTS]
+    # The money axis is scaled to this country's largest pool and states its own ticks
+    # (the author's hand-drawn broken axis is gone); the rank axis keeps the author's 0–11,
+    # which is what puts their painted band boundary on the top-5 line.
+    assert chart.category_axis.maximum_scale == pytest.approx(545e6 * 1.04)
+    assert chart.value_axis.maximum_scale == 11.0
     assert not chart.has_legend and not chart.has_title
-    assert not chart.value_axis.visible
 
 
-def test_the_hand_drawn_quadrant_bands_and_fake_axis_do_not_survive(filled_page):
+def test_the_deck_still_opens_after_the_chart_is_refilled(filled_page):
+    # These charts are authored off a BINARY workbook: replace_data writes .xlsx bytes into
+    # the .xlsb part unless the chart is detached first, and PowerPoint then refuses the file.
+    chart_part = _only_chart(filled_page[0]).chart.part
+    targets = [str(rel.target_ref or "").lower() for rel in chart_part.rels.values()]
+    assert not [t for t in targets if t.endswith(".xlsb")]
+    assert [t for t in targets if t.endswith(".xlsx")], "no workbook backs the written data"
+
+
+def test_the_painted_bands_survive_onto_the_new_frame(filled_page):
+    slide, _, whole = filled_page
+    bands = [sh for sh in slide.shapes
+             if str(sh.shape_type).startswith("GROUP") and sh.width > whole.w * 0.8
+             and sh.height > whole.h * 0.8]
+    assert len(bands) == 1, "the author's priority matrix is the page — it must not be stripped"
+
+
+def test_the_hand_drawn_axis_and_dummy_point_labels_do_not_survive(filled_page):
     slide, _, whole = filled_page
     inside = [sh for sh in slide.shapes
               if not getattr(sh, "has_chart", False) and sh.left is not None
               and whole.x <= sh.left + sh.width // 2 <= whole.x + whole.w
               and whole.y <= sh.top + sh.height // 2 <= whole.y + whole.h]
-    # No painted band group, no dashed threshold line, no break mark…
-    assert not [sh for sh in inside if sh.shape_type in (5, 6, 9)]
-    # …no "$2,080M" tick faking a broken axis, and no "Product (1)" dummy label.
     texts = [sh.text_frame.text for sh in inside if getattr(sh, "has_text_frame", False)]
+    # No "$2,080M" tick faking a broken axis, and no "Product (1)" dummy label.
     assert not [t for t in texts if "Product" in t or "$" in t]
 
 
-def test_the_size_caption_survives_and_moves_with_the_panel(filled_page):
+def test_both_axis_captions_survive_and_move_with_the_panel(filled_page):
     slide, panels, whole = filled_page
-    caption = next(sh for sh in slide.shapes if getattr(sh, "has_text_frame", False)
-                   and sh.text_frame.text.strip() == "Size of Marsh Portfolio")
-    assert caption.top > panels[0].frame.y + panels[0].frame.h    # followed the panel down
-    assert caption.top < whole.y + whole.h + IN                   # …and stayed under it
-    # The rank caption goes: the bars put lines of business up the side, and each states
-    # its own rank, so a rotated "Carrier Rank" would be labelling nothing.
-    assert not [sh for sh in slide.shapes if getattr(sh, "has_text_frame", False)
-                and "Rank" in sh.text_frame.text and sh.width < sh.height * 6]
+    captions = {sh.text_frame.text.strip(): sh for sh in slide.shapes
+                if getattr(sh, "has_text_frame", False)}
+    size = captions["Size of Marsh Portfolio"]
+    assert size.top > panels[0].frame.y + panels[0].frame.h    # followed the panel down
+    assert size.top < whole.y + whole.h + IN                   # …and stayed under it
+    # The rank caption stays: the refilled panel still plots rank up the side.
+    assert [t for t in captions if "Rank" in t]

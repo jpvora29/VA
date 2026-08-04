@@ -123,38 +123,56 @@ def _chart_manual_cue() -> Any:
     )
 
 
-def _pool_bars(panel, cue) -> Any:
-    """The LC-ranking panel: one row per line of business, longest Marsh pool first.
+# The rank the author's painted band boundary sits on, and the axis it implies — the same
+# top-5 line and 0–11 scaling the exported panel uses (``fill._LC_RANK_AXIS_MAX``), plus the
+# share of the axis past which a name is written to the LEFT so it stays inside the panel.
+_LC_TOP_RANK, _LC_RANK_AXIS_MAX, _LC_SIZE_HEADROOM, _LC_INSET_SHARE = 5.0, 11.0, 1.04, 0.6
 
-    Mirrors what the deck now exports (:mod:`studio.template_fill.lc_page`) — bar length is
-    the Marsh pool, its colour is the band the carrier's rank falls in, and the row states
-    both numbers. A panel with no country left in scope is dropped from the deck, so the
-    preview shows it as empty rather than as the template's authored example book.
+
+def _rank_quadrant(panel, cue) -> Any:
+    """The LC-ranking panel: one point per line of business on the author's priority matrix.
+
+    Mirrors what the deck exports (:mod:`studio.template_fill.lc_page`) — x is the size of
+    the Marsh pool, y is the carrier's rank in it (best at the top), and the four painted
+    bands behind them say which corner a line sits in. A panel with no country left in scope
+    is dropped from the deck, so the preview shows it as empty rather than as the template's
+    authored example book.
     """
-    rows = panel.get("bars") or []
-    if not rows:
-        return html.Div(className="qs-tf-poolempty")
-    widest = max(float(r["size"]) for r in rows) or 1.0
-    return html.Div([
-        html.Div([
-            html.Span(str(r["name"]), className="qs-tf-poolname"),
-            html.Div(className=f"qs-tf-poolbar is-{r['band']}",
-                     style={"width": f"{float(r['size']) / widest * 100:.0f}%"}),
-            html.Span(str(r["label"]), className="qs-tf-poollabel"),
-        ], className="qs-tf-poolrow") for r in rows
-    ] + list(cue), className="qs-tf-pool")
+    points = panel.get("points") or []
+    if not points:
+        return html.Div(className="qs-tf-lcempty")
+    x_max = (max(float(p["size"]) for p in points) * _LC_SIZE_HEADROOM) or 1.0
+    y_max = max(_LC_RANK_AXIS_MAX, max(float(p["rank"]) for p in points) + 1.0)
+    split_pct = _LC_TOP_RANK / y_max * 100.0        # the top-5 line, as the bands draw it
+    bands = [
+        html.Div(className="qs-tf-lcband is-tl", style={"height": f"{split_pct:.1f}%"}),
+        html.Div(className="qs-tf-lcband is-tr", style={"height": f"{split_pct:.1f}%"}),
+        html.Div(className="qs-tf-lcband is-bl", style={"top": f"{split_pct:.1f}%"}),
+        html.Div(className="qs-tf-lcband is-br", style={"top": f"{split_pct:.1f}%"}),
+    ]
+    dots = []
+    for p in points:
+        # Mirrors the exported panel: a name past the inset share is written to the left of
+        # its point, so it stays inside the plot instead of running off the edge.
+        inset = float(p["size"]) > _LC_INSET_SHARE * x_max
+        dots.append(html.Div(
+            html.Span(str(p["name"]), className="qs-tf-lclabel" + (" is-left" if inset else "")),
+            className="qs-tf-lcdot", title=f"{p['name']} · #{p['rank']}",
+            style={"left": f"{float(p['size']) / x_max * 100:.1f}%",
+                   "top": f"{float(p['rank']) / y_max * 100:.1f}%"}))
+    return html.Div([*bands, *dots, *cue], className="qs-tf-lcpanel")
 
 
 def _chart_svg(shape, values, w_px, h_px, slide_idx: int = 0) -> Any:
-    """A populated mini chart: the LC-ranking pool bars, the per-LoB growth quadrant for
-    the remaining scatter/bubble charts, else a small bar of the template's own series —
+    """A populated mini chart: the LC-ranking priority matrix, the per-LoB growth quadrant
+    for the remaining scatter/bubble charts, else a small bar of the template's own series —
     so the preview shows DATA, not a stub."""
-    # The LC-ranking panels are scatters in the template but are EXPORTED as pool bars, so
-    # they are matched by their own payload first — reading them as the growth quadrant
-    # drew four copies of the wrong chart from the wrong numbers.
+    # The LC-ranking panels are scatters, like the growth chart, so they are matched by
+    # their own payload first — reading them as the growth quadrant drew four copies of the
+    # wrong chart from the wrong numbers.
     panel = (values.get("lc_ranking") or {}).get(f"{slide_idx}:{shape.shape_id}")
     if panel is not None:
-        return _pool_bars(panel, [])            # the engine fills these now: no manual cue
+        return _rank_quadrant(panel, [])        # the engine fills these now: no manual cue
     is_quadrant = any(k in (shape.chart_type or "") for k in ("XY_SCATTER", "BUBBLE"))
     cue = [_chart_manual_cue()] if getattr(shape, "chart_external", False) else []
     pts = (values.get("growth_bubble") or {}).get("points", []) if is_quadrant else []

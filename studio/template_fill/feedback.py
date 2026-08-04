@@ -607,17 +607,9 @@ def _compose(kind: str, f: Dict[str, Any], limit: int) -> str:
 
 def _reporting_filters(result) -> Dict[str, Any]:
     """The result's filters with the reporting year pinned (max pin, else latest in scope)."""
-    from studio.template_fill.bindings import _latest_year_in_scope
+    from studio.template_fill.bindings import reporting_filters
 
-    f = dict(result.resolved_filters or {})
-    year = f.get(_YEAR_COL)
-    if isinstance(year, (list, tuple, set)):
-        year = max(int(y) for y in year) if year else None
-    if year is None:
-        year = _latest_year_in_scope(result, {k: v for k, v in f.items() if k != _YEAR_COL})
-    if year is not None:
-        f[_YEAR_COL] = int(year)
-    return f
+    return reporting_filters(result)
 
 
 def _countries_in_scope(result) -> List[str]:
