@@ -8,6 +8,7 @@ options derive from it. Everything resolves lazily from the browser store's
 """
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import pandas as pd
@@ -17,6 +18,10 @@ from studio.dataset.model import DatasetRecord
 from studio.dataset.repository import MAPPED_TABLE, get_repository
 
 logger = get_logger(__name__)
+
+# The peer group stays governed by design, so an uploaded dataset carries only a
+# schema-only Peers table (see ``materialize._ensure_empty_peers``).
+_PEERS_TABLE = "Peers"
 
 
 def dataset_in_use(store: Optional[Mapping[str, Any]]) -> Optional[DatasetRecord]:
@@ -36,6 +41,38 @@ def dataset_in_use(store: Optional[Mapping[str, Any]]) -> Optional[DatasetRecord
 def dataset_engine(dataset_id: str):
     """The engine over a submitted dataset's SQLite (its GPR table is canonical)."""
     return get_repository().engine(dataset_id)
+
+
+@lru_cache(maxsize=8)
+def dataset_source(dataset_id: str):
+    """The dataset as a :class:`~core.analytics.frames.FrameSource` — the analytics source.
+
+    Uploaded data does not answer SQL well. Its table carries only the columns the user
+    actually had, so every primitive cutting by one they did not upload (industry, cover
+    line, billing date…) failed with "no such column" and was swallowed into an empty
+    section — which is how a full deck came out a shell. The pandas executor
+    (:mod:`core.analytics.pandas_library`) treats an absent column as an absent CUT and
+    keeps the rest of the deck, and it reads the data once instead of per query.
+
+    Cached per dataset: the frames are rebuilt only when the dataset is re-materialized
+    (``use_for_deck`` clears this).
+    """
+    from core.analytics.frames import frame_source
+    from studio.dataset.repository import RAW_TABLE
+
+    repo = get_repository()
+    tables = {
+        MAPPED_TABLE: repo.load_frame(dataset_id, table=MAPPED_TABLE),
+        _PEERS_TABLE: repo.load_frame(dataset_id, table=_PEERS_TABLE),
+    }
+    loaded = {name: frame for name, frame in tables.items() if frame is not None}
+    if MAPPED_TABLE not in loaded:
+        logger.warning("dataset %s has no %s table — falling back to the raw upload",
+                       dataset_id, MAPPED_TABLE)
+        raw = repo.load_frame(dataset_id, table=RAW_TABLE)
+        if raw is not None:
+            loaded[MAPPED_TABLE] = raw
+    return frame_source(loaded, label=dataset_id)
 
 
 def _mapped_frame(dataset_id: str) -> Optional[pd.DataFrame]:

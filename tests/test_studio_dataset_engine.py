@@ -214,16 +214,43 @@ def test_add_and_delete_column_helpers(tmp_path):
     repo = DatasetRepository(tmp_path)
     record = _mapped_record(repo)
 
-    assert add_column(repo, record.dataset_id, "Net", "Written - Fees") is None
-    assert add_column(repo, record.dataset_id, "", "1") is not None       # needs a name
-    assert add_column(repo, record.dataset_id, "Bad", "Nope + 1") is not None  # bad formula
+    assert add_column(repo, record.dataset_id, "Net", "", "", "Written - Fees") is None
+    assert add_column(repo, record.dataset_id, "", "", "", "1") is not None       # needs a name
+    assert add_column(repo, record.dataset_id, "Bad", "", "", "Nope + 1") is not None  # bad formula
+    assert add_column(repo, record.dataset_id, "Net", "", "", "1") is not None    # already exists
 
     assert delete_column(repo, record.dataset_id, "Commission") is True
-    assert delete_column(repo, record.dataset_id, "Insurer") is False     # mapped → protected
 
     from studio.dataset.materialize import working_frame
     frame = working_frame(repo, repo.get(record.dataset_id))
     assert "Net" in frame.columns and "Commission" not in frame.columns
+
+
+def test_any_column_can_be_deleted_and_takes_its_mapping_with_it(tmp_path):
+    """Mapped columns used to be protected, which left no way to correct a bad upload.
+    Deleting one is allowed; the mapping cannot outlive the data it points at."""
+    repo = DatasetRepository(tmp_path)
+    record = _mapped_record(repo)
+    assert "Insurer" in {m.uploaded for m in record.mappings}
+
+    assert delete_column(repo, record.dataset_id, "Insurer") is True
+    after = repo.get(record.dataset_id)
+    assert "Insurer" not in {m.uploaded for m in after.mappings}
+    assert "Insurer" not in {c.name for c in after.profile.columns}
+
+
+def test_undo_puts_a_deleted_column_back(tmp_path):
+    from studio.authoring.data import undo_shape
+    from studio.dataset.materialize import working_frame
+
+    repo = DatasetRepository(tmp_path)
+    record = _mapped_record(repo)
+    delete_column(repo, record.dataset_id, "Insurer")
+    assert undo_shape(repo, record.dataset_id) is True
+
+    frame = working_frame(repo, repo.get(record.dataset_id))
+    assert "Insurer" in frame.columns
+    assert undo_shape(repo, record.dataset_id) is False   # nothing left to undo
 
 
 # ── precedence: the deck pipeline computes from the uploaded data ────────────

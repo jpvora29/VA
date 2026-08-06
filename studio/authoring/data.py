@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import replace
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
 from dash import ALL, Input, Output, State, ctx, html, no_update
 
@@ -53,27 +53,19 @@ def _bump(store, active_id, **extra):
 
 
 def seed_mappings(repo, record):
-    """Give a fresh upload its PROPOSED mapping, so the HITL step opens pre-filled.
+    """Give an upload its PROPOSED mapping, so the HITL step opens pre-filled.
 
     Proposals only: the record stays ``uploaded`` however complete they look, because a
     mapping governs every number in the deck and a machine guess is not a confirmation.
     The user reviews the rows, changes what is wrong and submits — which is what promotes
     the record and stamps every row ``user``.
 
-    A record that already carries mappings (a re-opened dataset) is left alone.
+    Delegates to ``shape.resync``, so a column the user already decided on keeps that
+    decision and only the undecided ones get a proposal.
     """
-    from studio.dataset.automap import propose_mappings
+    from studio.dataset.shape import resync
 
-    if record is None or record.mappings:
-        return record
-    proposed = propose_mappings(record.profile)
-    if not proposed:
-        return record
-    updated = replace(record, mappings=proposed)
-    repo.update_record(updated)
-    log.info("automap: proposed %d of %d columns for %s",
-             sum(1 for m in proposed if m.target), len(proposed), record.name)
-    return updated
+    return resync(repo, record)
 
 
 def upload_summary(record, *, truncated: bool = False) -> str:
@@ -150,39 +142,48 @@ def submit_mappings(
     return None
 
 
-def add_column(repo, active_id, name, formula) -> Optional[str]:
-    """Append an add-column op to the recipe. Returns an error message or None."""
-    from studio.dataset.materialize import working_frame
-    from studio.dataset.model import TransformOp
-    from studio.dataset.transform import apply_transforms
+def add_column(repo, active_id, name, source, recipe, formula) -> Optional[str]:
+    """Add a column: read one out of ``source`` with a ``recipe``, else compute a formula.
+
+    A recipe is the common case — "Year from a date" is what unlocks every period
+    comparison in the deck when a spreadsheet only carries a billing date. The formula
+    path stays for arithmetic over money columns. Returns an error message, or None.
+    """
+    from studio.dataset import shape
 
     record = repo.get(active_id) if active_id else None
     if record is None:
         return "No active dataset."
-    name = str(name or "").strip()
-    if not name:
-        return "Give the new column a name."
-    op = TransformOp(kind="add", name=name, formula=str(formula or ""))
     try:
-        frame = working_frame(repo, record)
-        apply_transforms(frame, [op])  # validate before persisting
+        if recipe:
+            shape.add_derived(repo, record, name or shape.suggested_name(source, recipe),
+                              source, recipe)
+        else:
+            shape.add_computed(repo, record, name, formula)
     except ValueError as exc:
         return str(exc)
-    repo.update_record(replace(record, transforms=(*record.transforms, op)))
     return None
 
 
 def delete_column(repo, active_id, name) -> bool:
-    """Append a drop op — mapped columns are protected (unmap first)."""
-    from studio.dataset.model import TransformOp
+    """Delete any column. A mapped one loses its mapping with it (``shape.drop_column``)."""
+    from studio.dataset import shape
 
     record = repo.get(active_id) if active_id else None
     if record is None:
         return False
-    if name in {m.uploaded for m in record.mappings if m.target}:
+    shape.drop_column(repo, record, name)
+    return True
+
+
+def undo_shape(repo, active_id) -> bool:
+    """Take back the last column change — the way out of a wrong delete."""
+    from studio.dataset import shape
+
+    record = repo.get(active_id) if active_id else None
+    if record is None or not record.transforms:
         return False
-    op = TransformOp(kind="drop", name=str(name))
-    repo.update_record(replace(record, transforms=(*record.transforms, op)))
+    shape.undo_last(repo, record)
     return True
 
 
@@ -205,6 +206,7 @@ def use_for_deck(repo, active_id) -> Optional[str]:
 
     Returns an error message, or None on success."""
     from studio.dataset.materialize import materialize
+    from studio.dataset.source import dataset_source
 
     record = repo.get(active_id) if active_id else None
     if record is None:
@@ -214,6 +216,7 @@ def use_for_deck(repo, active_id) -> Optional[str]:
     except ValueError as exc:
         return str(exc)
     repo.update_record(replace(record, status="submitted"))
+    dataset_source.cache_clear()   # the analytics frames must reflect what was just written
     return None
 
 
@@ -347,44 +350,58 @@ def register_data(app):
             return no_update, html.Span(error, className="qs-map-hint warn")
         return _bump(store, active), ""
 
-    # ── shape & pivot callbacks — PARKED ──────────────────────────────────────
-    # Column add/delete and the pivot builder are switched off for now
-    # (``SHAPE_TOOLS_ENABLED`` in studio/page/authoring/data.py hides their
-    # controls). The engine — transform.py, pivot.py, and the helpers above —
-    # is kept, tested and ready; re-registering these three callbacks and
-    # flipping the flag turns the feature back on.
-    #
-    # @app.callback(
-    #     Output("qs-dataset", "data", allow_duplicate=True),
-    #     Output("qs-col-msg", "children"),
-    #     Input("qs-col-add", "n_clicks"),
-    #     State("qs-col-name", "value"),
-    #     State("qs-col-formula", "value"),
-    #     State("qs-dataset", "data"),
-    #     prevent_initial_call=True,
-    # )
-    # def add_column_cb(n, name, formula, store):
-    #     active = (store or {}).get("active")
-    #     if not n or not active:
-    #         return no_update, no_update
-    #     error = add_column(get_repository(), active, name, formula)
-    #     if error:
-    #         return no_update, error
-    #     return _bump(store, active), ""
-    #
-    # @app.callback(
-    #     Output("qs-dataset", "data", allow_duplicate=True),
-    #     Input({"type": "qs-col-del", "col": ALL}, "n_clicks"),
-    #     State("qs-dataset", "data"),
-    #     prevent_initial_call=True,
-    # )
-    # def delete_column_cb(clicks, store):
-    #     active = (store or {}).get("active")
-    #     if not ctx.triggered_id or not any(clicks or []) or not active:
-    #         return no_update
-    #     if not delete_column(get_repository(), active, ctx.triggered_id["col"]):
-    #         return no_update
-    #     return _bump(store, active)
+    # ── the column tools ──────────────────────────────────────────────────────
+
+    @app.callback(
+        Output("qs-dataset", "data", allow_duplicate=True),
+        Output("qs-col-msg", "children"),
+        Input("qs-col-add", "n_clicks"),
+        State("qs-col-name", "value"),
+        State("qs-col-source", "value"),
+        State("qs-col-recipe", "value"),
+        State("qs-col-formula", "value"),
+        State("qs-dataset", "data"),
+        prevent_initial_call=True,
+    )
+    def add_column_cb(n, name, source, recipe, formula, store):
+        active = (store or {}).get("active")
+        if not n or not active:
+            return no_update, no_update
+        error = add_column(get_repository(), active, name, source, recipe, formula)
+        if error:
+            return no_update, html.Span(error, className="qs-map-hint warn")
+        return _bump(store, active), ""
+
+    @app.callback(
+        Output("qs-dataset", "data", allow_duplicate=True),
+        Input({"type": "qs-col-del", "col": ALL}, "n_clicks"),
+        State("qs-dataset", "data"),
+        prevent_initial_call=True,
+    )
+    def delete_column_cb(clicks, store):
+        active = (store or {}).get("active")
+        if not ctx.triggered_id or not any(clicks or []) or not active:
+            return no_update
+        if not delete_column(get_repository(), active, ctx.triggered_id["col"]):
+            return no_update
+        return _bump(store, active)
+
+    @app.callback(
+        Output("qs-dataset", "data", allow_duplicate=True),
+        Input("qs-col-undo", "n_clicks"),
+        State("qs-dataset", "data"),
+        prevent_initial_call=True,
+    )
+    def undo_shape_cb(n, store):
+        active = (store or {}).get("active")
+        if not n or not active or not undo_shape(get_repository(), active):
+            return no_update
+        return _bump(store, active)
+
+    # ── the pivot builder — PARKED ────────────────────────────────────────────
+    # Still switched off (``PIVOT_ENABLED`` in studio/page/authoring/data.py
+    # hides its controls). The engine — pivot.py and ``apply_pivot`` above — is kept
+    # and tested; re-registering this callback and flipping the flag restores it.
     #
     # @app.callback(
     #     Output("qs-dataset", "data", allow_duplicate=True),

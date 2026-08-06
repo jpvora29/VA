@@ -167,6 +167,59 @@
     border-top: 1px solid rgba(13, 27, 62, 0.07);
 }
 
+/* ── the column tools: chips you can delete, one bar to create ───────────── */
+.qs-shape-stack { display: flex; flex-direction: column; gap: 14px; }
+.qs-colchip-row { display: flex; flex-wrap: wrap; gap: 7px; }
+.qs-root .qs-colchip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 5px 5px 5px 11px;
+    border-radius: 999px; font-size: 11.5px; font-weight: 600; color: var(--navy);
+    background: #fff; border: none; box-shadow: var(--v3-ring);
+    transition: box-shadow var(--v3-ease);
+}
+.qs-root .qs-colchip:hover { box-shadow: 0 0 0 1px rgba(13, 27, 62, 0.18); }
+.qs-root .qs-colchip.mapped { box-shadow: var(--v3-ring), inset 3px 0 0 0 var(--good); padding-left: 13px; }
+.qs-root .qs-colchip.made { background: var(--blue-soft); box-shadow: inset 0 0 0 1px rgba(11, 75, 255, 0.18); }
+.qs-colchip-made { font-size: 10px; color: var(--blue); }
+.qs-colchip-x {
+    display: grid; place-items: center; width: 18px; height: 18px; padding: 0;
+    border: none; background: transparent; border-radius: 999px;
+    color: var(--faint); font-size: 11px; line-height: 1; cursor: pointer;
+    transition: all var(--v3-ease);
+}
+.qs-colchip-x:hover { color: #fff; background: var(--danger); }
+
+.qs-addcol-bar {
+    display: grid; gap: 10px; align-items: end; padding: 12px;
+    grid-template-columns: minmax(140px, 1fr) minmax(170px, 1.2fr) minmax(120px, .9fr) minmax(150px, 1.1fr) auto;
+    background: var(--v3-field); border-radius: 12px;
+    box-shadow: inset 0 0 0 1px rgba(13, 27, 62, 0.06);
+}
+.qs-col-addbtn { height: 38px; white-space: nowrap; }
+.qs-tf-addbtn {
+    display: inline-flex; align-items: center; gap: 7px; padding: 0 14px;
+    border: none; border-radius: 10px; cursor: pointer;
+    font-size: 12.5px; font-weight: 700; color: #fff; background: var(--navy);
+    transition: all var(--v3-ease);
+}
+.qs-tf-addbtn:hover { background: var(--blue); }
+.qs-col-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.qs-col-msg:empty { display: none; }
+.qs-col-history { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.qs-col-last { font-size: 11px; color: var(--muted); font-weight: 600; }
+.qs-col-undo {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px;
+    border: none; border-radius: 9px; cursor: pointer;
+    font-size: 11.5px; font-weight: 600; color: var(--va-ink-600);
+    background: #fff; box-shadow: var(--v3-ring); transition: all var(--v3-ease);
+}
+.qs-col-undo:hover:not(:disabled) { color: var(--blue); box-shadow: 0 0 0 1px rgba(11, 75, 255, 0.3); }
+.qs-col-undo:disabled { opacity: .45; cursor: default; }
+
+@media (max-width: 1180px) {
+    .qs-addcol-bar { grid-template-columns: 1fr; }
+    .qs-col-addbtn { justify-content: center; }
+}
+
 /* ── Setup: data source + data basis, one block ──────────────────────────── */
 .qs-source-field { gap: 12px; }
 .qs-basis-field {

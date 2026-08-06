@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from studio.dataset.model import ColumnMapping, ColumnProfile, DatasetProfile
 
@@ -34,10 +34,11 @@ FLOW = "gpr"
 MAPPABLE_ROLES = frozenset({"entity", "temporal", "measure"})
 
 # Column kinds each role can accept. A money measure MUST be numeric; a label may be
-# text or a code. Keeps "Region_Code" off ``Premium`` and "Notes" off ``Year``.
+# text or a code; a date arrives as TEXT far more often than as a parsed date (that is
+# what a CSV gives you), so temporal takes all three and the matchers decide.
 _ROLE_KINDS: Dict[str, frozenset] = {
     "measure": frozenset({"number"}),
-    "temporal": frozenset({"number", "date"}),
+    "temporal": frozenset({"number", "date", "text"}),
     "entity": frozenset({"text", "number", "date"}),
 }
 
@@ -216,20 +217,24 @@ def _proposals_for(profile: ColumnProfile, targets: Sequence[Target]) -> List[Pr
     return found
 
 
-def _claim_targets(profiles: Sequence[ColumnProfile],
-                   targets: Sequence[Target]) -> Dict[str, Proposal]:
+def _claim_targets(profiles: Sequence[ColumnProfile], targets: Sequence[Target],
+                   taken: Iterable[str] = ()) -> Dict[str, Proposal]:
     """``{uploaded column: the proposal it wins}`` — one column per canonical target.
 
     Settled globally rather than column by column: with "Insurer" and "Carrier Group"
     both in the upload, the exact match takes ``Carrier_Group`` and the alias falls
     through to nothing rather than the first row simply winning by position.
+
+    ``taken`` are targets already spoken for by decisions made outside this call (the
+    user's existing mappings when a new column is added), so a proposal can never
+    quietly duplicate one.
     """
     ranked = sorted(
         (p for profile in profiles for p in _proposals_for(profile, targets)),
         key=lambda p: -p.confidence,
     )
     by_column: Dict[str, Proposal] = {}
-    claimed: set = set()
+    claimed: set = {t for t in taken if t}
     for proposal in ranked:
         if proposal.column in by_column or proposal.target in claimed:
             continue
@@ -241,17 +246,19 @@ def _claim_targets(profiles: Sequence[ColumnProfile],
 # ── the public step ──────────────────────────────────────────────────────────
 
 
-def propose_mappings(profile: DatasetProfile,
-                     *, targets: Optional[Sequence[Target]] = None) -> Tuple[ColumnMapping, ...]:
+def propose_mappings(profile: DatasetProfile, *,
+                     targets: Optional[Sequence[Target]] = None,
+                     taken: Iterable[str] = ()) -> Tuple[ColumnMapping, ...]:
     """A proposed ``ColumnMapping`` for EVERY uploaded column, in the upload's own order.
 
     Columns nothing matched come back unmapped — that is a real answer, and the row then
     asks the user for the description that is the only thing explaining such a column.
+    ``taken`` names canonical targets that are already claimed elsewhere.
     """
     columns = profile.columns if profile else ()
     if not columns:
         return ()
-    won = _claim_targets(columns, targets if targets is not None else canonical_targets())
+    won = _claim_targets(columns, targets if targets is not None else canonical_targets(), taken)
     return tuple(
         _as_mapping(column, won.get(column.name)) for column in columns
     )

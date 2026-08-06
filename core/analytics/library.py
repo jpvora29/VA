@@ -15,12 +15,22 @@ Tiers (see the plan):
 Primitives take an injected SQLAlchemy `engine` (defaulting lazily to the process
 engine), so they unit-test against an in-memory DB. They are NOT yet wired into
 the live app or the registry — that is Phase 3.
+
+**Two executors, one contract.** When the injected "engine" is a
+:class:`~core.analytics.frames.FrameSource` — an uploaded dataset, whose tables are
+DataFrames and whose columns are whatever the user's spreadsheet had — the call is
+routed to its pandas twin in :mod:`core.analytics.pandas_library` (`@_on_frames`).
+Same arguments, same facts, no SQL. The composites need no routing of their own:
+they are Python over other primitives and thread the same source down.
 """
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any, Dict, List, Optional, Tuple
+from functools import wraps
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from core.analytics import pandas_library as P
+from core.analytics.frames import as_frame_source
 from core.analytics.sql import (
     flow_spec,
     peer_country_column,
@@ -31,6 +41,26 @@ from core.analytics.sql import (
     where_clause,
 )
 from core.analytics.types import AnalyticsFact, PrimitiveArgs
+
+
+def _on_frames(pandas_fn: Callable) -> Callable:
+    """Route a primitive to ``pandas_fn`` when its engine is a ``FrameSource``.
+
+    The whole two-executor seam, in one decorator: the SQL body below each of these
+    is untouched and still runs for every real engine. Tuning kwargs (``grain``,
+    ``top_n``…) pass through unchanged, so both executors take the same call.
+    """
+    def decorate(sql_fn: Callable) -> Callable:
+        @wraps(sql_fn)
+        def run(args: PrimitiveArgs, *, engine: Optional[Any] = None, **kwargs):
+            source = as_frame_source(engine)
+            if source is not None:
+                return pandas_fn(source, args, **kwargs)
+            return sql_fn(args, engine=engine, **kwargs)
+
+        run.on_sql = sql_fn                     # the SQL body, for parity tests
+        return run
+    return decorate
 
 
 def _num(value: Any) -> float:
@@ -61,6 +91,7 @@ def _measure_by_cut(
 
 # ── Tier 1 — atomic, shared ────────────────────────────────────────────────
 
+@_on_frames(P.compute_breakdown)
 def compute_breakdown(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[AnalyticsFact]:
     """The measure (premium/score) per group_by cut, under the given filters."""
     spec = flow_spec(args.flow)
@@ -83,6 +114,7 @@ def compute_breakdown(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> L
     ]
 
 
+@_on_frames(P.compute_rank)
 def compute_rank(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[AnalyticsFact]:
     """Rank entities (carriers) by the measure, within each group_by cut."""
     spec = flow_spec(args.flow)
@@ -126,6 +158,7 @@ def compute_rank(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[A
     return facts
 
 
+@_on_frames(P.compute_yoy)
 def compute_yoy(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[AnalyticsFact]:
     """Year-over-year % change of the measure, per group_by cut.
 
@@ -177,6 +210,7 @@ def compute_yoy(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[An
 
 # ── Tier 1 — atomic, GPR premium domain ────────────────────────────────────
 
+@_on_frames(P.compute_share_of_portfolio)
 def compute_share_of_portfolio(
     args: PrimitiveArgs, *, engine: Optional[Any] = None
 ) -> List[AnalyticsFact]:
@@ -215,6 +249,7 @@ def compute_share_of_portfolio(
     ]
 
 
+@_on_frames(P.compute_market_presence)
 def compute_market_presence(
     args: PrimitiveArgs, *, engine: Optional[Any] = None
 ) -> List[AnalyticsFact]:
@@ -301,6 +336,7 @@ def _peer_clauses(
     return carrier_col, clauses
 
 
+@_on_frames(P.compute_peer_average)
 def compute_peer_average(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[AnalyticsFact]:
     """The peer group's per-ROW average of the measure, per group_by cut.
 
@@ -344,6 +380,7 @@ def compute_peer_average(args: PrimitiveArgs, *, engine: Optional[Any] = None) -
     ]
 
 
+@_on_frames(P.compute_peer_average_total)
 def compute_peer_average_total(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[AnalyticsFact]:
     """Average of each peer's TOTAL measure: SUM per peer carrier, then AVG across peers.
 
@@ -386,6 +423,7 @@ def compute_peer_average_total(args: PrimitiveArgs, *, engine: Optional[Any] = N
     ]
 
 
+@_on_frames(P.compute_share_of_wallet)
 def compute_share_of_wallet(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[AnalyticsFact]:
     """Share of Wallet: the carrier's premium as a % of the TOTAL market premium
     for each slice (carrier / all-carriers-in-slice) — the recipe in rules/gpr.py."""
@@ -433,6 +471,7 @@ def compute_share_of_wallet(args: PrimitiveArgs, *, engine: Optional[Any] = None
     ]
 
 
+@_on_frames(P.compute_nps)
 def compute_nps(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[AnalyticsFact]:
     """Net Promoter Score per cut: %promoters (>=9) - %detractors (<=6), as a
     business-readable -100..100 number, not a raw average."""
@@ -586,6 +625,7 @@ def _period_expr(spec, grain: str) -> Optional[str]:
     raise ValueError(f"unknown period grain {grain!r}")
 
 
+@_on_frames(P.compute_period_series)
 def compute_period_series(
     args: PrimitiveArgs, *, grain: str = "month", engine: Optional[Any] = None
 ) -> List[AnalyticsFact]:
@@ -622,6 +662,7 @@ def compute_period_series(
     ]
 
 
+@_on_frames(P.compute_period_change)
 def compute_period_change(
     args: PrimitiveArgs, *, grain: str = "month", engine: Optional[Any] = None
 ) -> List[AnalyticsFact]:

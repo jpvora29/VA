@@ -33,10 +33,11 @@ from studio.dataset.model import (
     premium_mapped,
 )
 
-# Column add/delete and the pivot builder are parked for now. The engine
-# (studio/dataset/transform.py, pivot.py) is kept and tested; flip this to True
-# and re-register the parked callbacks in studio/authoring/data.py to restore.
-SHAPE_TOOLS_ENABLED = False
+# The PIVOT builder stays parked (the column tools are live — see ``_columns_section``).
+# Its engine (studio/dataset/pivot.py) is kept and tested; flip this to True and
+# re-register the parked callback in studio/authoring/data.py to restore it.
+PIVOT_ENABLED = False
+SHAPE_TOOLS_ENABLED = PIVOT_ENABLED      # kept for backward-compat imports
 
 _PREVIEW_ROWS = 500  # grid preview cap — plenty to eyeball, cheap to ship to the browser
 
@@ -584,43 +585,112 @@ def _custom_kpi_card(record: DatasetRecord) -> Optional[html.Div]:
 
 
 def _column_chips(frame, record: DatasetRecord) -> html.Div:
-    """Every working-frame column as a chip; unmapped ones are deletable."""
+    """Every working-frame column as a chip, each deletable.
+
+    Any column may go, mapped or not: the mapping goes with it (``shape.drop_column``),
+    which is the honest outcome — the deck cannot bind to data that is not there. The
+    raw upload is untouched and Undo puts it back.
+    """
+    from studio.dataset.shape import derived_columns
+
     mapped = {m.uploaded for m in record.mappings if m.target}
+    made = derived_columns(record)
     chips = []
     for col in frame.columns:
-        deletable = col not in mapped
+        name = str(col)
         chips.append(
             html.Span(
                 [
-                    html.Span(str(col), className="qs-colchip-name"),
+                    html.I(className="bi bi-magic qs-colchip-made",
+                           title="Created from another column") if name in made else None,
+                    html.Span(name, className="qs-colchip-name"),
                     html.Button(
                         html.I(className="bi bi-x"),
-                        id={"type": "qs-col-del", "col": str(col)},
+                        id={"type": "qs-col-del", "col": name},
                         className="qs-colchip-x",
-                        title="Delete this column",
-                    ) if deletable else html.I(
-                        className="bi bi-link-45deg qs-colchip-lock",
-                        title="Mapped column — unmap it before deleting",
+                        title=(f"Delete {name} — its mapping goes with it"
+                               if name in mapped else f"Delete {name}"),
                     ),
                 ],
-                className="qs-colchip" + ("" if deletable else " locked"),
+                className="qs-colchip" + (" mapped" if name in mapped else "")
+                          + (" made" if name in made else ""),
             )
         )
     return html.Div(chips, className="qs-colchip-row")
 
 
-def _add_column_bar() -> html.Div:
+def _recipe_options() -> List[Mapping[str, str]]:
+    from studio.dataset.transform import RECIPES
+
+    return [{"label": label, "value": key} for key, (label, _fn) in RECIPES.items()]
+
+
+def _add_column_bar(frame) -> html.Div:
+    """Create a column: read one out of another (the common case), or compute a formula."""
+    columns = [{"label": str(c), "value": str(c)} for c in frame.columns]
     return html.Div(
         [
-            dcc.Input(id="qs-col-name", placeholder="New column name",
-                      debounce=False, className="qs-map-desc qs-col-name"),
-            dcc.Input(id="qs-col-formula", placeholder="Formula — e.g. Premium * 0.15",
-                      debounce=False, className="qs-map-desc qs-col-formula"),
+            _field("FROM COLUMN", dcc.Dropdown(id="qs-col-source", options=columns,
+                                               placeholder="Pick a column…",
+                                               className="studio-dd")),
+            _field("READ", dcc.Dropdown(id="qs-col-recipe", options=_recipe_options(),
+                                        placeholder="e.g. Year from a date",
+                                        className="studio-dd")),
+            _field("NAME", dcc.Input(id="qs-col-name", placeholder="Defaults to the reading",
+                                     debounce=False, className="qs-map-desc qs-col-name")),
+            _field("OR FORMULA", dcc.Input(id="qs-col-formula",
+                                           placeholder="e.g. Premium + Fees",
+                                           debounce=False,
+                                           className="qs-map-desc qs-col-formula")),
             html.Button([html.I(className="bi bi-plus-lg"), "Add column"],
-                        id="qs-col-add", className="qs-tf-addbtn"),
-            html.Div(id="qs-col-msg", className="qs-map-hint warn"),
+                        id="qs-col-add", className="qs-tf-addbtn qs-col-addbtn"),
         ],
         className="qs-addcol-bar",
+    )
+
+
+def _columns_section(record: DatasetRecord, frame) -> Optional[html.Div]:
+    """Shape the columns BEFORE mapping them — the step that makes a thin file usable.
+
+    Sits above the mapping panel on purpose: a spreadsheet with a billing date and no
+    Year column cannot map to Year, and every period comparison in the deck stays
+    empty until that column exists.
+    """
+    from studio.dataset.shape import shape_history
+
+    if frame is None:
+        return None
+    history = shape_history(record)
+    return _section(
+        "bi-columns-gap", "Columns",
+        "Create a column from one you already have — a Year out of a billing date — "
+        "or delete what the deck does not need.",
+        html.Div(
+            [
+                _column_chips(frame, record),
+                _add_column_bar(frame),
+                html.Div(
+                    [
+                        html.Div(id="qs-col-msg", className="qs-col-msg"),
+                        html.Div(
+                            [
+                                html.Span(history[-1], className="qs-col-last"),
+                                html.Button([html.I(className="bi bi-arrow-counterclockwise"),
+                                             "Undo"],
+                                            id="qs-col-undo", className="qs-col-undo"),
+                            ],
+                            className="qs-col-history",
+                        ) if history else html.Button(
+                            [html.I(className="bi bi-arrow-counterclockwise"), "Undo"],
+                            id="qs-col-undo", className="qs-col-undo", disabled=True,
+                        ),
+                    ],
+                    className="qs-col-foot",
+                ),
+            ],
+            className="qs-shape-stack",
+        ),
+        aside=html.Span(f"{len(frame.columns)} columns", className="qs-sec-count"),
     )
 
 
@@ -681,8 +751,8 @@ def _pivot_preview(frame, record: DatasetRecord) -> Any:
 
 
 def _use_for_deck_section(record: DatasetRecord, frame) -> Optional[html.Div]:
-    """The hand-off to Setup. With ``SHAPE_TOOLS_ENABLED`` the column and pivot
-    builders appear above the CTA; parked for now, so this is the CTA alone."""
+    """The hand-off to Setup. With ``PIVOT_ENABLED`` the pivot builder appears above
+    the CTA; parked for now, so this is the CTA alone."""
     if record.status not in ("mapped", "submitted") or frame is None:
         return None
     in_use = record.status == "submitted"
@@ -704,7 +774,7 @@ def _use_for_deck_section(record: DatasetRecord, frame) -> Optional[html.Div]:
         ],
         className="qs-map-actions",
     )
-    if not SHAPE_TOOLS_ENABLED:
+    if not PIVOT_ENABLED:
         return _section(
             "bi-rocket-takeoff", "Use for the deck",
             "Your mapping is saved. Hand this dataset to Setup and it takes "
@@ -715,13 +785,11 @@ def _use_for_deck_section(record: DatasetRecord, frame) -> Optional[html.Div]:
 
     enriched = pivot_frame(record, frame)
     return _section(
-        "bi-bounding-box", "Shape & pivot",
-        "Delete columns you don't need, add calculated ones, and build the pivot "
-        "that scopes the deck. The deck still computes from row-level data.",
+        "bi-bounding-box", "Pivot",
+        "Build the pivot that scopes the deck. The deck still computes from "
+        "row-level data.",
         html.Div(
             [
-                _column_chips(frame, record),
-                _add_column_bar(),
                 _pivot_controls(enriched, record),
                 _pivot_preview(enriched, record),
                 cta,
@@ -759,6 +827,7 @@ def _active_panel(record: DatasetRecord, frame) -> html.Div:
     n_rows = len(frame) if frame is not None else record.n_rows
     n_preview = min(n_rows, _PREVIEW_ROWS)
     sections = [
+        _columns_section(record, frame),
         _mapping_panel(record),
         _primary_measure_card(record),
         _custom_kpi_card(record),

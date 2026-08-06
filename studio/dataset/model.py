@@ -59,11 +59,19 @@ class CustomMeasure:
 
 @dataclass(frozen=True)
 class TransformOp:
-    """One replayable column operation on the working frame (add / drop)."""
+    """One replayable column operation on the working frame.
 
-    kind: str                       # add | drop
+    ``add`` computes a column from an arithmetic formula; ``derive`` reads one out of
+    another column with a named recipe (a Year out of a billing date); ``drop`` removes
+    one. Stored as a recipe rather than a materialized column so the shape survives a
+    re-upload and stays auditable.
+    """
+
+    kind: str                       # add | derive | drop
     name: str
     formula: str = ""               # for add: arithmetic over existing columns
+    source: str = ""                # for derive: the column it is read from
+    recipe: str = ""                # for derive: which reading (see transform.RECIPES)
 
 
 @dataclass(frozen=True)
@@ -237,7 +245,10 @@ def record_from_json(raw: Mapping[str, Any]) -> DatasetRecord:
             m for m in (_measure_from_json(x) for x in raw.get("custom_measures", ())) if m
         ),
         transforms=tuple(
-            TransformOp(kind=t["kind"], name=t["name"], formula=t.get("formula", ""))
+            TransformOp(
+                kind=t["kind"], name=t["name"], formula=t.get("formula", ""),
+                source=t.get("source", ""), recipe=t.get("recipe", ""),
+            )
             for t in raw.get("transforms", ())
         ),
         pivot=_pivot_from_json(raw.get("pivot")),

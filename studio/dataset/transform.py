@@ -52,10 +52,81 @@ def safe_eval(frame: pd.DataFrame, formula: str) -> pd.Series:
     return result
 
 
+# ── derived columns: read one column out of another ──────────────────────────
+#
+# The case that made this necessary: a spreadsheet carries a billing DATE and no Year
+# column, so nothing could map to Year and every period comparison in the deck went
+# quiet. Recipes are named, pure and reversible-by-deletion — never a hand-typed
+# expression the user has to get right.
+
+
+def _dates(series: pd.Series) -> pd.Series:
+    parsed = pd.to_datetime(series, errors="coerce")
+    if parsed.isna().all():
+        raise ValueError("That column does not read as dates.")
+    return parsed
+
+
+def _year(series: pd.Series) -> pd.Series:
+    return _dates(series).dt.year.astype("Int64")
+
+
+def _quarter(series: pd.Series) -> pd.Series:
+    dates = _dates(series)
+    return dates.dt.year.astype("Int64").astype(str) + "-Q" + dates.dt.quarter.astype("Int64").astype(str)
+
+
+def _month(series: pd.Series) -> pd.Series:
+    return _dates(series).dt.strftime("%Y-%m")
+
+
+def _month_name(series: pd.Series) -> pd.Series:
+    return _dates(series).dt.strftime("%B")
+
+
+def _iso_date(series: pd.Series) -> pd.Series:
+    return _dates(series).dt.strftime("%Y-%m-%d")
+
+
+def _upper(series: pd.Series) -> pd.Series:
+    return series.astype(str).str.strip().str.upper()
+
+
+def _trimmed(series: pd.Series) -> pd.Series:
+    return series.astype(str).str.strip()
+
+
+# Recipe id → (label, function). The UI reads this map for its dropdown, so a new
+# reading is one entry here and nothing else.
+RECIPES = {
+    "year": ("Year from a date", _year),
+    "quarter": ("Quarter from a date (2025-Q1)", _quarter),
+    "month": ("Month from a date (2025-01)", _month),
+    "month_name": ("Month name from a date", _month_name),
+    "date": ("Clean date (YYYY-MM-DD)", _iso_date),
+    "upper": ("Upper-case text", _upper),
+    "trim": ("Trimmed text", _trimmed),
+}
+
+
+def derive_column(frame: pd.DataFrame, source: str, recipe: str) -> pd.Series:
+    """Read a new column out of ``source`` using a named recipe.
+
+    Raises ``ValueError`` — worded for the user — for an unknown recipe, a missing
+    source column, or values the recipe cannot read.
+    """
+    if source not in frame.columns:
+        raise ValueError(f"There is no column called {source!r}.")
+    entry = RECIPES.get(recipe)
+    if entry is None:
+        raise ValueError(f"Unknown recipe {recipe!r}.")
+    return entry[1](frame[source])
+
+
 def apply_transforms(frame: pd.DataFrame, ops: Sequence[TransformOp]) -> pd.DataFrame:
     """Replay the shape recipe (in order) on a copy of the frame.
 
-    Unknown drops are ignored; a failing add raises ``ValueError`` (the caller
+    Unknown drops are ignored; a failing add/derive raises ``ValueError`` (the caller
     shows it and the recipe is not persisted).
     """
     out = frame.copy()
@@ -64,4 +135,6 @@ def apply_transforms(frame: pd.DataFrame, ops: Sequence[TransformOp]) -> pd.Data
             out = out.drop(columns=[op.name], errors="ignore")
         elif op.kind == "add" and op.name:
             out[op.name] = safe_eval(out, op.formula)
+        elif op.kind == "derive" and op.name:
+            out[op.name] = derive_column(out, op.source, op.recipe)
     return out

@@ -47,14 +47,18 @@ def _friendly_options(dataset_store: Optional[Dict[str, Any]] = None) -> Dict[st
 
 
 def _engine_for(selection: Dict[str, Any]):
-    """The engine a selection computes against — the submitted dataset's SQLite
-    when the selection pins a ``dataset_id``, else the governed engine. The id
-    lives inside the selection JSON, so every lru_cache key already varies."""
+    """The analytics source a selection computes against.
+
+    The governed engine by default; a submitted dataset's FRAMES when the selection
+    pins a ``dataset_id``, which routes every primitive to the pandas executor (see
+    ``studio.dataset.source.dataset_source``). The id lives inside the selection JSON,
+    so every lru_cache key already varies.
+    """
     dataset_id = (selection or {}).get("dataset_id")
     if dataset_id:
-        from studio.dataset.source import dataset_engine
+        from studio.dataset.source import dataset_source
 
-        return dataset_engine(dataset_id)
+        return dataset_source(dataset_id)
     return engine
 
 

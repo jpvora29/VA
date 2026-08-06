@@ -338,6 +338,10 @@ def register_setup(app):
             # survey pages are a later change (see A.DATA_BASIS_OPTIONS).
             "data_basis": data_basis or A.DATA_BASIS_DEFAULT,
             "dataset_id": record.dataset_id if record else None,
+            # …and its revision, so re-shaping or re-mapping the SAME dataset re-keys
+            # every cached build. Without it, fixing a mapping and generating again
+            # re-served the deck built from the mapping that was wrong.
+            "dataset_rev": (dataset_store or {}).get("rev") if record else None,
         }
         deck = _generated_deck(selection)
         doc = D.new_document(deck) if deck else None
