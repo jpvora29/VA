@@ -278,3 +278,86 @@ def test_a_date_only_upload_builds_a_populated_deck(tmp_path, monkeypatch):
     finally:
         dataset_source.cache_clear()
         R.get_repository.cache_clear()
+
+
+# ── the growth quadrant on uploaded data ─────────────────────────────────────
+
+
+def _two_year_book() -> pd.DataFrame:
+    """Two years, three carriers, three lines — enough for a real YoY per line."""
+    rows = []
+    for year, factor in ((2024, 1.0), (2025, 1.4)):
+        for carrier in ("AIG", "Zurich", "Chubb"):
+            for line, base in (("Cyber", 300), ("Marine", 200), ("Property", 500)):
+                rows.append({"Insurer": carrier, "Market": "Singapore", "LOB": line,
+                             "Yr": year, "Written Premium": base * factor * 1000})
+    return pd.DataFrame(rows)
+
+
+def _submitted(repo, frame, name="growth"):
+    record = seed_mappings(repo, repo.save(frame, name=name, filename=f"{name}.csv"))
+    columns = [m.uploaded for m in record.mappings]
+    targets = [m.target for m in record.mappings]
+    targets[columns.index("Market")] = "Country"
+    assert submit_mappings(repo, record.dataset_id, columns, targets,
+                           ["x"] * len(columns)) is None
+    assert use_for_deck(repo, record.dataset_id) is None
+    return record.dataset_id
+
+
+def test_the_growth_quadrant_fills_from_uploaded_data(tmp_path, monkeypatch):
+    """The chart the user reported: "<Carrier> vs Marsh growth rates" on the country
+    sub-deck. It must fill from the upload, and plot only the lines that were selected —
+    with no year pinned, which is how it was silently left on the authored examples.
+    """
+    from studio.dataset import repository as R
+    from studio.dataset.source import dataset_source
+    from studio.compute import compute_overall
+    from studio.template_fill.assemble import plan_subdecks
+
+    monkeypatch.setenv("STUDIO_DATASET_DIR", str(tmp_path))
+    R.get_repository.cache_clear()
+    dataset_source.cache_clear()
+    try:
+        dataset_id = _submitted(R.get_repository(), _two_year_book())
+
+        def quadrant(**filters):
+            result = compute_overall(filters={"carrier": "AIG", "country": ["Singapore"],
+                                              **filters},
+                                     engine=dataset_source(dataset_id))
+            country = next(d for d in plan_subdecks(result) if d.template == "country")
+            return [p["lob"] for p in country.values["growth_bubble"]["points"]]
+
+        assert set(quadrant()) == {"Cyber", "Marine", "Property"}   # no year pinned
+        assert set(quadrant(product_line=["Cyber", "Marine"])) == {"Cyber", "Marine"}
+    finally:
+        dataset_source.cache_clear()
+        R.get_repository.cache_clear()
+
+
+def test_one_year_of_uploaded_data_clears_the_chart_rather_than_faking_it(tmp_path, monkeypatch):
+    """A single year supports no YoY, so the quadrant has nothing to plot. It must come
+    back as an EMPTY payload — which is what tells the fill engine to clear the authored
+    bubbles instead of shipping them as the carrier's own numbers."""
+    from studio.dataset import repository as R
+    from studio.dataset.source import dataset_source
+    from studio.compute import compute_overall
+    from studio.template_fill.assemble import plan_subdecks
+
+    monkeypatch.setenv("STUDIO_DATASET_DIR", str(tmp_path))
+    R.get_repository.cache_clear()
+    dataset_source.cache_clear()
+    try:
+        one_year = _two_year_book()
+        one_year = one_year[one_year["Yr"] == 2025]
+        dataset_id = _submitted(R.get_repository(), one_year, name="oneyear")
+
+        result = compute_overall(filters={"carrier": "AIG", "country": ["Singapore"]},
+                                 engine=dataset_source(dataset_id))
+        country = next(d for d in plan_subdecks(result) if d.template == "country")
+        payload = country.values["growth_bubble"]
+        assert payload is not None, "the fill engine needs the payload to clear the chart"
+        assert all(p["carrier_yoy"] is None for p in payload["points"])
+    finally:
+        dataset_source.cache_clear()
+        R.get_repository.cache_clear()

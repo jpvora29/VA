@@ -628,10 +628,17 @@ def _show_series_names(chart) -> None:
 
 def _write_bubble_chart(chart, points: List[Dict[str, Any]]) -> None:
     """One series per line of business (x = Marsh YoY, y = carrier YoY, size = carrier GWP),
-    each bubble labelled with its own line and the axes pinned to percentages."""
+    each bubble labelled with its own line and the axes pinned to percentages.
+
+    With NO points the chart is emptied rather than left alone: the author's example
+    bubbles are example DATA, and shipping them under the carrier's name on a page titled
+    "<Carrier> vs Marsh growth rates" would read as the carrier's own numbers.
+    """
     from pptx.chart.data import BubbleChartData
 
     data = BubbleChartData(number_format=_PERCENT_FORMAT)
+    if not points:
+        data.add_series("")                     # a chart needs one series; it plots nothing
     for p in points:
         ser = data.add_series(str(p.get("lob") or ""))
         ser.add_data_point(p["marsh_yoy"] / 100.0, p["carrier_yoy"] / 100.0,
@@ -1101,10 +1108,15 @@ def _fill_charts(prs, values: Dict[str, Any]) -> None:
     """
     if os.getenv("STUDIO_FILL_CHARTS", "auto").strip().lower() in {"off", "0", "false", "no"}:
         return
-    points = _bubble_points((values.get("growth_bubble") or {}).get("points") or [])
+    # ``growth_bubble`` present with NO points means the growth quadrant was computed and
+    # came back empty — which is a result, not a reason to skip: the chart must be cleared
+    # rather than left plotting the author's example lines of business under the carrier's
+    # own name. Absent entirely means no growth chart was asked for at all.
+    growth = values.get("growth_bubble")
+    points = _bubble_points((growth or {}).get("points") or [])
     bars = values.get("gwp_bars") or {}
     ranking = values.get("lc_ranking") or {}
-    if not points and not bars and not ranking:
+    if growth is None and not bars and not ranking:
         return
     from pptx.chart.data import XyChartData
 
@@ -1123,14 +1135,14 @@ def _fill_charts(prs, values: Dict[str, Any]) -> None:
                     if not _detach_external_data(chart):
                         continue
                     _write_bar_chart(chart, series)
-                elif not points:
+                elif growth is None:
                     continue
                 elif "BUBBLE" in ctype:
                     if not _detach_external_data(chart):
                         continue
                     _write_bubble_chart(chart, points)
                     _blank_stale_point_labels(slide, sh, points)
-                elif "SCATTER" in ctype:
+                elif "SCATTER" in ctype and points:
                     if _chart_is_external(chart):
                         continue
                     data = XyChartData()

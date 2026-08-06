@@ -159,12 +159,25 @@ def _spotlight(result, filters: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return {"name": top, "carrier_yoy": carrier.get("pct"), "marsh_yoy": marsh.get("pct")}
 
 
-def _growth_bubble(result) -> Optional[Dict[str, Any]]:
-    """Per-LoB carrier-vs-Marsh YoY growth (+ bubble size) for the growth-rate chart."""
-    f = result.resolved_filters
-    base = {k: v for k, v in f.items() if k != _CARRIER_COL}
-    carrier_moves = _safe(C.movement_by_dim, result.flow, "Product_Line", f, result.engine, top=12) or []
-    marsh_moves = _safe(C.movement_by_dim, result.flow, "Product_Line", base, result.engine, top=99) or []
+def _growth_bubble(result, filters: Dict[str, Any]) -> Dict[str, Any]:
+    """Per-LoB carrier-vs-Marsh YoY growth (+ bubble size) for the growth-rate chart.
+
+    ``filters`` must carry the REPORTING YEAR (:func:`reporting_filters`): both axes are
+    period comparisons, and ``movement_by_dim`` returns nothing at all without a year — so
+    reading the raw selection left every unpinned-year run with an empty payload, and the
+    chart kept the template's own example bubbles under the carrier's name.
+
+    Only the lines of business in scope are plotted: the filters carry the user's product
+    selection, so a run pinned to two lines shows those two.
+
+    ALWAYS returns a payload, even with no points — that is what tells the fill engine the
+    chart was considered and must be cleared rather than left showing authored examples.
+    """
+    base = {k: v for k, v in filters.items() if k != _CARRIER_COL}
+    carrier_moves = _safe(C.movement_by_dim, result.flow, _PRODUCT_COL, filters,
+                          result.engine, top=12) or []
+    marsh_moves = _safe(C.movement_by_dim, result.flow, _PRODUCT_COL, base,
+                        result.engine, top=99) or []
     marsh_by = {m["name"]: m for m in marsh_moves}
     points = []
     for cm in carrier_moves:
@@ -175,7 +188,7 @@ def _growth_bubble(result) -> Optional[Dict[str, Any]]:
             "marsh_yoy": (mm.get("pct") if mm else None),
             "size": cm.get("current") or 0.0,
         })
-    return {"points": points} if points else None
+    return {"points": points}
 
 
 def resolve_roles(result) -> Dict[str, Any]:
@@ -252,9 +265,9 @@ def resolve_roles(result) -> Dict[str, Any]:
         if spot.get("marsh_yoy") is not None:
             out["spotlight_marsh_yoy"] = spot["marsh_yoy"]
 
-    bubble = _growth_bubble(result)
-    if bubble:
-        out["growth_bubble"] = bubble
+    # Reports on the same resolved year as everything above it, and on the same product
+    # scope — so the growth quadrant answers the selection the deck was asked for.
+    out["growth_bubble"] = _growth_bubble(result, fy)
 
     return out
 

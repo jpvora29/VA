@@ -400,3 +400,82 @@ def test_bubble_chart_filled_from_growth_points(tmp_path):
     texts = [sh.text_frame.text.strip() for sh in slide.shapes
              if getattr(sh, "has_text_frame", False)]
     assert "Property" not in texts and "FINPRO" not in texts
+
+
+# ── the growth quadrant reports on the SELECTION, and never on examples ──────
+
+
+def test_an_empty_growth_payload_clears_the_authored_bubbles(tmp_path):
+    """A page titled "<Carrier> vs Marsh growth rates" must never plot the author's
+    example lines of business: with nothing to say, the chart is emptied.
+
+    Reachable in practice — a single year of data supports no YoY at all, so every
+    point comes back with no growth to plot.
+    """
+    if not Path(COUNTRY_TEMPLATE).exists():
+        pytest.skip("country template not present")
+    from pptx import Presentation
+
+    from studio.template_fill.fill import fill_template
+
+    doc = {"template_path": COUNTRY_TEMPLATE, "manifest": [],
+           "values": {"growth_bubble": {"points": [
+               {"lob": "Property", "carrier_yoy": None, "marsh_yoy": None, "size": 40e6}]}},
+           "overrides": {}, "map_overrides": {}, "added": {}}
+    out = fill_template(doc, out_path=str(tmp_path / "empty_bubble.pptx"))
+
+    prs = Presentation(out)
+    charts = [sh.chart for s in prs.slides for sh in s.shapes if getattr(sh, "has_chart", False)]
+    bubble = next(c for c in charts if "BUBBLE" in str(c.chart_type))
+    plotted = [v for s in bubble.plots[0].series for v in s.values]
+    assert not [v for v in plotted if v is not None], "authored example bubbles survived"
+
+
+def test_no_growth_role_at_all_leaves_the_chart_untouched(tmp_path):
+    """Absent is not the same as empty: a doc that never computed the quadrant (a
+    preview, a partial fill) must not have its chart wiped."""
+    if not Path(COUNTRY_TEMPLATE).exists():
+        pytest.skip("country template not present")
+    from pptx import Presentation
+
+    from studio.template_fill.fill import fill_template
+
+    doc = {"template_path": COUNTRY_TEMPLATE, "manifest": [], "values": {},
+           "overrides": {}, "map_overrides": {}, "added": {}}
+    out = fill_template(doc, out_path=str(tmp_path / "untouched.pptx"))
+
+    prs = Presentation(out)
+    charts = [sh.chart for s in prs.slides for sh in s.shapes if getattr(sh, "has_chart", False)]
+    bubble = next(c for c in charts if "BUBBLE" in str(c.chart_type))
+    assert list(bubble.plots[0].series), "the authored chart was cleared without being asked"
+
+
+def test_the_growth_quadrant_resolves_a_year_when_none_is_pinned():
+    """Regression: both axes are period comparisons, and ``movement_by_dim`` returns
+    nothing without a year — so an unpinned-year run produced an EMPTY payload and the
+    chart kept the template's own example bubbles under the carrier's name."""
+    from studio.compute import compute_overall
+    from studio.template_fill.bindings import resolve_roles
+
+    unpinned = resolve_roles(compute_overall(
+        filters={"carrier": "Zurich", "country": ["Singapore"]}))
+    points = (unpinned["growth_bubble"] or {}).get("points") or []
+    assert points, "no growth points without a pinned year"
+    assert all(p["carrier_yoy"] is not None for p in points)
+
+
+def test_the_growth_quadrant_plots_only_the_selected_lines_of_business():
+    """The chart answers the Setup selection: pinning two lines plots those two."""
+    from studio.compute import compute_overall
+    from studio.template_fill.bindings import resolve_roles
+
+    picked = ["Cyber", "Marine"]
+    roles = resolve_roles(compute_overall(
+        filters={"carrier": "Zurich", "country": ["Singapore"], "product_line": picked}))
+    plotted = {p["lob"] for p in roles["growth_bubble"]["points"]}
+    assert plotted == set(picked)
+
+    # …and an unfiltered run still covers the carrier's whole book.
+    everything = resolve_roles(compute_overall(
+        filters={"carrier": "Zurich", "country": ["Singapore"]}))
+    assert len({p["lob"] for p in everything["growth_bubble"]["points"]}) > len(picked)
