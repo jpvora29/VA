@@ -133,7 +133,7 @@ gpr:
     SIC_Major_Class: {role: entity, card_cap: 8, resolver: semantic, aliases: [industry, sic]}
     SIC_Minor_Class: {role: entity, card_cap: 8, resolver: semantic}
     CLIENT_NAME: {role: entity, card_cap: 8, confidential: true, aliases: [client, insured]}
-    Premium: {role: measure, aliases: [gross premium, revenue, book]}
+    Premium: {role: measure, aliases: [gross premium, revenue, book, gwp, written premium, gross written premium]}
     Billing_Date: {role: temporal}
     Year: {role: temporal, card_cap: 30}
     Month_Name: {role: temporal, card_cap: 30}

@@ -1,0 +1,200 @@
+/* ============================================================================
+   DATA TAB — V4. The upload → map → use pipeline, dressed as an app rather
+   than a form: a stepped header, a progress meter over the mapping, and one
+   card per column that shows the EVIDENCE (type, spread, examples) beside the
+   decision (target + who made it).
+
+   Loads after studio_authoring_v3.css (alphabetical), so it wins where the two
+   overlap. Every selector stays qs- scoped. Colours come from the shared
+   --va-* tokens via the v3 aliases — never a raw brand hex.
+   ========================================================================== */
+
+.qs-root {
+    --v4-row-gap: 10px;
+    --v4-pill: rgba(13, 27, 62, 0.055);
+}
+
+/* ── the three-step pipeline ─────────────────────────────────────────────── */
+.qs-pipeline {
+    display: flex; align-items: center; gap: 10px;
+    margin: 18px 0 22px; padding: 14px 16px;
+    background: #fff; border-radius: 14px; box-shadow: var(--v3-ring);
+    overflow-x: auto;
+}
+.qs-step { display: flex; align-items: center; gap: 11px; min-width: 0; flex: 0 0 auto; }
+.qs-step-mark {
+    display: grid; place-items: center; flex: 0 0 auto;
+    width: 28px; height: 28px; border-radius: 10px;
+    font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+    color: var(--va-ink-400); background: var(--v4-pill);
+    box-shadow: inset 0 0 0 1px rgba(13, 27, 62, 0.06);
+    transition: all var(--v3-ease);
+}
+.qs-step-title { font-size: 12.5px; font-weight: 700; color: var(--va-ink-400); letter-spacing: -0.005em; }
+.qs-step-sub { font-size: 10.5px; color: var(--faint); }
+.qs-step-link { flex: 1 1 24px; height: 1px; min-width: 18px; background: rgba(13, 27, 62, 0.10); }
+
+.qs-step.is-active .qs-step-mark {
+    color: #fff; background: var(--blue);
+    box-shadow: 0 0 0 1px rgba(11, 75, 255, 0.35), 0 6px 16px -6px rgba(11, 75, 255, 0.65);
+}
+.qs-step.is-active .qs-step-title { color: var(--navy); }
+.qs-step.is-done .qs-step-mark {
+    color: var(--good); background: rgba(31, 157, 85, 0.10);
+    box-shadow: inset 0 0 0 1px rgba(31, 157, 85, 0.28);
+}
+.qs-step.is-done .qs-step-title { color: var(--va-ink-600); }
+
+/* ── section head: a title on the left, live state on the right ──────────── */
+.qs-data-main .qs-sec-head {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 14px; flex-wrap: wrap;
+}
+.qs-sec-count {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--va-ink-400); padding: 4px 9px; border-radius: 999px; background: var(--v4-pill);
+    white-space: nowrap;
+}
+
+/* the three columns a deck cannot be built without, ticked off live */
+.qs-req-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.qs-req-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+    border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap;
+    color: var(--va-ink-500); background: var(--v4-pill);
+    box-shadow: inset 0 0 0 1px rgba(13, 27, 62, 0.05);
+}
+.qs-req-chip i { font-size: 11px; color: var(--faint); }
+.qs-req-chip.ok { color: var(--good); background: rgba(31, 157, 85, 0.09); box-shadow: inset 0 0 0 1px rgba(31, 157, 85, 0.24); }
+.qs-req-chip.ok i { color: var(--good); }
+
+/* ── mapping progress ────────────────────────────────────────────────────── */
+.qs-map-panel { display: flex; flex-direction: column; gap: 14px; }
+.qs-map-progress { display: flex; flex-direction: column; gap: 8px; }
+.qs-meter {
+    height: 5px; border-radius: 999px; overflow: hidden;
+    background: rgba(13, 27, 62, 0.07);
+}
+.qs-meter-fill {
+    height: 100%; border-radius: 999px;
+    background: linear-gradient(90deg, var(--cyan), var(--blue));
+    transition: width var(--va-transition-med);
+}
+.qs-map-counts { display: flex; flex-wrap: wrap; gap: 14px; }
+.qs-map-count { font-size: 11px; font-weight: 600; color: var(--muted); }
+.qs-map-count b { color: var(--navy); font-variant-numeric: tabular-nums; }
+.qs-map-count.alt b { color: var(--blue); }
+.qs-map-count.warn, .qs-map-count.warn b { color: var(--warn); }
+
+/* ── one card per column ─────────────────────────────────────────────────── */
+.qs-map-rows { display: flex; flex-direction: column; gap: var(--v4-row-gap); }
+.qs-root .qs-map-row {
+    display: grid;
+    grid-template-columns: minmax(210px, 1.15fr) 16px minmax(190px, 1fr) minmax(210px, 1.15fr);
+    gap: 14px; align-items: start; padding: 13px 15px;
+    background: #fff; border: none; border-radius: 13px;
+    box-shadow: var(--v3-ring); transition: box-shadow var(--v3-ease), transform var(--v3-ease);
+}
+.qs-root .qs-map-row:hover {
+    box-shadow: 0 0 0 1px rgba(13, 27, 62, 0.13), 0 8px 22px -12px rgba(10, 22, 54, 0.22);
+}
+.qs-root .qs-map-row.mapped { padding-left: 15px; box-shadow: var(--v3-ring), inset 3px 0 0 0 var(--good); }
+.qs-root .qs-map-row.needs-desc { padding-left: 15px; box-shadow: var(--v3-ring), inset 3px 0 0 0 var(--warn); }
+
+.qs-root .qs-map-headrow {
+    padding: 0 15px; background: transparent; box-shadow: none !important;
+    align-items: center;
+}
+.qs-root .qs-map-headrow:hover { box-shadow: none !important; }
+.qs-map-h {
+    font-size: 9.5px; font-weight: 700; letter-spacing: 0.11em;
+    text-transform: uppercase; color: var(--va-ink-400);
+}
+
+.qs-map-src { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.qs-map-colhead { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.qs-map-col {
+    font-size: 13px; font-weight: 700; color: var(--navy); letter-spacing: -0.008em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.qs-map-kindpill {
+    display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto;
+    padding: 3px 8px; border-radius: 999px;
+    font-size: 9.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--va-ink-500); background: var(--v4-pill);
+}
+.qs-map-kindpill i { font-size: 11px; }
+.qs-map-kindpill.number { color: var(--blue); background: rgba(11, 75, 255, 0.08); }
+.qs-map-kindpill.date { color: var(--cyan); background: rgba(0, 168, 224, 0.10); }
+
+.qs-map-facts { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.qs-map-stats { display: flex; flex-wrap: wrap; gap: 12px; }
+.qs-map-stat { font-size: 10.5px; color: var(--muted); }
+.qs-map-stat b { color: var(--va-ink-700); font-variant-numeric: tabular-nums; }
+.qs-map-stat.warn, .qs-map-stat.warn b { color: var(--warn); }
+.qs-map-samples { display: flex; flex-wrap: wrap; gap: 5px; overflow: hidden; max-height: 44px; }
+.qs-map-sample {
+    display: inline-block; max-width: 130px; padding: 2px 7px; border-radius: 6px;
+    font-size: 10.5px; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    color: var(--va-ink-600); background: var(--v3-field);
+    box-shadow: inset 0 0 0 1px rgba(13, 27, 62, 0.05);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.qs-map-arrow { color: var(--faint); font-size: 13px; align-self: center; }
+
+.qs-map-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.qs-map-fieldhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 18px; }
+.qs-map-fieldlabel {
+    font-size: 9.5px; font-weight: 700; letter-spacing: 0.11em;
+    text-transform: uppercase; color: var(--va-ink-400);
+}
+.qs-map-badge {
+    display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;
+    border-radius: 999px; font-size: 9.5px; font-weight: 700; white-space: nowrap;
+}
+.qs-map-badge i { font-size: 10px; }
+.qs-map-badge.auto { color: var(--blue); background: var(--blue-soft); box-shadow: inset 0 0 0 1px rgba(11, 75, 255, 0.16); }
+.qs-map-badge.user { color: var(--good); background: rgba(31, 157, 85, 0.09); box-shadow: inset 0 0 0 1px rgba(31, 157, 85, 0.22); }
+
+/* the description sits under its own label now, so it fills the cell */
+.qs-map-field .qs-map-desc { width: 100%; }
+
+/* ── actions ─────────────────────────────────────────────────────────────── */
+.qs-map-actions {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; margin-top: 4px; padding-top: 14px;
+    border-top: 1px solid rgba(13, 27, 62, 0.07);
+}
+
+/* ── Setup: data source + data basis, one block ──────────────────────────── */
+.qs-source-field { gap: 12px; }
+.qs-basis-field {
+    display: flex; flex-direction: column; gap: 7px;
+    padding-top: 12px; border-top: 1px solid rgba(13, 27, 62, 0.07);
+}
+.qs-basis-note { font-size: 10.5px; line-height: 1.45; color: var(--faint); }
+
+/* ── saved datasets: name, size, state ───────────────────────────────────── */
+.qs-ds-open { gap: 11px; padding: 10px 11px; }
+.qs-ds-text { min-width: 0; flex: 1; }
+.qs-ds-chip {
+    flex: 0 0 auto; padding: 3px 8px; border-radius: 999px;
+    font-size: 9.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--va-ink-500); background: var(--v4-pill);
+}
+.qs-ds-chip.ok { color: var(--good); background: rgba(31, 157, 85, 0.10); }
+.qs-ds-chip.live { color: var(--blue); background: var(--blue-soft); }
+
+/* ── narrow screens: the card stacks, the arrow goes ─────────────────────── */
+@media (max-width: 1180px) {
+    .qs-root .qs-map-row { grid-template-columns: 1fr; gap: 10px; }
+    .qs-root .qs-map-headrow { display: none; }
+    .qs-map-arrow { display: none; }
+    .qs-map-actions { flex-direction: column; align-items: stretch; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .qs-root .qs-map-row:hover { transform: none; }
+    .qs-meter-fill { transition: none; }
+}

@@ -299,23 +299,6 @@ def _rescope(result, column: str, value: Any):
     return replace(result, resolved_filters=filters)
 
 
-# The product-hierarchy filters the overall summary must ignore: the overall block reports
-# the carrier's WHOLE book, so a pinned product/business/cover line only decides how many
-# product sub-decks to build — it never narrows the overall numbers.
-_PRODUCT_SCOPE_COLS = ("Product_Line", "Business_Line", "Cover_Line")
-
-
-def scope_overall(result):
-    """``result`` with the product-hierarchy filters dropped (for the ``overall`` sub-deck).
-
-    So the overall summary stays on the carrier's total book even when the user pins
-    specific products — the product selection only drives the per-product pages.
-    """
-    filters = {k: v for k, v in (getattr(result, "resolved_filters", None) or {}).items()
-               if k not in _PRODUCT_SCOPE_COLS}
-    return replace(result, resolved_filters=filters)
-
-
 def scope_to_product(result, product: Any):
     """``result`` re-scoped to a single product line (for a ``product`` sub-deck)."""
     return _rescope(result, _PRODUCT_COL, product)

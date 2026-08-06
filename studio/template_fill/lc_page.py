@@ -153,16 +153,22 @@ def _safe(fn, *a, **k):
 
 
 def _reporting_filters(result) -> Dict[str, Any]:
-    """The result's filters with the reporting year pinned, and the product pin dropped.
+    """The result's filters with the reporting year pinned and the product pin widened
+    back to the RUN's own selection.
 
     The page is a PORTFOLIO view: its panels rank a country's lines of business against
-    each other, so a per-product sub-deck's own pin would leave every panel a single point.
-    Same rule the overall block already applies
-    (:func:`studio.template_fill.bindings.scope_overall`).
+    each other, so a per-product sub-deck's own single-value pin would leave every panel
+    with one point. Widening it to ``scope_products`` — the lines the user picked in Setup —
+    keeps the page inside that selection instead of silently ranking the whole book; with
+    no selection there is nothing to widen to, so the pin simply comes off.
     """
     from studio.template_fill.bindings import reporting_filters
 
-    return reporting_filters(result, drop=(_PRODUCT_COL,))
+    filters = reporting_filters(result, drop=(_PRODUCT_COL,))
+    selection = tuple(getattr(result, "scope_products", ()) or ())
+    if selection:
+        filters[_PRODUCT_COL] = selection
+    return filters
 
 
 def _marsh_pool(result, filters: Dict[str, Any]) -> Dict[str, float]:

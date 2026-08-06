@@ -100,6 +100,8 @@ from studio.page.authoring.setup import (
     BUSY_FORM,
     BUSY_PREVIEW,
     BUSY_SECTIONS,
+    DATA_BASIS_DEFAULT,
+    DATA_BASIS_OPTIONS,
     busy_overlay,
     peer_set_body,
     scope_axes,
@@ -121,6 +123,7 @@ __all__ = [
     # setup
     "scope_preview_empty", "scope_preview_card", "template_sections_panel", "setup_body",
     "peer_set_body", "scope_axes", "busy_overlay",
+    "DATA_BASIS_DEFAULT", "DATA_BASIS_OPTIONS",
     "BUSY_FLAG_CLASS", "BUSY_FLAG_ON", "BUSY_FORM", "BUSY_PREVIEW", "BUSY_SECTIONS",
     # canvas
     "normalized_zoom", "adjusted_zoom", "zoom_scale", "canvas_body",

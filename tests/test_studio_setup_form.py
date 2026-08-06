@@ -53,6 +53,39 @@ def test_generate_pins_the_report_to_qbr():
 # ── AI assist is on by default ───────────────────────────────────────────────
 
 
+# ── data basis: premium only, or premium + survey ────────────────────────────
+
+
+def test_the_form_offers_premium_only_or_premium_plus_survey():
+    form = _form()
+    assert "studio-data-basis" in form
+    assert "Premium only" in form and "Premium + survey" in form
+    # It sits with DATA SOURCE — both answer "what is this deck built from?".
+    assert "studio-data-source" in form
+
+
+def test_data_basis_defaults_to_premium_only():
+    """Today's deck is premium-only, so the default must not imply otherwise."""
+    from studio.page.authoring.setup import DATA_BASIS_DEFAULT, _data_basis_control
+
+    radio = _data_basis_control().children[0].children[1]
+    assert radio.id == "studio-data-basis"
+    assert radio.value == DATA_BASIS_DEFAULT == "premium"
+    assert [o["value"] for o in radio.options] == ["premium", "premium_survey"]
+
+
+def test_the_choice_reaches_the_selection_generate_builds_from():
+    """Wiring only — nothing consumes it yet, but a deck must record what it was asked
+    for, and every cached build has to re-key when the answer changes."""
+    import inspect
+
+    from studio.authoring import setup as S
+
+    src = inspect.getsource(S.register_setup)
+    assert 'State("studio-data-basis", "value")' in src
+    assert '"data_basis": data_basis or A.DATA_BASIS_DEFAULT' in src
+
+
 def test_ai_assist_defaults_to_on():
     from studio.page.authoring.setup import _ai_control
 

@@ -229,8 +229,38 @@ def _data_source_control(dataset_state: Optional[Mapping[str, Any]]) -> html.Div
                 {"label": "My uploaded data", "value": "custom"},
             ], source),
             status,
+            _data_basis_control(),
         ],
         className="qs-source-field",
+    )
+
+
+# Which books the deck draws on. Wired end-to-end (control → selection → build) but
+# INERT for now: both choices produce today's premium-only deck. Adding the survey
+# pages is a separate change that reads ``selection["data_basis"]``.
+DATA_BASIS_DEFAULT = "premium"
+DATA_BASIS_OPTIONS = (
+    {"label": "Premium only", "value": "premium"},
+    {"label": "Premium + survey", "value": "premium_survey"},
+)
+
+
+def _data_basis_control() -> html.Div:
+    """DATA BASIS — the premium book alone, or the premium book plus broker survey.
+
+    Segmented pills like DATA SOURCE above it: the two are the same kind of decision
+    (what the deck is built FROM), so they read as one block.
+    """
+    return html.Div(
+        [
+            _radio_field("DATA BASIS", "studio-data-basis",
+                         list(DATA_BASIS_OPTIONS), DATA_BASIS_DEFAULT),
+            html.Div(
+                "Survey pages are not generated yet — this choice is recorded with the deck.",
+                className="qs-basis-note",
+            ),
+        ],
+        className="qs-basis-field",
     )
 
 
@@ -465,7 +495,8 @@ def setup_body(
         [
             _setup_section(
                 "bi-database", "Data source",
-                "Build from the governed database, or bring your own dataset.",
+                "Build from the governed database or your own dataset, and choose which "
+                "books the deck draws on.",
                 _data_source_control(dataset),
                 span=True,
             ),

@@ -84,6 +84,11 @@ class OverallResult:
     # so a page can tell a single-country run from a multi-country one (the country-vs-country
     # chart on the GWP-performance page needs several countries to mean anything).
     scope_countries: Tuple[str, ...] = ()
+    # Every product line the whole RUN covers — the Setup selection, carried unchanged into
+    # each per-product sub-deck. A portfolio page ranks lines of business against EACH OTHER,
+    # so it must widen a sub-deck's single-product pin back to the run's own selection rather
+    # than to the carrier's whole book (see ``studio.template_fill.lc_page``).
+    scope_products: Tuple[str, ...] = ()
     # Commentary voice, chosen in Setup and applied when prose is written (see
     # ``studio.template_fill.commentary`` / ``studio.narrate.commentary``).
     style: str = "balanced"

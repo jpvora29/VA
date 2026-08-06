@@ -52,6 +52,44 @@ def _bump(store, active_id, **extra):
 # ── testable helpers (repository injected) ───────────────────────────────────
 
 
+def seed_mappings(repo, record):
+    """Give a fresh upload its PROPOSED mapping, so the HITL step opens pre-filled.
+
+    Proposals only: the record stays ``uploaded`` however complete they look, because a
+    mapping governs every number in the deck and a machine guess is not a confirmation.
+    The user reviews the rows, changes what is wrong and submits — which is what promotes
+    the record and stamps every row ``user``.
+
+    A record that already carries mappings (a re-opened dataset) is left alone.
+    """
+    from studio.dataset.automap import propose_mappings
+
+    if record is None or record.mappings:
+        return record
+    proposed = propose_mappings(record.profile)
+    if not proposed:
+        return record
+    updated = replace(record, mappings=proposed)
+    repo.update_record(updated)
+    log.info("automap: proposed %d of %d columns for %s",
+             sum(1 for m in proposed if m.target), len(proposed), record.name)
+    return updated
+
+
+def upload_summary(record, *, truncated: bool = False) -> str:
+    """What the upload zone says once a file has landed.
+
+    States the shape AND how much of the mapping is already done, because the proposals
+    are the difference between "30 decisions to make" and "3 to check".
+    """
+    proposed = sum(1 for m in record.mappings if m.target)
+    note = f" (truncated to {record.n_rows:,} rows)" if truncated else ""
+    return (
+        f"Loaded {record.name}: {record.n_rows:,} rows × {record.n_cols} columns{note}. "
+        f"{proposed} of {record.n_cols} columns mapped automatically — review below."
+    )
+
+
 def _primary_from_fields(name, column, formula) -> Optional[CustomMeasure]:
     if not (column or formula):
         return None
@@ -232,10 +270,10 @@ def register_data(app):
                 className="qs-map-hint warn",
             )
         name = (filename or "dataset").rsplit(".", 1)[0]
-        record = get_repository().save(frame, name=name, filename=filename or "")
-        note = f" (truncated to {record.n_rows:,} rows)" if truncated else ""
+        repo = get_repository()
+        record = seed_mappings(repo, repo.save(frame, name=name, filename=filename or ""))
         return _bump(store, record.dataset_id), html.Span(
-            f"Loaded {record.name}: {record.n_rows:,} rows × {record.n_cols} columns{note}."
+            upload_summary(record, truncated=truncated)
         )
 
     @app.callback(
@@ -247,7 +285,11 @@ def register_data(app):
     def open_dataset(clicks, store):
         if not ctx.triggered_id or not any(clicks or []):
             return no_update
-        return _bump(store, ctx.triggered_id["id"])
+        dataset_id = ctx.triggered_id["id"]
+        repo = get_repository()
+        # A dataset saved before auto-mapping existed opens with proposals too.
+        seed_mappings(repo, repo.get(dataset_id))
+        return _bump(store, dataset_id)
 
     @app.callback(
         Output("qs-dataset", "data", allow_duplicate=True),

@@ -215,6 +215,36 @@ def test_a_product_subdeck_still_ranks_the_whole_line_of_business_mix(overall_te
     assert len(names) > 1 and "Property" in names
 
 
+# ── the page reports on the Setup selection ──────────────────────────────────
+
+
+_PICKED = ("Property", "Financial Lines", "Cyber")
+
+
+def _points_of(template, result):
+    panel = next(p for p in L.values(template, result)["lc_ranking"].values() if p["points"])
+    return {p["name"] for p in panel["points"]}
+
+
+def test_the_page_ranks_only_the_lines_the_run_selected(overall_template):
+    """Setup governs the page: pinning three lines of business must not leave the panel
+    ranking the carrier's whole book. Regression — the product pin was dropped outright."""
+    run = replace(_result(["Singapore"]), scope_products=_PICKED)
+    assert _points_of(overall_template, run) == set(_PICKED)
+
+
+def test_a_product_subdeck_widens_back_to_the_selection_not_the_whole_book(overall_template):
+    """A per-product page still needs a portfolio to rank its product against — but that
+    portfolio is the run's selection, not every line the carrier writes."""
+    run = replace(_result(["Singapore"], product="Property"), scope_products=_PICKED)
+    assert _points_of(overall_template, run) == set(_PICKED)
+
+
+def test_with_no_selection_the_page_still_ranks_the_whole_book(overall_template):
+    """Nothing pinned means nothing to narrow to — the page keeps its old behaviour."""
+    assert len(_points_of(overall_template, _result(["Singapore"]))) > len(_PICKED)
+
+
 # ── integration: the written panel ───────────────────────────────────────────
 
 
@@ -267,6 +297,14 @@ def test_each_point_is_a_line_of_business_named_on_the_authored_axes(filled_page
     assert chart.category_axis.maximum_scale == pytest.approx(545e6 * 1.04)
     assert chart.value_axis.maximum_scale == 11.0
     assert not chart.has_legend and not chart.has_title
+
+
+def test_the_plot_is_ruled_both_ways(filled_page):
+    """The author drew no gridlines — their four example points were placed by hand. A
+    refilled panel is READ off its axes, so both directions are ruled."""
+    chart = _only_chart(filled_page[0]).chart
+    assert chart.category_axis.has_major_gridlines, "no vertical grid off the money axis"
+    assert chart.value_axis.has_major_gridlines, "no horizontal grid off the rank axis"
 
 
 def test_the_deck_still_opens_after_the_chart_is_refilled(filled_page):

@@ -87,6 +87,59 @@ def test_assemble_falls_back_to_full_carrier_book_when_unselected(split_template
     assert len(Presentation(out).slides._sldIdLst) == 7
 
 
+# ── the overall block reports on the Setup selection ─────────────────────────
+
+
+def _scoped_results(monkeypatch, result):
+    """``{sub-deck label: the result its PAGES are computed from}``.
+
+    Captured at ``_build_subdeck``, which is exactly what the page providers
+    (grids, gwp_page, lc_page…) are handed.
+    """
+    seen = {}
+    build = A._build_subdeck
+
+    def capture(template_name, scoped_result, values, label):
+        seen[label] = scoped_result
+        return build(template_name, scoped_result, values, label)
+
+    monkeypatch.setattr(A, "_build_subdeck", capture)
+    A.plan_subdecks(result)
+    return seen
+
+
+def test_the_overall_block_keeps_the_pinned_products(split_templates, monkeypatch):
+    """Regression: the overall summary dropped the product filter outright, so a run
+    pinned to two lines still reported the carrier's whole book on page 2."""
+    result = C.OverallResult(
+        subject="ACME", flow="gpr",
+        resolved_filters={"Product_Line": ("Aviation", "Marine"), "Country": ("UK",)},
+    )
+    seen = _scoped_results(monkeypatch, result)
+    assert seen["overall"].resolved_filters["Product_Line"] == ("Aviation", "Marine")
+    assert seen["overall"].resolved_filters["Country"] == ("UK",)
+
+
+def test_every_subdeck_carries_the_runs_whole_product_selection(split_templates, monkeypatch):
+    """A per-product sub-deck narrows to one line, so the SELECTION has to travel
+    separately — a portfolio page inside it ranks against the run, not the book."""
+    result = C.OverallResult(
+        subject="ACME", flow="gpr",
+        resolved_filters={"Product_Line": ("Aviation", "Marine")},
+    )
+    seen = _scoped_results(monkeypatch, result)
+    for scoped in seen.values():
+        assert scoped.scope_products == ("Aviation", "Marine")
+    assert seen["Marine"].resolved_filters["Product_Line"] == "Marine"
+
+
+def test_an_unfiltered_run_carries_no_product_selection(split_templates, monkeypatch):
+    """The fallback book is not a selection — nothing to narrow a portfolio page to."""
+    monkeypatch.setattr(A, "product_vocab", lambda r: ("Marine", "Property"))
+    seen = _scoped_results(monkeypatch, C.OverallResult(subject="ACME", flow="gpr"))
+    assert seen["overall"].scope_products == ()
+
+
 def test_plan_skips_unregistered_axes(tmp_path, monkeypatch):
     # Only 'overall' registered → product/country selections are ignored.
     overall = _tiny_template(str(tmp_path / "overall.pptx"), 3)

@@ -205,3 +205,29 @@ def test_the_survey_tile_is_bound_even_though_this_database_cannot_fill_it():
 
     roles = {b.role for b in get_binding_map("overall").bindings}
     assert "survey_score" in roles
+
+
+# ── the Setup selection governs page 2, not only the pages after it ──────────
+
+
+def test_pinned_products_narrow_the_overall_summary_and_the_ranking_page():
+    """The overall block used to drop the product filter outright, so page 2 reported the
+    carrier's WHOLE book however narrow the Setup selection was — and the portfolio page
+    behind it ranked every line of business rather than the ones that were picked.
+
+    Runs the real plan over the real overall template against the seed DB.
+    """
+    picked = ["Cyber", "Marine"]
+    whole = plan_subdecks(compute_overall(filters=_SELECTION))[0]
+    narrow = plan_subdecks(compute_overall(filters={**_SELECTION, "product_line": picked}))[0]
+    assert whole.template == narrow.template == "overall"
+
+    # The headline figures follow the selection, so they are strictly smaller.
+    assert 0 < narrow.values["carrier_gwp"] < whole.values["carrier_gwp"]
+    assert 0 < narrow.values["marsh_gwp"] < whole.values["marsh_gwp"]
+
+    # …and the portfolio/ranking page plots exactly the lines that were picked.
+    ranked = {point["name"]
+              for panel in narrow.values["lc_ranking"].values()
+              for point in panel["points"]}
+    assert ranked and ranked <= set(picked)

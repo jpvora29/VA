@@ -35,7 +35,6 @@ from studio.template_fill.bindings import (
     resolve_roles,
     resolve_roles_for_country,
     resolve_roles_for_product,
-    scope_overall,
     scope_to_country,
     scope_to_product,
     selected_countries,
@@ -139,11 +138,12 @@ def plan_subdecks(result, *, scope: Optional[str] = None) -> List[SubDeck]:
     selection when they pin any, ELSE every product/country the carrier writes in (so an
     unfiltered run produces the carrier's full book, one block each).
 
-    The OVERALL block reports the carrier's whole book (``scope_overall`` drops any pinned
-    product-line filter) so its summary stays on overall numbers; the pinned products only
-    decide how many product pages follow. Each deck's values carry the entity roles,
-    breakdown-grid rows, and (for products) the product vocabulary the fill engine rewrites;
-    surplus per-country pages are pruned to the country count.
+    The OVERALL block reports on the SETUP SELECTION, filters and all: a run pinned to
+    Aviation and Marine summarises Aviation + Marine premium, SoW and rank, not the
+    carrier's whole book. The pinned products additionally decide how many product pages
+    follow it. Each deck's values carry the entity roles, breakdown-grid rows, and (for
+    products) the product vocabulary the fill engine rewrites; surplus per-country pages
+    are pruned to the country count.
     """
     axes = _axes_for(scope)
     names = _buildable()
@@ -153,9 +153,12 @@ def plan_subdecks(result, *, scope: Optional[str] = None) -> List[SubDeck]:
     products = (selected_products(result) or vocab) if want_products else ()
     countries = (selected_countries(result) or carrier_countries(result)) if want_countries else ()
 
-    # Every sub-deck sees the run's whole country set, so a page can tell a single-country
-    # run from a multi-country one even after its filters are narrowed to one country.
-    result = replace(result, scope_countries=tuple(str(c) for c in countries))
+    # Every sub-deck sees the run's whole country and product set, so a page can tell a
+    # single-country run from a multi-country one — and a portfolio page can widen a
+    # sub-deck's one-product pin back to the SELECTION — after its own filters are narrowed.
+    result = replace(result,
+                     scope_countries=tuple(str(c) for c in countries),
+                     scope_products=tuple(str(p) for p in selected_products(result)))
     carriers = carrier_vocab(result)
 
     def with_context(values: Dict[str, Any]) -> Dict[str, Any]:
@@ -164,9 +167,8 @@ def plan_subdecks(result, *, scope: Optional[str] = None) -> List[SubDeck]:
 
     decks: List[SubDeck] = []
     if OVERALL in axes and OVERALL in names:
-        overall_result = scope_overall(result)
-        decks.append(_build_subdeck(OVERALL, overall_result,
-                                    with_context(resolve_roles(overall_result)), "overall"))
+        decks.append(_build_subdeck(OVERALL, result,
+                                    with_context(resolve_roles(result)), "overall"))
     for product in products:
         values = with_context(resolve_roles_for_product(result, product))
         values["product_vocab"] = vocab

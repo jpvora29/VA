@@ -293,11 +293,12 @@ def register_setup(app):
         State("studio-commentary-style", "value"),
         State("studio-ai-toggle", "value"),
         State("studio-template", "value"),
+        State("studio-data-basis", "value"),
         State("qs-dataset", "data"),
         prevent_initial_call=True,
     )
     def generate(n, fvals, fids, cut_vals, cut_ids, peer_mode, custom_peers,
-                 audience, style, ai, template_scope, dataset_store):
+                 audience, style, ai, template_scope, data_basis, dataset_store):
         if not n:
             return no_update, no_update, no_update, no_update, no_update, no_update
         from studio.dataset.source import dataset_in_use
@@ -332,6 +333,10 @@ def register_setup(app):
             "ai": bool(ai),
             "template_scope": template_scope or "all",
             "template_path": _scope_template_path(template_scope),
+            # Which books the deck draws on ("premium" | "premium_survey"). Carried into
+            # every cached build so a change re-keys them; nothing reads it yet — the
+            # survey pages are a later change (see A.DATA_BASIS_OPTIONS).
+            "data_basis": data_basis or A.DATA_BASIS_DEFAULT,
             "dataset_id": record.dataset_id if record else None,
         }
         deck = _generated_deck(selection)

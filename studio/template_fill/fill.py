@@ -686,6 +686,12 @@ _LC_SIZE_HEADROOM = 1.04
 # top-5 line the rest of the deck benchmarks against. Kept unless the data ranks deeper,
 # in which case the axis grows to fit (and the boundary drifts with it).
 _LC_RANK_AXIS_MAX = 11.0
+# The ruling behind the points. The author drew none — their four example points were
+# labelled and placed by hand — but a refilled panel is READ off its axes, so both
+# directions get a hairline grid: pale enough to sit under the painted priority bands,
+# dark enough to carry the eye from a point to its tick.
+_LC_GRID_RGB = (0xD5, 0xDB, 0xE6)
+_LC_GRID_PT = 0.75
 
 _SHAPE_TYPE_FREEFORM, _SHAPE_TYPE_LINE, _SHAPE_TYPE_GROUP = 5, 9, 6
 # The furniture the author hand-drew AROUND their example points, all of which is positioned
@@ -826,7 +832,8 @@ def _fill_rank_scatter(chart, points: List[Dict[str, Any]], country: str) -> Non
     Both axes are re-scaled to the country's own numbers: the money axis to the largest pool
     (its ticks now shown, since the hand-drawn broken axis goes), the rank axis to the
     author's own 0–11 — which is what puts their band boundary on the top-5 line — widened
-    only if the carrier ranks deeper than that.
+    only if the carrier ranks deeper than that. Both are ruled, vertically and horizontally,
+    so a point can be read back to its pool size and its rank without a hand-drawn axis.
     """
     from pptx.chart.data import XyChartData
     from pptx.util import Pt
@@ -844,11 +851,13 @@ def _fill_rank_scatter(chart, points: List[Dict[str, Any]], country: str) -> Non
     size_axis.tick_labels.number_format_is_linked = False
     size_axis.tick_labels.font.size = Pt(_LC_LABEL_PT)
     _show_tick_labels(size_axis)
+    _rule_axis(size_axis)                           # the vertical grid
 
     rank_axis = chart.value_axis                    # the y axis: rank 1 at the top (maxMin)
     rank_axis.minimum_scale = 0.0
     rank_axis.maximum_scale = max(_LC_RANK_AXIS_MAX,
                                   max(float(p["rank"]) for p in points) + 1.0)
+    _rule_axis(rank_axis)                           # the horizontal grid
 
     for point, row, side in zip(chart.plots[0].series[0].points, points,
                                 _label_sides(points, size_axis.maximum_scale)):
@@ -896,6 +905,23 @@ def _show_tick_labels(axis) -> None:
     pos = axis._element.find(qn("c:tickLblPos"))
     if pos is not None:
         pos.set("val", "nextTo")
+
+
+def _rule_axis(axis) -> None:
+    """Rule the plot along ``axis`` — major gridlines, hairline and pale.
+
+    Called for BOTH axes of a ranking panel, so the plot is crossed by a vertical grid
+    (pool size) and a horizontal one (rank). The colour is deliberately quiet: the grid
+    has to survive being drawn over the author's painted priority bands without competing
+    with them or with the points.
+    """
+    from pptx.dml.color import RGBColor
+    from pptx.util import Pt
+
+    axis.has_major_gridlines = True
+    line = axis.major_gridlines.format.line
+    line.color.rgb = RGBColor(*_LC_GRID_RGB)
+    line.width = Pt(_LC_GRID_PT)
 
 
 def _name_point(point, text: str, side) -> None:
