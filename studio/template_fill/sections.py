@@ -44,7 +44,12 @@ class Section(str, Enum):
 # generic ones ("trading summary" before "summary"; "portfolio and lc"/"ranking" before
 # "portfolio analysis"; "gwp yoy growth" before the bare "growth rate" cue).
 _TITLE_RULES: List[tuple] = [
-    (("carrier survey", "survey"), Section.SURVEY),
+    # Deliberately the specific phrase, not the bare word "survey": a bare-word rule sitting
+    # first in a classifier shared by every template in the repo would silently steal any
+    # future page titled e.g. "NPS Survey" or "Broker Survey Results". "carrier survey" still
+    # matches the shipped template's title ("Carrier Survey") via substring, same as the other
+    # rules below.
+    (("carrier survey",), Section.SURVEY),
     (("swot",), Section.SWOT),
     (("trading summary",), Section.TRADING_SUMMARY),
     (("feedback",), Section.FEEDBACK),

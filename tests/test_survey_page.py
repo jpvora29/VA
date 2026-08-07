@@ -1,6 +1,8 @@
 """The Carrier Survey page — detection against the REAL template, and its fill payload."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from studio import seed as S
@@ -33,8 +35,13 @@ def test_the_survey_slide_classifies_as_its_own_section(template):
 
 
 def test_other_templates_are_unaffected_by_the_new_section_rule():
-    for name in ("overall", "country", "product"):
-        for slide in analyze(f"template/{name}_template.pptx").slides:
+    """Every OTHER top-level template, globbed (not hardcoded) so a template added later is
+    covered automatically — ``template/old`` is excluded on purpose, non-recursive glob."""
+    templates = sorted(Path("template").glob("*.pptx"))
+    others = [p for p in templates if p.name != "survey_template.pptx"]
+    assert others, "expected at least one other template to guard against"
+    for path in others:
+        for slide in analyze(str(path)).slides:
             assert section_of(slide) is not Section.SURVEY
 
 
