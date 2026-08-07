@@ -1213,16 +1213,18 @@ def _drop_think_cell(slide) -> None:
             sh._element.getparent().remove(sh._element)
 
 
-def _swap_image(slide, shape, png: bytes) -> bool:
-    """Point ``shape`` at ``png`` by replacing its image part's blob, keeping its frame."""
-    rid = shape._element.blipFill.blip.rEmbed
-    part = slide.part.related_part(rid)
-    if "png" not in str(getattr(part, "content_type", "")).lower():
-        logger.warning("template_fill: picture %s is not a PNG part; left as authored",
-                       shape.shape_id)
-        return False
-    part._blob = png
-    return True
+def _swap_image(slide, shape, png: bytes) -> None:
+    """Point ``shape`` at ``png``, keeping its authored frame, size and crop.
+
+    A NEW image part is minted and only this shape's blip is repointed. Mutating the
+    existing part's blob in place would be simpler but is wrong: python-pptx dedupes
+    image parts by content hash, so a part is frequently shared with other shapes —
+    and rewriting it silently changes every one of them.
+    """
+    from io import BytesIO
+
+    _, rid = slide.part.get_or_add_image_part(BytesIO(png))
+    shape._element.blipFill.blip.rEmbed = rid
 
 
 def _replace_pictures(prs, values: Dict[str, Any]) -> None:
@@ -1243,9 +1245,9 @@ def _replace_pictures(prs, values: Dict[str, Any]) -> None:
             if not png or not hasattr(sh._element, "blipFill"):
                 continue
             try:
-                if _swap_image(slide, sh, png):
-                    swapped += 1
-                    touched = True
+                _swap_image(slide, sh, png)
+                swapped += 1
+                touched = True
             except Exception as exc:  # noqa: BLE001 — a picture must never break the export
                 logger.warning("template_fill: picture swap skipped (%s): %s", sh.shape_id, exc)
         if touched:

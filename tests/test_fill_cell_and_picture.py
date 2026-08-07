@@ -80,6 +80,21 @@ def test_picture_replacement_keeps_the_authored_frame(deck):
     assert (after.left, after.top, after.width, after.height) == frame
 
 
+def test_swapping_one_picture_does_not_corrupt_a_sibling_sharing_its_image_part(deck):
+    # python-pptx dedupes image parts by content hash: two ``add_picture`` calls with
+    # identical bytes share ONE part and rId. A naive blob-in-place swap would silently
+    # rewrite both shapes; the fix mints a new part and repoints only the target's blip.
+    prs, _, picture_id = deck
+    slide = prs.slides[0]
+    sibling = slide.shapes.add_picture(io.BytesIO(_RED), Inches(4), Inches(4),
+                                       Inches(2), Inches(1))
+    F._replace_pictures(prs, {"pictures": {f"0:{picture_id}": _BLUE}})
+    swapped = next(s for s in slide.shapes if s.shape_id == picture_id)
+    untouched = next(s for s in slide.shapes if s.shape_id == sibling.shape_id)
+    assert swapped.image.blob == _BLUE
+    assert untouched.image.blob == _RED
+
+
 def test_think_cell_object_is_removed_from_a_refilled_slide(deck):
     prs, _, picture_id = deck
     slide = prs.slides[0]
@@ -90,8 +105,12 @@ def test_think_cell_object_is_removed_from_a_refilled_slide(deck):
 
 
 def test_think_cell_survives_a_slide_we_did_not_refill(deck):
-    prs, _, _ = deck
-    box = prs.slides[0].shapes.add_textbox(Inches(0), Inches(0), Inches(1), Inches(1))
+    # An empty ``pictures`` dict would trip the top-level no-op return before the slide
+    # loop ever runs, which would prove nothing about the per-slide ``touched`` scoping.
+    # Targeting a shape id that is not on this slide keeps the loop live but the flag False.
+    prs, _, picture_id = deck
+    slide = prs.slides[0]
+    box = slide.shapes.add_textbox(Inches(0), Inches(0), Inches(1), Inches(1))
     box.name = "think-cell data - do not delete"
-    F._replace_pictures(prs, {"pictures": {}})
-    assert [s for s in prs.slides[0].shapes if "think-cell" in s.name.lower()]
+    F._replace_pictures(prs, {"pictures": {f"0:{picture_id + 999}": _BLUE}})
+    assert [s for s in slide.shapes if "think-cell" in s.name.lower()]
