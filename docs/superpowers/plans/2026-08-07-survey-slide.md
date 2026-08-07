@@ -12,6 +12,15 @@
 
 - Design spec: `docs/superpowers/specs/2026-08-07-survey-slide-design.md`. Read it before starting.
 - Run everything with the repo venv: `.venv/Scripts/python.exe -m pytest ...` (do not use `uv run` — the lockfile lives on OneDrive and is flaky).
+- **Tests must inject their engine.** Pass `engine=` (from `studio.data.get_engine()`, which
+  falls back to the seed DB) into `compute_breakdown` calls and onto every `OverallResult`.
+  The repo convention — see `tests/test_studio_qbr_generation.py`. Without it the primitives
+  fall back to `core.initialization.Initialization.engine`, which requires `DB_PATH` to be
+  exported and points at whatever database the developer happens to have configured.
+- Pre-existing on this branch, NOT yours to fix: ~8 files error at collection (missing
+  `config.valid_values_config`, missing `core.skills.loader`, a stale path under
+  `codex changes/tests/`), and `tests/test_template_assemble.py::test_assemble_overall_only_when_no_selection_and_no_data`
+  fails when `DB_PATH` is set. Compare pass/fail counts against a baseline run; do not chase these.
 - Follow `CLAUDE.md`: one function does one job; dataclasses for internal contracts; pure functions for transformation/formatting; dict-dispatch over branching; no new abstract base classes.
 - Every provider called from `assemble.py` must be failure-tolerant — a broken survey page must never break the rest of the deck.
 - Confidentiality: no carrier name other than the deck's subject may reach the rendered output. `flows.yaml` sets `peer_names_allowed: false` for the `survey` flow.
@@ -176,7 +185,7 @@ def _survey_score(rng, *, carrier: str, section: str, practice: str, year: int) 
             + SURVEY_PRACTICES.index(practice))
     drift = _SURVEY_DRIFTS[slot % len(_SURVEY_DRIFTS)]
     elapsed = year - SURVEY_YEARS[0]
-    return round(min(10.0, max(1.0, base + drift * elapsed / 2.0 + rng.uniform(-0.15, 0.15))), 2)
+    return round(min(10.0, max(1.0, base + drift * elapsed + rng.uniform(-0.15, 0.15))), 2)
 
 
 def _survey_rows(rng: random.Random) -> List[dict]:
@@ -858,10 +867,19 @@ Append to `tests/test_survey_facts.py`:
 
 
 def _result(country="Singapore", peers=None):
+    """A result scoped to one country, with the seed engine injected explicitly.
+
+    The engine is injected so the suite needs no ``DB_PATH`` — the repo convention (see
+    ``tests/test_studio_qbr_generation.py``). Without it the primitives fall back to
+    ``core.initialization.Initialization.engine``, which points at whatever database the
+    developer happens to have configured.
+    """
     from studio.compute import OverallResult
+    from studio.data import get_engine
 
     return OverallResult(subject=S.SUBJECT, flow="gpr",
-                         resolved_filters={"Country": country}, peers=peers)
+                         resolved_filters={"Country": country}, peers=peers,
+                         engine=get_engine())
 
 
 def test_has_survey_data_is_true_for_a_seeded_country(seeded):
@@ -1543,11 +1561,13 @@ def template():
 
 @pytest.fixture(scope="module")
 def result():
+    """Injects the seed engine explicitly so the test needs no ``DB_PATH``."""
     from studio.compute import OverallResult
+    from studio.data import get_engine
 
     S.ensure_seed_db()
     return OverallResult(subject=S.SUBJECT, flow="gpr",
-                         resolved_filters={"Country": "Singapore"})
+                         resolved_filters={"Country": "Singapore"}, engine=get_engine())
 
 
 def test_the_survey_slide_classifies_as_its_own_section(template):
@@ -1629,9 +1649,10 @@ def test_values_survives_a_broken_renderer(template, result, monkeypatch):
 
 def test_values_is_empty_for_a_country_with_no_survey(template):
     from studio.compute import OverallResult
+    from studio.data import get_engine
 
     result = OverallResult(subject=S.SUBJECT, flow="gpr",
-                           resolved_filters={"Country": "Atlantis"})
+                           resolved_filters={"Country": "Atlantis"}, engine=get_engine())
     assert P.values(template, result) == {}
 
 
