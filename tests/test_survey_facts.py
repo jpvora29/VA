@@ -10,7 +10,13 @@ from studio import seed as S
 
 @pytest.fixture(scope="module")
 def seeded():
-    return S.ensure_seed_db()
+    """The seed DB's engine. Injected explicitly so the suite needs no DB_PATH — the
+    repo convention (see tests/test_studio_qbr_generation.py), and the reason these
+    tests do not depend on whatever database the developer happens to have configured."""
+    from studio.data import get_engine
+
+    S.ensure_seed_db()
+    return get_engine()
 
 
 def test_seed_has_survey_rows(seeded):
@@ -18,6 +24,7 @@ def test_seed_has_survey_rows(seeded):
         PrimitiveArgs(flow="survey", metric="score", group_by=("Sections",),
                       filters={"Carrier": S.SUBJECT, "SurveyCountry": "Singapore",
                                "Survey_Year": 2025}),
+        engine=seeded,
     )
     sections = {f.dims["Sections"] for f in facts}
     assert sections == set(S.SURVEY_SECTIONS)
@@ -30,6 +37,7 @@ def test_seed_survey_scores_move_year_on_year(seeded):
             PrimitiveArgs(flow="survey", metric="score", group_by=("Sections", "SurveyPractice"),
                           filters={"Carrier": S.SUBJECT, "SurveyCountry": "Singapore",
                                    "Survey_Year": year}),
+            engine=seeded,
         )
         return {(f.dims["Sections"], f.dims["SurveyPractice"]): f.value for f in facts}
 
