@@ -65,6 +65,30 @@ PRODUCTS: Dict[str, List] = {
 }
 SEGMENTS = ["Risk Management", "Corporate", "Commercial"]
 YEARS = [2023, 2024, 2025]
+
+# ── survey book (the `Carriers` table behind the Carrier Survey page) ────────
+# Section and practice labels are the ones AUTHORED INTO template/survey_template.pptx —
+# the page fills by header match, so these must stay byte-identical to the table's own
+# row/column headers (note the EN DASH in the two Claims sections).
+SURVEY_SECTIONS = [
+    "Underwriting",
+    "Client Focus",
+    "Policy Administration",
+    "Claims – Claims Professionals",
+    "Claims – Non-Claims Professionals",
+    "Loss Control",
+]
+SURVEY_PRACTICES = [
+    "CE/CM", "Claims", "Cyber", "Energy", "FINPRO", "Property", "Marsh Multinational",
+]
+SURVEY_ATTRIBUTES = ["Responsiveness", "Expertise", "Accuracy"]
+SURVEY_YEARS = [2023, 2024, 2025]
+
+# Per-(section, practice) year-on-year drift, cycled deterministically so the seeded book
+# exercises EVERY band in the template's legend — including both extremes. Without this the
+# cell colours would all land in the neutral band and the page would look unfilled.
+_SURVEY_DRIFTS = (-1.4, -0.8, -0.35, 0.0, 0.35, 0.8, 1.4)
+
 # Per-carrier strength multiplier (subject is a strong-but-not-leading #6-ish).
 _CARRIER_STRENGTH = {c: w for c, w in zip(CARRIERS, [0.85, 1.15, 1.05, 0.95, 0.8, 0.7, 0.6, 0.55, 0.5, 0.48, 0.65, 0.9])}
 # Industries where the subject is growing fast (drives the >100% YoY rule demo).
@@ -101,6 +125,13 @@ _SUBJECT_PEERS: Dict[str, List[str]] = {
 }
 
 
+def _peer_row(carrier: str, country: str, peer: str) -> dict:
+    """One Peers row, named for BOTH flows — GPR reads Carrier_Group/Overall_Peer_Group,
+    survey reads Carrier/Peers (see ``peer_columns`` in flows.yaml)."""
+    return {"Carrier_Group": carrier, "Carrier": carrier, "Country": country,
+            "Overall_Peer_Group": peer, "Peers": peer}
+
+
 def _peer_rows(rng: random.Random) -> List[dict]:
     """The Peers table: one row per (carrier, country, peer).
 
@@ -110,12 +141,53 @@ def _peer_rows(rng: random.Random) -> List[dict]:
     rows: List[dict] = []
     for country in COUNTRIES:
         for peer in _SUBJECT_PEERS[country]:
-            rows.append({"Carrier_Group": SUBJECT, "Country": country, "Overall_Peer_Group": peer})
+            rows.append(_peer_row(SUBJECT, country, peer))
         for carrier in CARRIERS:  # a small generic mapping for the rest
             if carrier == SUBJECT:
                 continue
             for peer in rng.sample([c for c in CARRIERS if c != carrier], 4):
-                rows.append({"Carrier_Group": carrier, "Country": country, "Overall_Peer_Group": peer})
+                rows.append(_peer_row(carrier, country, peer))
+    return rows
+
+
+def _survey_score(rng, *, carrier: str, section: str, practice: str, year: int) -> float:
+    """One survey response score on the 1–10 scale, deterministic and band-spanning.
+
+    Built from a carrier's own standing plus a stable per-(section, practice) drift, so
+    the year-on-year change a cell shows is a real, reproducible signal rather than noise.
+    """
+    base = 5.9 + 1.4 * _CARRIER_STRENGTH[carrier] / 1.15
+    slot = (SURVEY_SECTIONS.index(section) * len(SURVEY_PRACTICES)
+            + SURVEY_PRACTICES.index(practice))
+    drift = _SURVEY_DRIFTS[slot % len(_SURVEY_DRIFTS)]
+    elapsed = year - SURVEY_YEARS[0]
+    return round(min(10.0, max(1.0, base + drift * elapsed + rng.uniform(-0.15, 0.15))), 2)
+
+
+def _survey_rows(rng: random.Random) -> List[dict]:
+    """The `Carriers` table — one row per carrier · country · practice · section ·
+    attribute · year. Schema matches ``core/registry/flows.yaml``'s ``survey`` flow."""
+    rows: List[dict] = []
+    for carrier in CARRIERS:
+        for country in COUNTRIES:
+            for practice in SURVEY_PRACTICES:
+                for section in SURVEY_SECTIONS:
+                    for year in SURVEY_YEARS:
+                        score = _survey_score(rng, carrier=carrier, section=section,
+                                              practice=practice, year=year)
+                        for attribute in SURVEY_ATTRIBUTES:
+                            rows.append({
+                                "Region": REGION_OF[country],
+                                "SurveyCountry": country,
+                                "Carrier": carrier,
+                                "SurveyPractice": practice,
+                                "Sections": section,
+                                "Attributes": attribute,
+                                "SurveySegment": rng.choice(SEGMENTS),
+                                "Survey_Year": year,
+                                "Score": score,
+                                "NPS Score": round(min(10.0, max(0.0, score - 0.4)), 2),
+                            })
     return rows
 
 
@@ -167,10 +239,12 @@ def build_seed(path: Path = _SEED_PATH) -> Path:
     gpr = pd.DataFrame(rows)
 
     peers = pd.DataFrame(_peer_rows(rng))
+    survey = pd.DataFrame(_survey_rows(rng))
 
     engine = create_engine(f"sqlite:///{path}")
     gpr.to_sql("GPR", engine, index=False, if_exists="replace")
     peers.to_sql("Peers", engine, index=False, if_exists="replace")
+    survey.to_sql("Carriers", engine, index=False, if_exists="replace")
     engine.dispose()
     return path
 
@@ -178,16 +252,20 @@ def build_seed(path: Path = _SEED_PATH) -> Path:
 def _matches_current_schema(path: Path) -> bool:
     """Whether an existing seed has the schema this module now builds.
 
-    Peers gained a ``Country`` column (peer groups are per-market). An older seed
-    would resolve NO peers at all under a country filter, which looks like missing
-    data rather than a stale file — so detect it and rebuild.
+    Two migrations so far: Peers gained a ``Country`` column (peer groups are per-market),
+    then a ``Carrier``/``Peers`` naming pair so the SAME table serves the survey flow, and
+    the survey book itself arrived as ``Carriers``. An older seed would resolve no peers or
+    no survey rows at all, which looks like missing data rather than a stale file — so
+    detect it and rebuild.
     """
     from sqlalchemy import inspect
 
     engine = None
     try:
         engine = create_engine(f"sqlite:///{path}")
-        return "Country" in {c["name"] for c in inspect(engine).get_columns("Peers")}
+        inspector = inspect(engine)
+        peer_cols = {c["name"] for c in inspector.get_columns("Peers")}
+        return {"Country", "Carrier"} <= peer_cols and "Carriers" in inspector.get_table_names()
     except Exception:  # noqa: BLE001 — an unreadable seed is simply rebuilt
         return False
     finally:
