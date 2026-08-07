@@ -297,8 +297,11 @@ Expected: same pass/fail counts as before this task.
 
 - [ ] **Step 9: Commit**
 
+`studio/_seed/` is git-ignored — the seed DB is a generated artifact and stays that way.
+`ensure_seed_db` rebuilds it wherever the schema check (Step 6) fails, so do NOT force-add it.
+
 ```bash
-git add studio/seed.py tests/test_survey_facts.py studio/_seed/studio_seed.db
+git add studio/seed.py tests/test_survey_facts.py
 git commit -m "feat: seed the survey book so the Carrier Survey page is testable locally"
 ```
 
@@ -2298,7 +2301,6 @@ from studio.template_fill.assemble import assemble_deck, plan_subdecks
 pytestmark = pytest.mark.e2e
 
 _SELECTION = {"carrier": "Zurich", "country": ["Singapore", "Japan"], "year": 2025}
-_COUNTRY_SLIDES = 5
 
 
 @pytest.fixture(scope="module")
@@ -2430,12 +2432,16 @@ def test_no_peer_carrier_is_named_anywhere_on_the_page(survey_deck):
 # ── regression: the premium-only deck must be untouched ──────────────────────
 
 
-def test_premium_only_deck_is_unchanged_by_this_feature(result, tmp_path):
+def test_premium_only_deck_is_unchanged_by_this_feature(result, survey_deck, tmp_path):
+    """The premium deck carries no survey page, and the survey deck adds EXACTLY one
+    slide per country to it — derived from the two decks, so neither count is hardcoded
+    against a template that may gain or lose slides for unrelated reasons."""
     premium = assemble_deck(result, out_path=str(tmp_path / "premium.pptx"),
                             work_dir=str(tmp_path / "w1"), data_basis="premium")
     assert not _survey_slides(premium)
-    expected = 6 + len(_SELECTION["country"]) * _COUNTRY_SLIDES + 1   # overall + countries + end
-    assert len(Presentation(premium).slides._sldIdLst) == expected
+    premium_n = len(Presentation(premium).slides._sldIdLst)
+    survey_n = len(Presentation(survey_deck).slides._sldIdLst)
+    assert survey_n - premium_n == len(_SELECTION["country"])
 
 
 def test_default_data_basis_still_produces_the_premium_deck(result, tmp_path):
@@ -2449,10 +2455,10 @@ def test_default_data_basis_still_produces_the_premium_deck(result, tmp_path):
 ```
 .venv/Scripts/python.exe -m pytest tests/test_survey_end_to_end.py -v
 ```
-Expected: PASS. If `test_premium_only_deck_is_unchanged_by_this_feature` fails on the slide
-COUNT, read the actual count off the failure and correct `expected` — the overall block's
-slide count is a property of the shipped template, not of this feature. Do NOT relax the
-`not _survey_slides(premium)` assertion.
+Expected: PASS. Both counts in `test_premium_only_deck_is_unchanged_by_this_feature` are
+derived from the two decks it builds, so a template that gains or loses slides for unrelated
+reasons cannot make it fail. If it DOES fail, the delta is wrong — that is a real defect in
+this feature, not a number to adjust. Never relax it to make it pass.
 
 - [ ] **Step 3: Run the whole suite, e2e included**
 
