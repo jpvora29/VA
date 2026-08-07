@@ -29,6 +29,7 @@ class Section(str, Enum):
     GWP_PERFORMANCE = "gwp_performance"
     PORTFOLIO = "portfolio"
     FEEDBACK = "feedback"
+    SURVEY = "survey"
     RANKING = "ranking"
     GROWTH = "growth"
     SWOT = "swot"
@@ -43,6 +44,7 @@ class Section(str, Enum):
 # generic ones ("trading summary" before "summary"; "portfolio and lc"/"ranking" before
 # "portfolio analysis"; "gwp yoy growth" before the bare "growth rate" cue).
 _TITLE_RULES: List[tuple] = [
+    (("carrier survey", "survey"), Section.SURVEY),
     (("swot",), Section.SWOT),
     (("trading summary",), Section.TRADING_SUMMARY),
     (("feedback",), Section.FEEDBACK),
