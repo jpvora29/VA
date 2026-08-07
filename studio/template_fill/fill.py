@@ -1154,6 +1154,105 @@ def _fill_charts(prs, values: Dict[str, Any]) -> None:
                 logger.warning("template_fill: chart fill skipped (%s): %s", ctype, exc)
 
 
+# ── table-cell backgrounds ───────────────────────────────────────────────────
+
+
+def _paint_cell(table, spec: Dict[str, Any]) -> None:
+    """Paint one cell: a hex fills it solid, ``None`` clears it back to no fill."""
+    from pptx.dml.color import RGBColor
+
+    cell = table.cell(int(spec["r"]), int(spec["c"]))
+    hexv = spec.get("hex")
+    if hexv:
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = RGBColor.from_string(str(hexv).lstrip("#").upper())
+    else:
+        cell.fill.background()
+
+
+def _fill_cell_backgrounds(prs, values: Dict[str, Any]) -> None:
+    """Paint table cells from the ``cell_fills`` payload, addressed by ``slide:shape``.
+
+    The Carrier Survey table encodes each score's year-on-year move as the CELL COLOUR
+    (:mod:`studio.template_fill.survey.bands`), which no text write can express — so the
+    payload names the cells and their colours, and this writes them. Generic: any page can
+    emit ``cell_fills``.
+    """
+    fills = values.get("cell_fills") or {}
+    if not fills:
+        return
+    painted = 0
+    for sidx, slide in enumerate(prs.slides):
+        for sh in _iter_leaves(slide.shapes):
+            specs = fills.get(f"{sidx}:{int(sh.shape_id)}")
+            if not specs or not getattr(sh, "has_table", False):
+                continue
+            for spec in specs:
+                try:
+                    _paint_cell(sh.table, spec)
+                    painted += 1
+                except Exception as exc:  # noqa: BLE001 — one cell must not break the deck
+                    logger.warning("template_fill: cell fill skipped (%s): %s", spec, exc)
+    logger.info("template_fill: painted %d table cell(s)", painted)
+
+
+# ── picture replacement ──────────────────────────────────────────────────────
+
+_THINK_CELL = "think-cell"
+
+
+def _drop_think_cell(slide) -> None:
+    """Remove the think-cell data object from a slide whose picture we just replaced.
+
+    The authored chart is a think-cell RENDER plus a hidden data object. Leaving the data
+    behind means a viewer with think-cell installed can re-render the author's example
+    numbers straight over the chart we just filled.
+    """
+    for sh in list(slide.shapes):
+        if _THINK_CELL in str(getattr(sh, "name", "") or "").lower():
+            sh._element.getparent().remove(sh._element)
+
+
+def _swap_image(slide, shape, png: bytes) -> bool:
+    """Point ``shape`` at ``png`` by replacing its image part's blob, keeping its frame."""
+    rid = shape._element.blipFill.blip.rEmbed
+    part = slide.part.related_part(rid)
+    if "png" not in str(getattr(part, "content_type", "")).lower():
+        logger.warning("template_fill: picture %s is not a PNG part; left as authored",
+                       shape.shape_id)
+        return False
+    part._blob = png
+    return True
+
+
+def _replace_pictures(prs, values: Dict[str, Any]) -> None:
+    """Swap picture images from the ``pictures`` payload, addressed by ``slide:shape``.
+
+    Some authored visuals are images, not charts — the Carrier Survey ribbon is a pasted
+    think-cell render — so the only way to fill them is to draw our own and put it in the
+    same frame. PNG in, PNG out; the shape's position, size and crop are untouched.
+    """
+    pictures = values.get("pictures") or {}
+    if not pictures:
+        return
+    swapped = 0
+    for sidx, slide in enumerate(prs.slides):
+        touched = False
+        for sh in _iter_leaves(slide.shapes):
+            png = pictures.get(f"{sidx}:{int(sh.shape_id)}")
+            if not png or not hasattr(sh._element, "blipFill"):
+                continue
+            try:
+                if _swap_image(slide, sh, png):
+                    swapped += 1
+                    touched = True
+            except Exception as exc:  # noqa: BLE001 — a picture must never break the export
+                logger.warning("template_fill: picture swap skipped (%s): %s", sh.shape_id, exc)
+        if touched:
+            _drop_think_cell(slide)
+    logger.info("template_fill: replaced %d picture(s)", swapped)
+
+
 # ── hidden / reordered slides ────────────────────────────────────────────────
 
 
@@ -1221,6 +1320,8 @@ def fill_template(doc: Dict[str, Any], *, out_path: Optional[str] = None) -> str
         _add_elements(slide, doc.get("added", {}).get(str(sidx), []), width_emu, height_emu)
 
     _fill_charts(prs, values)
+    _fill_cell_backgrounds(prs, values)
+    _replace_pictures(prs, values)
 
     n = len(prs.slides)
     _apply_order(prs, doc.get("order", list(range(n))), doc.get("hidden", []))
