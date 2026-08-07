@@ -156,3 +156,56 @@ def test_load_ribbon_caps_the_stack_but_never_drops_the_subject(seeded):
     for column in spec.columns:
         assert len(column.boxes) == facts.MAX_RIBBON_ROWS
         assert any(b.highlight for b in column.boxes)
+
+
+# ── _capped, in isolation ─────────────────────────────────────────────────────
+#
+# The DB-backed test above exercises `load_ribbon`'s cap end to end, but with the
+# seeded data Zurich always lands inside the top MAX_RIBBON_ROWS anyway (rank 5 of 12
+# in Underwriting/2025/Singapore), so plain `boxes[:MAX_RIBBON_ROWS]` truncation already
+# keeps it — the swap-in branch (`kept[-1] = subject; kept.sort(...)`) never runs there.
+# These tests force the subject below the cap by hand so that branch is actually covered,
+# independent of wherever a seeded carrier happens to rank.
+
+
+def test_capped_keeps_the_subject_when_it_ranks_below_the_cap():
+    from studio.template_fill.survey import facts
+    from studio.template_fill.survey.ribbon import RibbonBox
+
+    # 11 peers, best-score-first, then the subject last — below the cap.
+    peers = [RibbonBox(f"Peer{i}", float(12 - i)) for i in range(11)]  # scores 12..2
+    subject = RibbonBox("Zurich", 1.0, highlight=True)
+    boxes = peers + [subject]
+
+    capped = facts._capped(boxes)
+
+    # Exactly MAX_RIBBON_ROWS boxes, still best-score-first.
+    assert len(capped) == facts.MAX_RIBBON_ROWS
+    scores = [b.score for b in capped]
+    assert scores == sorted(scores, reverse=True)
+
+    # The subject is present, and only once.
+    assert sum(1 for b in capped if b.highlight) == 1
+    assert next(b for b in capped if b.highlight).carrier == "Zurich"
+
+    # The displaced box is the lowest-scoring PEER that was inside the original
+    # top-MAX_RIBBON_ROWS window (Peer8, score 4) — not some other peer.
+    displaced = peers[facts.MAX_RIBBON_ROWS - 1]
+    assert displaced not in capped
+    for kept_peer in peers[: facts.MAX_RIBBON_ROWS - 1]:
+        assert kept_peer in capped
+    # Peers that were never inside the cap stay excluded too.
+    for excluded_peer in peers[facts.MAX_RIBBON_ROWS:]:
+        assert excluded_peer not in capped
+
+
+def test_capped_passes_through_unchanged_at_or_under_the_cap():
+    from studio.template_fill.survey import facts
+    from studio.template_fill.survey.ribbon import RibbonBox
+
+    at_cap = tuple(RibbonBox(f"Peer{i}", float(9 - i), highlight=(i == 3))
+                    for i in range(facts.MAX_RIBBON_ROWS))
+    assert facts._capped(at_cap) == at_cap
+
+    under_cap = at_cap[:5]
+    assert facts._capped(under_cap) == under_cap
