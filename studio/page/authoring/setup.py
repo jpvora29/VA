@@ -235,9 +235,8 @@ def _data_source_control(dataset_state: Optional[Mapping[str, Any]]) -> html.Div
     )
 
 
-# Which books the deck draws on. Wired end-to-end (control → selection → build) but
-# INERT for now: both choices produce today's premium-only deck. Adding the survey
-# pages is a separate change that reads ``selection["data_basis"]``.
+# Which books the deck draws on. "premium_survey" appends a Carrier Survey page to each
+# country block (see studio.template_fill.assemble.plan_subdecks).
 DATA_BASIS_DEFAULT = "premium"
 DATA_BASIS_OPTIONS = (
     {"label": "Premium only", "value": "premium"},
@@ -252,14 +251,8 @@ def _data_basis_control() -> html.Div:
     (what the deck is built FROM), so they read as one block.
     """
     return html.Div(
-        [
-            _radio_field("DATA BASIS", "studio-data-basis",
-                         list(DATA_BASIS_OPTIONS), DATA_BASIS_DEFAULT),
-            html.Div(
-                "Survey pages are not generated yet — this choice is recorded with the deck.",
-                className="qs-basis-note",
-            ),
-        ],
+        [_radio_field("DATA BASIS", "studio-data-basis",
+                      list(DATA_BASIS_OPTIONS), DATA_BASIS_DEFAULT)],
         className="qs-basis-field",
     )
 

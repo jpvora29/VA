@@ -26,6 +26,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from logger import get_logger
 from studio.template_fill import commentary, feedback, grids, gwp_page, kpi_band, lc_page, prune
 from studio.template_fill import roles as R
+from studio.template_fill.survey import facts as survey_facts
+from studio.template_fill.survey import page as survey_page
 from studio.template_fill.analyze import analyze
 from studio.template_fill.binding_map import BindingMap, available, get_binding_map
 from studio.template_fill.bindings import (
@@ -50,6 +52,12 @@ OVERALL = "overall"
 PRODUCT = "product"
 COUNTRY = "country"
 END = "end"
+
+# The Carrier Survey page. NOT a member of _SCOPE_AXES: it is not a scope choice but a
+# DATA BASIS one — the Setup form's "Premium + survey" — so it is gated separately, and
+# rides along with whichever country blocks the chosen scope already builds.
+SURVEY = "survey"
+DATA_BASIS_WITH_SURVEY = "premium_survey"
 
 # Which sub-deck axes each Setup "scope" choice assembles, in deck order. "all" is the full
 # deck; the single-axis choices let the author generate just the overall, product or country
@@ -100,7 +108,16 @@ def _country_count(values: Dict[str, Any]) -> int:
     return sum(1 for k in values if k.startswith("country_name["))
 
 
-def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], label: str) -> SubDeck:
+# What each sub-deck's values are enriched with, in order. The survey page shares none of
+# the premium providers — its numbers come from a different book entirely — so giving it
+# its own list keeps it off five queries that could only ever return nothing.
+_PREMIUM_PROVIDERS = (grids.grid_values, gwp_page.values, lc_page.values,
+                      feedback.values, commentary.values)
+_SURVEY_PROVIDERS = (survey_page.values,)
+
+
+def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], label: str,
+                   *, providers=_PREMIUM_PROVIDERS) -> SubDeck:
     """Finish a sub-deck: fold in grid rows, table commentary/KPIs and prose commentary,
     then drop surplus country pages.
 
@@ -110,8 +127,7 @@ def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], la
     hidden: Tuple[int, ...] = ()
     try:
         template = analyze(get_binding_map(template_name).path)
-        for provider in (grids.grid_values, gwp_page.values, lc_page.values,
-                         feedback.values, commentary.values):
+        for provider in providers:
             try:
                 extra = provider(template, scoped_result)
             except Exception as exc:  # noqa: BLE001 — one provider must not sink the rest
@@ -129,7 +145,8 @@ def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], la
     return SubDeck(template_name, values, label=label, hidden=hidden)
 
 
-def plan_subdecks(result, *, scope: Optional[str] = None) -> List[SubDeck]:
+def plan_subdecks(result, *, scope: Optional[str] = None,
+                  data_basis: Optional[str] = None) -> List[SubDeck]:
     """The ordered sub-decks for ``result``: overall, then per product, then per country.
 
     ``scope`` (from the Setup "scope" control) selects which axes to build — the full deck
@@ -137,6 +154,10 @@ def plan_subdecks(result, *, scope: Optional[str] = None) -> List[SubDeck]:
     template being registered AND present on disk. The product/country entities are the user's
     selection when they pin any, ELSE every product/country the carrier writes in (so an
     unfiltered run produces the carrier's full book, one block each).
+
+    ``data_basis`` (the Setup form's DATA BASIS control) decides whether each country block
+    is followed by its Carrier Survey page. Only ``"premium_survey"`` generates it, and only
+    for a country that actually has a survey book — the rest keep today's five-slide block.
 
     The OVERALL block reports on the SETUP SELECTION, filters and all: a run pinned to
     Aviation and Marine summarises Aviation + Marine premium, SoW and rank, not the
@@ -152,6 +173,8 @@ def plan_subdecks(result, *, scope: Optional[str] = None) -> List[SubDeck]:
     want_countries = COUNTRY in axes and COUNTRY in names
     products = (selected_products(result) or vocab) if want_products else ()
     countries = (selected_countries(result) or carrier_countries(result)) if want_countries else ()
+    want_survey = (str(data_basis or "") == DATA_BASIS_WITH_SURVEY
+                   and SURVEY in names and want_countries)
 
     # Every sub-deck sees the run's whole country and product set, so a page can tell a
     # single-country run from a multi-country one — and a portfolio page can widen a
@@ -177,6 +200,13 @@ def plan_subdecks(result, *, scope: Optional[str] = None) -> List[SubDeck]:
         decks.append(_build_subdeck(COUNTRY, scope_to_country(result, country),
                                     with_context(resolve_roles_for_country(result, country)),
                                     str(country)))
+        if want_survey and survey_facts.has_survey_data(result, country):
+            decks.append(_build_subdeck(
+                SURVEY, scope_to_country(result, country),
+                # The page needs no premium roles — only its own country label, which the
+                # fill engine's "Country (1)" substitution reads.
+                {"country_name[0]": str(country)}, f"{country} survey",
+                providers=_SURVEY_PROVIDERS))
     if END in axes and END in names:
         decks.append(SubDeck(END, {}, label="end"))
     return decks
@@ -196,6 +226,7 @@ def _augmented_manifest(bmap: BindingMap) -> List[Dict[str, Any]]:
       * ``kpi_band.augment`` — the headline "Marsh GWP · Carrier GWP · SoW% · Rank" band;
       * ``commentary.augment`` — the prose slots (Trading Summary etc.);
       * ``feedback.augment`` — the feedback/quadrant/highlight cells and panels.
+      * ``survey_page.augment`` — the Carrier Survey table's score cells.
     """
     key = (bmap.name, bmap.path)
     cached = _manifest_cache.get(key)
@@ -203,7 +234,7 @@ def _augmented_manifest(bmap: BindingMap) -> List[Dict[str, Any]]:
         template = analyze(bmap.path)
         bindings = R.manifest_from_dicts(bmap.manifest())
         for augment in (grids.augment, gwp_page.augment, kpi_band.augment,
-                        commentary.augment, feedback.augment):
+                        commentary.augment, feedback.augment, survey_page.augment):
             bindings = augment(template, bindings)
         cached = _manifest_cache[key] = R.manifest_to_dicts(bindings)
     return cached
@@ -230,13 +261,13 @@ def _fill_subdeck(sub: SubDeck, work_dir: str, idx: int) -> str:
 
 
 def assemble_deck(result, *, out_path: Optional[str] = None, work_dir: Optional[str] = None,
-                  scope: Optional[str] = None) -> str:
+                  scope: Optional[str] = None, data_basis: Optional[str] = None) -> str:
     """Fill every sub-deck for ``result`` and merge them, in order, into ``out_path``.
 
     ``scope`` picks which axes to assemble (see :func:`plan_subdecks`); ``work_dir`` holds
     the intermediate filled sub-decks (a temp dir by default).
     """
-    decks = plan_subdecks(result, scope=scope)
+    decks = plan_subdecks(result, scope=scope, data_basis=data_basis)
     tmp = work_dir or tempfile.mkdtemp(prefix="qbr_assemble_")
     Path(tmp).mkdir(parents=True, exist_ok=True)
     filled = [_fill_subdeck(sub, tmp, i) for i, sub in enumerate(decks)]

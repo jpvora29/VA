@@ -216,7 +216,8 @@ def _assembled_for(selection_json: str) -> Optional[str]:
     subject = str(filters.get("carrier", "Carrier")).replace(" ", "_")
     tag = hashlib.sha1(selection_json.encode("utf-8")).hexdigest()[:8]
     out = Path(tempfile.gettempdir()) / f"{subject}_{tag}_QBR.pptx"
-    return assemble_deck(result, out_path=str(out), scope=selection.get("template_scope"))
+    return assemble_deck(result, out_path=str(out), scope=selection.get("template_scope"),
+                         data_basis=selection.get("data_basis"))
 
 
 def _assembled_export(selection: Optional[Dict[str, Any]]) -> Optional[str]:
