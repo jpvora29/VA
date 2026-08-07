@@ -493,11 +493,16 @@ In `pyproject.toml`, in the `dependencies` list, after the two `plotly` entries:
     "kaleido>=1.0.0",
 ```
 
-Install it:
+Install it, then update the lockfile:
 
 ```
 .venv/Scripts/python.exe -m pip install "kaleido>=1.0.0"
+uv lock
 ```
+
+`uv.lock` is tracked, so a dependency added to `pyproject.toml` without relocking means a
+fresh clone never installs it. `uv lock` is flaky on this OneDrive checkout — if it does not
+complete cleanly, do NOT hand-edit the lockfile; report it instead.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -608,11 +613,7 @@ from __future__ import annotations
 
 import textwrap
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
-
-from logger import get_logger
-
-logger = get_logger(__name__)
+from typing import Dict, List, Tuple
 
 # Sampled from the authored picture so a refilled chart is indistinguishable in style.
 CARRIER_FILL = "#7BBCFC"
@@ -667,7 +668,12 @@ class RibbonSpec:
 
 
 def available() -> bool:
-    """Whether a PNG can actually be rendered on this host (kaleido + a browser)."""
+    """Whether kaleido is installed at all — a cheap pre-check, not a guarantee.
+
+    kaleido 1.x acquires its browser lazily at render time, so this cannot promise a
+    render will succeed. The real fallback is the caller's: the page wraps
+    ``render_ribbon_png`` and keeps the authored picture on any failure.
+    """
     try:
         import kaleido  # noqa: F401
     except ImportError:
