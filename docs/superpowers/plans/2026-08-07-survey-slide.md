@@ -1693,7 +1693,7 @@ In `studio/template_fill/sections.py`, add to the `Section` enum, after `FEEDBAC
 And add as the FIRST entry of `_TITLE_RULES` (it is the most specific cue on the page and collides with nothing):
 
 ```python
-    (("carrier survey", "survey"), Section.SURVEY),
+    (("carrier survey",), Section.SURVEY),
 ```
 
 - [ ] **Step 4: Write `page.py`**
