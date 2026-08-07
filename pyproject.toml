@@ -19,6 +19,11 @@ dependencies = [
     "pandas>=3.0.3",
     "plotly>=6.8.0",
     "plotly-express>=0.4.1",
+    # Renders the Carrier Survey ribbon chart to PNG (studio/template_fill/survey/ribbon.py).
+    # v1+ only: 0.2.1 hangs indefinitely on Windows. Needs a Chrome/Chromium on the host;
+    # `plotly_get_chrome` fetches one where none exists. The survey page degrades to the
+    # authored picture when it is unavailable, so this is a soft runtime requirement.
+    "kaleido>=1.0.0",
     "pydantic>=2.13.4",
     "python-docx>=1.2.0",
     "python-dotenv>=1.2.2",
