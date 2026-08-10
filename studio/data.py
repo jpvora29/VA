@@ -186,14 +186,21 @@ def dependent_options(
     return _options(values)
 
 
-def peer_members(flow: str, carrier: str, *, country=None) -> List[str]:
+def peer_members(flow: str, carrier: str, *, country=None, engine=None) -> List[str]:
     """The carrier's peers — see :func:`_peer_members`, cached (it is on the Setup hot path).
 
     The cache key carries the DATABASE signature, not just the arguments: the engine is
     resolved at call time, so a different (or refreshed) database must not be answered from
     another one's cache.
+
+    ``engine`` asks a SPECIFIC database. The deck pipeline carries its own engine on the
+    result (an injected test DB, a custom uploaded dataset), and answering it from the
+    app-wide one returns a peer group whose carriers are not in the book being reported —
+    which reads on the page as "this carrier has no peers".
     """
     key = tuple(country) if isinstance(country, (list, tuple, set)) else country
+    if engine is not None:
+        return list(_peer_members(flow, carrier, country=key, engine=engine))
     return list(_peer_members_cached(_db_signature(), flow, carrier, key))
 
 
@@ -202,7 +209,7 @@ def _peer_members_cached(db_signature: str, flow: str, carrier: str, country) ->
     return tuple(_peer_members(flow, carrier, country=country))
 
 
-def _peer_members(flow: str, carrier: str, *, country=None) -> List[str]:
+def _peer_members(flow: str, carrier: str, *, country=None, engine=None) -> List[str]:
     """The carrier's existing peers from the flow's Peers table (empty if none).
 
     Scoped to ``country`` when the Peers table carries a country column, so Setup
@@ -211,15 +218,16 @@ def _peer_members(flow: str, carrier: str, *, country=None) -> List[str]:
 
     Powers the peers panel: an empty list means "no peers exist for this carrier
     — pick custom peers instead"."""
-    from core.analytics.sql import peer_country_column
+    from core.analytics.sql import peer_country_column, resolve_engine
 
     spec = get_flow_registry().get(flow)
     peer = getattr(spec, "peer_columns", None) if spec else None
     if not spec or not peer or not carrier:
         return []
+    eng = resolve_engine(engine) if engine is not None else get_engine()
     params: Dict[str, Any] = {"subject": carrier}
     where = [f'LOWER("{peer["key"]}") = LOWER(:subject)']
-    ccol = peer_country_column(spec, get_engine())
+    ccol = peer_country_column(spec, eng)
     if ccol and country:
         cvals = list(country) if isinstance(country, (list, tuple, set)) else [country]
         cvals = [v for v in cvals if v not in (None, "", "all", "All")]
@@ -235,10 +243,11 @@ def _peer_members(flow: str, carrier: str, *, country=None) -> List[str]:
         f'WHERE {" AND ".join(where)} ORDER BY m'
     )
     try:
-        with get_engine().connect() as conn:
+        with eng.connect() as conn:
             return [r.m for r in conn.execute(text(sql), params).fetchall() if r.m]
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("peer_members(%s) failed: %s", carrier, exc)
+    except Exception as exc:  # noqa: BLE001 — a Peers table shaped differently is not fatal
+        logger.warning("peer_members(%s, %s) failed against %s: %s",
+                       flow, carrier, peer.get("table"), exc)
         return []
 
 

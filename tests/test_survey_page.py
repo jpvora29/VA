@@ -1,6 +1,7 @@
 """The Carrier Survey page — detection against the REAL template, and its fill payload."""
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
@@ -123,3 +124,34 @@ def test_values_is_empty_for_a_country_with_no_survey(template):
 
 def test_values_is_empty_for_a_template_without_a_survey_page(result):
     assert P.values(analyze("template/country_template.pptx"), result) == {}
+
+
+# ── when an axis genuinely does not match ────────────────────────────────────
+
+
+def test_an_authored_label_the_book_does_not_have_is_named_in_the_log(template, result, caplog):
+    """A template that says "FINPRO" against a book that says "Financial Lines" fills
+    nothing on that column and looks, on the slide, exactly like a warehouse with no survey.
+    Only a log carrying BOTH vocabularies tells the two apart, so it prints them."""
+    import logging
+
+    from studio.template_fill.survey import facts
+
+    page = P.pages(template)[0]
+    grid = facts.load_grid(result, "Singapore")
+    thin = dataclasses.replace(grid, sections=("Underwriting",), practices=("CE/CM",))
+    with caplog.at_level(logging.WARNING, logger="studio.template_fill.survey.page"):
+        P._report_unmatched(page, thin)
+    logged = caplog.text
+    assert "column label" in logged and "row label" in logged
+    assert "FINPRO" in logged and "CE/CM" in logged        # authored, and the book's own
+
+
+def test_nothing_is_logged_when_every_axis_matches(template, result, caplog):
+    import logging
+
+    from studio.template_fill.survey import facts
+
+    with caplog.at_level(logging.WARNING, logger="studio.template_fill.survey.page"):
+        P._report_unmatched(P.pages(template)[0], facts.load_grid(result, "Singapore"))
+    assert "not in the survey book" not in caplog.text

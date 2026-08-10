@@ -17,8 +17,9 @@ Two products:
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from logger import get_logger
 from studio.template_fill.survey import ribbon as ribbon_mod
@@ -47,6 +48,29 @@ def _safe(fn, *args, **kwargs):
     except Exception as exc:  # noqa: BLE001 — a failing query degrades the page, never breaks it
         logger.warning("survey.facts: %s failed: %s", getattr(fn, "__name__", fn), exc)
         return None
+
+
+# ── label matching ───────────────────────────────────────────────────────────
+#
+# The page's axes are the TEMPLATE's authored labels; the numbers are keyed by the
+# WAREHOUSE's own values. The two are typed by different people years apart, so they agree
+# on the term and disagree on the typography — "Claims – Claims Professionals" against
+# "Claims - Claims Professionals", "FINPRO" against "FinPro", a trailing space out of a
+# spreadsheet. Matching the raw strings left every such cell on its ``x.x``, which reads as
+# "not surveyed" when the score is right there in the book.
+#
+# Typography only: case, whitespace, dash flavour, and "&" for "and". A label that means
+# something else still does not match, and must not — a QBR cell showing the wrong
+# practice's score is worse than one showing none.
+# Written as escapes on purpose — the dash variants are indistinguishable in most editors.
+_DASHES = re.compile("[‐-―−]")
+
+
+def norm_label(text: Any) -> str:
+    """A survey label reduced to what it SAYS, so typography cannot break a match."""
+    flat = _DASHES.sub("-", str(text or ""))
+    flat = flat.replace("&", " and ")
+    return " ".join(flat.split()).strip().lower()
 
 
 def _breakdown(result, group_by: Tuple[str, ...], filters: Dict[str, Any]):
@@ -146,9 +170,13 @@ class ScoreGrid:
     """The Carrier Survey table's numbers for one country.
 
     ``cells`` / ``prior_cells`` are keyed ``(section, practice)``; the totals are keyed by
-    the one dimension they collapse to. Every lookup returns ``None`` when the data has no
-    such cut — the page then keeps the template's own placeholder rather than inventing a
-    number.
+    the one dimension they collapse to. Every key is :func:`norm_label`-normalised, and so
+    is every lookup, so the template's authored wording finds the warehouse's own value
+    whatever the typography. Every lookup returns ``None`` when the data has no such cut —
+    the page then keeps the template's own placeholder rather than inventing a number.
+
+    ``sections`` / ``practices`` are the data's OWN labels, kept so a page that cannot match
+    its axes can report WHICH vocabulary it was matching against.
     """
 
     year: int
@@ -161,28 +189,36 @@ class ScoreGrid:
     prior_practice_totals: Dict[str, float]
     overall: Optional[float] = None
     prior_overall: Optional[float] = None
+    sections: Tuple[str, ...] = ()
+    practices: Tuple[str, ...] = ()
 
     def score(self, section: str, practice: str) -> Optional[float]:
-        return self.cells.get((section, practice))
+        return self.cells.get(_pair(section, practice))
 
     def delta(self, section: str, practice: str) -> Optional[float]:
-        return _diff(self.cells.get((section, practice)),
-                     self.prior_cells.get((section, practice)))
+        key = _pair(section, practice)
+        return _diff(self.cells.get(key), self.prior_cells.get(key))
 
     def section_total(self, section: str) -> Optional[float]:
-        return self.section_totals.get(section)
+        return self.section_totals.get(norm_label(section))
 
     def section_total_delta(self, section: str) -> Optional[float]:
-        return _diff(self.section_totals.get(section), self.prior_section_totals.get(section))
+        key = norm_label(section)
+        return _diff(self.section_totals.get(key), self.prior_section_totals.get(key))
 
     def practice_total(self, practice: str) -> Optional[float]:
-        return self.practice_totals.get(practice)
+        return self.practice_totals.get(norm_label(practice))
 
     def practice_total_delta(self, practice: str) -> Optional[float]:
-        return _diff(self.practice_totals.get(practice), self.prior_practice_totals.get(practice))
+        key = norm_label(practice)
+        return _diff(self.practice_totals.get(key), self.prior_practice_totals.get(key))
 
     def overall_delta(self) -> Optional[float]:
         return _diff(self.overall, self.prior_overall)
+
+
+def _pair(section: str, practice: str) -> Tuple[str, str]:
+    return norm_label(section), norm_label(practice)
 
 
 def _diff(current: Optional[float], prior: Optional[float]) -> Optional[float]:
@@ -195,12 +231,20 @@ def _diff(current: Optional[float], prior: Optional[float]) -> Optional[float]:
 
 
 def _by_pair(facts, first: str, second: str) -> Dict[Tuple[str, str], float]:
-    return {(str(f.dims[first]), str(f.dims[second])): float(f.value)
+    """Keyed by NORMALISED labels — the caller looks these up with the template's wording."""
+    return {_pair(f.dims[first], f.dims[second]): float(f.value)
             for f in facts if f.dims.get(first) is not None and f.dims.get(second) is not None}
 
 
 def _by_one(facts, column: str) -> Dict[str, float]:
-    return {str(f.dims[column]): float(f.value) for f in facts if f.dims.get(column) is not None}
+    return {norm_label(f.dims[column]): float(f.value)
+            for f in facts if f.dims.get(column) is not None}
+
+
+def _labels(facts, column: str) -> Tuple[str, ...]:
+    """The data's OWN labels for a cut, in order — what a mismatch report has to show."""
+    seen = {str(f.dims[column]) for f in facts if f.dims.get(column) is not None}
+    return tuple(sorted(seen))
 
 
 def _one(facts) -> Optional[float]:
@@ -221,10 +265,15 @@ def load_grid(result, country: str) -> Optional[ScoreGrid]:
     if year is None:
         return None
 
+    body = _breakdown(result, (section, PRACTICE_COL),
+                      {**_base_filters(result, country), YEAR_COL: int(year)})
+
     def cuts(for_year: int):
         filters = {**_base_filters(result, country), YEAR_COL: int(for_year)}
+        pairs = (body if for_year == year
+                 else _breakdown(result, (section, PRACTICE_COL), filters))
         return (
-            _by_pair(_breakdown(result, (section, PRACTICE_COL), filters), section, PRACTICE_COL),
+            _by_pair(pairs, section, PRACTICE_COL),
             _by_one(_breakdown(result, (section,), filters), section),
             _by_one(_breakdown(result, (PRACTICE_COL,), filters), PRACTICE_COL),
             _one(_breakdown(result, (), filters)),
@@ -244,25 +293,51 @@ def load_grid(result, country: str) -> Optional[ScoreGrid]:
         section_totals=section_totals, prior_section_totals=prior[1],
         practice_totals=practice_totals, prior_practice_totals=prior[2],
         overall=overall, prior_overall=prior[3],
+        sections=_labels(body, section), practices=_labels(body, PRACTICE_COL),
     )
 
 
 # ── the ribbon ───────────────────────────────────────────────────────────────
 
 
-def _peer_carriers(result, country: str) -> Tuple[str, ...]:
-    """The carriers the subject is ranked against — the Setup peer selection.
+def _surveyed_carriers(result, country: str) -> Tuple[str, ...]:
+    """Every carrier the survey book scores in ``country``, best first, minus the subject."""
+    facts = _breakdown(result, (CARRIER_COL,), {COUNTRY_COL: str(country)})
+    ranked = sorted(((str(f.dims[CARRIER_COL]), float(f.value or 0.0))
+                     for f in facts if f.dims.get(CARRIER_COL) is not None),
+                    key=lambda pair: -pair[1])
+    return tuple(name for name, _ in ranked if name != str(result.subject))
 
-    Order of authority: the custom peers pinned in Setup, else the subject's group from
-    the survey flow's own Peers table. An empty result is not an error — the ribbon then
-    shows the subject alone, which is honest.
+
+def _peer_carriers(result, country: str) -> Tuple[str, ...]:
+    """The carriers the subject is ranked against, in order of authority.
+
+    The peers pinned in Setup, else the subject's group from the survey flow's own Peers
+    table, else EVERY OTHER CARRIER the survey book scores in this country.
+
+    That last fallback exists because a chart of one carrier is not a ranking. A Peers table
+    that has no row for this carrier and country — a different key column, a market it was
+    never mapped in — used to leave the page with a single blue box and nothing to compare
+    it to. Ranking against the whole surveyed field is a weaker statement than a curated
+    peer group, but it is a true one, and it is what the reader came to the page for.
+    Disclosure-safe either way: the ribbon draws peers as unnamed grey boxes carrying a
+    score (``flows.yaml`` sets ``peer_names_allowed: false`` for this flow).
     """
     pinned = tuple(str(p) for p in (result.peers or ()) if str(p).strip())
     if pinned:
         return pinned
     from studio.data import peer_members
 
-    return tuple(_safe(peer_members, SURVEY_FLOW, str(result.subject), country=str(country)) or ())
+    group = tuple(_safe(peer_members, SURVEY_FLOW, str(result.subject),
+                        country=str(country), engine=result.engine) or ())
+    if group:
+        return group
+    field = _surveyed_carriers(result, country)
+    if field:
+        logger.info("survey.facts: no Peers row for %s in %s — ranking against the %d "
+                    "carrier(s) the survey book scores there",
+                    result.subject, country, len(field))
+    return field
 
 
 def _capped(boxes: Sequence[ribbon_mod.RibbonBox]) -> Tuple[ribbon_mod.RibbonBox, ...]:
@@ -287,6 +362,11 @@ def load_ribbon(result, country: str, sections: Sequence[str]) -> Optional[ribbo
 
     ``sections`` is the TEMPLATE's authored row order (minus its Total row), so the chart
     reads down the page in the same order as the table above it.
+
+    One query for the whole country-year, bucketed by section HERE rather than one filtered
+    query per authored label: the label has to match the warehouse's own wording, and a SQL
+    equality cannot be told to ignore a dash flavour or a stray capital (see
+    :func:`norm_label`). Cheaper too — one scan instead of one per row.
     """
     section = section_column(result)
     if section is None:
@@ -297,17 +377,21 @@ def load_ribbon(result, country: str, sections: Sequence[str]) -> Optional[ribbo
     subject = str(result.subject)
     wanted = {subject, *(_peer_carriers(result, country))}
 
+    scored: Dict[str, List[Tuple[str, float]]] = {}
+    for fact in _breakdown(result, (section, CARRIER_COL),
+                           {COUNTRY_COL: str(country), YEAR_COL: int(year)}):
+        carrier = str(fact.dims.get(CARRIER_COL))
+        if fact.dims.get(section) is None or carrier not in wanted or fact.value is None:
+            continue
+        scored.setdefault(norm_label(fact.dims[section]), []).append((carrier, float(fact.value)))
+
     columns = []
     for label in sections:
-        filters = {COUNTRY_COL: str(country), YEAR_COL: int(year), section: str(label)}
-        facts = _breakdown(result, (CARRIER_COL,), filters)
-        scored = [(str(f.dims[CARRIER_COL]), float(f.value))
-                  for f in facts if str(f.dims.get(CARRIER_COL)) in wanted]
-        if not scored:
+        ranked = sorted(scored.get(norm_label(label), []), key=lambda pair: -pair[1])
+        if not ranked:
             continue
-        scored.sort(key=lambda pair: -pair[1])
         boxes = _capped([ribbon_mod.RibbonBox(name, value, highlight=(name == subject))
-                         for name, value in scored])
+                         for name, value in ranked])
         columns.append(ribbon_mod.RibbonColumn(str(label), boxes))
 
     return ribbon_mod.RibbonSpec(tuple(columns)) if columns else None

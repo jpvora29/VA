@@ -15,7 +15,6 @@ keeps filling if it is moved, restyled or duplicated.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -33,15 +32,10 @@ ROLE_PREFIX = "survey:"
 
 _TOTAL = "total"
 _SECTION_HEADER = "section"
-# Any dash the author might have typed (U+2010..U+2015 plus the minus sign), normalised so
-# "Claims – Claims Professionals" matches the data's own label whichever dash each side used.
-# Written as escapes on purpose — the dashes are indistinguishable in most editors.
-_DASHES = re.compile("[\u2010-\u2015\u2212]")
 
-
-def _norm(text: str) -> str:
-    """Case/space/dash-insensitive form for header matching."""
-    return _DASHES.sub("-", " ".join((text or "").split())).strip().lower()
+# The same normaliser the score lookups use, so a header is recognised on exactly the
+# terms a cell is matched on — one definition, in the module that owns the matching.
+_norm = facts.norm_label
 
 
 # ── page anatomy ─────────────────────────────────────────────────────────────
@@ -210,7 +204,31 @@ def _table_payload(page: SurveyPage,
             continue
         texts[_role(page.slide_idx, row, col)] = float(score)
         fills.append({"r": row, "c": col, "hex": bands.band_for(delta)})
+    _report_unmatched(page, grid)
     return texts, fills
+
+
+def _report_unmatched(page: SurveyPage, grid: facts.ScoreGrid) -> None:
+    """Name any authored axis label the survey book has no value for.
+
+    A page whose template says "FINPRO" against a book that says "Financial Lines" fills
+    nothing on that column and looks, on the slide, exactly like a page with no data — the
+    cells keep their ``x.x`` and take no band colour. The difference matters: one is a
+    warehouse without the survey, the other is two vocabularies that need reconciling, and
+    only a log that prints BOTH lists tells them apart.
+    """
+    known_sections = {facts.norm_label(s) for s in grid.sections}
+    known_practices = {facts.norm_label(p) for p in grid.practices}
+    for axis, authored, known, theirs in (
+        ("row", [label for _, label in page.rows], known_sections, grid.sections),
+        ("column", [label for _, label in page.cols], known_practices, grid.practices),
+    ):
+        missing = [label for label in authored if facts.norm_label(label) not in known]
+        if missing:
+            logger.warning(
+                "survey_page: %d authored %s label(s) are not in the survey book — %s; "
+                "the book has %s. Those cells keep the template's placeholder.",
+                len(missing), axis, missing, list(theirs))
 
 
 def _ribbon_png(page: SurveyPage, result, country: str) -> Optional[bytes]:
