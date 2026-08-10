@@ -209,3 +209,73 @@ def test_capped_passes_through_unchanged_at_or_under_the_cap():
 
     under_cap = at_cap[:5]
     assert facts._capped(under_cap) == under_cap
+
+
+# ── the section column is spelled BOTH ways in the wild ──────────────────────
+#
+# A live Carriers table names the column ``Section``; the seed DB (and this repo's own
+# fixtures) name it ``Sections``. The physical name is resolved at runtime, but the flow
+# registry ALSO has to declare it — ``core.analytics.sql.safe_column`` refuses any
+# identifier the flow does not list, so a warehouse using the undeclared spelling had every
+# cut of the survey page fail with "unknown column 'Section' for flow survey" and shipped an
+# empty page.
+
+
+def _carriers_db(path, section_column: str):
+    """A one-country Carriers table whose section column is named ``section_column``."""
+    import pandas as pd
+    from sqlalchemy import create_engine
+
+    engine = create_engine(f"sqlite:///{path}")
+    rows = [{"Region": "Asia", "SurveyCountry": "Singapore", "Carrier": carrier,
+             "SurveyPractice": practice, section_column: section, "Attributes": "Overall",
+             "SurveySegment": "Large", "Survey_Year": year, "Score": score, "NPS Score": score}
+            for carrier, score in ((S.SUBJECT, 7.0), ("Other Carrier", 6.0))
+            for practice in ("Property", "Casualty")
+            for section in ("Underwriting", "Claims")
+            for year in (2024, 2025)]
+    pd.DataFrame(rows).to_sql("Carriers", engine, index=False, if_exists="replace")
+    pd.DataFrame([{"Carrier": S.SUBJECT, "Peers": "Other Carrier", "Country": "Singapore"}]
+                 ).to_sql("Peers", engine, index=False, if_exists="replace")
+    return engine
+
+
+def _result_on(engine):
+    from studio.compute import OverallResult
+
+    return OverallResult(subject=S.SUBJECT, flow="gpr",
+                         resolved_filters={"Country": "Singapore"}, engine=engine)
+
+
+@pytest.mark.parametrize("spelling", ["Sections", "Section"])
+def test_either_spelling_of_the_section_column_builds_the_page(tmp_path, spelling):
+    from studio.template_fill.survey import facts
+
+    result = _result_on(_carriers_db(tmp_path / f"{spelling}.db", spelling))
+    assert facts.section_column(result) == spelling
+    assert facts.has_survey_data(result, "Singapore") is True
+    grid = facts.load_grid(result, "Singapore")
+    assert grid is not None and grid.score("Underwriting", "Property") is not None
+    assert facts.load_overall_score(result, ("Singapore",)) is not None
+
+
+def test_the_registry_declares_every_spelling_the_resolver_may_pick():
+    """The resolver picks a PHYSICAL name; the identifier allowlist has to accept it, or
+    every query built from it is refused."""
+    from core.analytics.sql import flow_spec, safe_column
+    from studio.template_fill.survey import facts
+
+    spec = flow_spec("survey")
+    for spelling in facts.SECTION_CANDIDATES:
+        assert safe_column(spec, spelling) == spelling
+
+
+def test_a_spelling_the_registry_does_not_declare_is_not_used(tmp_path, monkeypatch):
+    """Rather than building a query the allowlist will refuse, the page stands down — the
+    warning names the undeclared column, which is the fix a deployment can act on."""
+    from studio.template_fill.survey import facts
+
+    result = _result_on(_carriers_db(tmp_path / "undeclared.db", "SectionName"))
+    monkeypatch.setattr(facts, "SECTION_CANDIDATES", ("Sections", "Section", "SectionName"))
+    assert facts.section_column(result) is None
+    assert facts.has_survey_data(result, "Singapore") is False

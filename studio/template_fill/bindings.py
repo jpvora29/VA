@@ -94,33 +94,6 @@ def _country_breakdown(result) -> List[Dict[str, Any]]:
     return rows
 
 
-# The broker-survey flow: a different table (Carriers) and a different carrier column from
-# the premium book, so the survey tile is looked up on its own terms.
-_SURVEY_FLOW = "survey"
-_SURVEY_CARRIER_COL = "Carrier"
-
-
-def _survey_score(result) -> Optional[float]:
-    """The carrier's average broker-survey score — the "Overall Carrier Survey" tile.
-
-    Lives in the ``survey`` flow, not the premium book, so it is queried separately and is
-    simply ABSENT when that flow's table is not in the deck's database. The tile then keeps
-    the template's own placeholder rather than showing an unrelated premium-derived number.
-    """
-    from core.analytics.library import compute_breakdown
-    from core.analytics.types import PrimitiveArgs
-
-    if not result.subject:
-        return None
-    facts = _safe(
-        compute_breakdown,
-        PrimitiveArgs(flow=_SURVEY_FLOW, metric="score", group_by=(),
-                      filters={_SURVEY_CARRIER_COL: result.subject}),
-        engine=result.engine,
-    ) or []
-    return facts[0].value if facts and facts[0].value is not None else None
-
-
 def _spotlight(result, filters: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """The single entity to feature in the "… Country xyz YoY change" highlights.
 
@@ -239,9 +212,9 @@ def resolve_roles(result) -> Dict[str, Any]:
         if rankm.get("delta") is not None:
             out["rank_yoy"] = int(rankm["delta"])
 
-    survey = _survey_score(result)
-    if survey is not None:
-        out["survey_score"] = survey
+    # NOTE: the overall survey-score tile is NOT resolved here — it is sourced from the
+    # survey book and gated on the run's data basis, so it belongs to the module that owns
+    # the tile (:mod:`studio.template_fill.survey.kpi`).
 
     # Confidential peer benchmark: the top-5 carriers' AVERAGE premium and share of wallet.
     # Never a named competitor — the templates head these "Peer GWP" / "Peer SoW".

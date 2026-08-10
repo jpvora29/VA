@@ -62,13 +62,26 @@ def _breakdown(result, group_by: Tuple[str, ...], filters: Dict[str, Any]):
 
 
 def section_column(result) -> Optional[str]:
-    """Which column actually holds the survey sections, or ``None`` if there is no book."""
-    from core.analytics.sql import resolve_engine, table_columns
+    """Which column actually holds the survey sections, or ``None`` if there is no book.
+
+    A candidate has to satisfy BOTH the warehouse and the flow registry: the physical table
+    is what the SQL runs against, and ``core.analytics.sql.safe_column`` refuses any
+    identifier the flow does not declare. Picking a column that only one of them knows is
+    what turns a missing declaration into an opaque "compute_breakdown failed" on every cut
+    of the page, so a name only one side knows is reported here instead.
+    """
+    from core.analytics.sql import flow_spec, resolve_engine, table_columns
 
     columns = _safe(table_columns, _safe(resolve_engine, result.engine), SURVEY_TABLE) or frozenset()
+    spec = _safe(flow_spec, SURVEY_FLOW)
+    declared = set(spec.columns) if spec is not None else set()
     for candidate in SECTION_CANDIDATES:
-        if candidate in columns:
+        if candidate in columns and candidate in declared:
             return candidate
+    undeclared = [c for c in SECTION_CANDIDATES if c in columns]
+    if undeclared:
+        logger.warning("survey.facts: table %s has %s but flows.yaml does not declare it — "
+                       "the survey page cannot be built", SURVEY_TABLE, undeclared)
     return None
 
 
@@ -92,12 +105,37 @@ def has_survey_data(result, country: str) -> bool:
 
 def _reported_years(result, country: str) -> Tuple[Optional[int], Optional[int]]:
     """``(latest surveyed year, the one before it)`` for this country and carrier."""
-    facts = _breakdown(result, (YEAR_COL,), _base_filters(result, country))
+    return _years_for(result, _base_filters(result, country))
+
+
+def _years_for(result, filters: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
+    """``(latest surveyed year, the one before it)`` for an arbitrary survey cut."""
+    facts = _breakdown(result, (YEAR_COL,), filters)
     years = sorted({int(f.dims[YEAR_COL]) for f in facts if f.dims.get(YEAR_COL) is not None})
     if not years:
         return None, None
     latest = years[-1]
     return latest, (latest - 1 if (latest - 1) in years else None)
+
+
+def load_overall_score(result, countries: Sequence[str] = ()) -> Optional[float]:
+    """The subject's average survey score at its latest surveyed year — the overall KPI.
+
+    Scoped by ``countries`` when the run pins any, so the tile reports on the same book the
+    rest of the page does; carrier-wide otherwise. ``None`` whenever the survey book has
+    nothing to say for that scope — there is no premium-side number that could stand in for
+    a survey score, so the caller takes the tile off the page instead.
+    """
+    if section_column(result) is None:
+        return None
+    filters: Dict[str, Any] = {CARRIER_COL: str(result.subject)}
+    scope = tuple(str(c) for c in countries if str(c).strip())
+    if scope:
+        filters[COUNTRY_COL] = scope
+    year, _ = _years_for(result, filters)
+    if year is None:
+        return None
+    return _one(_breakdown(result, (), {**filters, YEAR_COL: int(year)}))
 
 
 # ── the table ────────────────────────────────────────────────────────────────

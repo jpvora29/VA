@@ -315,8 +315,8 @@ def _facts(result, filters: Dict[str, Any]) -> Dict[str, Any]:
     peer = _safe(C.peer_average_totals, result.flow, filters, result.engine) or {}
     movers = _safe(C.movement_by_dim, result.flow, dim, filters, result.engine, top=8) or []
     pool = _safe(C.movement_by_dim, result.flow, dim, base, result.engine, top=8) or []
-    return {"carrier": carrier, "marsh": marsh, "rank": rank, "sow": sow, "peer": peer,
-            "movers": movers, "pool": pool}
+    return {"subject": str(subject or ""), "carrier": carrier, "marsh": marsh, "rank": rank,
+            "sow": sow, "peer": peer, "movers": movers, "pool": pool}
 
 
 # ── deterministic text composition (every claim carries its figure) ──────────
@@ -395,6 +395,53 @@ def _signed_money(raw: float) -> str:
     return ("-" if raw < 0 else "+") + _money(raw)
 
 
+# ── prose formatting ─────────────────────────────────────────────────────────
+# These panels are read aloud in a carrier's boardroom, so they are written the way an
+# adviser speaks: the direction of a movement belongs in the VERB ("grew 12.0%"), not in a
+# sign glued to the number ("+12.0%"), which reads as a spreadsheet cell rather than a
+# sentence. The figures themselves are untouched — only how they are said.
+
+
+def _mag(pct: float) -> str:
+    """A movement's size, for a sentence that already carries its direction."""
+    return f"{abs(pct):.1f}%"
+
+
+def _moved(pct: float) -> str:
+    """A movement as a clause of its own: ``grew 12.0%`` / ``fell 3.0%``."""
+    return f"{'grew' if pct >= 0 else 'fell'} {_mag(pct)}"
+
+
+def _up_down(pct: float) -> str:
+    """A movement hung off a noun: ``up 12.0%`` / ``down 3.0%``."""
+    return f"{'up' if pct >= 0 else 'down'} {_mag(pct)}"
+
+
+def _subject(f: Dict[str, Any], *, opening: bool = False) -> str:
+    """The carrier by name where the facts carry it, else "the account".
+
+    A partner names the account rather than talking around it. ``opening`` capitalises the
+    fallback for a sentence that starts on it.
+    """
+    name = str(f.get("subject") or "").strip()
+    if name:
+        return name
+    return "The account" if opening else "the account"
+
+
+def _and(parts: List[str]) -> str:
+    """``a``, ``a and b``, ``a, b and c`` — a list said the way it is spoken.
+
+    An item carrying its own comma takes a comma before the "and" too, or the two run
+    together ("Cyber, up $85M and Financial Lines, up $67M" reads as three things). Only the
+    items BEFORE the last matter: a comma inside the final item cannot blur the join.
+    """
+    if len(parts) < 2:
+        return "".join(parts)
+    tail = ", and " if any("," in p for p in parts[:-1]) else " and "
+    return ", ".join(parts[:-1]) + tail + parts[-1]
+
+
 def _rank_of(r: Dict[str, Any]) -> str:
     """``#5 of 41`` where the field size is known, else ``#5``."""
     return f"#{int(r['current'])}" + (f" of {int(r['of_n'])}" if r.get("of_n") else "")
@@ -404,20 +451,35 @@ def _places(n: int) -> str:
     return "1 place" if abs(n) == 1 else f"{abs(n)} places"
 
 
-def _named_moves(rows: List[Dict[str, Any]], *, rising: bool, top: int = 2) -> str:
-    """``Cyber +$22M (+97.3%) and Financial Lines +$16M (+57.1%)`` — the movers, named.
+# A movement smaller than this share of the book is noise rather than a finding. Naming a
+# $145K move on a $208M book — as "what premium was given back on" — is exactly what makes
+# commentary read as generated: a partner would not have mentioned it.
+_MATERIAL_MOVE_SHARE = 0.01
+
+
+def _material_floor(f: Dict[str, Any]) -> float:
+    """The smallest movement worth naming, from the size of the book it moved."""
+    return abs((f.get("carrier") or {}).get("current") or 0.0) * _MATERIAL_MOVE_SHARE
+
+
+def _named_moves(rows: List[Dict[str, Any]], *, rising: bool, top: int = 2,
+                 floor: float = 0.0) -> str:
+    """``Cyber, up $22M (97.3%), and Financial Lines, up $16M (57.1%)`` — the movers, named.
 
     A scope with one value on the driver dimension (a product page's own line of business)
-    cannot decompose into anything: naming it would only restate the headline.
+    cannot decompose into anything: naming it would only restate the headline. Movements
+    below ``floor`` are left out for the same reason — they carry no argument.
     """
     if len(rows) < 2:
         return ""
     picked = [x for x in rows
-              if ((x.get("delta") or 0.0) > 0) is rising and (x.get("delta") or 0.0)][:top]
-    parts = [f"{x['name']} {_signed_money(x['delta'])}"
-             + (f" ({x['pct']:+.1f}%)" if x.get("pct") is not None else "")
+              if ((x.get("delta") or 0.0) > 0) is rising
+              and abs(x.get("delta") or 0.0) >= floor and (x.get("delta") or 0.0)][:top]
+    word = "up" if rising else "down"
+    parts = [f"{x['name']}, {word} {_money(abs(x['delta']))}"
+             + (f" ({_mag(x['pct'])})" if x.get("pct") is not None else "")
              for x in picked]
-    return " and ".join(parts)
+    return _and(parts)
 
 
 def _point_of_share(f: Dict[str, Any]) -> Optional[float]:
@@ -440,29 +502,32 @@ def _working_points(f: Dict[str, Any]) -> List[str]:
     c, m, r, s = f["carrier"], f.get("marsh") or {}, f["rank"], f["sow"]
     parts: List[str] = []
     if (c.get("pct") or 0) > 0:
-        line = f"GWP with Marsh grew {c['pct']:+.1f}% YoY to {_money(c['current'])}"
+        line = (f"{_subject(f, opening=True)} grew its book with Marsh {_mag(c['pct'])} "
+                f"year on year to {_money(c['current'])}")
         if m.get("pct") is not None and m["pct"] < c["pct"]:
-            line += (f", well ahead of the {m['pct']:+.1f}% the wider Marsh book moved — "
-                     f"the growth was won on share, not carried by the market")
+            line += (f", well ahead of the wider Marsh book, which {_moved(m['pct'])}, so the "
+                     f"gain was won on share rather than carried by the market")
         elif m.get("pct") is not None:
-            line += f", against a Marsh book up {m['pct']:+.1f}%"
+            line += f", against a wider Marsh book that {_moved(m['pct'])}"
         parts.append(line + ".")
-    risers = _named_moves(f.get("movers") or [], rising=True)
+    risers = _named_moves(f.get("movers") or [], rising=True, floor=_material_floor(f))
     if risers and (c.get("delta") or 0) > 0:
-        parts.append(f"The increase was led by {risers}, on a total book movement of "
-                     f"{_signed_money(c['delta'])}.")
+        parts.append(f"The increase was led by {risers}, out of a total book movement of "
+                     f"{_money(c['delta'])}.")
     if (r.get("delta") or 0) > 0:
-        parts.append(f"Market rank improved {_places(int(r['delta']))} to {_rank_of(r)} — "
-                     f"the gain came at competitors' expense, not from a growing pool.")
+        parts.append(f"Market rank improved {_places(int(r['delta']))} to {_rank_of(r)}, and "
+                     f"that came at competitors' expense rather than from a growing pool.")
     if (s.get("delta") or 0) > 0:
-        line = f"Share of wallet rose {s['delta']:+.1f}pp to {s['current']:.1f}%"
+        line = f"Share of wallet rose {abs(s['delta']):.1f}pp to {s['current']:.1f}%"
         peer_sow = (f.get("peer") or {}).get("sow")
         if peer_sow is not None:
-            line += (f", now {s['current'] - peer_sow:+.1f}pp against the top-5 peer "
-                     f"average of {peer_sow:.1f}%")
+            side = "above" if s["current"] >= peer_sow else "below"
+            line += (f", which leaves the book {abs(s['current'] - peer_sow):.1f}pp {side} the "
+                     f"top-5 peer average of {peer_sow:.1f}%")
         parts.append(line + ".")
     if not parts and c.get("current"):
-        parts.append(f"Book held at {_money(c['current'])} with Marsh.")
+        parts.append(f"{_subject(f, opening=True)} held its book with Marsh at "
+                     f"{_money(c['current'])}.")
     return parts
 
 
@@ -476,28 +541,33 @@ def _challenges_points(f: Dict[str, Any]) -> List[str]:
     c, m, r, s = f["carrier"], f.get("marsh") or {}, f["rank"], f["sow"]
     parts: List[str] = []
     if (c.get("pct") or 0) < 0:
-        line = f"GWP with Marsh declined {c['pct']:+.1f}% YoY to {_money(c['current'])}"
+        line = (f"{_subject(f, opening=True)}'s book with Marsh fell {_mag(c['pct'])} "
+                f"year on year to {_money(c['current'])}")
         if m.get("pct") is not None and m["pct"] > c["pct"]:
-            line += f", while the Marsh book moved {m['pct']:+.1f}% — this is lost share"
+            line += f", while the wider Marsh book {_moved(m['pct'])}, so this is lost share"
         parts.append(line + ".")
     if (r.get("delta") or 0) < 0:
         parts.append(f"Market rank slipped {_places(int(r['delta']))} to {_rank_of(r)}.")
     if (s.get("delta") or 0) < 0:
-        parts.append(f"Share of wallet fell {s['delta']:+.1f}pp to {s['current']:.1f}%.")
+        parts.append(f"Share of wallet fell {abs(s['delta']):.1f}pp to {s['current']:.1f}%.")
     if (c.get("pct") is not None) and (m.get("pct") is not None) and m["pct"] > c["pct"] \
             and (c.get("pct") or 0) >= 0:
-        parts.append(f"Growth of {c['pct']:+.1f}% trails the Marsh book ({m['pct']:+.1f}%) — "
-                     f"the account is growing but losing ground.")
-    fallers = _named_moves(f.get("movers") or [], rising=False)
+        parts.append(f"Growth of {_mag(c['pct'])} trails a wider Marsh book that "
+                     f"{_moved(m['pct'])}, so {_subject(f)} is growing but losing ground.")
+    fallers = _named_moves(f.get("movers") or [], rising=False, floor=_material_floor(f))
     if fallers:
-        parts.append(f"Premium was given back on {fallers}, offsetting the gains elsewhere.")
+        # "Offsetting the gains" only means something on a book that made gains; on a book
+        # that shrank overall these lines ARE the decline, and saying otherwise would read
+        # as a softener rather than a finding.
+        tail = ", which offset the gains elsewhere" if (c.get("pct") or 0) > 0 else ""
+        parts.append(f"Premium was given back on {fallers}{tail}.")
     gap = _peer_share_gap(f)
     point = _point_of_share(f)
     if gap is not None:
         line = (f"At {s['current']:.1f}% share of wallet the book sits {gap:.1f}pp below the "
                 f"top-5 peer average of {f['peer']['sow']:.1f}%")
         if point:
-            line += f" — about {_money(gap * point)} of premium in scope"
+            line += f", which is about {_money(gap * point)} of premium in scope"
         parts.append(line + ".")
     return parts
 
@@ -509,11 +579,13 @@ def _growth_points(f: Dict[str, Any]) -> List[str]:
     if c.get("current") is not None and m.get("current"):
         headroom = m["current"] - c["current"]
         if headroom > 0:
-            share = f" at {s['current']:.1f}% share of wallet" if s.get("current") is not None else ""
+            share = (f", leaving {_subject(f)} on {s['current']:.1f}% of the wallet"
+                     if s.get("current") is not None else "")
             point = _point_of_share(f)
-            worth = f" — every point of share is worth about {_money(point)}" if point else ""
-            parts.append(f"{_money(headroom)} of the {_money(m['current'])} Marsh book is "
-                         f"placed elsewhere{share}{worth}.")
+            worth = (f", where every point of share is worth about {_money(point)}"
+                     if point else "")
+            parts.append(f"Of the {_money(m['current'])} Marsh book, {_money(headroom)} is "
+                         f"placed with other carriers{share}{worth}.")
     gap, point = _peer_share_gap(f), _point_of_share(f)
     if gap is not None and point:
         parts.append(f"Closing the {gap:.1f}pp gap to the top-5 peer average would add roughly "
@@ -522,8 +594,8 @@ def _growth_points(f: Dict[str, Any]) -> List[str]:
     if capture:
         parts.append(capture)
     if (m.get("pct") or 0) > 0 and (c.get("pct") is not None) and m["pct"] > c["pct"]:
-        parts.append(f"Marsh demand is growing {m['pct']:+.1f}% YoY — holding share flat still "
-                     f"leaves premium on the table; capture rate is the lever.")
+        parts.append(f"Marsh demand grew {_mag(m['pct'])} year on year, so holding share flat "
+                     f"would still leave premium on the table, and capture rate is the lever.")
     return parts
 
 
@@ -544,10 +616,10 @@ def _capture_gap(f: Dict[str, Any]) -> Optional[str]:
     captured = mine[worst["name"]]
     if captured >= worst["delta"]:
         return None
-    took = (f"the account took only {_money(captured)} of it" if captured > 0
-            else f"the account gave back {_money(captured)}")
+    took = (f"{_subject(f)} took only {_money(captured)} of it" if captured > 0
+            else f"{_subject(f)} gave back {_money(captured)}")
     return (f"{worst['name']} added {_money(worst['delta'])} of Marsh premium year on year "
-            f"while {took} — the widest capture gap in the portfolio.")
+            f"while {took}, the widest capture gap in the portfolio.")
 
 
 def _key_messages_points(f: Dict[str, Any]) -> List[str]:
@@ -557,25 +629,31 @@ def _key_messages_points(f: Dict[str, Any]) -> List[str]:
     parts: List[str] = []
     if c.get("current") is not None:
         year = f" in {int(c['current_year'])}" if c.get("current_year") else ""
-        yoy = f" ({c['pct']:+.1f}% YoY)" if c.get("pct") is not None else ""
-        market = f", against a Marsh book up {m['pct']:+.1f}%" if m.get("pct") is not None else ""
-        parts.append(f"{_money(c['current'])} written with Marsh{year}{yoy}{market}.")
+        yoy = f", {_up_down(c['pct'])} on the year," if c.get("pct") is not None else ""
+        market = (f" against a wider Marsh book that {_moved(m['pct'])}"
+                  if m.get("pct") is not None else "")
+        parts.append(f"{_subject(f, opening=True)} wrote {_money(c['current'])} with "
+                     f"Marsh{year}{yoy}{market}.")
     pos: List[str] = []
     if r.get("current") is not None:
-        pos.append(f"rank {_rank_of(r)}")
+        pos.append(f"ranks {_rank_of(r)}")
     if s.get("current") is not None:
-        moved = f" ({s['delta']:+.1f}pp)" if s.get("delta") is not None else ""
-        pos.append(f"{s['current']:.1f}% share of wallet{moved}")
-    if peer.get("sow") is not None:
-        pos.append(f"top-5 peer average {peer['sow']:.1f}%")
+        moved = (f", {'up' if s['delta'] >= 0 else 'down'} {abs(s['delta']):.1f}pp"
+                 if s.get("delta") is not None else "")
+        # The peer average benchmarks the SHARE, so it hangs off the share clause — never
+        # off a rank, which it says nothing about.
+        against = (f", against a top-5 peer average of {peer['sow']:.1f}%"
+                   if peer.get("sow") is not None else "")
+        pos.append(f"holds {s['current']:.1f}% of the wallet{moved}{against}")
     if pos:
-        parts.append("Position: " + ", ".join(pos) + ".")
-    risers = _named_moves(f.get("movers") or [], rising=True)
+        parts.append(f"{_subject(f, opening=True)} " + _and(pos) + ".")
+    risers = _named_moves(f.get("movers") or [], rising=True, floor=_material_floor(f))
     if risers:
-        parts.append(f"Momentum sits with {risers} — protect the renewal book there first.")
+        parts.append(f"Momentum sits with {risers}, so the renewal book there is what to "
+                     f"protect first.")
     gap, point = _peer_share_gap(f), _point_of_share(f)
     if gap is not None and point:
-        parts.append(f"The ask: {gap:.1f}pp of share to reach peer parity, worth about "
+        parts.append(f"Reaching peer parity means winning {gap:.1f}pp of share, worth about "
                      f"{_money(gap * point)} of GWP.")
     return parts
 
@@ -594,6 +672,22 @@ _COMPOSERS: Dict[str, Callable[[Dict[str, Any]], List[str]]] = {
     "key_messages": _key_messages_points,
     "highlights": _highlights_points,
 }
+
+
+def points(kind: str, f: Dict[str, Any]) -> List[str]:
+    """The sentences a panel of ``kind`` is built from — ``[]`` for a KPI callout.
+
+    Public because the summary page's prose columns ask the same questions of the same
+    facts as these panels do (:mod:`studio.template_fill.commentary`), and the deck should
+    answer them in one voice rather than two.
+    """
+    composer = _COMPOSERS.get(kind)
+    return list(composer(f)) if composer else []
+
+
+def facts_for(result) -> Dict[str, Any]:
+    """The fact set behind a panel, for ``result``'s own scope and reporting year."""
+    return _facts(result, _reporting_filters(result))
 
 
 def _compose(kind: str, f: Dict[str, Any], limit: int) -> str:

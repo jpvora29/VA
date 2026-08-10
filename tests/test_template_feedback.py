@@ -123,18 +123,20 @@ def test_values_blank_country_rows_beyond_scope(_stub_compute):
 
 
 def test_values_commentary_carries_figures(_stub_compute):
+    # The prose says the direction in its verb ("grew 52.5%"), so the figure is unsigned —
+    # the KPI cells above still carry the signed form (see the test two above).
     vals = F.values(_template(), _result())
-    assert "+52.5%" in vals["fbnote:0:2:1:1"] and "$48M" in vals["fbnote:0:2:1:1"]  # working well
+    assert "52.5%" in vals["fbnote:0:2:1:1"] and "$48M" in vals["fbnote:0:2:1:1"]   # working well
     assert "$363M" in vals["fbnote:0:2:1:3"]                                        # headroom
     assert vals["fbnote:1:3:0:0"].startswith("Key Highlights:")
-    assert "rank #2" in vals["fbnote:1:4:1:3"]                                      # key messages
+    assert "ranks #2" in vals["fbnote:1:4:1:3"]                                     # key messages
 
 
 def test_declines_flow_to_challenges():
     facts = {"carrier": {"current": 30e6, "pct": -12.0}, "marsh": {"current": 100e6, "pct": 2.0},
              "rank": {"current": 6, "delta": -2}, "sow": {"current": 4.0, "delta": -1.1}}
     text = F._compose("challenges", facts, F._PANEL_BULLETS)
-    assert "-12.0%" in text and "slipped" in text
+    assert "fell 12.0%" in text and "slipped" in text
     assert F._kpi_cell("rank", facts) == "6 (-2▼)\nCarrier Rank"
 
 

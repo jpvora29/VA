@@ -64,8 +64,16 @@ survey:
     Carrier: {role: entity, card_cap: 8, confidential: false}
     SurveyPractice: {role: entity, card_cap: 30, resolver: semantic, aliases: [practice, line of business, lob, product]}
     Region: {role: entity, card_cap: 30}
+    # Section/attribute are spelled BOTH ways across live Carriers tables (and this file's
+    # own chart_defaults above says the singular). Both spellings are declared so the
+    # identifier allowlist accepts whichever one a given warehouse physically has; the code
+    # resolves the real name against the table at runtime
+    # (studio.template_fill.survey.facts.section_column). Declaring only one silently sinks
+    # every survey query on a warehouse that uses the other.
     Sections: {role: entity, card_cap: 30, resolver: semantic}
+    Section: {role: entity, card_cap: 30, resolver: semantic}
     Attributes: {role: entity, card_cap: 30, resolver: semantic}
+    Attribute: {role: entity, card_cap: 30, resolver: semantic}
     SurveySegment: {role: entity, card_cap: 30, resolver: semantic, aliases: [segment]}
     Survey_Year: {role: temporal, card_cap: 30}
     Score: {role: measure}

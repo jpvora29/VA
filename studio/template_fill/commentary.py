@@ -2,12 +2,16 @@
 
 Section-aware (see :mod:`studio.template_fill.sections`): on slides that carry
 fact-derivable commentary (Trading Summary, SWOT, Highlights, Summary) the ellipsis
-prose boxes are bound to ``note:<slot-key>`` roles and filled with commentary built by
-:mod:`studio.narrate.commentary` (100% faithful by construction). When an LLM is
-configured the wording is polished and then re-checked by the faithfulness verifier
-(numbers must already appear in the deterministic text); otherwise the deterministic
-text stands. Qualitative-only sections (relationship Feedback) are deliberately left as
-placeholders — premium data can't honestly fill them.
+prose boxes are bound to ``note:<slot-key>`` roles and filled with whole sentences that
+are 100% faithful by construction — each column is composed by the SAME fact-grounded
+composers as the per-country feedback panels (:mod:`studio.template_fill.feedback`), so
+the deck argues in one voice; SWOT quadrants, and any column those composers cannot
+carry, fall back to the rule-based :mod:`studio.narrate.commentary`. When an LLM is
+configured the wording is polished and then re-checked — for faithfulness (every number
+must already appear in the deterministic draft) and for READING (whole sentences, none of
+the phrases that make prose sound generated); a rewrite that fails either is dropped and
+the draft stands. Qualitative-only sections (relationship Feedback) are deliberately left
+as placeholders — premium data can't honestly fill them.
 
 Mirrors :mod:`studio.template_fill.grids`: ``augment`` re-binds slots, ``values``
 produces the keyed text — both fold into the same doc the preview and fill consume.
@@ -30,13 +34,16 @@ _COMMENTARY_SECTIONS = {
     Section.TRADING_SUMMARY, Section.SWOT, Section.HIGHLIGHTS, Section.SUMMARY,
 }
 # The commentary voice chosen in Setup → the instruction appended to the polish prompt.
-# Every style keeps the same faithfulness guardrails; only the tone/length shifts.
+# Every style keeps the same faithfulness guardrails; only the length shifts. Each style
+# still demands whole sentences: a QBR page is read aloud to an executive team, and a
+# telegraphic fragment ("Momentum: Cyber +97%") is not something a partner would say.
 _STYLE_DIRECTIVE: Dict[str, str] = {
-    "concise": "Keep each bullet to one short clause — the headline figure and nothing else.",
-    "balanced": "Give each bullet up to two sentences: the figure, then what it means for "
-                "the account.",
-    "detailed": "Give each bullet two or three sentences: the figure, what drove it, and "
-                "what it means for the account next year.",
+    "concise": "Write each line as ONE complete sentence carrying the figure and its "
+               "consequence.",
+    "balanced": "Write each line as TWO complete sentences: what the figures show, then what "
+                "it means for this account.",
+    "detailed": "Write each line as TWO OR THREE complete sentences: what the figures show, "
+                "what moved them, and what the account should do about it.",
 }
 
 # Commentary is written as BULLET POINTS, one per line, so the polish must preserve the line
@@ -48,20 +55,39 @@ _BULLET_RULES = (
     "the slide adds the bullet itself. "
 )
 
+# Who is writing. Insurer Consulting Group partners write for carrier boards: plain,
+# declarative, unhedged, and always answerable to the figure on the page.
+_VOICE = (
+    "You are a partner in Marsh's Insurer Consulting Group with twenty years advising "
+    "carriers, writing the commentary a carrier's executive team will read in their "
+    "quarterly business review. Write the way you would speak to that room: plainly, in the "
+    "past tense, in complete sentences, with a view the figures support and no hedging. "
+    "Distinguish market movement from share movement, and use the market's own words — GWP, "
+    "share of wallet, rank, renewal book, capture rate, headroom, placement. "
+)
+
+# What separates a consultant's page from a generated one. These are the habits that make
+# commentary read as machine-written, and they are named explicitly because a model asked
+# only for "professional" prose reaches for every one of them.
+_CRAFT = (
+    "CRAFT: every line must be a complete sentence with a subject and a verb and end in a "
+    "full stop — never a heading, a label, a fragment, or a 'Topic: value' pair. Say what "
+    "happened and what it means; do not restate a figure you have already given, do not "
+    "explain what a percentage is, and do not close on advice that would be true for any "
+    "carrier. Never write the words 'indicating', 'showcasing', 'underscoring', "
+    "'demonstrating', 'reflecting a', 'positioning the carrier', 'solid foothold', 'robust', "
+    "'strategic', 'leverage', 'key driver', 'landscape', 'moving forward', 'it is worth "
+    "noting', or 'overall,'. "
+)
+
+_FAITHFULNESS = (
+    "HARD RULES: keep EVERY number, currency amount, percentage and rank EXACTLY as written — "
+    "never invent, recalculate or round a figure; never name a competitor carrier. "
+)
+
 
 def _style_system(style: Optional[str]) -> str:
-    base = (
-        "You are a Marsh broking analyst with twenty years in carrier portfolio management, "
-        "polishing commentary for a carrier QBR slide. Write the way an experienced analyst "
-        "briefs a client executive: lead with the 'so what', use active voice, distinguish "
-        "market movement from share movement, and say what each figure means for the account "
-        "rather than restating it. Use the trade's own vocabulary — GWP, share of wallet, "
-        "rank, renewal book, capture rate, headroom — and never hedge a point the figures "
-        "support. "
-        "HARD RULES: keep EVERY number, currency amount, percentage and rank EXACTLY as written — "
-        "never invent, recalculate or round a figure; never name a competitor carrier. "
-    )
-    return base + _BULLET_RULES + _STYLE_DIRECTIVE.get(
+    return _VOICE + _CRAFT + _FAITHFULNESS + _BULLET_RULES + _STYLE_DIRECTIVE.get(
         (style or "balanced").lower(), _STYLE_DIRECTIVE["balanced"])
 
 
@@ -193,20 +219,61 @@ def augment(template: Template, bindings: List[R.Binding]) -> List[R.Binding]:
 # A bullet character the model may prefix a line with despite being told not to.
 _LEADING_BULLET = re.compile(r"^\s*(?:[-•▪◦*·]|\d+[.)])\s+")
 
+# The tells of machine-written prose. The prompt forbids them; this is what makes the ban
+# stick — a rewrite carrying one of these is dropped and the deterministic draft stands,
+# which is the better page anyway. Kept to phrases no partner would write on a QBR slide,
+# so a legitimate rewrite is never thrown away.
+_AI_TELLS = re.compile(
+    r"\b(?:indicat(?:es|ing)|showcas\w+|underscor\w+|demonstrat(?:es|ing)|reflecting a|"
+    r"solid foothold|robust|strategic(?:ally)?|leverag\w+|key driver|landscape|"
+    r"moving forward|it is worth noting|testament to|poised to|ever-\w+|"
+    r"significant potential|delve)\b",
+    re.I,
+)
+
+
+def _is_whole_sentence(line: str) -> bool:
+    """A finished sentence, not a label or a fragment: it ends in a full stop."""
+    return line.rstrip().endswith((".", "?", "!"))
+
+
+def _accept(lines: List[str], *, wanted: int, node: str) -> Optional[str]:
+    """The polished bullets, or ``None`` when the rewrite is worse than the draft.
+
+    Three ways a rewrite is refused: it changed the bullet STRUCTURE (the slide's shape is
+    the draft's to decide), it left a line as a fragment, or it reached for one of the
+    phrases that make commentary read as generated.
+    """
+    if len(lines) != wanted:
+        logger.info("commentary: %s polish returned %d line(s) for %d bullet(s) — keeping "
+                    "the deterministic draft", node, len(lines), wanted)
+        return None
+    fragment = next((ln for ln in lines if not _is_whole_sentence(ln)), None)
+    if fragment is not None:
+        logger.info("commentary: %s polish left a fragment (%.40r) — keeping the "
+                    "deterministic draft", node, fragment)
+        return None
+    tell = _AI_TELLS.search("\n".join(lines))
+    if tell is not None:
+        logger.info("commentary: %s polish reads as generated (%r) — keeping the "
+                    "deterministic draft", node, tell.group(0))
+        return None
+    return "\n".join(lines)
+
 
 def _polish(text: str, *, node: str, style: Optional[str] = None) -> str:
     """LLM-polish ``text`` if available, keeping only verifier-faithful output.
 
-    ``style`` (from Setup) tunes the tone/length of the rewrite; the faithfulness guardrails
-    are identical across styles. ``text`` is a newline-separated BULLET LIST, so a rewrite is
-    only accepted when it comes back with the same number of lines — a model that merges or
-    invents bullets would silently change the slide's structure, and the deterministic draft
-    is already correct.
+    ``style`` (from Setup) tunes the length of the rewrite; the faithfulness guardrails are
+    identical across styles. ``text`` is a newline-separated BULLET LIST of whole sentences,
+    and the polish is only accepted when it comes back as the same list of whole sentences
+    (see :func:`_accept`) — the deterministic draft is already correct and already reads,
+    so a rewrite has to earn its place.
     """
     if not text:
         return text
     from studio.ai import client
-    from studio.ai.verifier import allowed_numbers, verify_text
+    from studio.ai.verifier import allowed_numbers, verify_bullets
 
     allowed = allowed_numbers(text)
     system = _style_system(style)
@@ -216,25 +283,76 @@ def _polish(text: str, *, node: str, style: Optional[str] = None) -> str:
         out = client.generate(system, text, tier="fast", node=node)
         if not out:
             return None
-        clean, _ = verify_text(out, allowed)
-        if not clean:
-            return None
-        lines = [_LEADING_BULLET.sub("", ln).strip() for ln in clean.split("\n") if ln.strip()]
-        if len(lines) != wanted:
-            logger.info("commentary: %s polish returned %d line(s) for %d bullet(s) — keeping "
-                        "the deterministic draft", node, len(lines), wanted)
-            return None
-        return "\n".join(lines)
+        # Verified BULLET BY BULLET, not as one blob: the whole-text verifier joins the
+        # sentences it keeps with spaces, which would flatten a four-bullet column into a
+        # single paragraph — and then fail the line count below for the wrong reason.
+        lines = [_LEADING_BULLET.sub("", ln).strip() for ln in out.split("\n") if ln.strip()]
+        clean, _ = verify_bullets(lines, allowed)
+        return _accept(clean, wanted=wanted, node=node)
 
     return client.run_or_fallback(call, lambda: text)
 
 
-def _topic_points(result, topic: str) -> List[str]:
-    """Deterministic, fact-grounded commentary POINTS for a column/quadrant topic.
+# What each prose column asks of the facts, as ``(composer, how many of its sentences)``.
+#
+# The summary page's columns ask the same questions of the same book as the per-country
+# feedback panels do — what worked, what did not, where the headroom is, what the account
+# team should be able to say — so they are answered by the SAME composers
+# (:func:`studio.template_fill.feedback.points`). One voice across the deck, and every
+# sentence already carries the figure behind it.
+_TOPIC_PANELS: Dict[str, Tuple[Tuple[str, int], ...]] = {
+    "reflections": (("working", 1), ("challenges", 1), ("growth", 1)),
+    "performance": (("working", 2), ("challenges", 2)),
+    "priorities": (("growth", 3),),
+    "key_messages": (("key_messages", 3),),
+}
 
-    One point per bullet — the deck renders each as its own bulleted paragraph, so they are
-    kept as separate strings all the way through rather than joined into a paragraph.
+
+def panel_facts(result) -> Dict[str, Any]:
+    """The fact set the prose columns are composed from — ``{}`` when it can't be loaded.
+
+    An empty set is not an error: a thin book or a dataset with no peer benchmark simply
+    sends the columns back to the rule-based narrator.
     """
+    from studio.template_fill import feedback
+
+    try:
+        return feedback.facts_for(result)
+    except Exception as exc:  # noqa: BLE001 — commentary must never break the doc
+        logger.warning("commentary: panel facts unavailable (%s) — using the rule narrator", exc)
+        return {}
+
+
+def _panel_points(topic: str, facts: Dict[str, Any]) -> List[str]:
+    """The composed sentences for ``topic``, de-duplicated, or ``[]`` if it has no panel."""
+    from studio.template_fill import feedback
+
+    panels = _TOPIC_PANELS.get(topic)
+    if not panels or not facts:
+        return []
+    out: List[str] = []
+    for kind, take in panels:
+        for point in feedback.points(kind, facts)[:take]:
+            if point not in out:
+                out.append(point)
+    return out
+
+
+def _topic_points(result, topic: str, facts: Optional[Dict[str, Any]] = None) -> List[str]:
+    """Complete, fact-grounded commentary sentences for a column/quadrant topic.
+
+    One sentence per bullet — the deck renders each as its own bulleted paragraph, so they
+    are kept as separate strings all the way through rather than joined into a paragraph.
+
+    The panel composers answer the four prose columns; the SWOT quadrants, and any column
+    the panels cannot carry, fall back to the rule-based narrator.
+    """
+    return (_panel_points(topic, facts if facts is not None else panel_facts(result))
+            or _narrated_points(result, topic))
+
+
+def _narrated_points(result, topic: str) -> List[str]:
+    """The rule-based narrator's points for ``topic`` — the fallback, and the SWOT source."""
     from studio.narrate.commentary import build_commentary, build_initiatives, build_swot
 
     headline, points, actions = build_commentary(result)
@@ -275,12 +393,13 @@ def values(template: Template, result) -> Dict[str, Any]:
     if not targets:
         return out
     style = getattr(result, "style", "balanced")
+    facts = panel_facts(result)                 # loaded once; every topic reads the same book
     cache: Dict[str, str] = {}
     for t in targets:
         topic = t["topic"]
         if topic not in cache:
             try:
-                base = bullet_list(_topic_points(result, topic))
+                base = bullet_list(_topic_points(result, topic, facts))
                 cache[topic] = _polish(base, node=f"commentary-{topic}", style=style) if base else ""
             except Exception as exc:  # noqa: BLE001 — commentary must never break the doc
                 logger.warning("commentary: topic %s failed: %s", topic, exc)

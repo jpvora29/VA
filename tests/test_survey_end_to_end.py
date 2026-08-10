@@ -11,6 +11,8 @@ then reads the exported file back. Deterministic: seed DB, no LLM.
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 from pptx import Presentation
 
@@ -175,3 +177,35 @@ def test_default_data_basis_still_produces_the_premium_deck(result, tmp_path):
     default = assemble_deck(result, out_path=str(tmp_path / "default.pptx"),
                             work_dir=str(tmp_path / "w2"))
     assert not _survey_slides(default)
+
+
+# ── the summary page's overall survey-score tile ─────────────────────────────
+# Same gate as the page itself, on the page the deck OPENS with: filled from the survey
+# book when the run asked for it, off the slide when it did not.
+
+
+# The caption reaches the exported deck as "Overall <carrier> Survey" — the fill engine
+# rewrites the authored "Carrier" to the subject's own name, like every other label.
+_TILE = re.compile(r"overall\s+\S+\s+survey", re.I)
+
+
+def _survey_tiles(path):
+    """The text of every overall survey-score tile in the exported deck."""
+    return [sh.text_frame.text for slide in Presentation(path).slides
+            for sh in slide.shapes
+            if sh.has_text_frame and _TILE.search(sh.text_frame.text)]
+
+
+def test_the_overall_survey_tile_carries_a_real_score_on_the_survey_basis(survey_deck):
+    tiles = _survey_tiles(survey_deck)
+    assert len(tiles) == 1
+    score = float(re.search(r"\d+\.\d", tiles[0]).group(0))
+    assert 1.0 <= score <= 10.0
+
+
+def test_the_overall_survey_tile_comes_off_the_page_on_the_premium_basis(result, tmp_path):
+    """A premium-basis deck must not carry a survey number — nor the template's own "x.x"
+    where one would have gone. Scoped to the overall block: that is the page under test."""
+    path = assemble_deck(result, out_path=str(tmp_path / "premium.pptx"),
+                         work_dir=str(tmp_path / "work"), scope="overall")
+    assert _survey_tiles(path) == []

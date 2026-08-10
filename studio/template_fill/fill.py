@@ -1432,6 +1432,29 @@ def _crop_pictures(prs, values: Dict[str, Any]) -> None:
     logger.info("template_fill: cropped %d picture(s)", cropped)
 
 
+# ── shapes a run does not carry ──────────────────────────────────────────────
+
+
+def _drop_shapes(prs, values: Dict[str, Any]) -> None:
+    """Remove the shapes listed in ``drop_shapes`` (``"<slide>:<shape>"`` keys).
+
+    A page can carry a tile that only some runs can honestly fill — the Overall Carrier
+    Survey score is only in scope on the survey data basis. The module that owns such a
+    tile names it here rather than leaving it to fill with a placeholder, so the slide
+    ships one fact fewer instead of one invented fact more.
+    """
+    wanted = {str(k) for k in (values.get("drop_shapes") or ())}
+    if not wanted:
+        return
+    dropped = 0
+    for sidx, slide in enumerate(prs.slides):
+        for sh in list(slide.shapes):           # materialised: the loop deletes as it goes
+            if f"{sidx}:{int(sh.shape_id)}" in wanted:
+                sh._element.getparent().remove(sh._element)
+                dropped += 1
+    logger.info("template_fill: dropped %d shape(s) the run does not carry", dropped)
+
+
 # ── hidden / reordered slides ────────────────────────────────────────────────
 
 
@@ -1502,6 +1525,7 @@ def fill_template(doc: Dict[str, Any], *, out_path: Optional[str] = None) -> str
     _fill_cell_backgrounds(prs, values)
     _replace_pictures(prs, values)
     _crop_pictures(prs, values)
+    _drop_shapes(prs, values)
 
     n = len(prs.slides)
     _apply_order(prs, doc.get("order", list(range(n))), doc.get("hidden", []))

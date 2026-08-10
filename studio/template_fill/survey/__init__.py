@@ -6,7 +6,9 @@ Split by responsibility so each piece stays testable on its own:
   * :mod:`ribbon` — pure: a ranking spec → the chart PNG;
   * :mod:`facts`  — the deterministic survey queries behind both;
   * :mod:`page`   — detection, slot binding and the fill payload (the module
-    :mod:`studio.template_fill.assemble` actually calls).
+    :mod:`studio.template_fill.assemble` actually calls);
+  * :mod:`kpi`    — the summary page's "Overall Carrier Survey" tile, which is sourced from
+    the same book and so lives under the same data-basis gate as the page.
 
 Deliberately re-exports nothing: ``page`` imports its siblings from this package, so an
 ``__init__`` that imported ``page`` would close a cycle. Import the submodule you want.

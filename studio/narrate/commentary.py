@@ -50,10 +50,40 @@ def _significant_movers(rows: List[Dict[str, Any]]) -> Tuple[List[str], List[str
             # >100% growth always shows previous + current year premium (the YoY rule);
             # prior is derived exactly from current ÷ (1 + YoY) — no extra query.
             prior = p / (1 + y / 100) if (1 + y / 100) else 0.0
-            hi.append(f"{r['name']} ({pct(y, signed=True)}: {money(prior)}→{money(p)})")
+            hi.append(f"{r['name']}, up {pct(y)} from {money(prior)} to {money(p)}")
         elif y <= -10 and p >= cfg.significant_premium_floor:
-            lo.append(f"{r['name']} ({pct(y, signed=True)})")
+            lo.append(f"{r['name']}, down {pct(abs(y))} to {money(p)}")
     return hi, lo
+
+
+def _and(parts: List[str]) -> str:
+    """``a``, ``a and b``, ``a, b and c`` — a list said the way it is spoken.
+
+    An item carrying its own comma takes a comma before the "and" too, or the two run
+    together; only the items before the last can blur the join.
+    """
+    if len(parts) < 2:
+        return "".join(parts)
+    tail = ", and " if any("," in p for p in parts[:-1]) else " and "
+    return ", ".join(parts[:-1]) + tail + parts[-1]
+
+
+def _named(mover: str) -> str:
+    """The entity out of a mover phrase — ``"Cyber, up 97.3% …"`` → ``"Cyber"``."""
+    return mover.split(",")[0].strip()
+
+
+def _as_clause(mover: str) -> str:
+    """A mover phrase with a verb in it, for prose that opens on the mover.
+
+    ``"Cyber, up 97.3% from …"`` → ``"Cyber grew 97.3% from …"``. The list form keeps the
+    appositive so several movers can be joined; a sentence that STARTS with one needs the
+    verb, or it reads as a caption.
+    """
+    for tag, verb in ((", up ", " grew "), (", down ", " fell ")):
+        if tag in mover:
+            return mover.replace(tag, verb, 1)
+    return mover
 
 
 def _penetration(rows: List[Dict[str, Any]]) -> Optional[str]:
@@ -63,8 +93,8 @@ def _penetration(rows: List[Dict[str, Any]]) -> Optional[str]:
     best = max(have, key=lambda r: r["sow"])
     worst = min(have, key=lambda r: r["sow"])
     return (
-        f"Share of wallet is strongest in {best['name']} ({best['sow']:.1f}%) "
-        f"and weakest in {worst['name']} ({worst['sow']:.1f}%)."
+        f"The account is best penetrated in {best['name']}, at {best['sow']:.1f}% of the "
+        f"wallet, and thinnest in {worst['name']}, at {worst['sow']:.1f}%."
     )
 
 
@@ -74,13 +104,18 @@ def breakdown_takeaways(section) -> List[Point]:
     pts: List[Point] = []
     if rows:
         top = max(rows, key=lambda r: r["premium"] or 0)
-        sow = f" at {top['sow']:.1f}% wallet share" if top.get("sow") is not None else ""
-        pts.append({"label": "Leader.", "text": f"{top['name']} leads with {money(top['premium'])}{sow}.", "tone": "good"})
+        sow = (f", where the account holds {top['sow']:.1f}% of the wallet"
+               if top.get("sow") is not None else "")
+        pts.append({"label": "Leader.",
+                    "text": f"{top['name']} is the largest book at {money(top['premium'])}{sow}.",
+                    "tone": "good"})
     hi, lo = _significant_movers(rows)
     if hi:
-        pts.append({"label": "Growth.", "text": f"Fast, material growth in {', '.join(hi)}.", "tone": "good"})
+        pts.append({"label": "Growth.",
+                    "text": f"The fastest material growth came in {_and(hi)}.", "tone": "good"})
     if lo:
-        pts.append({"label": "Decline.", "text": f"Material declines in {', '.join(lo)}.", "tone": "danger"})
+        pts.append({"label": "Decline.",
+                    "text": f"Premium was given back in {_and(lo)}.", "tone": "danger"})
     pen = _penetration(rows)
     if pen:
         pts.append({"label": "Penetration.", "text": pen, "tone": "neutral"})
@@ -92,9 +127,18 @@ def whitespace_takeaways(result) -> List[Point]:
     if result.whitespace:
         ws_total = sum(w["market"] for w in result.whitespace)
         biggest = result.whitespace[0]
-        pts.append({"label": "Scale.", "text": f"{money(ws_total)} of market premium across {len(result.whitespace)} industries you don't write.", "tone": "warn"})
-        pts.append({"label": "Priority.", "text": f"{biggest['name']} is the largest single gap at {money(biggest['market'])}.", "tone": "warn"})
-        pts.append({"label": "Action.", "text": f"Build a dedicated appetite statement and underwriting capacity for {biggest['name']}.", "tone": "neutral"})
+        pts.append({"label": "Scale.",
+                    "text": f"The market places {money(ws_total)} across "
+                            f"{len(result.whitespace)} industries the account does not write.",
+                    "tone": "warn"})
+        pts.append({"label": "Priority.",
+                    "text": f"{biggest['name']} is the largest single gap, at "
+                            f"{money(biggest['market'])} of market premium.",
+                    "tone": "warn"})
+        pts.append({"label": "Action.",
+                    "text": f"Standing up an appetite statement and underwriting capacity for "
+                            f"{biggest['name']} is what would open it.",
+                    "tone": "neutral"})
     return pts
 
 
@@ -116,35 +160,40 @@ def build_swot(result):
     top_prem = sorted(rows, key=lambda r: r.get("premium") or 0, reverse=True)[:2]
     strengths = []
     if rank:
-        strengths.append(f"Market position at {rank}")
+        strengths.append(f"The account ranks {rank} in the market.")
     strengths += [
-        f"Scale in {r['name']} — {money(r['premium'])} ({(r.get('premium') or 0) / total_prem * 100:.0f}% of the book)"
+        f"{r['name']} carries {money(r['premium'])} of the book, "
+        f"{(r.get('premium') or 0) / total_prem * 100:.0f}% of everything written."
         for r in top_prem if (r.get("premium") or 0) > 0
     ]
-    strengths += [f"Strong penetration in {r['name']} ({r['sow']:.1f}%)" for r in top_sow]
+    strengths += [f"Penetration is strongest in {r['name']}, at {r['sow']:.1f}% of the wallet."
+                  for r in top_sow]
     if hi:
-        strengths.append(f"Momentum in {hi[0]}")
+        strengths.append(f"The momentum is in {hi[0]}.")
 
-    weaknesses = [f"Low share in {r['name']} ({r['sow']:.1f}%)" for r in low_sow]
-    weaknesses += [f"Declining {m}" for m in lo]
+    weaknesses = [f"The account holds only {r['sow']:.1f}% of the wallet in {r['name']}, so "
+                  f"most of that market is placed elsewhere." for r in low_sow]
+    weaknesses += [f"The book is eroding in {m}." for m in lo]
 
-    opportunities = [f"Whitespace: {w['name']} ({money(w['market'])} market)" for w in result.whitespace[:3]]
+    opportunities = [f"{w['name']} is a {money(w['market'])} market the account does not "
+                     f"currently write." for w in result.whitespace[:3]]
     if hi:
-        opportunities.append(f"Scale high-growth lines: {', '.join(hi)}")
+        opportunities.append(f"There is room to put capacity behind {_and(hi)}.")
 
     threats = []
     if result.whitespace:
         ws_total = sum(w["market"] for w in result.whitespace)
-        threats.append(f"{money(ws_total)} written by competitors, not you")
-    threats += [f"Erosion risk in {m}" for m in lo]
+        threats.append(f"{money(ws_total)} of premium in scope is written by other carriers.")
+    threats += [f"Continued erosion in {m} would compound." for m in lo]
     if sow_total:
-        threats.append(f"Overall wallet share only {sow_total}")
+        threats.append(f"Overall share of wallet is only {sow_total}, which leaves the "
+                       f"relationship easy to displace.")
 
     return SwotBlock(
-        strengths=strengths[:4] or ["Established book in core lines"],
-        weaknesses=weaknesses[:4] or ["Concentration in a few lines"],
-        opportunities=opportunities[:4] or ["Deepen existing relationships"],
-        threats=threats[:4] or ["Competitive pricing pressure"],
+        strengths=strengths[:4] or ["The account has an established book in its core lines."],
+        weaknesses=weaknesses[:4] or ["The book is concentrated in a few lines."],
+        opportunities=opportunities[:4] or ["There is room to deepen existing relationships."],
+        threats=threats[:4] or ["Competitive pricing pressure is a standing risk."],
     )
 
 
@@ -157,21 +206,23 @@ def build_initiatives(result) -> List[Mapping[str, Any]]:
     if result.whitespace:
         w = result.whitespace[0]
         cards.append({"tag": "ENTER", "tone": "warn", "title": f"Enter {w['name']}",
-                      "body": f"{money(w['market'])} addressable market, zero current premium. Stand up appetite + capacity."})
+                      "body": f"The market places {money(w['market'])} here and the account "
+                              f"writes none of it, so appetite and capacity have to come first."})
     if hi:
-        name = hi[0].split(" (")[0]
-        cards.append({"tag": "SCALE", "tone": "good", "title": f"Scale {name}",
-                      "body": f"Outsized growth ({hi[0].split('(')[1].rstrip(')') if '(' in hi[0] else 'high'}) in a favourable rate environment."})
+        cards.append({"tag": "SCALE", "tone": "good", "title": f"Scale {_named(hi[0])}",
+                      "body": f"{_as_clause(hi[0])}, and the rate environment still supports "
+                              f"putting capacity behind it."})
     if lo:
-        name = lo[0].split(" (")[0]
-        cards.append({"tag": "DEFEND", "tone": "danger", "title": f"Defend {name}",
-                      "body": f"Book contracting ({lo[0].split('(')[1].rstrip(')') if '(' in lo[0] else 'declining'}). Review pricing and protect renewals."})
+        cards.append({"tag": "DEFEND", "tone": "danger", "title": f"Defend {_named(lo[0])}",
+                      "body": f"{_as_clause(lo[0])}, so pricing and the renewal book both need "
+                              f"reviewing before the next cycle."})
     # Pad with a penetration play.
     have_sow = [r for r in rows if r.get("sow") is not None]
     if have_sow and len(cards) < 3:
         low = min(have_sow, key=lambda r: r["sow"])
         cards.append({"tag": "DEEPEN", "tone": "neutral", "title": f"Deepen {low['name']}",
-                      "body": f"Wallet share only {low['sow']:.1f}% — room to grow with existing clients."})
+                      "body": f"The account holds {low['sow']:.1f}% of the wallet here, so most "
+                              f"of the growth is available from clients it already serves."})
     return cards[:3]
 
 
@@ -190,11 +241,14 @@ def build_commentary(result, *, page: str = "overall") -> Tuple[str, List[Point]
     # Momentum / soft spots from the significance-gated movers.
     hi, lo = _significant_movers(rows)
     if hi:
-        points.append({"label": "Momentum.", "text": f"Fast, material growth in {', '.join(hi)}.", "tone": "good"})
-        actions.append(f"Scale {hi[0].split(' (')[0]} while growth and rate environment are favourable.")
+        points.append({"label": "Momentum.",
+                       "text": f"The growth is concentrated in {_and(hi)}.", "tone": "good"})
+        actions.append(f"Put capacity behind {_named(hi[0])} while the growth and the rate "
+                       f"environment still support it.")
     if lo:
-        points.append({"label": "Soft spots.", "text": f"Material declines in {', '.join(lo)}.", "tone": "danger"})
-        actions.append(f"Review pricing and defend renewals in {lo[0].split(' (')[0]}.")
+        points.append({"label": "Soft spots.",
+                       "text": f"Premium was given back in {_and(lo)}.", "tone": "danger"})
+        actions.append(f"Review pricing in {_named(lo[0])} and defend the renewal book there.")
 
     # Penetration.
     pen = _penetration(rows)
@@ -204,31 +258,34 @@ def build_commentary(result, *, page: str = "overall") -> Tuple[str, List[Point]
     # Opportunity (whitespace).
     if result.whitespace:
         ws_total = sum(w["market"] for w in result.whitespace)
-        names = ", ".join(w["name"] for w in result.whitespace)
+        names = _and([w["name"] for w in result.whitespace])
         points.append(
             {
                 "label": "Opportunity.",
-                "text": f"{names} are written by the market but not by {subject} — "
+                "text": f"{names} are written by the market but not by {subject}, which is "
                 f"{money(ws_total)} of whitespace.",
                 "tone": "warn",
             }
         )
         actions.append(
-            f"Build an appetite statement for {result.whitespace[0]['name']} — "
-            f"largest single whitespace ({money(result.whitespace[0]['market'])})."
+            f"Build an appetite statement for {result.whitespace[0]['name']}, the largest "
+            f"single piece of whitespace at {money(result.whitespace[0]['market'])}."
         )
 
     # Headline.
     lead = rows[0]["name"] if rows else None
-    growth_clause = f" {('up ' + pct(yoy, signed=True)) if yoy is not None else ''}".rstrip()
+    movement = f", {'up' if yoy >= 0 else 'down'} {pct(abs(yoy))} on the year" if yoy is not None else ""
     headline = (
-        f"{subject} wrote {total}{(' (' + growth_clause.strip() + ' YoY)') if yoy is not None else ''}"
+        f"{subject} wrote {total}{movement}"
         + (f", led by {lead} across {dim_label}." if lead else ".")
     )
     if result.whitespace:
-        headline += f" {len(result.whitespace)} material {dim_label.split()[0]} opportunities remain unwritten."
+        headline += (f" {len(result.whitespace)} material {dim_label.split()[0]} "
+                     f"opportunities remain unwritten.")
 
     if not points:
-        points.append({"label": "", "text": "No material signals for the current filters.", "tone": "neutral"})
+        points.append({"label": "",
+                       "text": "The current filters surface no material signals.",
+                       "tone": "neutral"})
 
     return headline, points, actions

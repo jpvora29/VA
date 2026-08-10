@@ -11,6 +11,7 @@ from typing import Any, List, Mapping, Optional, Sequence, Tuple
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
+from studio.compute import DATA_BASIS_PREMIUM, DATA_BASIS_WITH_SURVEY
 from studio.page.layout import _filter_grid, _scope_toggle
 
 # ── the Setup busy overlay ───────────────────────────────────────────────────
@@ -236,11 +237,13 @@ def _data_source_control(dataset_state: Optional[Mapping[str, Any]]) -> html.Div
 
 
 # Which books the deck draws on. "premium_survey" appends a Carrier Survey page to each
-# country block (see studio.template_fill.assemble.plan_subdecks).
-DATA_BASIS_DEFAULT = "premium"
+# country block and keeps the summary page's overall survey-score tile (see
+# studio.template_fill.assemble.plan_subdecks). The VALUES come from studio.compute, which
+# is where the choice is read again — the form must not spell them a second time.
+DATA_BASIS_DEFAULT = DATA_BASIS_PREMIUM
 DATA_BASIS_OPTIONS = (
-    {"label": "Premium only", "value": "premium"},
-    {"label": "Premium + survey", "value": "premium_survey"},
+    {"label": "Premium only", "value": DATA_BASIS_PREMIUM},
+    {"label": "Premium + survey", "value": DATA_BASIS_WITH_SURVEY},
 )
 
 

@@ -47,6 +47,12 @@ _CARRIER_COL = "Carrier_Group"
 _YEAR_COL = "Year"
 _INDUSTRY_COL = "SIC_Major_Class"
 
+# The Setup form's DATA BASIS choice — which books a run draws on. It rides on the result
+# (``OverallResult.data_basis``) so any page can ask, and it lives here rather than in the
+# template layer because the result is what carries it from Setup to every consumer.
+DATA_BASIS_PREMIUM = "premium"
+DATA_BASIS_WITH_SURVEY = "premium_survey"
+
 # Friendly labels for breakdown columns (for section titles).
 DIM_LABEL = {
     "SIC_Major_Class": "Industry",
@@ -92,6 +98,11 @@ class OverallResult:
     # Commentary voice, chosen in Setup and applied when prose is written (see
     # ``studio.template_fill.commentary`` / ``studio.narrate.commentary``).
     style: str = "balanced"
+    # Which books the run draws on, chosen in Setup. The survey book is a SEPARATE flow, so
+    # anything sourced from it — the Carrier Survey page, the overall survey-score tile — is
+    # only generated on ``DATA_BASIS_WITH_SURVEY``; on the premium basis it comes off the
+    # deck rather than reporting a number the run was not asked for.
+    data_basis: str = DATA_BASIS_PREMIUM
 
 
 _BLANK_VALS = (None, "", "all", "All")
