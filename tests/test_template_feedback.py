@@ -402,6 +402,140 @@ def test_bubble_chart_filled_from_growth_points(tmp_path):
     assert "Property" not in texts and "FINPRO" not in texts
 
 
+# ── the quadrant split (the axes' own zero lines) ────────────────────────────
+
+
+def _bubble_axes(path):
+    """``(x, y)`` scales of the filled growth chart, as ``(min, max)`` pairs."""
+    from pptx import Presentation
+
+    charts = [sh.chart for s in Presentation(path).slides for sh in s.shapes
+              if getattr(sh, "has_chart", False)]
+    bubble = next(c for c in charts if "BUBBLE" in str(c.chart_type))
+    return [(ax.minimum_scale, ax.maximum_scale)
+            for ax in (bubble.category_axis, bubble.value_axis)]
+
+
+def _fill_growth(tmp_path, points, name):
+    from studio.template_fill.fill import fill_template
+
+    doc = {"template_path": COUNTRY_TEMPLATE, "manifest": [],
+           "values": {"growth_bubble": {"points": points}},
+           "overrides": {}, "map_overrides": {}, "added": {}}
+    return fill_template(doc, out_path=str(tmp_path / name))
+
+
+@pytest.mark.parametrize("label,points", [
+    # A book that grew on both axes: left to itself the scale would start at the smallest
+    # point and push both zero lines off the plot — which is the regression this guards.
+    ("all growing", [{"lob": "Property", "carrier_yoy": 12.0, "marsh_yoy": 5.0, "size": 40e6},
+                     {"lob": "Cyber", "carrier_yoy": 20.0, "marsh_yoy": 9.0, "size": 15e6}]),
+    ("all shrinking", [{"lob": "Property", "carrier_yoy": -12.0, "marsh_yoy": -5.0, "size": 40e6},
+                       {"lob": "Cyber", "carrier_yoy": -4.0, "marsh_yoy": -9.0, "size": 15e6}]),
+    ("straddling", [{"lob": "Property", "carrier_yoy": 12.0, "marsh_yoy": -5.0, "size": 40e6},
+                    {"lob": "Cyber", "carrier_yoy": -4.0, "marsh_yoy": 9.0, "size": 15e6}]),
+    ("flat", [{"lob": "Property", "carrier_yoy": 0.0, "marsh_yoy": 0.0, "size": 40e6}]),
+])
+def test_both_axes_span_zero_so_the_quadrant_split_is_drawn(tmp_path, label, points):
+    """The page's four corner captions are written against the split at zero growth, and
+    that split IS the chart's two axis lines (authored ``crosses="autoZero"``). PowerPoint
+    only draws them inside the plot when the scale spans zero."""
+    if not Path(COUNTRY_TEMPLATE).exists():
+        pytest.skip("country template not present")
+
+    out = _fill_growth(tmp_path, points, f"{label.replace(' ', '_')}.pptx")
+    for (lo, hi), axis in zip(_bubble_axes(out), ("marsh", "carrier")):
+        assert lo < 0 < hi, f"{label}: the {axis} axis does not cross zero ({lo}, {hi})"
+
+
+def test_every_bubble_sits_inside_the_framed_plot(tmp_path):
+    """Headroom past the extremes: a point ON the scale's edge is half-clipped by the plot
+    border, and the extremes here are the very points the page is about."""
+    if not Path(COUNTRY_TEMPLATE).exists():
+        pytest.skip("country template not present")
+
+    points = [{"lob": "Property", "carrier_yoy": 12.0, "marsh_yoy": 5.0, "size": 40e6},
+              {"lob": "Cyber", "carrier_yoy": -4.0, "marsh_yoy": 9.0, "size": 15e6}]
+    (x_lo, x_hi), (y_lo, y_hi) = _bubble_axes(_fill_growth(tmp_path, points, "framed.pptx"))
+    assert x_lo < 5.0 / 100 and 9.0 / 100 < x_hi          # marsh growth: +5% … +9%
+    assert y_lo < -4.0 / 100 and 12.0 / 100 < y_hi        # carrier growth: -4% … +12%
+
+
+def _growth_slide(path):
+    from pptx import Presentation
+
+    for slide in Presentation(path).slides:
+        for sh in slide.shapes:
+            if getattr(sh, "has_chart", False) and "BUBBLE" in str(sh.chart.chart_type):
+                return slide, sh
+    raise AssertionError("no growth chart in the deck")
+
+
+def _quadrant(slide, shape):
+    """The painted outline and shaded band behind the growth chart."""
+    from studio.template_fill.fill import _quadrant_backdrop
+
+    return _quadrant_backdrop(slide, shape)
+
+
+def _plot_box(shape):
+    from pptx.oxml.ns import qn
+
+    manual = shape.chart._chartSpace.plotArea.find(qn("c:layout")).find(qn("c:manualLayout"))
+    fx, fy, fw, fh = (float(manual.find(qn(f"c:{k}")).get("val")) for k in ("x", "y", "w", "h"))
+    return (shape.left + fx * shape.width, shape.top + fy * shape.height,
+            fw * shape.width, fh * shape.height)
+
+
+def test_the_plot_is_pinned_onto_the_painted_quadrant(tmp_path):
+    """The page's quadrant is DRAWN, not plotted: the author painted its outline as a slide
+    shape, which does not move when the numbers do. Left to lay itself out, the chart puts
+    its plot wherever this deck's tick labels allow — a second frame beside the author's."""
+    if not Path(COUNTRY_TEMPLATE).exists():
+        pytest.skip("country template not present")
+
+    points = [{"lob": "Property", "carrier_yoy": 12.0, "marsh_yoy": 5.0, "size": 40e6},
+              {"lob": "Cyber", "carrier_yoy": -4.0, "marsh_yoy": 9.0, "size": 15e6}]
+    slide, shape = _growth_slide(_fill_growth(tmp_path, points, "pinned.pptx"))
+    outline, _ = _quadrant(slide, shape)
+    assert outline is not None, "the painted quadrant was not found"
+    box = (outline.left, outline.top, outline.width, outline.height)
+    assert _plot_box(shape) == pytest.approx(box, abs=2)
+    # …and the frame still holds the axis labels that sit outside the plot, or PowerPoint
+    # throws the pinned layout away and lays the plot out itself.
+    assert shape.left < outline.left and shape.top < outline.top
+    assert shape.left + shape.width > outline.left + outline.width
+    assert shape.top + shape.height > outline.top + outline.height
+
+
+def test_the_shaded_band_is_recut_to_this_decks_zero_line(tmp_path):
+    """The band shades the half of the quadrant above zero growth. Its foot was drawn on
+    the zero line of the AUTHOR's scale; on ours the line is somewhere else."""
+    if not Path(COUNTRY_TEMPLATE).exists():
+        pytest.skip("country template not present")
+
+    points = [{"lob": "Property", "carrier_yoy": 12.0, "marsh_yoy": 5.0, "size": 40e6},
+              {"lob": "Cyber", "carrier_yoy": -4.0, "marsh_yoy": 9.0, "size": 15e6}]
+    slide, shape = _growth_slide(_fill_growth(tmp_path, points, "recut.pptx"))
+    outline, band = _quadrant(slide, shape)
+    assert band is not None, "the shaded band was not found"
+    axis = shape.chart.value_axis          # the vertical one: carrier growth
+    y_lo, y_hi = axis.minimum_scale, axis.maximum_scale
+    zero = outline.top + outline.height * y_hi / (y_hi - y_lo)
+    assert band.top + band.height == pytest.approx(zero, abs=2)
+
+
+def test_an_emptied_chart_keeps_the_authored_scale(tmp_path):
+    """With no points there is nothing to frame — re-scaling off an empty book would only
+    invent a range the author never drew."""
+    if not Path(COUNTRY_TEMPLATE).exists():
+        pytest.skip("country template not present")
+
+    out = _fill_growth(tmp_path, [{"lob": "Property", "carrier_yoy": None,
+                                   "marsh_yoy": None, "size": 40e6}], "unscaled.pptx")
+    assert _bubble_axes(out) == [(None, None), (None, None)]
+
+
 # ── the growth quadrant reports on the SELECTION, and never on examples ──────
 
 

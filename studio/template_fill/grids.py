@@ -58,6 +58,7 @@ class Grid:
     row_count: int
     cells: Tuple[Tuple[int, List[Any], str, int], ...] = ()
     subtitle_id: Optional[int] = None
+    runway_chart_id: Optional[int] = None
 
 # A subtitle like "Carrier breakdown – Country (1)" — its (n) is hard-coded on EVERY
 # breakdown slide, so it must be re-resolved per slide to the slide's own country.
@@ -138,6 +139,27 @@ def _runway_label_ids(slide: Slide) -> List[int]:
     return [sh.shape_id for sh in sorted(labels, key=_cy)]
 
 
+def _covers(outer: Shape, inner: Shape) -> bool:
+    return (outer.x <= _cx(inner) <= outer.x + outer.w
+            and outer.y <= _cy(inner) <= outer.y + outer.h)
+
+
+def _runway_chart_id(slide: Slide, label_ids: List[int]) -> Optional[int]:
+    """The picture the runway bars are drawn on — the one every value label sits over.
+
+    Identified through the labels rather than by position: they are the shapes already
+    known to belong to the runway, one per product row, and they are drawn ON the bars.
+    """
+    wanted = set(label_ids)
+    labels = [sh for sh in slide.shapes if sh.shape_id in wanted]
+    if not labels:
+        return None
+    for sh in slide.shapes:
+        if sh.kind == "picture" and all(_covers(sh, label) for label in labels):
+            return sh.shape_id
+    return None
+
+
 def _detect_table(slide: Slide) -> Optional[Grid]:
     """The breakdown grid authored as a real PowerPoint table, or None."""
     for sh in slide.shapes:
@@ -157,12 +179,15 @@ def _detect_table(slide: Slide) -> Optional[Grid]:
 
         # The runway column is authored empty (its values are free text boxes over the
         # bar picture); bind those, positionally, when the column exists at all.
+        chart_id = None
         if runway_col is not None:
-            for row, shape_id in enumerate(_runway_label_ids(slide)[:len(data_rows)]):
+            label_ids = _runway_label_ids(slide)
+            for row, shape_id in enumerate(label_ids[:len(data_rows)]):
                 cells.append((shape_id, ["para", 0], "runway", row))
+            chart_id = _runway_chart_id(slide, label_ids)
 
         return Grid(row_count=len(data_rows), cells=tuple(cells),
-                    subtitle_id=_subtitle_id(slide, sh.y))
+                    subtitle_id=_subtitle_id(slide, sh.y), runway_chart_id=chart_id)
     return None
 
 
@@ -351,4 +376,19 @@ def grid_values(template: Template, result) -> Dict[str, Any]:
                 out[_role(slide.index, i, metric)] = "" if value is None else value
             out[_role(slide.index, i, "rank_change")] = _fmt_rank_change(
                 None if r is None else r.get("rank_change"))
+        _trim_runway_chart(out, slide.index, grid, len(rows))
     return out
+
+
+def _trim_runway_chart(out: Dict[str, Any], slide_idx: int, grid: Grid, live: int) -> None:
+    """Cut the runway bars belonging to rows this country has no product for.
+
+    The runway is drawn as ONE picture of bars, laid out top-to-bottom against the grid's
+    rows. Blanking a row's value label leaves its bar behind — a bar under no product,
+    which reads as a runway the carrier does not have. Cropping the picture to the live
+    rows takes the bars off with the rows; with no rows at all the whole picture goes.
+    """
+    if grid.runway_chart_id is None or live >= grid.row_count:
+        return
+    crops = out.setdefault("picture_crops", {})
+    crops[f"{slide_idx}:{grid.runway_chart_id}"] = {"bottom": 1.0 - live / grid.row_count}

@@ -56,7 +56,7 @@ if __name__ == "__main__":
     # reset the in-memory view back to Setup mid-build, so the finished deck never showed.
     # See studio/authoring/layout.py (qs-view now persists).
     port = int(os.environ.get("PORT", "8131"))
-    host = os.environ.get("HOST", "::")
+    host = os.environ.get("HOST", "localhost")
     try:
         app.run(debug=True, dev_tools_hot_reload=False, use_reloader=False,
                 host=host, port=port)

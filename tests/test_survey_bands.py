@@ -18,9 +18,9 @@ from studio.template_fill.survey import bands
     (-0.5, "FFBF35"),          # edge: closes the amber band
     (-0.49, "FFF3DC"),
     (-0.21, "FFF3DC"),
-    (-0.2, None),              # edge: neutral is inclusive
-    (0.0, None),
-    (0.2, None),               # edge: neutral is inclusive
+    (-0.2, "FFFFFF"),          # edge: neutral is inclusive
+    (0.0, "FFFFFF"),
+    (0.2, "FFFFFF"),           # edge: neutral is inclusive
     (0.21, "ABDC97"),
     (0.49, "ABDC97"),
     (0.5, "5BBF41"),           # edge: opens the mid-green band
@@ -33,9 +33,11 @@ def test_band_for_covers_every_edge(delta, expected):
 
 
 def test_band_for_none_delta_is_unfilled():
+    """No comparable prior year is not "no change": the cell keeps the template's own
+    styling rather than taking the neutral band's white."""
     assert bands.band_for(None) is None
 
 
 def test_every_legend_colour_is_reachable():
     reached = {bands.band_for(d) for d in (-2, -0.7, -0.3, 0, 0.3, 0.7, 2)}
-    assert reached == {"CF3638", "FFBF35", "FFF3DC", None, "ABDC97", "5BBF41", "008542"}
+    assert reached == {"CF3638", "FFBF35", "FFF3DC", "FFFFFF", "ABDC97", "5BBF41", "008542"}

@@ -626,9 +626,105 @@ def _show_series_names(chart) -> None:
                 el.set("val", val)
 
 
-def _write_bubble_chart(chart, points: List[Dict[str, Any]]) -> None:
+# The growth page IS a quadrant: its four corner captions ("outgrowing Marsh", "losing
+# share", …) are written against the split at zero growth on both axes. The split is not
+# drawn furniture — it is the chart's own two axis lines, which the author styled in navy
+# and set to cross at zero (``c:crosses="autoZero"``). PowerPoint only draws a crossing
+# line INSIDE the plot when the scale spans zero, so a book that grew (or shrank) across
+# the board would auto-scale off its own extremes and push both lines onto the plot edge,
+# leaving the corner captions labelling nothing. Each axis is therefore framed to contain
+# zero explicitly, with headroom so the extreme bubbles sit inside the plot rather than on
+# its border.
+_GROWTH_AXIS_PAD = 0.15         # headroom past the extremes, as a share of the span
+_GROWTH_AXIS_MIN_SPAN = 0.02    # 2pp — a flat book still gets a plot to be flat in
+
+
+def _zero_centred_bounds(values: List[float]) -> Tuple[float, float]:
+    """``(min, max)`` for a growth axis: the range of ``values``, widened to contain zero."""
+    lo, hi = min(values + [0.0]), max(values + [0.0])
+    pad = max(hi - lo, _GROWTH_AXIS_MIN_SPAN) * _GROWTH_AXIS_PAD
+    return lo - pad, hi + pad
+
+
+def _frame_growth_quadrant(chart, points: List[Dict[str, Any]]) -> Tuple[float, float]:
+    """Scale both axes of the growth chart so their zero lines cross inside the plot.
+
+    Returns the VERTICAL bounds, which is where the horizontal zero line lands and so what
+    the painted band behind the plot has to be cut to.
+    """
+    # Both axes of an XY/bubble chart are value axes; python-pptx hands back the first
+    # (the horizontal, Marsh growth) as ``category_axis`` and the second as ``value_axis``.
+    bounds = {}
+    for axis, series in ((chart.category_axis, "marsh_yoy"), (chart.value_axis, "carrier_yoy")):
+        bounds[series] = _zero_centred_bounds([float(p[series]) / 100.0 for p in points])
+        axis.minimum_scale, axis.maximum_scale = bounds[series]
+    return bounds["carrier_yoy"]
+
+
+def _within(box, frame) -> bool:
+    """True when ``box`` lies wholly inside ``frame`` (both ``(x, y, w, h)``)."""
+    return (box[0] >= frame[0] and box[1] >= frame[1]
+            and box[0] + box[2] <= frame[0] + frame[2]
+            and box[1] + box[3] <= frame[1] + frame[3])
+
+
+# How far apart the painted outline and the band inside it may be authored and still count
+# as sharing an edge, as a share of the outline's width. They are drawn a rounding error
+# — a single EMU, in the shipped template — off each other.
+_QUADRANT_EDGE_SHARE = 0.01
+
+
+def _quadrant_backdrop(slide, chart_shape):
+    """``(outline, band)`` — the growth page's painted quadrant, or ``(None, None)``.
+
+    The page's backdrop is drawn rather than plotted: the author painted the quadrant's
+    outline, and shaded the half of it above the zero line, as ordinary slide shapes behind
+    the chart. They are the two largest shapes lying wholly inside the chart's frame — the
+    band being the shorter one drawn to the outline's own left edge and width.
+    """
+    frame = _box(chart_shape)
+    inside = []
+    for sh in _iter_leaves(slide.shapes):
+        if getattr(sh, "has_chart", False):
+            continue
+        try:
+            box = _box(sh)
+        except TypeError:                       # a shape without geometry
+            continue
+        if _within(box, frame):
+            inside.append((sh, box))
+    if not inside:
+        return None, None
+    inside.sort(key=lambda pair: pair[1][2] * pair[1][3], reverse=True)
+    outline, outer = inside[0]
+    tolerance = _QUADRANT_EDGE_SHARE * outer[2]
+    band = next((sh for sh, box in inside[1:]
+                 if abs(box[0] - outer[0]) <= tolerance and abs(box[2] - outer[2]) <= tolerance
+                 and box[3] < outer[3]), None)
+    return outline, band
+
+
+def _align_growth_quadrant(slide, chart_shape, y_bounds: Tuple[float, float]) -> None:
+    """Put the growth page's plot back under the quadrant the author painted for it.
+
+    Both halves of the backdrop were placed against the plot as the AUTHOR's numbers laid
+    it out, and neither moves on its own: so the plot is pinned onto the outline, and the
+    shaded band re-cut so its foot sits on this deck's own zero line.
+    """
+    outline, band = _quadrant_backdrop(slide, chart_shape)
+    if outline is None:
+        return
+    plot = _box(outline)
+    _pin_plot_area(chart_shape, plot)
+    lo, hi = y_bounds
+    if band is not None and lo < 0 < hi:
+        band.height = max(1, plot[1] + int(round(plot[3] * hi / (hi - lo))) - band.top)
+
+
+def _write_bubble_chart(slide, shape, points: List[Dict[str, Any]]) -> None:
     """One series per line of business (x = Marsh YoY, y = carrier YoY, size = carrier GWP),
-    each bubble labelled with its own line and the axes pinned to percentages.
+    each bubble labelled with its own line, the axes pinned to percentages and framed around
+    zero so the page's quadrant split is drawn — over the quadrant the author painted.
 
     With NO points the chart is emptied rather than left alone: the author's example
     bubbles are example DATA, and shipping them under the carrier's name on a page titled
@@ -636,6 +732,7 @@ def _write_bubble_chart(chart, points: List[Dict[str, Any]]) -> None:
     """
     from pptx.chart.data import BubbleChartData
 
+    chart = shape.chart
     data = BubbleChartData(number_format=_PERCENT_FORMAT)
     if not points:
         data.add_series("")                     # a chart needs one series; it plots nothing
@@ -645,6 +742,8 @@ def _write_bubble_chart(chart, points: List[Dict[str, Any]]) -> None:
                            abs(p.get("size") or 0.0) or 1.0)
     _replace_chart_data(chart, data)
     _pin_value_axis_format(chart, _PERCENT_FORMAT)
+    if points:                                  # an emptied chart keeps the authored scale
+        _align_growth_quadrant(slide, shape, _frame_growth_quadrant(chart, points))
     # Every bubble is cloned from the author's single authored series, so they all share one
     # colour: the legend comes off and each bubble names itself.
     chart.has_legend = False
@@ -693,12 +792,6 @@ _LC_SIZE_HEADROOM = 1.04
 # top-5 line the rest of the deck benchmarks against. Kept unless the data ranks deeper,
 # in which case the axis grows to fit (and the boundary drifts with it).
 _LC_RANK_AXIS_MAX = 11.0
-# The ruling behind the points. The author drew none — their four example points were
-# labelled and placed by hand — but a refilled panel is READ off its axes, so both
-# directions get a hairline grid: pale enough to sit under the painted priority bands,
-# dark enough to carry the eye from a point to its tick.
-_LC_GRID_RGB = (0xD5, 0xDB, 0xE6)
-_LC_GRID_PT = 0.75
 
 _SHAPE_TYPE_FREEFORM, _SHAPE_TYPE_LINE, _SHAPE_TYPE_GROUP = 5, 9, 6
 # The furniture the author hand-drew AROUND their example points, all of which is positioned
@@ -839,8 +932,9 @@ def _fill_rank_scatter(chart, points: List[Dict[str, Any]], country: str) -> Non
     Both axes are re-scaled to the country's own numbers: the money axis to the largest pool
     (its ticks now shown, since the hand-drawn broken axis goes), the rank axis to the
     author's own 0–11 — which is what puts their band boundary on the top-5 line — widened
-    only if the carrier ranks deeper than that. Both are ruled, vertically and horizontally,
-    so a point can be read back to its pool size and its rank without a hand-drawn axis.
+    only if the carrier ranks deeper than that. The author's gridlines (drawn ``noFill``)
+    are left as authored: the painted priority bands are the panel's backdrop, and a grid
+    over them competes with the reading they exist to give.
     """
     from pptx.chart.data import XyChartData
     from pptx.util import Pt
@@ -858,13 +952,11 @@ def _fill_rank_scatter(chart, points: List[Dict[str, Any]], country: str) -> Non
     size_axis.tick_labels.number_format_is_linked = False
     size_axis.tick_labels.font.size = Pt(_LC_LABEL_PT)
     _show_tick_labels(size_axis)
-    _rule_axis(size_axis)                           # the vertical grid
 
     rank_axis = chart.value_axis                    # the y axis: rank 1 at the top (maxMin)
     rank_axis.minimum_scale = 0.0
     rank_axis.maximum_scale = max(_LC_RANK_AXIS_MAX,
                                   max(float(p["rank"]) for p in points) + 1.0)
-    _rule_axis(rank_axis)                           # the horizontal grid
 
     for point, row, side in zip(chart.plots[0].series[0].points, points,
                                 _label_sides(points, size_axis.maximum_scale)):
@@ -914,23 +1006,6 @@ def _show_tick_labels(axis) -> None:
         pos.set("val", "nextTo")
 
 
-def _rule_axis(axis) -> None:
-    """Rule the plot along ``axis`` — major gridlines, hairline and pale.
-
-    Called for BOTH axes of a ranking panel, so the plot is crossed by a vertical grid
-    (pool size) and a horizontal one (rank). The colour is deliberately quiet: the grid
-    has to survive being drawn over the author's painted priority bands without competing
-    with them or with the points.
-    """
-    from pptx.dml.color import RGBColor
-    from pptx.util import Pt
-
-    axis.has_major_gridlines = True
-    line = axis.major_gridlines.format.line
-    line.color.rgb = RGBColor(*_LC_GRID_RGB)
-    line.width = Pt(_LC_GRID_PT)
-
-
 def _name_point(point, text: str, side) -> None:
     """Label one scatter point with its line of business, on the given ``side`` of it.
 
@@ -953,6 +1028,63 @@ def _name_point(point, text: str, side) -> None:
 
 def _box(shape) -> Tuple[int, int, int, int]:
     return int(shape.left or 0), int(shape.top or 0), int(shape.width or 0), int(shape.height or 0)
+
+
+# ── the plot area, pinned to the frame the author painted ────────────────────
+
+# Room kept free inside the chart's frame for the axis labels that sit OUTSIDE its plot.
+# PowerPoint honours a manual plot layout only while those labels still fit inside the
+# frame; asked for more than that it silently drops back to an automatic layout — which
+# puts the plot wherever this deck's numbers happen to put it, while the backdrop the
+# author painted behind it does not move. Spare frame costs nothing (a chart draws nothing
+# outside its own plot but these labels), so the margins are deliberately generous.
+_PLOT_LABEL_MARGIN_X = 320040       # 0.35" — half a money/percent tick label
+_PLOT_LABEL_MARGIN_Y = 182880       # 0.20" — one line of them under the plot
+
+_MANUAL_LAYOUT_XML = (
+    '<c:manualLayout %s>'
+    '<c:layoutTarget val="inner"/><c:xMode val="edge"/><c:yMode val="edge"/>'
+    '<c:x val="0"/><c:y val="0"/><c:w val="1"/><c:h val="1"/>'
+    '</c:manualLayout>')
+
+
+def _manual_layout(chart):
+    """The plot area's ``c:manualLayout``, added (targeting the INNER plot) if absent."""
+    from pptx.oxml import parse_xml
+    from pptx.oxml.ns import nsdecls, qn
+
+    plot_area = chart._chartSpace.plotArea
+    layout = plot_area.find(qn("c:layout"))
+    if layout is None:
+        layout = plot_area.makeelement(qn("c:layout"), {})
+        plot_area.insert(0, layout)
+    manual = layout.find(qn("c:manualLayout"))
+    if manual is None:
+        manual = parse_xml(_MANUAL_LAYOUT_XML % nsdecls("c"))
+        layout.append(manual)
+    return manual
+
+
+def _pin_plot_area(shape, plot: Tuple[int, int, int, int]) -> None:
+    """Pin a chart's plot area onto the absolute rect ``plot``.
+
+    The chart's own frame is first grown to leave the axis labels room outside ``plot``,
+    then the layout is written as fractions of that frame. Both halves are needed: the
+    fractions alone are only a request, and PowerPoint refuses one it cannot label.
+    """
+    from pptx.oxml.ns import qn
+
+    x, y, w, h = _box(shape)
+    left = min(x, plot[0] - _PLOT_LABEL_MARGIN_X)
+    top = min(y, plot[1] - _PLOT_LABEL_MARGIN_Y // 2)
+    right = max(x + w, plot[0] + plot[2] + _PLOT_LABEL_MARGIN_X)
+    bottom = max(y + h, plot[1] + plot[3] + _PLOT_LABEL_MARGIN_Y)
+    shape.left, shape.top, shape.width, shape.height = left, top, right - left, bottom - top
+    manual = _manual_layout(shape.chart)
+    fractions = ((plot[0] - left) / (right - left), (plot[1] - top) / (bottom - top),
+                 plot[2] / (right - left), plot[3] / (bottom - top))
+    for tag, value in zip(("x", "y", "w", "h"), fractions):
+        manual.find(qn(f"c:{tag}")).set("val", repr(value))
 
 
 def _panel_furniture(slide, charts) -> Dict[int, List[Any]]:
@@ -1053,11 +1185,15 @@ def _fill_ranking_panels(slide, sidx: int, panels: Dict[str, Any]) -> set:
                 continue
             rect = panel["rect"]
             old, new = _box(sh), (rect["x"], rect["y"], rect["w"], rect["h"])
+            new_plot = _plot_frame(sh.chart, new)
             _move_panel_furniture(furniture[int(sh.shape_id)], old, new,
-                                  old_plot=_plot_frame(sh.chart, old),
-                                  new_plot=_plot_frame(sh.chart, new))
+                                  old_plot=_plot_frame(sh.chart, old), new_plot=new_plot)
             sh.left, sh.top, sh.width, sh.height = new
             _fill_rank_scatter(sh.chart, panel["points"], panel.get("country") or "")
+            if new_plot:
+                # The panel now states its own money ticks, which the author's layout left
+                # no room for — so the plot is pinned back onto the bands it sits behind.
+                _pin_plot_area(sh, new_plot)
         except Exception as exc:  # noqa: BLE001 — a panel must never break the export
             logger.warning("template_fill: ranking panel skipped: %s", exc)
     logger.info("template_fill: %d ranking panel(s) on slide %d (%d blanked)",
@@ -1140,7 +1276,7 @@ def _fill_charts(prs, values: Dict[str, Any]) -> None:
                 elif "BUBBLE" in ctype:
                     if not _detach_external_data(chart):
                         continue
-                    _write_bubble_chart(chart, points)
+                    _write_bubble_chart(slide, sh, points)
                     _blank_stale_point_labels(slide, sh, points)
                 elif "SCATTER" in ctype and points:
                     if _chart_is_external(chart):
@@ -1255,6 +1391,47 @@ def _replace_pictures(prs, values: Dict[str, Any]) -> None:
     logger.info("template_fill: replaced %d picture(s)", swapped)
 
 
+def _crop_picture(shape, bottom: float) -> None:
+    """Cut ``bottom`` (a share of what is currently visible) off a picture's foot.
+
+    The FRAME shrinks by the same share, so what remains keeps its scale and its top edge:
+    a picture laid out row-by-row against a table therefore stays aligned with the rows it
+    still has, rather than stretching to refill the space its cropped rows left.
+    """
+    visible = 1.0 - shape.crop_top - shape.crop_bottom
+    shape.crop_bottom += bottom * visible
+    shape.height = int(round(shape.height * (1.0 - bottom)))
+
+
+def _crop_pictures(prs, values: Dict[str, Any]) -> None:
+    """Trim pictures from the ``picture_crops`` payload, addressed by ``slide:shape``.
+
+    ``{"bottom": share}`` takes that share off the picture's foot; a share of 1 leaves
+    nothing to show, so the picture comes off the slide whole. Generic: any page whose
+    artwork is drawn per row can emit it (:mod:`studio.template_fill.grids` does, for the
+    runway bars of a breakdown grid with fewer products than rows).
+    """
+    crops = values.get("picture_crops") or {}
+    if not crops:
+        return
+    cropped = 0
+    for sidx, slide in enumerate(prs.slides):
+        for sh in list(_iter_leaves(slide.shapes)):
+            spec = crops.get(f"{sidx}:{int(sh.shape_id)}")
+            if not spec or not hasattr(sh._element, "blipFill"):
+                continue
+            try:
+                bottom = float(spec.get("bottom") or 0.0)
+                if bottom >= 1.0:
+                    sh._element.getparent().remove(sh._element)
+                elif bottom > 0.0:
+                    _crop_picture(sh, bottom)
+                cropped += 1
+            except Exception as exc:  # noqa: BLE001 — a picture must never break the export
+                logger.warning("template_fill: picture crop skipped (%s): %s", sh.shape_id, exc)
+    logger.info("template_fill: cropped %d picture(s)", cropped)
+
+
 # ── hidden / reordered slides ────────────────────────────────────────────────
 
 
@@ -1324,6 +1501,7 @@ def fill_template(doc: Dict[str, Any], *, out_path: Optional[str] = None) -> str
     _fill_charts(prs, values)
     _fill_cell_backgrounds(prs, values)
     _replace_pictures(prs, values)
+    _crop_pictures(prs, values)
 
     n = len(prs.slides)
     _apply_order(prs, doc.get("order", list(range(n))), doc.get("hidden", []))

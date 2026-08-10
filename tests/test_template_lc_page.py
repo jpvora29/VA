@@ -19,6 +19,7 @@ import pytest
 from pptx import Presentation
 
 from studio.compute import compute_overall
+from studio.template_fill import fill as F
 from studio.template_fill import lc_page as L
 from studio.template_fill.analyze import Shape, Slide, Template, analyze
 
@@ -278,12 +279,41 @@ def _only_chart(slide):
     return charts[0]
 
 
-def test_the_panel_stays_the_authored_scatter_at_its_planned_rect(filled_page):
+def _plot_box(shape):
+    """Where the chart's plot area sits on the slide, in absolute EMU."""
+    from pptx.oxml.ns import qn
+
+    manual = shape.chart._chartSpace.plotArea.find(qn("c:layout")).find(qn("c:manualLayout"))
+    fx, fy, fw, fh = (float(manual.find(qn(f"c:{k}")).get("val")) for k in ("x", "y", "w", "h"))
+    return (shape.left + fx * shape.width, shape.top + fy * shape.height,
+            fw * shape.width, fh * shape.height)
+
+
+def test_the_panel_stays_the_authored_scatter_over_its_planned_rect(filled_page):
+    """The panel's PLOT lands on the planned rect's authored plot area. Its frame is wider
+    than that — the money ticks it now states need room outside the plot, and PowerPoint
+    drops a manual plot layout it cannot label, so the frame has to hold both."""
+    slide, panels, whole = filled_page
+    shape = _only_chart(slide)
+    assert "SCATTER" in str(shape.chart.chart_type)
+    authored = next(sh for sh in Presentation(OVERALL_TEMPLATE).slides[panels[0].slide_idx].shapes
+                    if getattr(sh, "has_chart", False)
+                    and int(sh.shape_id) == panels[0].shape_id)
+    planned = F._plot_frame(authored.chart, (whole.x, whole.y, whole.w, whole.h))
+    assert _plot_box(shape) == pytest.approx(planned, abs=2)
+    assert shape.left <= planned[0] and shape.left + shape.width >= planned[0] + planned[2]
+    assert shape.top + shape.height >= planned[1] + planned[3]
+
+
+def test_the_plot_lands_exactly_on_the_painted_bands(filled_page):
+    """The bands are the panel's backdrop: the plot border drawn over them has to be the
+    rectangle they are, or the page shows two frames a quarter-inch apart."""
     slide, _, whole = filled_page
-    frame = _only_chart(slide)
-    assert "SCATTER" in str(frame.chart.chart_type)
-    assert (frame.left, frame.top, frame.width, frame.height) == (whole.x, whole.y,
-                                                                  whole.w, whole.h)
+    band = next(sh for sh in slide.shapes if str(sh.shape_type).startswith("GROUP")
+                and sh.width > whole.w * 0.8)
+    plot = _plot_box(_only_chart(slide))
+    assert plot == pytest.approx((band.left, band.top, band.width, band.height),
+                                 abs=0.01 * band.width)
 
 
 def test_each_point_is_a_line_of_business_named_on_the_authored_axes(filled_page):
@@ -299,12 +329,15 @@ def test_each_point_is_a_line_of_business_named_on_the_authored_axes(filled_page
     assert not chart.has_legend and not chart.has_title
 
 
-def test_the_plot_is_ruled_both_ways(filled_page):
-    """The author drew no gridlines — their four example points were placed by hand. A
-    refilled panel is READ off its axes, so both directions are ruled."""
+def test_the_plot_keeps_the_authored_ruling(filled_page):
+    """The author authored both grids ``noFill`` — the painted priority bands are the
+    panel's backdrop, and a grid over them competes with the reading they exist to give.
+    The refill must not paint one on."""
     chart = _only_chart(filled_page[0]).chart
-    assert chart.category_axis.has_major_gridlines, "no vertical grid off the money axis"
-    assert chart.value_axis.has_major_gridlines, "no horizontal grid off the rank axis"
+    for axis, which in ((chart.category_axis, "money"), (chart.value_axis, "rank")):
+        line = axis.major_gridlines.format.line
+        assert line.fill.type is None or str(line.fill.type).startswith("BACKGROUND"), \
+            f"a grid was painted onto the {which} axis"
 
 
 def test_the_deck_still_opens_after_the_chart_is_refilled(filled_page):

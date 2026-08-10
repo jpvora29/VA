@@ -100,7 +100,7 @@ def test_the_scores_are_real_numbers_on_the_survey_scale(survey_deck):
 def test_cells_are_coloured_by_their_move_against_last_year(survey_deck):
     from studio.template_fill.survey import bands
 
-    legend = {bands.RED, bands.AMBER, bands.CREAM, bands.LIGHT_GREEN,
+    legend = {bands.RED, bands.AMBER, bands.CREAM, bands.WHITE, bands.LIGHT_GREEN,
               bands.GREEN, bands.DARK_GREEN}
     seen = set()
     for slide in _survey_slides(survey_deck):
@@ -113,7 +113,7 @@ def test_cells_are_coloured_by_their_move_against_last_year(survey_deck):
                     try:
                         seen.add(str(cell.fill.fore_color.rgb))
                     except (AttributeError, TypeError):
-                        pass          # an unfilled (neutral-band) cell
+                        pass          # a cell with no comparable prior year
     assert seen & legend, "no cell took a band colour"
     assert seen <= legend, f"unexpected colours on the page: {seen - legend}"
     assert len(seen & legend) >= 3, "the seeded drifts should span several bands"

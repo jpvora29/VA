@@ -332,3 +332,73 @@ def test_breakdown_slide_is_scoped_to_its_own_country():
     assert len(set(subtitles)) == len(subtitles)
     assert all("(1)" not in s and "Carrier" not in s for s in subtitles)
     assert all("Zurich" in s for s in subtitles)
+
+
+# ── the runway bars, one per grid row ────────────────────────────────────────
+
+COUNTRY_TEMPLATE = "template/country_template.pptx"
+
+
+def _breakdown_grid():
+    from studio.template_fill import grids
+
+    if not Path(COUNTRY_TEMPLATE).exists():
+        pytest.skip("country template not present")
+    for slide in analyze(COUNTRY_TEMPLATE).slides:
+        grid = grids._detect(slide)
+        if grid is not None:
+            return slide.index, grid
+    raise AssertionError("no breakdown grid in the country template")
+
+
+def test_the_runway_bars_are_found_through_their_own_value_labels():
+    """The bars are one picture, and the value labels are drawn on it — which is what
+    identifies it, rather than where on the slide it happens to sit."""
+    _, grid = _breakdown_grid()
+    assert grid.runway_chart_id is not None
+    assert grid.row_count > 1
+
+
+@pytest.mark.parametrize("live,expected", [(7, None), (3, 4 / 7), (1, 6 / 7), (0, 1.0)])
+def test_the_runway_is_cropped_to_the_rows_that_have_a_product(live, expected):
+    """A blanked row keeps its bar unless the picture is cut — a runway under no product.
+    A full grid is left alone; a grid with nothing in it loses the picture whole."""
+    from studio.template_fill import grids
+
+    idx, grid = _breakdown_grid()
+    out = {}
+    grids._trim_runway_chart(out, idx, grid, live)
+    crop = (out.get("picture_crops") or {}).get(f"{idx}:{grid.runway_chart_id}")
+    if expected is None:
+        assert not out, "a full grid needs no crop"
+    else:
+        assert crop["bottom"] == pytest.approx(expected)
+
+
+def test_cropping_trims_the_picture_and_its_frame_together(tmp_path):
+    """The bars line up with the table's rows, so the visible part has to keep its scale
+    and its top edge — a crop alone would stretch the survivors over the whole frame."""
+    idx, grid = _breakdown_grid()
+    before = next(sh for sh in Presentation(COUNTRY_TEMPLATE).slides[idx].shapes
+                  if int(sh.shape_id) == grid.runway_chart_id)
+    doc = {"template_path": COUNTRY_TEMPLATE, "manifest": [],
+           "values": {"picture_crops": {f"{idx}:{grid.runway_chart_id}": {"bottom": 3 / 7}}},
+           "overrides": {}, "map_overrides": {}, "added": {}}
+    out = fill_template(doc, out_path=str(tmp_path / "cropped.pptx"))
+
+    after = next(sh for sh in Presentation(out).slides[idx].shapes
+                 if int(sh.shape_id) == grid.runway_chart_id)
+    # OOXML stores a crop in hundred-thousandths, so the fraction lands rounded.
+    assert after.crop_bottom == pytest.approx(3 / 7, rel=1e-4)
+    assert after.height == pytest.approx(before.height * 4 / 7, rel=1e-3)
+    assert (after.left, after.top, after.width) == (before.left, before.top, before.width)
+
+
+def test_a_grid_with_no_products_loses_the_runway_picture(tmp_path):
+    idx, grid = _breakdown_grid()
+    doc = {"template_path": COUNTRY_TEMPLATE, "manifest": [],
+           "values": {"picture_crops": {f"{idx}:{grid.runway_chart_id}": {"bottom": 1.0}}},
+           "overrides": {}, "map_overrides": {}, "added": {}}
+    out = fill_template(doc, out_path=str(tmp_path / "gone.pptx"))
+    ids = {int(sh.shape_id) for sh in Presentation(out).slides[idx].shapes}
+    assert grid.runway_chart_id not in ids
