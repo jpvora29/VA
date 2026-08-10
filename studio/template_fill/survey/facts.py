@@ -109,9 +109,24 @@ def section_column(result) -> Optional[str]:
     return None
 
 
-def _base_filters(result, country: str) -> Dict[str, Any]:
-    """Country + carrier — the ONLY premium-side scoping the survey page inherits."""
-    return {COUNTRY_COL: str(country), CARRIER_COL: str(result.subject)}
+def subject_in_book(result, country: str) -> Optional[str]:
+    """The subject's name in the SURVEY book for ``country`` (see :mod:`identity`)."""
+    from studio.template_fill.survey import identity
+
+    return identity.resolve_carrier(result, (country,))
+
+
+def _base_filters(result, country: str) -> Optional[Dict[str, Any]]:
+    """Country + the subject AS THE SURVEY BOOK NAMES IT, or ``None`` if it is not in it.
+
+    The premium subject is a ``Carrier_Group``; this book keys on ``Carrier``. Passing the
+    group name straight through is what put another carrier's scores — or none — on the
+    page (:mod:`studio.template_fill.survey.identity`).
+    """
+    carrier = subject_in_book(result, country)
+    if carrier is None:
+        return None
+    return {COUNTRY_COL: str(country), CARRIER_COL: carrier}
 
 
 def has_survey_data(result, country: str) -> bool:
@@ -129,7 +144,8 @@ def has_survey_data(result, country: str) -> bool:
 
 def _reported_years(result, country: str) -> Tuple[Optional[int], Optional[int]]:
     """``(latest surveyed year, the one before it)`` for this country and carrier."""
-    return _years_for(result, _base_filters(result, country))
+    base = _base_filters(result, country)
+    return _years_for(result, base) if base is not None else (None, None)
 
 
 def _years_for(result, filters: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
@@ -150,10 +166,15 @@ def load_overall_score(result, countries: Sequence[str] = ()) -> Optional[float]
     nothing to say for that scope — there is no premium-side number that could stand in for
     a survey score, so the caller takes the tile off the page instead.
     """
+    from studio.template_fill.survey import identity
+
     if section_column(result) is None:
         return None
-    filters: Dict[str, Any] = {CARRIER_COL: str(result.subject)}
     scope = tuple(str(c) for c in countries if str(c).strip())
+    carrier = identity.resolve_carrier(result, scope)
+    if carrier is None:
+        return None
+    filters: Dict[str, Any] = {CARRIER_COL: carrier}
     if scope:
         filters[COUNTRY_COL] = scope
     year, _ = _years_for(result, filters)
@@ -259,17 +280,17 @@ def load_grid(result, country: str) -> Optional[ScoreGrid]:
     once any cell is missing.
     """
     section = section_column(result)
-    if section is None:
+    base = _base_filters(result, country) if section is not None else None
+    if base is None:
         return None
     year, prior_year = _reported_years(result, country)
     if year is None:
         return None
 
-    body = _breakdown(result, (section, PRACTICE_COL),
-                      {**_base_filters(result, country), YEAR_COL: int(year)})
+    body = _breakdown(result, (section, PRACTICE_COL), {**base, YEAR_COL: int(year)})
 
     def cuts(for_year: int):
-        filters = {**_base_filters(result, country), YEAR_COL: int(for_year)}
+        filters = {**base, YEAR_COL: int(for_year)}
         pairs = (body if for_year == year
                  else _breakdown(result, (section, PRACTICE_COL), filters))
         return (
@@ -300,22 +321,24 @@ def load_grid(result, country: str) -> Optional[ScoreGrid]:
 # ── the ribbon ───────────────────────────────────────────────────────────────
 
 
-def _surveyed_carriers(result, country: str) -> Tuple[str, ...]:
+def _surveyed_carriers(result, country: str, subject: str) -> Tuple[str, ...]:
     """Every carrier the survey book scores in ``country``, best first, minus the subject."""
     facts = _breakdown(result, (CARRIER_COL,), {COUNTRY_COL: str(country)})
     ranked = sorted(((str(f.dims[CARRIER_COL]), float(f.value or 0.0))
                      for f in facts if f.dims.get(CARRIER_COL) is not None),
                     key=lambda pair: -pair[1])
-    return tuple(name for name, _ in ranked if name != str(result.subject))
+    return tuple(name for name, _ in ranked if name != subject)
 
 
-def _peer_carriers(result, country: str) -> Tuple[str, ...]:
+def _peer_carriers(result, country: str, subject: str) -> Tuple[str, ...]:
     """The carriers the subject is ranked against, in order of authority.
 
     The peers pinned in Setup, else the subject's group from the survey flow's own Peers
-    table, else EVERY OTHER CARRIER the survey book scores in this country.
+    table, else EVERY OTHER CARRIER the survey book scores in this country. Every name is
+    resolved into the SURVEY book's own vocabulary first (:mod:`identity`) — a peer set
+    pinned on the premium side names carrier groups this book has never heard of.
 
-    That last fallback exists because a chart of one carrier is not a ranking. A Peers table
+    The last fallback exists because a chart of one carrier is not a ranking. A Peers table
     that has no row for this carrier and country — a different key column, a market it was
     never mapped in — used to leave the page with a single blue box and nothing to compare
     it to. Ranking against the whole surveyed field is a weaker statement than a curated
@@ -323,20 +346,21 @@ def _peer_carriers(result, country: str) -> Tuple[str, ...]:
     Disclosure-safe either way: the ribbon draws peers as unnamed grey boxes carrying a
     score (``flows.yaml`` sets ``peer_names_allowed: false`` for this flow).
     """
-    pinned = tuple(str(p) for p in (result.peers or ()) if str(p).strip())
+    from studio.template_fill.survey import identity
+
+    pinned = identity.resolve_peers(result, subject, (country,))
     if pinned:
         return pinned
     from studio.data import peer_members
 
-    group = tuple(_safe(peer_members, SURVEY_FLOW, str(result.subject),
+    group = tuple(_safe(peer_members, SURVEY_FLOW, subject,
                         country=str(country), engine=result.engine) or ())
     if group:
         return group
-    field = _surveyed_carriers(result, country)
+    field = _surveyed_carriers(result, country, subject)
     if field:
         logger.info("survey.facts: no Peers row for %s in %s — ranking against the %d "
-                    "carrier(s) the survey book scores there",
-                    result.subject, country, len(field))
+                    "carrier(s) the survey book scores there", subject, country, len(field))
     return field
 
 
@@ -369,13 +393,13 @@ def load_ribbon(result, country: str, sections: Sequence[str]) -> Optional[ribbo
     :func:`norm_label`). Cheaper too — one scan instead of one per row.
     """
     section = section_column(result)
-    if section is None:
+    subject = subject_in_book(result, country) if section is not None else None
+    if section is None or subject is None:
         return None
     year, _ = _reported_years(result, country)
     if year is None:
         return None
-    subject = str(result.subject)
-    wanted = {subject, *(_peer_carriers(result, country))}
+    wanted = {subject, *(_peer_carriers(result, country, subject))}
 
     scored: Dict[str, List[Tuple[str, float]]] = {}
     for fact in _breakdown(result, (section, CARRIER_COL),

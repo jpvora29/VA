@@ -260,6 +260,61 @@ def _data_basis_control() -> html.Div:
     )
 
 
+# ── the survey selections ────────────────────────────────────────────────────
+
+
+def survey_note(text: str, *, tone: str = "") -> html.Div:
+    """The one line under the survey carrier — how the identity was resolved, or why not."""
+    return html.Div(text, className="qs-peer-note" + (f" {tone}" if tone else "")) if text else html.Div()
+
+
+def _survey_panel() -> html.Div:
+    """SURVEY — who the subject and its peers are IN THE SURVEY BOOK.
+
+    The survey book keeps its own carrier vocabulary: it records the entity that was
+    surveyed ("Zurich Insurance Company Ltd") where the premium book groups ("Zurich"). The
+    deck resolves the match itself, but the author is the one who can see both lists, so the
+    resolution is shown and can be overridden here — a survey page reporting another
+    carrier's scores under this carrier's name is the failure this panel prevents.
+
+    Shown only on the "Premium + survey" basis; the whole section is hidden otherwise.
+    """
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.Div("SURVEY CARRIER", className="studio-field-label"),
+                    dcc.Dropdown(
+                        id="studio-survey-carrier", options=[], value=None,
+                        placeholder="Matched from the survey book",
+                        className="studio-dd sm",
+                    ),
+                    html.Div(survey_note(""), id="studio-survey-msg",
+                             className="studio-peer-msg"),
+                ],
+                className="studio-field",
+            ),
+            html.Div(
+                [
+                    html.Div("SURVEY PEERS", className="studio-field-label"),
+                    dcc.Dropdown(
+                        id="studio-survey-peers", options=[], value=[], multi=True,
+                        placeholder="Ranked against the surveyed field",
+                        className="studio-dd sm",
+                    ),
+                    html.Div(
+                        "Leave empty to use the survey Peers table, or the carriers "
+                        "surveyed in this market when it lists none.",
+                        className="qs-peer-note",
+                    ),
+                ],
+                className="studio-field",
+            ),
+        ],
+        className="qs-survey-field",
+    )
+
+
 def scope_preview_empty(message: str = "Pick a carrier to preview this scope.") -> html.Div:
     return html.Div(
         [html.I(className="bi bi-binoculars"), html.Span(message)],
@@ -511,6 +566,15 @@ def setup_body(
                 "bi-people", "Peers",
                 "Confidential — aggregate benchmark only.",
                 _peers_panel(),
+            ),
+            html.Div(
+                _setup_section(
+                    "bi-clipboard-data", "Survey",
+                    "The survey book names carriers its own way — check the match.",
+                    _survey_panel(),
+                ),
+                id="studio-survey-section",
+                style={"display": "none"},          # shown on the Premium + survey basis
             ),
             _setup_section(
                 "bi-stars", "AI assist",

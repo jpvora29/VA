@@ -103,6 +103,13 @@ class OverallResult:
     # only generated on ``DATA_BASIS_WITH_SURVEY``; on the premium basis it comes off the
     # deck rather than reporting a number the run was not asked for.
     data_basis: str = DATA_BASIS_PREMIUM
+    # The subject and its peers AS THE SURVEY BOOK NAMES THEM, chosen in Setup. The two
+    # books keep separate carrier vocabularies (``Carrier_Group`` groups, ``Carrier``
+    # entities), so the survey pages resolve their own identity rather than reusing the
+    # premium subject verbatim (``studio.template_fill.survey.identity``). ``None`` means
+    # "resolve it from the book" — the pin is the author's override, not the only route.
+    survey_carrier: Optional[str] = None
+    survey_peers: Optional[Tuple[str, ...]] = None
 
 
 _BLANK_VALS = (None, "", "all", "All")
@@ -700,6 +707,8 @@ def compute_overall(
     engine: Any = None,
     peers: Optional[Sequence[str]] = None,
     style: str = "balanced",
+    survey_carrier: Optional[str] = None,
+    survey_peers: Optional[Sequence[str]] = None,
 ) -> OverallResult:
     """Compute the Overall page from the live DB. Best-effort: a failing metric is
     logged and skipped, never fatal."""
@@ -713,6 +722,8 @@ def compute_overall(
     result = OverallResult(
         store=store, subject=subject, flow=flow, resolved_filters=dict(resolved),
         engine=engine, peers=tuple(peers) if peers else None, style=style or "balanced",
+        survey_carrier=survey_carrier or None,
+        survey_peers=tuple(survey_peers) if survey_peers else None,
     )
 
     try:

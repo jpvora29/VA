@@ -63,13 +63,15 @@ def test_the_ribbon_is_the_taller_picture_not_the_legend(template):
     assert page.ribbon_id != legend.shape_id
 
 
-def test_augment_binds_every_data_cell(template):
+def test_augment_binds_every_data_cell_and_both_axis_headers(template):
     bound = P.augment(template, [])
     roles = {b.role for b in bound}
     page = P.pages(template)[0]
-    # body + one total per row + one per column + the corner
-    expected = len(page.rows) * len(page.cols) + len(page.rows) + len(page.cols) + 1
-    assert len([r for r in roles if r and r.startswith(P.ROLE_PREFIX)]) == expected
+    # body + one total per row + one per column + the corner, plus the axis HEADERS: the
+    # page reports the carrier's OWN sections and practices, so the labels are filled too.
+    data = len(page.rows) * len(page.cols) + len(page.rows) + len(page.cols) + 1
+    headers = len(page.rows) + len(page.cols)
+    assert len([r for r in roles if r and r.startswith(P.ROLE_PREFIX)]) == data + headers
     assert all(not b.placeholder for b in bound if str(b.role or "").startswith(P.ROLE_PREFIX))
 
 
@@ -126,32 +128,65 @@ def test_values_is_empty_for_a_template_without_a_survey_page(result):
     assert P.values(analyze("template/country_template.pptx"), result) == {}
 
 
-# ── when an axis genuinely does not match ────────────────────────────────────
+# ── the page's axes belong to the carrier, not to the template ───────────────
 
 
-def test_an_authored_label_the_book_does_not_have_is_named_in_the_log(template, result, caplog):
-    """A template that says "FINPRO" against a book that says "Financial Lines" fills
-    nothing on that column and looks, on the slide, exactly like a warehouse with no survey.
-    Only a log carrying BOTH vocabularies tells the two apart, so it prints them."""
-    import logging
-
+def test_the_axes_are_the_practices_and_sections_the_carrier_is_surveyed_on(template, result):
+    """A carrier surveyed on three practices gets a three-column page — not seven columns,
+    six of them x.x. The authored slots supply the layout; the book supplies the labels."""
     from studio.template_fill.survey import facts
 
     page = P.pages(template)[0]
     grid = facts.load_grid(result, "Singapore")
-    thin = dataclasses.replace(grid, sections=("Underwriting",), practices=("CE/CM",))
-    with caplog.at_level(logging.WARNING, logger="studio.template_fill.survey.page"):
-        P._report_unmatched(page, thin)
-    logged = caplog.text
-    assert "column label" in logged and "row label" in logged
-    assert "FINPRO" in logged and "CE/CM" in logged        # authored, and the book's own
+    thin = dataclasses.replace(grid, practices=("CE/CM", "Cyber", "Marsh Multinational"))
+    axes = P.axes_for(page, thin)
+    assert [p for p in axes.practices if p] == ["CE/CM", "Cyber", "Marsh Multinational"]
+    assert axes.practices.count(None) == len(page.cols) - 3
 
 
-def test_nothing_is_logged_when_every_axis_matches(template, result, caplog):
-    import logging
-
+def test_a_slot_the_book_cannot_fill_is_blanked_not_left_authored(template, result):
     from studio.template_fill.survey import facts
 
-    with caplog.at_level(logging.WARNING, logger="studio.template_fill.survey.page"):
-        P._report_unmatched(P.pages(template)[0], facts.load_grid(result, "Singapore"))
-    assert "not in the survey book" not in caplog.text
+    page = P.pages(template)[0]
+    grid = facts.load_grid(result, "Singapore")
+    thin = dataclasses.replace(grid, practices=("CE/CM",))
+    texts, _ = P._table_payload(page, thin)
+    # The first authored column keeps its label; every other column header is blanked, and
+    # so is every cell under it — an authored practice this carrier does not write must not
+    # ship over a column of placeholders.
+    headers = [texts[P._role(page.slide_idx, 0, c)] for c, _ in page.cols]
+    assert headers[0] == "CE/CM" and set(headers[1:]) == {""}
+    body = [texts[P._role(page.slide_idx, r, c)] for r, _ in page.rows for c, _ in page.cols[1:]]
+    assert set(body) == {""}
+
+
+def test_a_practice_the_template_never_had_still_reaches_the_page(template, result):
+    """The book leads. A practice the author never drew a column for takes one of the
+    slots the carrier does not need."""
+    from studio.template_fill.survey import facts
+
+    page = P.pages(template)[0]
+    grid = facts.load_grid(result, "Singapore")
+    thin = dataclasses.replace(grid, practices=("CE/CM", "Political Risk"))
+    axes = P.axes_for(page, thin)
+    assert [p for p in axes.practices if p] == ["CE/CM", "Political Risk"]
+
+
+def test_the_authored_order_is_kept_for_labels_the_book_shares(template, result):
+    from studio.template_fill.survey import facts
+
+    page = P.pages(template)[0]
+    grid = facts.load_grid(result, "Singapore")
+    axes = P.axes_for(page, grid)
+    assert list(axes.practices) == [label for _, label in page.cols]
+    assert list(axes.sections) == [label for _, label in page.rows]
+
+
+def test_assign_axis_packs_the_book_into_the_slots_from_the_start():
+    # Shared labels first, in the AUTHORED order; then the book's extras; then None. The
+    # filled part is contiguous — a hole between two scores reads as a rendering fault.
+    assert P.assign_axis(["A", "B", "C"], ["c", "A", "Zed"]) == ["A", "c", "Zed"]
+    assert P.assign_axis(["A", "B"], ["A"]) == ["A", None]
+    assert P.assign_axis(["A", "B"], []) == [None, None]
+    # An unchanged carrier gets an unchanged page.
+    assert P.assign_axis(["A", "B"], ["B", "A"]) == ["A", "B"]

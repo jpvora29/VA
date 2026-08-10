@@ -16,7 +16,7 @@ keeps filling if it is moved, restyled or duplicated.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from logger import get_logger
 from studio.template_fill import roles as R
@@ -120,10 +120,16 @@ def _role(slide_idx: int, row: int, col: int) -> str:
 
 
 def _cells(page: SurveyPage) -> List[Tuple[int, int]]:
-    """Every data cell on the page: the body, both Total axes, and the corner."""
+    """Every fillable cell: the body, both Total axes, the corner, and the axis HEADERS.
+
+    The headers are fillable because the axes belong to the CARRIER, not to the template —
+    a deck for a carrier surveyed on four practices must say those four, not the seven the
+    template was drawn with (see :func:`assign_axis`).
+    """
     rows = [r for r, _ in page.rows] + ([page.total_row] if page.total_row is not None else [])
     cols = [c for c, _ in page.cols] + ([page.total_col] if page.total_col is not None else [])
-    return [(r, c) for r in rows for c in cols]
+    headers = [(r, 0) for r, _ in page.rows] + [(0, c) for c, _ in page.cols]
+    return [(r, c) for r in rows for c in cols] + headers
 
 
 def _token_at(template: Template, page: SurveyPage, row: int, col: int) -> str:
@@ -157,6 +163,33 @@ def augment(template: Template, bindings: List[R.Binding]) -> List[R.Binding]:
     return bindings + extra
 
 
+# ── the carrier's own axes ───────────────────────────────────────────────────
+
+
+def assign_axis(authored: Sequence[str], available: Sequence[str]) -> List[Optional[str]]:
+    """Which book label each authored slot shows — ``None`` for a slot to blank.
+
+    The page's axes are the SUBJECT's: the sections and practices this carrier is actually
+    surveyed on, in this country. The template supplies the slots (and its own order, which
+    an author chose for a reason); the book supplies what goes in them.
+
+    The labels the template already names come first, IN ITS ORDER — a carrier surveyed on
+    the familiar seven practices gets the familiar page, unmoved — then whatever the book
+    has beyond them. They are laid into the slots from the start, so the filled part of the
+    table is contiguous: a hole in the middle of a row of scores reads as a rendering fault,
+    where a shorter table just reads as a shorter table.
+
+    Trailing slots the book cannot fill come back as ``None``. The caller removes those
+    rows and columns outright, rather than shipping an authored practice this carrier does
+    not write over a column of ``x.x`` — which is what made the page read as broken.
+    """
+    known = {facts.norm_label(label): label for label in available if str(label).strip()}
+    ordered = [known.pop(facts.norm_label(label))
+               for label in authored if facts.norm_label(label) in known]
+    ordered += sorted(known.values())
+    return [ordered[i] if i < len(ordered) else None for i in range(len(authored))]
+
+
 # ── values ───────────────────────────────────────────────────────────────────
 
 _COUNTRY_FILTER = "Country"
@@ -170,76 +203,130 @@ def _country_of(result) -> Optional[str]:
     return named[0] if len(named) == 1 else None
 
 
-def _reading(grid: facts.ScoreGrid, page: SurveyPage,
+@dataclass(frozen=True)
+class Axes:
+    """What each authored slot on the page reports — the CARRIER's sections and practices.
+
+    ``sections`` / ``practices`` are indexed by slot, ``None`` where the book has nothing to
+    put in that slot and it is therefore blanked.
+    """
+
+    sections: Tuple[Optional[str], ...] = ()
+    practices: Tuple[Optional[str], ...] = ()
+
+    def section(self, row: int, page: "SurveyPage") -> Optional[str]:
+        return _at(self.sections, [r for r, _ in page.rows], row)
+
+    def practice(self, col: int, page: "SurveyPage") -> Optional[str]:
+        return _at(self.practices, [c for c, _ in page.cols], col)
+
+
+def _at(labels: Sequence[Optional[str]], slots: Sequence[int], index: int) -> Optional[str]:
+    return labels[slots.index(index)] if index in slots else None
+
+
+def axes_for(page: SurveyPage, grid: facts.ScoreGrid) -> Axes:
+    """The page's axes, taken from what the subject is actually surveyed on."""
+    return Axes(
+        sections=tuple(assign_axis([label for _, label in page.rows], grid.sections)),
+        practices=tuple(assign_axis([label for _, label in page.cols], grid.practices)),
+    )
+
+
+def _reading(grid: facts.ScoreGrid, page: SurveyPage, axes: Axes,
              row: int, col: int) -> Tuple[Optional[float], Optional[float]]:
     """``(score, Δ vs prior year)`` for one cell, whichever axis(es) it totals."""
-    sections = dict(page.rows)
-    practices = dict(page.cols)
     is_total_row = row == page.total_row
     is_total_col = col == page.total_col
     if is_total_row and is_total_col:
         return grid.overall, grid.overall_delta()
+    section, practice = axes.section(row, page), axes.practice(col, page)
     if is_total_row:
-        practice = practices[col]
-        return grid.practice_total(practice), grid.practice_total_delta(practice)
+        return ((grid.practice_total(practice), grid.practice_total_delta(practice))
+                if practice else (None, None))
     if is_total_col:
-        section = sections[row]
-        return grid.section_total(section), grid.section_total_delta(section)
-    section, practice = sections[row], practices[col]
+        return ((grid.section_total(section), grid.section_total_delta(section))
+                if section else (None, None))
+    if section is None or practice is None:
+        return None, None
     return grid.score(section, practice), grid.delta(section, practice)
 
 
 def _table_payload(page: SurveyPage,
                    grid: facts.ScoreGrid) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    """``({role: score}, [{r, c, hex}])`` — the numbers and the colours behind them.
+    """``({role: score-or-label}, [{r, c, hex}])`` — the axes, the numbers, the colours.
 
-    A cell with no score is left out entirely: it keeps the template's own ``x.x`` and
-    takes no colour, which reads as "not surveyed" rather than as a real zero.
+    Every cell of the table is written, including the axis headers: the page reports the
+    sections and practices THIS carrier is surveyed on, so a slot the book cannot fill is
+    BLANKED. Leaving it would ship an authored practice the carrier does not write, over a
+    row of ``x.x`` — which is what made a partly-surveyed carrier's page read as broken.
     """
+    axes = axes_for(page, grid)
     texts: Dict[str, Any] = {}
     fills: List[Dict[str, Any]] = []
     for row, col in _cells(page):
-        score, delta = _reading(grid, page, row, col)
-        if score is None:
+        header = _header_label(page, axes, row, col)
+        if header is not None:
+            texts[_role(page.slide_idx, row, col)] = header
             continue
-        texts[_role(page.slide_idx, row, col)] = float(score)
-        fills.append({"r": row, "c": col, "hex": bands.band_for(delta)})
-    _report_unmatched(page, grid)
+        score, delta = _reading(grid, page, axes, row, col)
+        texts[_role(page.slide_idx, row, col)] = "" if score is None else float(score)
+        if score is not None:
+            fills.append({"r": row, "c": col, "hex": bands.band_for(delta)})
+    _report_axes(page, axes, grid)
     return texts, fills
 
 
-def _report_unmatched(page: SurveyPage, grid: facts.ScoreGrid) -> None:
-    """Name any authored axis label the survey book has no value for.
+def _trim(page: SurveyPage, axes: Axes) -> Dict[str, List[int]]:
+    """The rows and columns to take off the table — the slots the book could not fill."""
+    return {
+        "rows": [r for (r, _), label in zip(page.rows, axes.sections) if label is None],
+        "cols": [c for (c, _), label in zip(page.cols, axes.practices) if label is None],
+    }
 
-    A page whose template says "FINPRO" against a book that says "Financial Lines" fills
-    nothing on that column and looks, on the slide, exactly like a page with no data — the
-    cells keep their ``x.x`` and take no band colour. The difference matters: one is a
-    warehouse without the survey, the other is two vocabularies that need reconciling, and
-    only a log that prints BOTH lists tells them apart.
+
+def _header_label(page: SurveyPage, axes: Axes, row: int, col: int) -> Optional[str]:
+    """The text for an axis-header cell (``""`` to blank it), or ``None`` if not a header."""
+    if col == 0 and row in [r for r, _ in page.rows]:
+        return axes.section(row, page) or ""
+    if row == 0 and col in [c for c, _ in page.cols]:
+        return axes.practice(col, page) or ""
+    return None
+
+
+def _report_axes(page: SurveyPage, axes: Axes, grid: facts.ScoreGrid) -> None:
+    """Say what the page ended up reporting on, and what it had to drop.
+
+    A page filled from a carrier's own book can differ from the authored one in both
+    directions — practices the template never had, authored ones this carrier is not
+    surveyed on — and on the slide both look like "it didn't work". The log is what
+    distinguishes a vocabulary problem from an absent survey.
     """
-    known_sections = {facts.norm_label(s) for s in grid.sections}
-    known_practices = {facts.norm_label(p) for p in grid.practices}
-    for axis, authored, known, theirs in (
-        ("row", [label for _, label in page.rows], known_sections, grid.sections),
-        ("column", [label for _, label in page.cols], known_practices, grid.practices),
+    for axis, slots, authored, theirs in (
+        ("section", axes.sections, [label for _, label in page.rows], grid.sections),
+        ("practice", axes.practices, [label for _, label in page.cols], grid.practices),
     ):
-        missing = [label for label in authored if facts.norm_label(label) not in known]
-        if missing:
-            logger.warning(
-                "survey_page: %d authored %s label(s) are not in the survey book — %s; "
-                "the book has %s. Those cells keep the template's placeholder.",
-                len(missing), axis, missing, list(theirs))
+        shown = [s for s in slots if s]
+        dropped = [a for a in authored
+                   if facts.norm_label(a) not in {facts.norm_label(s) for s in shown}]
+        spare = len(theirs) - len(shown)
+        logger.info("survey_page: %d %s slot(s) filled from the book %s%s%s",
+                    len(shown), axis, list(theirs),
+                    f"; blanked authored {dropped}" if dropped else "",
+                    f"; {spare} more in the book than the page has room for" if spare > 0 else "")
 
 
-def _ribbon_png(page: SurveyPage, result, country: str) -> Optional[bytes]:
+def _ribbon_png(page: SurveyPage, result, country: str,
+                sections: Sequence[str]) -> Optional[bytes]:
     """The ribbon image for this page, or ``None`` — a dead renderer costs the CHART only.
 
     The authored picture then stays, which is a visibly stale chart rather than a broken
-    deck; the table above it is filled either way.
+    deck; the table above it is filled either way. ``sections`` is the table's OWN row
+    order after :func:`axes_for`, so the chart reads down the page beside it.
     """
     if page.ribbon_id is None or not ribbon_mod.available():
         return None
-    spec = facts.load_ribbon(result, country, tuple(label for _, label in page.rows))
+    spec = facts.load_ribbon(result, country, tuple(sections))
     if spec is None or not spec.columns:
         return None
     try:
@@ -269,18 +356,26 @@ def values(template: Template, result) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     cell_fills: Dict[str, Any] = {}
     pictures: Dict[str, Any] = {}
+    trims: Dict[str, Any] = {}
     for page in found:
+        axes = axes_for(page, grid)
         texts, fills = _table_payload(page, grid)
         out.update(texts)
         if fills:
             cell_fills[f"{page.slide_idx}:{page.table_id}"] = fills
-        png = _ribbon_png(page, result, country)
+        trim = _trim(page, axes)
+        if trim["rows"] or trim["cols"]:
+            trims[f"{page.slide_idx}:{page.table_id}"] = trim
+        # The chart's columns are the table's OWN rows, so the two read together.
+        png = _ribbon_png(page, result, country, [s for s in axes.sections if s])
         if png:
             pictures[f"{page.slide_idx}:{page.ribbon_id}"] = png
     if cell_fills:
         out["cell_fills"] = cell_fills
     if pictures:
         out["pictures"] = pictures
+    if trims:
+        out["drop_table_lines"] = trims
     logger.info("survey_page: %s %d — %d cell(s), %d chart(s)",
                 country, grid.year, len(out), len(pictures))
     return out

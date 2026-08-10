@@ -114,3 +114,60 @@ def test_think_cell_survives_a_slide_we_did_not_refill(deck):
     box.name = "think-cell data - do not delete"
     F._replace_pictures(prs, {"pictures": {f"0:{picture_id + 999}": _BLUE}})
     assert [s for s in slide.shapes if "think-cell" in s.name.lower()]
+
+
+# ── trimming a table to the size of what there is to say ─────────────────────
+#
+# A page whose axes come from the DATA (the Carrier Survey table's practices are the ones
+# the carrier is surveyed on) has to be able to come out shorter than the template. Left in,
+# the surplus lines are blank strips between the numbers and the Total.
+
+
+@pytest.fixture
+def grid_deck():
+    """A 4x4 table whose cells name their own coordinates, so a trim is checkable."""
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    shape = slide.shapes.add_table(4, 4, Inches(1), Inches(1), Inches(8), Inches(4))
+    for r in range(4):
+        for c in range(4):
+            shape.table.cell(r, c).text = f"{r}{c}"
+    return prs, shape.shape_id
+
+
+def _grid(prs):
+    table = prs.slides[0].shapes[0].table
+    return [[c.text for c in row.cells] for row in table.rows]
+
+
+def test_dropped_columns_and_rows_leave_the_table(grid_deck):
+    prs, table_id = grid_deck
+    F._drop_table_lines(prs, {"drop_table_lines": {f"0:{table_id}": {"rows": [1], "cols": [1, 2]}}})
+    assert _grid(prs) == [["00", "03"], ["20", "23"], ["30", "33"]]
+
+
+def test_the_trimmed_table_still_spans_its_frame(grid_deck):
+    """The freed width and height are shared over the survivors — a table that shrank to
+    a third of the page would read as a mistake, not as a shorter table."""
+    prs, table_id = grid_deck
+    table = prs.slides[0].shapes[0].table
+    before = (sum(c.width for c in table.columns), sum(r.height for r in table.rows))
+    F._drop_table_lines(prs, {"drop_table_lines": {f"0:{table_id}": {"rows": [2], "cols": [0, 3]}}})
+    table = prs.slides[0].shapes[0].table
+    assert (sum(c.width for c in table.columns), sum(r.height for r in table.rows)) == before
+
+
+def test_indices_are_the_original_ones_however_many_are_dropped(grid_deck):
+    """Callers address cells by the template's own indices — dropping high-to-low is what
+    keeps a two-column trim from removing the wrong second column."""
+    prs, table_id = grid_deck
+    F._drop_table_lines(prs, {"drop_table_lines": {f"0:{table_id}": {"cols": [0, 1, 2]}}})
+    assert _grid(prs) == [["03"], ["13"], ["23"], ["33"]]
+
+
+def test_a_table_with_nothing_to_drop_is_untouched(grid_deck):
+    prs, table_id = grid_deck
+    before = _grid(prs)
+    F._drop_table_lines(prs, {"drop_table_lines": {f"0:{table_id}": {"rows": [], "cols": []}}})
+    F._drop_table_lines(prs, {})
+    assert _grid(prs) == before

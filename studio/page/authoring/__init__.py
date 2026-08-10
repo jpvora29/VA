@@ -105,6 +105,7 @@ from studio.page.authoring.setup import (
     busy_overlay,
     peer_set_body,
     scope_axes,
+    survey_note,
     scope_preview_card,
     scope_preview_empty,
     setup_body,
@@ -122,7 +123,7 @@ __all__ = [
     "mode_rail", "top_bar",
     # setup
     "scope_preview_empty", "scope_preview_card", "template_sections_panel", "setup_body",
-    "peer_set_body", "scope_axes", "busy_overlay",
+    "peer_set_body", "survey_note", "scope_axes", "busy_overlay",
     "DATA_BASIS_DEFAULT", "DATA_BASIS_OPTIONS",
     "BUSY_FLAG_CLASS", "BUSY_FLAG_ON", "BUSY_FORM", "BUSY_PREVIEW", "BUSY_SECTIONS",
     # canvas

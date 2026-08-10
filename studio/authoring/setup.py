@@ -171,6 +171,96 @@ def peer_panel_state(selected: dict, mode, record, options: dict):
     return opts, hidden, A.peer_set_body(in_scope, note)
 
 
+# ── the survey selections ────────────────────────────────────────────────────
+#
+# The survey book keeps its own carrier vocabulary, so the deck resolves the premium
+# subject into it (``studio.template_fill.survey.identity``). The author is the one who can
+# see both lists, so Setup shows the match it found and lets them override it — and pins
+# survey peers in the same vocabulary, because a peer set pinned on the premium side names
+# carrier groups this book has never heard of.
+
+_SURVEY_HIDDEN = {"display": "none"}
+
+
+def _survey_result():
+    """A bare result the survey lookups can run against — they need only the engine.
+
+    Studio's own engine, explicitly (the one every other panel on this form queries), and
+    always the GOVERNED one: the survey book is not something a user uploads, so an
+    uploaded dataset is answered before we get here.
+    """
+    from studio.compute import OverallResult
+    from studio.data import get_engine
+
+    return OverallResult(subject=None, flow="survey", engine=get_engine())
+
+
+def survey_panel_state(selected: dict, basis: str, pinned_carrier, record):
+    """``(section style, carrier options, carrier value, note, peer options)``.
+
+    The carrier list is the survey book's own, narrowed to the countries in scope. The
+    value is what the author pinned, else the match the deck would make on its own — shown
+    rather than hidden, so a wrong match is visible BEFORE the deck is built.
+    """
+    from studio.compute import DATA_BASIS_WITH_SURVEY
+    from studio.template_fill.survey import identity
+
+    if str(basis or "") != DATA_BASIS_WITH_SURVEY:
+        return _SURVEY_HIDDEN, [], None, A.survey_note(""), []
+    if record is not None:
+        return {}, [], None, A.survey_note(
+            "The survey book is governed data — an uploaded dataset has no survey pages.",
+            tone="warn"), []
+
+    carrier = (selected or {}).get("carrier")
+    countries = (selected or {}).get("country")
+    result = _survey_result()
+    names = _safe_survey(identity.carrier_options, result, _as_tuple(countries))
+    options = [{"label": n, "value": n} for n in names]
+    if not names:
+        return {}, [], None, A.survey_note(
+            "No survey book for this scope — the survey pages will be skipped.",
+            tone="warn"), []
+
+    value = pinned_carrier if pinned_carrier in names else None
+    if value is None and carrier:
+        from dataclasses import replace
+
+        value = _safe_survey(identity.resolve_carrier,
+                             replace(result, subject=str(carrier)), _as_tuple(countries))
+    note = _survey_note_for(carrier, value)
+    peers = [o for o in options if o["value"] != value]
+    return {}, options, value, note, peers
+
+
+def _survey_note_for(carrier, matched):
+    """How the survey identity was resolved, in one line the author can act on."""
+    if not carrier:
+        return A.survey_note("Select a carrier to match it against the survey book.")
+    if matched is None:
+        return A.survey_note(
+            f"{carrier} could not be matched in the survey book — pick the surveyed "
+            f"carrier, or the survey pages will be skipped.", tone="warn")
+    if str(matched).strip().lower() == str(carrier).strip().lower():
+        return A.survey_note(f"Surveyed as {matched}.")
+    return A.survey_note(f"{carrier} is surveyed as {matched} — change it if that is wrong.")
+
+
+def _safe_survey(fn, *args):
+    """A survey lookup must never take the Setup form down with it."""
+    try:
+        return fn(*args)
+    except Exception as exc:  # noqa: BLE001 — a form that still renders beats a blank page
+        log.warning("survey panel: %s failed: %s", getattr(fn, "__name__", fn), exc)
+        return () if fn.__name__ == "carrier_options" else None
+
+
+def _as_tuple(value):
+    if isinstance(value, (list, tuple, set)):
+        return tuple(str(v) for v in value if v not in BLANK)
+    return (str(value),) if value not in BLANK else ()
+
+
 def _hashable(value):
     """A selection in a form a cache key accepts (Dash hands multi-selects over as lists)."""
     return tuple(value) if isinstance(value, list) else value
@@ -294,11 +384,14 @@ def register_setup(app):
         State("studio-ai-toggle", "value"),
         State("studio-template", "value"),
         State("studio-data-basis", "value"),
+        State("studio-survey-carrier", "value"),
+        State("studio-survey-peers", "value"),
         State("qs-dataset", "data"),
         prevent_initial_call=True,
     )
     def generate(n, fvals, fids, cut_vals, cut_ids, peer_mode, custom_peers,
-                 audience, style, ai, template_scope, data_basis, dataset_store):
+                 audience, style, ai, template_scope, data_basis,
+                 survey_carrier, survey_peers, dataset_store):
         if not n:
             return no_update, no_update, no_update, no_update, no_update, no_update
         from studio.dataset.source import dataset_in_use
@@ -334,9 +427,13 @@ def register_setup(app):
             "template_scope": template_scope or "all",
             "template_path": _scope_template_path(template_scope),
             # Which books the deck draws on ("premium" | "premium_survey"). Carried into
-            # every cached build so a change re-keys them; nothing reads it yet — the
-            # survey pages are a later change (see A.DATA_BASIS_OPTIONS).
+            # every cached build so a change re-keys them (see A.DATA_BASIS_OPTIONS).
             "data_basis": data_basis or A.DATA_BASIS_DEFAULT,
+            # Who the subject and its peers are IN THE SURVEY BOOK. Both are the author's
+            # override of the match the deck would make itself; absent, it resolves them
+            # (studio.template_fill.survey.identity).
+            "survey_carrier": survey_carrier or None,
+            "survey_peers": [p for p in (survey_peers or []) if p] or None,
             "dataset_id": record.dataset_id if record else None,
             # …and its revision, so re-shaping or re-mapping the SAME dataset re-keys
             # every cached build. Without it, fixing a mapping and generating again
@@ -380,6 +477,29 @@ def register_setup(app):
         options = cascade_filter_options(selected, record)
         peer_opts, peer_style, peer_msg = peer_panel_state(selected, mode, record, options)
         return [options.get(i["col"], no_update) for i in ids], peer_opts, peer_style, peer_msg
+
+    # The survey panel is its own callback, not part of refresh_form: it queries a DIFFERENT
+    # book, and only on the survey basis, so folding it in would make every premium-only
+    # filter change pay for a lookup it never uses.
+    @app.callback(
+        Output("studio-survey-section", "style"),
+        Output("studio-survey-carrier", "options"),
+        Output("studio-survey-carrier", "value"),
+        Output("studio-survey-msg", "children"),
+        Output("studio-survey-peers", "options"),
+        Input({"type": "studio-filter", "col": ALL}, "value"),
+        Input("studio-data-basis", "value"),
+        State({"type": "studio-filter", "col": ALL}, "id"),
+        State("studio-survey-carrier", "value"),
+        State("qs-dataset", "data"),
+        running=_busy(A.BUSY_FORM),
+    )
+    def refresh_survey(values, basis, ids, pinned, dataset_store):
+        """Match the selected carrier into the survey book, and offer its peers."""
+        from studio.dataset.source import dataset_in_use
+
+        selected = {i["col"]: v for i, v in zip(ids or [], values or []) if v not in BLANK}
+        return survey_panel_state(selected, basis, pinned, dataset_in_use(dataset_store))
 
     @app.callback(
         Output("studio-scope-preview", "children"),

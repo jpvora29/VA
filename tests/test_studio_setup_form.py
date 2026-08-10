@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from studio.authoring.setup import carriers_in_scope
 from studio.page.authoring.setup import (
     peer_set_body,
@@ -24,6 +26,15 @@ from studio.page.authoring.setup import (
 def _rendered(component) -> str:
     """A Dash component tree flattened to JSON so tests can assert on its content."""
     return json.dumps(component, default=lambda o: getattr(o, "__dict__", str(o)))
+
+
+@pytest.fixture(scope="module")
+def seeded_survey():
+    """The seed DB, which carries the survey book the panel reads."""
+    from studio import seed as S
+
+    S.ensure_seed_db()
+    return True
 
 
 def _form() -> str:
@@ -75,8 +86,8 @@ def test_data_basis_defaults_to_premium_only():
 
 
 def test_the_choice_reaches_the_selection_generate_builds_from():
-    """Wiring only — nothing consumes it yet, but a deck must record what it was asked
-    for, and every cached build has to re-key when the answer changes."""
+    """A deck must record what it was asked for, and every cached build has to re-key
+    when the answer changes."""
     import inspect
 
     from studio.authoring import setup as S
@@ -84,6 +95,82 @@ def test_the_choice_reaches_the_selection_generate_builds_from():
     src = inspect.getsource(S.register_setup)
     assert 'State("studio-data-basis", "value")' in src
     assert '"data_basis": data_basis or A.DATA_BASIS_DEFAULT' in src
+    # …and so do the survey identities chosen beside it.
+    assert 'State("studio-survey-carrier", "value")' in src
+    assert '"survey_carrier": survey_carrier or None' in src
+    assert '"survey_peers":' in src
+
+
+# ── the survey selections ────────────────────────────────────────────────────
+#
+# The survey book keeps its own carrier vocabulary. The deck resolves the premium subject
+# into it, but the author is the one who can see both lists — so the match is SHOWN, and
+# can be overridden, before a page of someone else's scores is built.
+
+
+def test_the_survey_panel_is_in_the_form_but_hidden_by_default():
+    form = _form()
+    assert "studio-survey-carrier" in form and "studio-survey-peers" in form
+    assert "studio-survey-section" in form
+
+
+def test_the_panel_is_hidden_on_the_premium_basis():
+    from studio.authoring.setup import survey_panel_state
+
+    style, options, value, _note, peers = survey_panel_state(
+        {"carrier": "Zurich"}, "premium", None, None)
+    assert style == {"display": "none"}
+    assert options == [] and value is None and peers == []
+
+
+def test_the_panel_offers_the_survey_book_s_own_carrier_names(seeded_survey):
+    from studio.authoring.setup import survey_panel_state
+
+    style, options, value, _note, peers = survey_panel_state(
+        {"carrier": "Zurich", "country": "Singapore"}, "premium_survey", None, None)
+    assert style == {}
+    names = [o["value"] for o in options]
+    assert "Zurich" in names and len(names) > 1
+    assert value == "Zurich"                       # the match it would make on its own
+    assert value not in [p["value"] for p in peers], "a carrier is not its own peer"
+
+
+def test_the_panel_shows_how_the_carrier_was_matched(seeded_survey):
+    from studio.authoring.setup import survey_panel_state
+
+    _s, _o, _v, note, _p = survey_panel_state(
+        {"carrier": "Zurich", "country": "Singapore"}, "premium_survey", None, None)
+    assert "Surveyed as Zurich" in _rendered(note)
+
+
+def test_the_panel_warns_when_the_carrier_is_not_surveyed(seeded_survey):
+    """The page will be skipped — better said on the form than discovered in the deck."""
+    from studio.authoring.setup import survey_panel_state
+
+    _s, _o, value, note, _p = survey_panel_state(
+        {"carrier": "Nobody At All", "country": "Singapore"}, "premium_survey", None, None)
+    assert value is None
+    assert "could not be matched" in _rendered(note)
+
+
+def test_a_pinned_carrier_is_kept_over_the_match(seeded_survey):
+    from studio.authoring.setup import survey_panel_state
+
+    _s, _o, value, _n, _p = survey_panel_state(
+        {"carrier": "Zurich", "country": "Singapore"}, "premium_survey", "Chubb", None)
+    assert value == "Chubb"
+
+
+def test_an_uploaded_dataset_has_no_survey_book(seeded_survey):
+    from studio.authoring.setup import survey_panel_state
+
+    class _Record:
+        dataset_id = "x"
+
+    style, options, value, note, _p = survey_panel_state(
+        {"carrier": "Zurich"}, "premium_survey", None, _Record())
+    assert style == {} and options == [] and value is None
+    assert "governed data" in _rendered(note)
 
 
 def test_ai_assist_defaults_to_on():

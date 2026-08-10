@@ -1432,6 +1432,78 @@ def _crop_pictures(prs, values: Dict[str, Any]) -> None:
     logger.info("template_fill: cropped %d picture(s)", cropped)
 
 
+# ── table lines a run does not carry ─────────────────────────────────────────
+
+
+def _share_out(elements, attr: str, removed: int) -> None:
+    """Give ``removed`` EMU back to ``elements``, so the table still spans its frame."""
+    if not elements or removed <= 0:
+        return
+    each, extra = divmod(removed, len(elements))
+    for i, el in enumerate(elements):
+        el.set(attr, str(int(el.get(attr) or 0) + each + (1 if i < extra else 0)))
+
+
+def _drop_table_lines(prs, values: Dict[str, Any]) -> None:
+    """Remove the table rows/columns named in ``drop_table_lines`` and reclaim their space.
+
+    ``{"<slide>:<shape>": {"rows": [...], "cols": [...]}}``, in the table's ORIGINAL index
+    space — which is why this runs after every text write, all of which address cells by
+    those same indices.
+
+    A page whose axes come from the data (the Carrier Survey table's practices are the ones
+    the carrier is surveyed on) has to be able to come out SHORTER than the template. Left
+    in, the surplus lines are blank strips between the numbers and the Total, which reads as
+    a broken render; taken out, the table is simply the size of what there is to say. The
+    freed width and height are shared over the survivors so the table still fills the frame
+    the author drew.
+    """
+    spec = values.get("drop_table_lines") or {}
+    if not spec:
+        return
+    for sidx, slide in enumerate(prs.slides):
+        for sh in slide.shapes:
+            wanted = spec.get(f"{sidx}:{int(sh.shape_id)}")
+            if not wanted or not getattr(sh, "has_table", False):
+                continue
+            try:
+                _drop_lines(sh.table._tbl, wanted)
+            except Exception as exc:  # noqa: BLE001 — a blank line beats a broken deck
+                logger.warning("template_fill: table trim skipped (%s): %s", sh.shape_id, exc)
+
+
+def _drop_lines(tbl, wanted: Dict[str, Any]) -> None:
+    """Drop ``wanted``'s rows and columns from a ``<a:tbl>`` element, highest index first."""
+    rows = sorted({int(r) for r in (wanted.get("rows") or ())}, reverse=True)
+    cols = sorted({int(c) for c in (wanted.get("cols") or ())}, reverse=True)
+    grid = tbl.tblGrid
+    all_rows = list(tbl.tr_lst)
+
+    freed_w = 0
+    for c in cols:
+        gridcols = list(grid)
+        if not 0 <= c < len(gridcols):
+            continue
+        freed_w += int(gridcols[c].get("w") or 0)
+        grid.remove(gridcols[c])
+        for tr in all_rows:
+            cells = list(tr)
+            if c < len(cells):
+                tr.remove(cells[c])
+    _share_out(list(grid), "w", freed_w)
+
+    freed_h = 0
+    for r in rows:
+        if not 0 <= r < len(all_rows):
+            continue
+        freed_h += int(all_rows[r].get("h") or 0)
+        tbl.remove(all_rows[r])
+        all_rows.pop(r)
+    _share_out(list(tbl.tr_lst), "h", freed_h)
+    logger.info("template_fill: trimmed %d row(s) and %d column(s) from a table",
+                len(rows), len(cols))
+
+
 # ── shapes a run does not carry ──────────────────────────────────────────────
 
 
@@ -1525,6 +1597,9 @@ def fill_template(doc: Dict[str, Any], *, out_path: Optional[str] = None) -> str
     _fill_cell_backgrounds(prs, values)
     _replace_pictures(prs, values)
     _crop_pictures(prs, values)
+    # Last, and in this order: both address cells and shapes by the indices every write
+    # above used, so nothing may shift until every write is done.
+    _drop_table_lines(prs, values)
     _drop_shapes(prs, values)
 
     n = len(prs.slides)
