@@ -171,3 +171,49 @@ def test_a_table_with_nothing_to_drop_is_untouched(grid_deck):
     F._drop_table_lines(prs, {"drop_table_lines": {f"0:{table_id}": {"rows": [], "cols": []}}})
     F._drop_table_lines(prs, {})
     assert _grid(prs) == before
+
+
+# ── moving and resizing a shape ──────────────────────────────────────────────
+#
+# A page that DROPS a visual it cannot honestly fill has to hand its space to the one beside
+# it, or the slide ships a hole where the author drew content. The GWP page does exactly
+# this when a single-country run leaves the country-vs-country chart nothing to compare.
+
+
+@pytest.fixture
+def boxed():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    box = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(3), Inches(4))
+    return prs, box
+
+
+def test_a_shape_is_moved_and_resized_from_the_payload(boxed):
+    prs, box = boxed
+    F._resize_shapes(prs, {"resize_shapes": {f"0:{box.shape_id}": {
+        "x": 100_000, "y": 200_000, "w": 300_000, "h": 400_000}}})
+    assert (box.left, box.top, box.width, box.height) == (100_000, 200_000, 300_000, 400_000)
+
+
+def test_only_the_named_edges_move(boxed):
+    """A page widening a chart must not also stretch it downward through the table."""
+    prs, box = boxed
+    before = (box.top, box.height)
+    F._resize_shapes(prs, {"resize_shapes": {f"0:{box.shape_id}": {"x": 42, "w": 4242}}})
+    assert (box.left, box.width) == (42, 4242)
+    assert (box.top, box.height) == before
+
+
+def test_a_shape_the_payload_does_not_name_is_untouched(boxed):
+    prs, box = boxed
+    before = (box.left, box.top, box.width, box.height)
+    F._resize_shapes(prs, {"resize_shapes": {f"0:{box.shape_id + 999}": {"x": 1}}})
+    F._resize_shapes(prs, {})
+    assert (box.left, box.top, box.width, box.height) == before
+
+
+def test_a_malformed_box_costs_that_shape_only(boxed):
+    """One bad entry must never break the export."""
+    prs, box = boxed
+    F._resize_shapes(prs, {"resize_shapes": {f"0:{box.shape_id}": {"x": "not an emu"}}})
+    assert box.left == Inches(1)

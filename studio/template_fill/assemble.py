@@ -118,6 +118,33 @@ _PREMIUM_PROVIDERS = (grids.grid_values, gwp_page.values, lc_page.values,
                       feedback.values, commentary.values, survey_kpi.values)
 _SURVEY_PROVIDERS = (survey_page.values,)
 
+# The fill-engine payloads more than one provider can write. Everything else a provider
+# returns is one role's own text and belongs to that provider alone; these are addressed by
+# SHAPE, so any page can contribute to them — and a plain dict update would let whichever
+# provider ran last silently erase the others' entries.
+#
+# Two providers already emit `drop_shapes`: the survey tile drops itself off a premium-basis
+# summary page, and the GWP page drops the country chart a one-country run cannot fill. The
+# shipped templates keep them apart (the overall deck has the tile and no GWP page; the
+# country deck the reverse), so the clash is latent rather than live — but it is one
+# re-authored template away, and it would fail silently.
+_SHARED_PAYLOADS = ("drop_shapes", "resize_shapes", "cell_fills", "pictures",
+                    "picture_crops", "drop_table_lines", "gwp_bars")
+
+
+def _merge_values(base: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
+    """``base`` updated with ``extra``, COMBINING the payloads providers share."""
+    merged = {**base, **extra}
+    for key in _SHARED_PAYLOADS:
+        mine, theirs = base.get(key), extra.get(key)
+        if not mine or not theirs:
+            continue
+        if isinstance(mine, dict) and isinstance(theirs, dict):
+            merged[key] = {**mine, **theirs}
+        elif isinstance(mine, list) and isinstance(theirs, list):
+            merged[key] = list(dict.fromkeys(mine + theirs))
+    return merged
+
 
 def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], label: str,
                    *, providers=_PREMIUM_PROVIDERS) -> SubDeck:
@@ -138,7 +165,7 @@ def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], la
                                getattr(provider, "__module__", provider), template_name, exc)
                 extra = None
             if extra:
-                values = {**values, **extra}
+                values = _merge_values(values, extra)
         tyear = _template_year(template)
         if tyear is not None:
             values.setdefault("template_year", tyear)

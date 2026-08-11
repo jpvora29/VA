@@ -273,12 +273,100 @@ def test_country_chart_is_filled_across_the_selected_countries(country_template)
 
 def test_single_country_run_does_not_plot_other_countries(country_template):
     # The rule: a country-vs-country comparison needs several countries. With one selected,
-    # the chart carries only that country — never the template's authored example countries.
+    # no country series is plotted at all — and certainly not the authored example countries.
     values = G.values(country_template, _country_result(["Singapore"], "Singapore"))
     for series in values["gwp_bars"].values():
         assert "Germany" not in series["categories"]     # the authored example is gone
         countries = [c for c in series["categories"] if c in {"Japan", "Hong Kong", "Australia"}]
         assert not countries, f"unselected countries plotted: {countries}"
+
+
+# ── the country chart a one-country run has nothing to put in ────────────────
+#
+# "GWP Countries" ranks countries AGAINST EACH OTHER. Pin one and the chart came out as a
+# single bar carrying the two figures the panel to its left already states — it read as a
+# rendering fault, not a finding. It now comes off the page, and the breakdown beside it
+# takes the space so the slide does not ship a hole.
+
+
+def _classified_page(template, countries):
+    """The page with its charts mapped to dimensions — the same vocabulary ``values``
+    classifies them against, so a test names the same chart the deck does."""
+    result = _country_result(countries, countries[0])
+    return G.pages(template, vocab=G._vocab(result))[0]
+
+
+@pytest.mark.parametrize("countries,moot", [
+    (["Singapore"], True),
+    (["Singapore", "Japan"], False),
+    ([], False),                                   # unpinned: the carrier's whole footprint
+])
+def test_the_country_chart_is_moot_only_for_a_single_country(countries, moot):
+    from dataclasses import replace
+
+    run = replace(_result(["Singapore"]), scope_countries=tuple(countries))
+    assert G.country_chart_is_moot(run) is moot
+
+
+def test_a_single_country_run_takes_the_country_chart_off_the_page(country_template):
+    values = G.values(country_template, _country_result(["Singapore"], "Singapore"))
+    page = _classified_page(country_template, ["Singapore"])
+    country_id = next(sid for sid, col in page.charts if col == "Country")
+
+    assert f"{page.slide_idx}:{country_id}" in values["drop_shapes"]
+    assert f"{page.slide_idx}:{country_id}" not in values.get("gwp_bars", {})
+
+
+def test_the_breakdown_beside_it_takes_the_freed_space(country_template):
+    values = G.values(country_template, _country_result(["Singapore"], "Singapore"))
+    page = _classified_page(country_template, ["Singapore"])
+    by_id = {sh.shape_id: sh for sh in country_template.slides[page.slide_idx].shapes}
+    country_id = next(sid for sid, col in page.charts if col == "Country")
+    product_id = next(sid for sid, col in page.charts if col == "Product_Line")
+
+    box = values["resize_shapes"][f"{page.slide_idx}:{product_id}"]
+    country, product = by_id[country_id], by_id[product_id]
+    # It spans both authored slots — no hole where the dropped chart was.
+    assert box["x"] == min(country.x, product.x)
+    assert box["x"] + box["w"] == max(country.x + country.w, product.x + product.w)
+    # …and only sideways: a taller chart would run straight through the table below it.
+    assert "y" not in box and "h" not in box
+
+
+def test_the_rule_between_the_two_charts_goes_with_them(country_template):
+    """A divider has no job once the charts it divided are one chart."""
+    values = G.values(country_template, _country_result(["Singapore"], "Singapore"))
+    page = _classified_page(country_template, ["Singapore"])
+    slide = country_template.slides[page.slide_idx]
+    box = next(iter(values["resize_shapes"].values()))
+
+    rules = [sh for sh in slide.shapes
+             if sh.kind not in ("chart", "table") and 0 < sh.w <= 0.01 * 12192000
+             and box["x"] <= sh.x <= box["x"] + box["w"]]
+    assert rules, "the authored page has a rule between the two charts"
+    for rule in rules:
+        assert f"{page.slide_idx}:{rule.shape_id}" in values["drop_shapes"]
+
+
+def test_the_page_furniture_is_not_mistaken_for_a_rule(country_template):
+    """The page number and footer are small, but they are not separators — dropping them
+    with the chart took the slide's own numbering off the deck."""
+    values = G.values(country_template, _country_result(["Singapore"], "Singapore"))
+    page = _classified_page(country_template, ["Singapore"])
+    slide = country_template.slides[page.slide_idx]
+    charts = [sh for sh in slide.shapes if sh.kind == "chart"]
+    band_bottom = max(sh.y + sh.h for sh in charts)
+
+    below = [sh for sh in slide.shapes if sh.kind == "text" and sh.y > band_bottom]
+    assert below, "the authored page has furniture under the charts"
+    for sh in below:
+        assert f"{page.slide_idx}:{sh.shape_id}" not in values["drop_shapes"]
+
+
+def test_a_multi_country_run_keeps_the_chart_and_its_layout(country_template):
+    values = G.values(country_template, _country_result(["Singapore", "Japan"], "Singapore"))
+    assert not values.get("drop_shapes")
+    assert not values.get("resize_shapes")
 
 
 def test_product_chart_is_unaffected_by_the_country_rule(country_template):

@@ -402,21 +402,105 @@ def _cy_py_by_dim(result, filters: Dict[str, Any], column: str,
 
 def _country_series(result, filters: Dict[str, Any],
                     *, divisor: float = 1e6) -> Optional[Dict[str, Any]]:
-    """The country bar chart's data — or a single bar when the run covers one country.
+    """The country bar chart's data — every country the run covers, biggest first.
 
-    A country-by-country comparison needs several countries. When the run is scoped to one
-    (the user pinned a single country), the chart is filled with just that country's own
-    CY/PY bar instead of the template's authored example countries, so no invented country
-    ever reaches the deck.
+    Widened to the RUN's own country set rather than the sub-deck's single pin: this is the
+    one chart on the page that compares countries with each other, so a country block has to
+    see its siblings. A run covering one country never reaches here — the chart is taken off
+    the page instead (:func:`country_chart_is_moot`).
     """
-    scope = tuple(getattr(result, "scope_countries", ()) or ())
-    if len(scope) == 1:
-        return _cy_py_by_dim(result, {**filters, _COUNTRY_COL: scope[0]}, _COUNTRY_COL,
-                             divisor=divisor)
     wide = dict(filters)
+    scope = tuple(getattr(result, "scope_countries", ()) or ())
     if scope:
         wide[_COUNTRY_COL] = scope
     return _cy_py_by_dim(result, wide, _COUNTRY_COL, divisor=divisor)
+
+
+# ── the chart a single-country run has nothing to put in ─────────────────────
+#
+# "GWP Countries" ranks countries AGAINST EACH OTHER. Pin one country and there is nothing
+# to rank: the chart came out as a single bar carrying the two figures the panel to its left
+# already states, which reads as a rendering fault rather than as a finding. So the chart
+# comes off the page and the breakdown beside it takes the space, rather than the slide
+# shipping a hole where the author drew content.
+
+
+def country_chart_is_moot(result) -> bool:
+    """Whether the country-vs-country chart has anything to compare (one country: no)."""
+    return len(tuple(getattr(result, "scope_countries", ()) or ())) == 1
+
+
+# A rule or separator is a shape thinner than this share of the slide. Its only job is to
+# divide two neighbours, so it has none once they have been merged into one.
+_HAIRLINE = 0.01
+
+
+def _side_by_side(a: Shape, b: Shape) -> bool:
+    """Whether two shapes sit in the same horizontal band — one can take the other's place."""
+    top, bottom = max(a.y, b.y), min(a.y + a.h, b.y + b.h)
+    return bottom - top > 0.5 * min(a.h, b.h)
+
+
+def _gap(a: Shape, b: Shape) -> int:
+    """The horizontal space between two shapes (0 when they touch or overlap)."""
+    return max(0, max(a.x, b.x) - min(a.x + a.w, b.x + b.w))
+
+
+def _neighbour(slide: Slide, dropped: Shape, partners: Sequence[int]) -> Optional[Shape]:
+    """The chart that should inherit ``dropped``'s space.
+
+    Chosen from the page's OTHER dimension breakdowns (``partners``), never by geometry
+    alone: the country chart's real partner is the breakdown drawn to match it, and the
+    nearest chart by position is the page's own YoY column — a different visual, with a
+    different height, which stretching across the page ran straight through the table below.
+    """
+    beside = [sh for sh in slide.shapes
+              if sh.shape_id in set(partners) and sh.shape_id != dropped.shape_id
+              and sh.kind == "chart" and _side_by_side(sh, dropped)]
+    return min(beside, key=lambda sh: _gap(sh, dropped), default=None)
+
+
+def _merged_box(dropped: Shape, kept: Shape) -> Dict[str, int]:
+    """``kept``'s new box: the two shapes' span, so the pair's whole width is used."""
+    left = min(dropped.x, kept.x)
+    right = max(dropped.x + dropped.w, kept.x + kept.w)
+    return {"x": int(left), "w": int(right - left)}
+
+
+def _rules_inside(slide: Slide, box: Dict[str, int], band: Shape,
+                  template: Template) -> List[int]:
+    """The vertical separators swallowed by ``box`` once it is one shape wide.
+
+    A separator is thin in WIDTH and stands in the charts' own vertical band — both tests
+    matter. Width alone catches the page number in the corner, which is small but is not a
+    rule and must not come off the slide with the chart.
+    """
+    thin = _HAIRLINE * float(template.width_emu or 12192000)
+    return [sh.shape_id for sh in slide.shapes
+            if sh.kind not in ("chart", "table")
+            and sh.w <= thin and _side_by_side(sh, band)
+            and box["x"] <= sh.x + sh.w / 2 <= box["x"] + box["w"]]
+
+
+def moot_country_chart(template: Template, slide: Slide, chart_id: int,
+                       partners: Sequence[int]) -> Tuple[List[str], Dict[str, Any]]:
+    """``([shape keys to drop], {shape key: new box})`` for taking the chart off ``slide``.
+
+    The chart goes, the breakdown beside it widens to cover both slots, and any rule that
+    only divided the two goes with them. ``partners`` are the page's other classified
+    breakdown charts — the candidates for inheriting the space.
+    """
+    chart = next((sh for sh in slide.shapes if sh.shape_id == chart_id), None)
+    if chart is None:
+        return [], {}
+    drop = [f"{slide.index}:{chart_id}"]
+    kept = _neighbour(slide, chart, partners)
+    if kept is None:
+        return drop, {}
+    box = _merged_box(chart, kept)
+    drop += [f"{slide.index}:{sid}" for sid in _rules_inside(slide, box, kept, template)
+             if sid != kept.shape_id]
+    return drop, {f"{slide.index}:{kept.shape_id}": box}
 
 
 _SERIES_BUILDERS = {
@@ -478,18 +562,34 @@ def values(template: Template, result) -> Dict[str, Any]:
     found = pages(template, vocab=_vocab(result))
 
     by_index = {s.index: s for s in template.slides}
+    moot = country_chart_is_moot(result)
     out: Dict[str, Any] = {}
     bars: Dict[str, Any] = {}
+    drop: List[str] = []
+    boxes: Dict[str, Any] = {}
     for page in found:
+        slide = by_index[page.slide_idx]
         out.update(_table_values(template, page, readings))
         out.update(_panel_values(template, page, readings, scope))
-        divisor = _chart_divisor(by_index[page.slide_idx])
+        divisor = _chart_divisor(slide)
         for shape_id, column in page.charts:
+            if moot and column == _COUNTRY_COL:
+                gone, box = moot_country_chart(
+                    template, slide, shape_id, [sid for sid, _ in page.charts])
+                drop += gone
+                boxes.update(box)
+                continue
             series = _SERIES_BUILDERS[column](result, fy, divisor)
             if series:
                 bars[f"{page.slide_idx}:{shape_id}"] = series
     if bars:
         out["gwp_bars"] = bars
+    if drop:
+        out["drop_shapes"] = drop
+        logger.info("gwp_page: one country in scope — dropped %d shape(s), widened %d",
+                    len(drop), len(boxes))
+    if boxes:
+        out["resize_shapes"] = boxes
     logger.info("gwp_page: resolved %d slot value(s), %d chart(s)", len(out), len(bars))
     return out
 

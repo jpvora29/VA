@@ -191,3 +191,51 @@ def test_a_dropped_shape_is_gone_from_the_exported_file(tmp_path):
     texts = [sh.text_frame.text for sh in Presentation(out).slides[0].shapes
              if sh.has_text_frame]
     assert texts == ["keep me"]
+
+
+# ── payloads several providers contribute to ─────────────────────────────────
+#
+# A sub-deck's values are built by folding each provider's output in turn. Most keys are one
+# role's own text and belong to one provider, but the fill-engine payloads are addressed by
+# SHAPE, so any page can contribute — and a plain dict update would let whichever provider
+# ran last silently erase the others' entries. Two providers already write `drop_shapes`
+# (the survey tile, the GWP page's country chart); today's templates keep them on separate
+# decks, so these pin the behaviour before a re-authored template makes the clash live.
+
+
+def test_two_providers_writing_the_same_payload_are_combined():
+    merged = A._merge_values({"drop_shapes": ["0:1"], "cell_fills": {"0:9": [{"r": 0}]}},
+                             {"drop_shapes": ["0:2"], "cell_fills": {"0:8": [{"r": 1}]}})
+    assert merged["drop_shapes"] == ["0:1", "0:2"]
+    assert set(merged["cell_fills"]) == {"0:9", "0:8"}
+
+
+def test_the_same_shape_named_twice_is_dropped_once():
+    merged = A._merge_values({"drop_shapes": ["0:1", "0:2"]}, {"drop_shapes": ["0:2", "0:3"]})
+    assert merged["drop_shapes"] == ["0:1", "0:2", "0:3"]
+
+
+def test_an_ordinary_role_is_still_overwritten_by_the_later_provider():
+    """Only the shared payloads combine — a role's text has exactly one author."""
+    assert A._merge_values({"title": "old"}, {"title": "new"})["title"] == "new"
+
+
+def test_a_provider_that_writes_nothing_leaves_the_payload_alone():
+    base = {"drop_shapes": ["0:1"], "resize_shapes": {"0:5": {"x": 1}}}
+    assert A._merge_values(base, {"title": "t"})["drop_shapes"] == ["0:1"]
+    assert A._merge_values({}, base)["resize_shapes"] == {"0:5": {"x": 1}}
+
+
+def test_the_real_provider_chain_keeps_both_providers_drops(axes, monkeypatch):
+    """The fix where it actually bites: two providers on one sub-deck, both dropping a
+    shape the page cannot honestly fill. Before, the second erased the first."""
+    monkeypatch.setattr(A, "prune", type("P", (), {"hidden_country_pages": staticmethod(
+        lambda template, n: ())})())
+    providers = (lambda template, result: {"drop_shapes": ["0:11"], "gwp_bars": {"0:1": {}}},
+                 lambda template, result: {"drop_shapes": ["0:22"]})
+
+    sub = A._build_subdeck("overall", C.OverallResult(subject="Zurich"), {}, "overall",
+                           providers=providers)
+
+    assert sub.values["drop_shapes"] == ["0:11", "0:22"]
+    assert sub.values["gwp_bars"] == {"0:1": {}}

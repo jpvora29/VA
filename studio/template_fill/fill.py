@@ -1507,6 +1507,39 @@ def _drop_lines(tbl, wanted: Dict[str, Any]) -> None:
 # ── shapes a run does not carry ──────────────────────────────────────────────
 
 
+_BOX_ATTRS = ("x", "y", "w", "h")
+_BOX_PROPS = {"x": "left", "y": "top", "w": "width", "h": "height"}
+
+
+def _resize_shapes(prs, values: Dict[str, Any]) -> None:
+    """Move and resize the shapes listed in ``resize_shapes``.
+
+    ``{"<slide>:<shape>": {"x": emu, "y": emu, "w": emu, "h": emu}}`` — any subset of the
+    four, in the template's own absolute EMU. A page that DROPS a visual it cannot honestly
+    fill usually has to hand its space to the one beside it, or the slide ships a hole where
+    the author drew content. Generic: any page can emit it
+    (:mod:`studio.template_fill.gwp_page` does, for the country-vs-country chart a
+    single-country run has nothing to put in).
+    """
+    boxes = values.get("resize_shapes") or {}
+    if not boxes:
+        return
+    moved = 0
+    for sidx, slide in enumerate(prs.slides):
+        for sh in _iter_leaves(slide.shapes):
+            box = boxes.get(f"{sidx}:{int(sh.shape_id)}")
+            if not box:
+                continue
+            try:
+                for attr in _BOX_ATTRS:
+                    if box.get(attr) is not None:
+                        setattr(sh, _BOX_PROPS[attr], int(box[attr]))
+                moved += 1
+            except Exception as exc:  # noqa: BLE001 — a shape must never break the export
+                logger.warning("template_fill: resize skipped (%s): %s", sh.shape_id, exc)
+    logger.info("template_fill: repositioned %d shape(s)", moved)
+
+
 def _drop_shapes(prs, values: Dict[str, Any]) -> None:
     """Remove the shapes listed in ``drop_shapes`` (``"<slide>:<shape>"`` keys).
 
@@ -1600,6 +1633,7 @@ def fill_template(doc: Dict[str, Any], *, out_path: Optional[str] = None) -> str
     # Last, and in this order: both address cells and shapes by the indices every write
     # above used, so nothing may shift until every write is done.
     _drop_table_lines(prs, values)
+    _resize_shapes(prs, values)
     _drop_shapes(prs, values)
 
     n = len(prs.slides)
