@@ -195,22 +195,27 @@ def _survey_result():
     return OverallResult(subject=None, flow="survey", engine=get_engine())
 
 
+def _on_survey_basis(basis) -> bool:
+    from studio.compute import DATA_BASIS_WITH_SURVEY
+
+    return str(basis or "") == DATA_BASIS_WITH_SURVEY
+
+
 def survey_panel_state(selected: dict, basis: str, pinned_carrier, record):
-    """``(section style, carrier options, carrier value, note, peer options)``.
+    """``(section style, carrier options, carrier value, note)`` for SURVEY CARRIER.
 
     The carrier list is the survey book's own, narrowed to the countries in scope. The
     value is what the author pinned, else the match the deck would make on its own — shown
     rather than hidden, so a wrong match is visible BEFORE the deck is built.
     """
-    from studio.compute import DATA_BASIS_WITH_SURVEY
     from studio.template_fill.survey import identity
 
-    if str(basis or "") != DATA_BASIS_WITH_SURVEY:
-        return _SURVEY_HIDDEN, [], None, A.survey_note(""), []
+    if not _on_survey_basis(basis):
+        return _SURVEY_HIDDEN, [], None, A.survey_note("")
     if record is not None:
         return {}, [], None, A.survey_note(
             "The survey book is governed data — an uploaded dataset has no survey pages.",
-            tone="warn"), []
+            tone="warn")
 
     carrier = (selected or {}).get("carrier")
     countries = (selected or {}).get("country")
@@ -219,8 +224,7 @@ def survey_panel_state(selected: dict, basis: str, pinned_carrier, record):
     options = [{"label": n, "value": n} for n in names]
     if not names:
         return {}, [], None, A.survey_note(
-            "No survey book for this scope — the survey pages will be skipped.",
-            tone="warn"), []
+            "No survey book for this scope — the survey pages will be skipped.", tone="warn")
 
     value = pinned_carrier if pinned_carrier in names else None
     if value is None and carrier:
@@ -228,9 +232,67 @@ def survey_panel_state(selected: dict, basis: str, pinned_carrier, record):
 
         value = _safe_survey(identity.resolve_carrier,
                              replace(result, subject=str(carrier)), _as_tuple(countries))
-    note = _survey_note_for(carrier, value)
-    peers = [o for o in options if o["value"] != value]
-    return {}, options, value, note, peers
+    return {}, options, value, _survey_note_for(carrier, value)
+
+
+def survey_peer_state(selected: dict, basis: str, survey_carrier, chosen, record):
+    """``(peer options, peer value, note)`` for SURVEY PEERS — pre-filled from Peers.
+
+    The same promise the premium peer panel makes: the author sees the group the deck WILL
+    rank against before generating it, and can edit it. Pre-filling is the fix for a panel
+    that started empty and therefore said nothing about which peers the survey page would
+    end up using.
+
+    Keyed on ``Carrier`` and scoped to the selected countries — the survey flow's own
+    ``peer_columns`` (``core/registry/flows.yaml``). NOT ``Carrier_Group``: that is the
+    premium key, and it groups entities this book records separately, so looking a group up
+    here returns either nothing or another carrier's peers.
+
+    The author's own edit survives a filter change as long as every name in it is still
+    offered; a selection that has gone stale is replaced by the Peers table's answer rather
+    than left pointing at carriers this scope does not hold.
+    """
+    from studio.data import peer_members
+    from studio.template_fill.survey import identity
+
+    if not _on_survey_basis(basis) or record is not None or not survey_carrier:
+        return [], [], A.survey_note("")
+    result = _survey_result()
+    countries = _as_tuple((selected or {}).get("country"))
+    names = _safe_survey(identity.carrier_options, result, countries)
+    options = [{"label": n, "value": n} for n in names if n != survey_carrier]
+    offered = {o["value"] for o in options}
+
+    kept = [p for p in (chosen or []) if p in offered]
+    if kept and len(kept) == len(chosen or []):
+        return options, kept, _survey_peer_note(len(kept), "your selection")
+
+    group = [str(m) for m in (_safe_peers(peer_members, "survey", str(survey_carrier),
+                                          country=countries) or [])]
+    matched = [m for m in group if m in offered]
+    if not matched:
+        return options, [], A.survey_note(
+            f"No survey peer group for {survey_carrier} in this scope — pick peers, or the "
+            f"page ranks it against every carrier surveyed in the market.", tone="warn")
+    absent = [m for m in group if m not in offered]
+    note = _survey_peer_note(len(matched), "the Peers table")
+    if absent:
+        note = A.survey_note(f"{len(matched)} peer(s) from the Peers table. "
+                             f"Not surveyed in this scope: {', '.join(absent)}.")
+    return options, matched, note
+
+
+def _survey_peer_note(count: int, source: str):
+    return A.survey_note(f"{count} peer{'s' if count != 1 else ''} from {source}.")
+
+
+def _safe_peers(fn, *args, **kwargs):
+    """A peer lookup must never take the Setup form down with it."""
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 — a form that still renders beats a blank page
+        log.warning("survey peers: lookup failed: %s", exc)
+        return []
 
 
 def _survey_note_for(carrier, matched):
@@ -486,7 +548,6 @@ def register_setup(app):
         Output("studio-survey-carrier", "options"),
         Output("studio-survey-carrier", "value"),
         Output("studio-survey-msg", "children"),
-        Output("studio-survey-peers", "options"),
         Input({"type": "studio-filter", "col": ALL}, "value"),
         Input("studio-data-basis", "value"),
         State({"type": "studio-filter", "col": ALL}, "id"),
@@ -495,11 +556,34 @@ def register_setup(app):
         running=_busy(A.BUSY_FORM),
     )
     def refresh_survey(values, basis, ids, pinned, dataset_store):
-        """Match the selected carrier into the survey book, and offer its peers."""
+        """Match the selected carrier into the survey book."""
         from studio.dataset.source import dataset_in_use
 
         selected = {i["col"]: v for i, v in zip(ids or [], values or []) if v not in BLANK}
         return survey_panel_state(selected, basis, pinned, dataset_in_use(dataset_store))
+
+    # Peers are their own callback so the SURVEY CARRIER above can drive them: a component
+    # cannot be both an Input and an Output of one callback, and the peer group is a
+    # function of the carrier — change who the subject is and the group has to follow.
+    @app.callback(
+        Output("studio-survey-peers", "options"),
+        Output("studio-survey-peers", "value"),
+        Output("studio-survey-peer-msg", "children"),
+        Input("studio-survey-carrier", "value"),
+        Input({"type": "studio-filter", "col": ALL}, "value"),
+        Input("studio-data-basis", "value"),
+        State({"type": "studio-filter", "col": ALL}, "id"),
+        State("studio-survey-peers", "value"),
+        State("qs-dataset", "data"),
+        running=_busy(A.BUSY_FORM),
+    )
+    def refresh_survey_peers(survey_carrier, values, basis, ids, chosen, dataset_store):
+        """Pre-fill the survey peer group from the Peers table, keyed on the carrier."""
+        from studio.dataset.source import dataset_in_use
+
+        selected = {i["col"]: v for i, v in zip(ids or [], values or []) if v not in BLANK}
+        return survey_peer_state(selected, basis, survey_carrier, chosen,
+                                 dataset_in_use(dataset_store))
 
     @app.callback(
         Output("studio-scope-preview", "children"),

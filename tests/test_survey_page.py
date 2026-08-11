@@ -150,7 +150,7 @@ def test_a_slot_the_book_cannot_fill_is_blanked_not_left_authored(template, resu
     page = P.pages(template)[0]
     grid = facts.load_grid(result, "Singapore")
     thin = dataclasses.replace(grid, practices=("CE/CM",))
-    texts, _ = P._table_payload(page, thin)
+    texts, _ = P._table_payload(page, P.axes_for(page, thin), thin)
     # The first authored column keeps its label; every other column header is blanked, and
     # so is every cell under it — an authored practice this carrier does not write must not
     # ship over a column of placeholders.

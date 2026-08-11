@@ -97,17 +97,44 @@ def _text_shape(shape, fields_by_target, subs) -> Optional[html.Div]:
     return html.Div(children, className="qs-tf-shape")
 
 
-def _table_shape(shape, fields_by_target, slide_idx, subs) -> Optional[html.Div]:
+def _cell_colours(values, slide_idx: int, shape_id: int) -> Dict[Tuple[int, int], str]:
+    """``{(row, col): hex}`` for one table, from the ``cell_fills`` payload the deck built.
+
+    The Carrier Survey table says as much in its CELL COLOUR as in its numbers — the move
+    against last year, against the legend printed under it — and the export writes them
+    (:func:`studio.template_fill.fill._fill_cell_backgrounds`). Reading the same payload
+    here is what stops the preview showing a table of bare numbers for a slide that ships
+    fully banded.
+    """
+    fills = (values or {}).get("cell_fills") or {}
+    specs = fills.get(f"{slide_idx}:{int(shape_id)}") or ()
+    out: Dict[Tuple[int, int], str] = {}
+    for spec in specs:
+        try:
+            if spec.get("hex"):
+                out[(int(spec["r"]), int(spec["c"]))] = str(spec["hex"]).lstrip("#")
+        except (TypeError, ValueError, KeyError):    # a malformed spec costs that cell only
+            continue
+    return out
+
+
+def _table_shape(shape, fields_by_target, slide_idx, subs, values=None) -> Optional[html.Div]:
+    colours = _cell_colours(values, slide_idx, shape.shape_id)
     rows = []
     for r, row in enumerate(shape.table or []):
         cells = []
         for c, cell in enumerate(row):
             fld = fields_by_target.get((shape.shape_id, ("cell", r, c)))
+            colour = colours.get((r, c))
+            style = ({"background": f"#{colour}",
+                      "color": "#fff" if _is_dark(colour) else "#0b1f44"} if colour else None)
             if fld:
                 text = str(fld["text"]) if fld["filled"] else _apply_subs(str(fld["token"]), subs)
-                cells.append(html.Td(text, className="qs-tf-td" + (" is-filled" if fld["filled"] else "")))
+                cells.append(html.Td(text, style=style,
+                                     className="qs-tf-td" + (" is-filled" if fld["filled"] else "")))
             else:
-                cells.append(html.Td(_apply_subs(cell, subs), className="qs-tf-th" if r == 0 else ""))
+                cells.append(html.Td(_apply_subs(cell, subs), style=style,
+                                     className="qs-tf-th" if r == 0 else ""))
         rows.append(html.Tr(cells))
     return html.Div(html.Table(html.Tbody(rows), className="qs-tf-table"), className="qs-tf-shape")
 
@@ -234,7 +261,7 @@ def _render_shape(shape, fields_by_target, scale, slide_idx, values, subs, *, re
     if rendered_background and shape.kind in ("table", "text", "chart", "picture", "ole"):
         return None
     if shape.kind == "table" and shape.table:
-        inner = _table_shape(shape, fields_by_target, slide_idx, subs)
+        inner = _table_shape(shape, fields_by_target, slide_idx, subs, values)
         if inner is None:
             return None
     elif shape.kind == "chart":

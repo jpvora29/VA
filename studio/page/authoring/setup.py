@@ -302,11 +302,13 @@ def _survey_panel() -> html.Div:
                         placeholder="Ranked against the surveyed field",
                         className="studio-dd sm",
                     ),
-                    html.Div(
-                        "Leave empty to use the survey Peers table, or the carriers "
-                        "surveyed in this market when it lists none.",
-                        className="qs-peer-note",
-                    ),
+                    # Pre-filled from the survey Peers table (keyed on Carrier, scoped to
+                    # the selected countries) as soon as a survey carrier is matched, so
+                    # the author sees the group the page will rank against — and can edit
+                    # it — before generating. Cleared, the page falls back to the whole
+                    # surveyed field.
+                    html.Div(survey_note(""), id="studio-survey-peer-msg",
+                             className="studio-peer-msg"),
                 ],
                 className="studio-field",
             ),

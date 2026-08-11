@@ -192,14 +192,16 @@ def assign_axis(authored: Sequence[str], available: Sequence[str]) -> List[Optio
 
 # ── values ───────────────────────────────────────────────────────────────────
 
-_COUNTRY_FILTER = "Country"
-
-
 def _country_of(result) -> Optional[str]:
-    """The single country this sub-deck is for — the survey page is always per-country."""
-    value = (getattr(result, "resolved_filters", None) or {}).get(_COUNTRY_FILTER)
-    values = list(value) if isinstance(value, (list, tuple, set)) else ([value] if value else [])
-    named = [str(v) for v in values if v not in (None, "", "all", "All")]
+    """The single country this sub-deck is for — the survey page is always per-country.
+
+    The run's OWN selection, read the same way every other page reads it
+    (:func:`studio.template_fill.survey.scope.selected_countries`), so the survey slide
+    reports the market the author picked and not a wider cut of the book.
+    """
+    from studio.template_fill.survey import scope as scope_mod
+
+    named = scope_mod.selected_countries(result)
     return named[0] if len(named) == 1 else None
 
 
@@ -225,12 +227,21 @@ def _at(labels: Sequence[Optional[str]], slots: Sequence[int], index: int) -> Op
     return labels[slots.index(index)] if index in slots else None
 
 
-def axes_for(page: SurveyPage, grid: facts.ScoreGrid) -> Axes:
-    """The page's axes, taken from what the subject is actually surveyed on."""
+def axes_for(page: SurveyPage, book) -> Axes:
+    """The page's axes, taken from what the subject is actually surveyed on.
+
+    ``book`` is anything carrying the vocabulary — a :class:`facts.SurveyAxes` before the
+    numbers are loaded, or the :class:`facts.ScoreGrid` afterwards.
+    """
     return Axes(
-        sections=tuple(assign_axis([label for _, label in page.rows], grid.sections)),
-        practices=tuple(assign_axis([label for _, label in page.cols], grid.practices)),
+        sections=tuple(assign_axis([label for _, label in page.rows], book.sections)),
+        practices=tuple(assign_axis([label for _, label in page.cols], book.practices)),
     )
+
+
+def shown(labels: Sequence[Optional[str]]) -> Tuple[str, ...]:
+    """The book labels an axis actually shows — the slots the carrier's book could fill."""
+    return tuple(label for label in labels if label)
 
 
 def _reading(grid: facts.ScoreGrid, page: SurveyPage, axes: Axes,
@@ -252,7 +263,7 @@ def _reading(grid: facts.ScoreGrid, page: SurveyPage, axes: Axes,
     return grid.score(section, practice), grid.delta(section, practice)
 
 
-def _table_payload(page: SurveyPage,
+def _table_payload(page: SurveyPage, axes: Axes,
                    grid: facts.ScoreGrid) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """``({role: score-or-label}, [{r, c, hex}])`` — the axes, the numbers, the colours.
 
@@ -260,8 +271,13 @@ def _table_payload(page: SurveyPage,
     sections and practices THIS carrier is surveyed on, so a slot the book cannot fill is
     BLANKED. Leaving it would ship an authored practice the carrier does not write, over a
     row of ``x.x`` — which is what made a partly-surveyed carrier's page read as broken.
+
+    A cell only carries a fill when its move against the previous survey puts it in a band
+    (:mod:`studio.template_fill.survey.bands`). No band means no claim about direction, and
+    the cell keeps the template's own styling — emitting ``hex: None`` instead told the fill
+    engine to CLEAR it, which is how a book with nothing to compare against ended up
+    stripping the whole table's background.
     """
-    axes = axes_for(page, grid)
     texts: Dict[str, Any] = {}
     fills: List[Dict[str, Any]] = []
     for row, col in _cells(page):
@@ -271,9 +287,9 @@ def _table_payload(page: SurveyPage,
             continue
         score, delta = _reading(grid, page, axes, row, col)
         texts[_role(page.slide_idx, row, col)] = "" if score is None else float(score)
-        if score is not None:
-            fills.append({"r": row, "c": col, "hex": bands.band_for(delta)})
-    _report_axes(page, axes, grid)
+        band = bands.band_for(delta) if score is not None else None
+        if band:
+            fills.append({"r": row, "c": col, "hex": band})
     return texts, fills
 
 
@@ -294,17 +310,20 @@ def _header_label(page: SurveyPage, axes: Axes, row: int, col: int) -> Optional[
     return None
 
 
-def _report_axes(page: SurveyPage, axes: Axes, grid: facts.ScoreGrid) -> None:
+def _report_axes(page: SurveyPage, axes: Axes, book: facts.SurveyAxes) -> None:
     """Say what the page ended up reporting on, and what it had to drop.
 
     A page filled from a carrier's own book can differ from the authored one in both
     directions — practices the template never had, authored ones this carrier is not
     surveyed on — and on the slide both look like "it didn't work". The log is what
     distinguishes a vocabulary problem from an absent survey.
+
+    Reads the carrier's WHOLE vocabulary (:func:`facts.load_axes`), not the grid's: the grid
+    only knows the axes the page had room for, so it could never report the ones it left out.
     """
     for axis, slots, authored, theirs in (
-        ("section", axes.sections, [label for _, label in page.rows], grid.sections),
-        ("practice", axes.practices, [label for _, label in page.cols], grid.practices),
+        ("section", axes.sections, [label for _, label in page.rows], book.sections),
+        ("practice", axes.practices, [label for _, label in page.cols], book.practices),
     ):
         shown = [s for s in slots if s]
         dropped = [a for a in authored
@@ -339,9 +358,16 @@ def _ribbon_png(page: SurveyPage, result, country: str,
 def values(template: Template, result) -> Dict[str, Any]:
     """``{survey-role: score}`` plus the ``cell_fills`` and ``pictures`` payloads.
 
+    Two passes over the book, because the page's axes decide what its totals mean. First
+    :func:`facts.load_axes` says what the carrier is surveyed on; the template's slots are
+    laid over that (:func:`axes_for`); only then are the numbers loaded, RESTRICTED to the
+    axes that survived. That is what makes the Total column the average of the row printed
+    beside it, on a page whose surplus rows and columns have been trimmed away.
+
     Empty when the template has no survey page, when the sub-deck is not scoped to exactly
-    one country, or when that country has no survey book — in every case the slide is
-    simply not generated (see :func:`studio.template_fill.assemble.plan_subdecks`).
+    one country, or when that country has no survey book for this run's carrier and year —
+    in every case the slide is simply not generated (see
+    :func:`studio.template_fill.assemble.plan_subdecks`).
     """
     found = pages(template)
     if not found:
@@ -349,17 +375,24 @@ def values(template: Template, result) -> Dict[str, Any]:
     country = _country_of(result)
     if country is None:
         return {}
-    grid = facts.load_grid(result, country)
-    if grid is None:
+    book = facts.load_axes(result, country)
+    if book is None:
         return {}
 
     out: Dict[str, Any] = {}
     cell_fills: Dict[str, Any] = {}
     pictures: Dict[str, Any] = {}
     trims: Dict[str, Any] = {}
+    year = book.year
     for page in found:
-        axes = axes_for(page, grid)
-        texts, fills = _table_payload(page, grid)
+        axes = axes_for(page, book)
+        grid = facts.load_grid(result, country, sections=shown(axes.sections),
+                               practices=shown(axes.practices))
+        if grid is None:
+            continue
+        year = grid.year
+        texts, fills = _table_payload(page, axes, grid)
+        _report_axes(page, axes, book)
         out.update(texts)
         if fills:
             cell_fills[f"{page.slide_idx}:{page.table_id}"] = fills
@@ -367,7 +400,7 @@ def values(template: Template, result) -> Dict[str, Any]:
         if trim["rows"] or trim["cols"]:
             trims[f"{page.slide_idx}:{page.table_id}"] = trim
         # The chart's columns are the table's OWN rows, so the two read together.
-        png = _ribbon_png(page, result, country, [s for s in axes.sections if s])
+        png = _ribbon_png(page, result, country, shown(axes.sections))
         if png:
             pictures[f"{page.slide_idx}:{page.ribbon_id}"] = png
     if cell_fills:
@@ -377,5 +410,5 @@ def values(template: Template, result) -> Dict[str, Any]:
     if trims:
         out["drop_table_lines"] = trims
     logger.info("survey_page: %s %d — %d cell(s), %d chart(s)",
-                country, grid.year, len(out), len(pictures))
+                country, year, len(out), len(pictures))
     return out

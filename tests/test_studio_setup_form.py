@@ -117,28 +117,26 @@ def test_the_survey_panel_is_in_the_form_but_hidden_by_default():
 def test_the_panel_is_hidden_on_the_premium_basis():
     from studio.authoring.setup import survey_panel_state
 
-    style, options, value, _note, peers = survey_panel_state(
-        {"carrier": "Zurich"}, "premium", None, None)
+    style, options, value, _note = survey_panel_state({"carrier": "Zurich"}, "premium", None, None)
     assert style == {"display": "none"}
-    assert options == [] and value is None and peers == []
+    assert options == [] and value is None
 
 
 def test_the_panel_offers_the_survey_book_s_own_carrier_names(seeded_survey):
     from studio.authoring.setup import survey_panel_state
 
-    style, options, value, _note, peers = survey_panel_state(
+    style, options, value, _note = survey_panel_state(
         {"carrier": "Zurich", "country": "Singapore"}, "premium_survey", None, None)
     assert style == {}
     names = [o["value"] for o in options]
     assert "Zurich" in names and len(names) > 1
     assert value == "Zurich"                       # the match it would make on its own
-    assert value not in [p["value"] for p in peers], "a carrier is not its own peer"
 
 
 def test_the_panel_shows_how_the_carrier_was_matched(seeded_survey):
     from studio.authoring.setup import survey_panel_state
 
-    _s, _o, _v, note, _p = survey_panel_state(
+    _s, _o, _v, note = survey_panel_state(
         {"carrier": "Zurich", "country": "Singapore"}, "premium_survey", None, None)
     assert "Surveyed as Zurich" in _rendered(note)
 
@@ -147,7 +145,7 @@ def test_the_panel_warns_when_the_carrier_is_not_surveyed(seeded_survey):
     """The page will be skipped — better said on the form than discovered in the deck."""
     from studio.authoring.setup import survey_panel_state
 
-    _s, _o, value, note, _p = survey_panel_state(
+    _s, _o, value, note = survey_panel_state(
         {"carrier": "Nobody At All", "country": "Singapore"}, "premium_survey", None, None)
     assert value is None
     assert "could not be matched" in _rendered(note)
@@ -156,7 +154,7 @@ def test_the_panel_warns_when_the_carrier_is_not_surveyed(seeded_survey):
 def test_a_pinned_carrier_is_kept_over_the_match(seeded_survey):
     from studio.authoring.setup import survey_panel_state
 
-    _s, _o, value, _n, _p = survey_panel_state(
+    _s, _o, value, _n = survey_panel_state(
         {"carrier": "Zurich", "country": "Singapore"}, "premium_survey", "Chubb", None)
     assert value == "Chubb"
 
@@ -167,10 +165,76 @@ def test_an_uploaded_dataset_has_no_survey_book(seeded_survey):
     class _Record:
         dataset_id = "x"
 
-    style, options, value, note, _p = survey_panel_state(
+    style, options, value, note = survey_panel_state(
         {"carrier": "Zurich"}, "premium_survey", None, _Record())
     assert style == {} and options == [] and value is None
     assert "governed data" in _rendered(note)
+
+
+# ── the survey peer group ────────────────────────────────────────────────────
+#
+# The premium panel has always shown the peer group the deck WOULD use before it is built.
+# The survey panel started empty, so the survey page's peer set was invisible until the
+# deck existed — and it is keyed differently (``Carrier``, not ``Carrier_Group``), so it is
+# not the group shown above it either.
+
+
+def _peer_state(selected, basis="premium_survey", carrier="Zurich", chosen=None, record=None):
+    from studio.authoring.setup import survey_peer_state
+
+    return survey_peer_state(selected, basis, carrier, chosen, record)
+
+
+def test_the_peer_panel_is_prefilled_from_the_peers_table(seeded_survey):
+    from studio.data import peer_members
+
+    options, value, note = _peer_state({"carrier": "Zurich", "country": "Singapore"})
+    assert value, "the survey peer group must be shown before the deck is built"
+    # Keyed on Carrier and scoped to the country — the survey flow's own peer columns.
+    assert set(value) == set(peer_members("survey", "Zurich", country=("Singapore",)))
+    assert "Peers table" in _rendered(note)
+    assert "Zurich" not in [o["value"] for o in options], "a carrier is not its own peer"
+
+
+def test_the_peer_panel_follows_the_survey_carrier_not_the_premium_one(seeded_survey):
+    """Two carriers keep two different peer groups; the panel must track the survey one."""
+    zurich = _peer_state({"country": "Singapore"}, carrier="Zurich")[1]
+    aig = _peer_state({"country": "Singapore"}, carrier="AIG")[1]
+    assert zurich and aig and set(zurich) != set(aig)
+    assert "AIG" not in aig and "Zurich" not in zurich
+
+
+def test_an_edited_peer_selection_survives_a_filter_change(seeded_survey):
+    options, value, note = _peer_state({"carrier": "Zurich", "country": "Singapore"},
+                                       chosen=["Chubb"])
+    assert value == ["Chubb"]
+    assert "your selection" in _rendered(note)
+
+
+def test_a_stale_peer_selection_is_replaced_by_the_peers_table(seeded_survey):
+    """A name this scope does not survey is not a selection worth keeping."""
+    _o, value, _n = _peer_state({"carrier": "Zurich", "country": "Singapore"},
+                                chosen=["Someone Not Surveyed"])
+    assert value and "Someone Not Surveyed" not in value
+
+
+def test_the_peer_panel_is_silent_off_the_survey_basis(seeded_survey):
+    options, value, note = _peer_state({"carrier": "Zurich"}, basis="premium")
+    assert options == [] and value == []
+    assert "Peers table" not in _rendered(note)
+
+
+def test_the_peer_panel_waits_for_a_survey_carrier(seeded_survey):
+    options, value, _n = _peer_state({"country": "Singapore"}, carrier=None)
+    assert options == [] and value == []
+
+
+def test_the_peer_panel_says_so_when_the_peers_table_has_no_row(seeded_survey):
+    """Silence would read as "no peers needed"; the page would then rank against the whole
+    surveyed field, which is a different statement and worth saying out loud."""
+    _o, value, note = _peer_state({"country": "Singapore"}, carrier="Nobody At All")
+    assert value == []
+    assert "No survey peer group" in _rendered(note)
 
 
 def test_ai_assist_defaults_to_on():

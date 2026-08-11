@@ -4,14 +4,18 @@ Everything the page shows comes from the ``survey`` flow (table ``Carriers``), n
 premium book — a survey score is not a premium figure, and the two use different
 taxonomies (``SurveyPractice`` vs ``Product_Line``, ``Carrier`` vs ``Carrier_Group``).
 For that reason the page is scoped by COUNTRY, CARRIER and YEAR only: honouring a
-``Product_Line`` pin would blank most of a table whose columns ARE the practices.
+``Product_Line`` pin would blank most of a table whose columns ARE the practices. Which
+country, carrier and year those are is settled once, from the run's own Setup selection,
+by :mod:`studio.template_fill.survey.scope`.
 
-Two products:
+Three products, asked for in this order:
 
-  * :class:`ScoreGrid` — the table. The subject's average score per section × practice at
-    the latest surveyed year, the same grid a year earlier, and the row/column/corner
-    totals. Totals are their OWN average over the raw rows, not a mean of the displayed
-    cells, so a sparse row cannot skew them.
+  * :func:`load_axes` — what this carrier is surveyed ON in that cut: the sections and
+    practices the page's axes are then built from.
+  * :class:`ScoreGrid` — the table. The subject's average score per section × practice, the
+    same grid at the previous survey, and the row/column/corner totals. A Total is its own
+    average over the raw rows RESTRICTED TO THE AXES THE PAGE SHOWS, so the Total column
+    always averages the row printed beside it — never a wider cut the reader cannot see.
   * :func:`load_ribbon` — the chart. Per section, the subject and its peers ranked by
     average score.
 """
@@ -111,73 +115,49 @@ def section_column(result) -> Optional[str]:
 
 def subject_in_book(result, country: str) -> Optional[str]:
     """The subject's name in the SURVEY book for ``country`` (see :mod:`identity`)."""
-    from studio.template_fill.survey import identity
+    from studio.template_fill.survey import identity, scope as scope_mod
 
-    return identity.resolve_carrier(result, (country,))
-
-
-def _base_filters(result, country: str) -> Optional[Dict[str, Any]]:
-    """Country + the subject AS THE SURVEY BOOK NAMES IT, or ``None`` if it is not in it.
-
-    The premium subject is a ``Carrier_Group``; this book keys on ``Carrier``. Passing the
-    group name straight through is what put another carrier's scores — or none — on the
-    page (:mod:`studio.template_fill.survey.identity`).
-    """
-    carrier = subject_in_book(result, country)
-    if carrier is None:
-        return None
-    return {COUNTRY_COL: str(country), CARRIER_COL: carrier}
+    market = scope_mod.book_country(result, country)
+    return identity.resolve_carrier(result, (market,)) if market else None
 
 
 def has_survey_data(result, country: str) -> bool:
-    """Whether ``country`` has any survey rows for the subject — the slide's gate.
+    """Whether ``country`` has survey rows for the subject IN SCOPE — the slide's gate.
 
-    Cut by ``YEAR_COL`` (via :func:`_reported_years`) rather than an empty ``group_by``:
-    an aggregate with no ``GROUP BY`` always returns exactly one SQL row — NULL, not
-    absent, when nothing matches — so an empty-tuple cut can never observe "no data".
+    "In scope" is the whole point: a country the book spells differently, a carrier it does
+    not hold, or a selected year it has no survey for all answer False, and the page is not
+    generated rather than generated from a cut the run never asked for
+    (:func:`studio.template_fill.survey.scope.resolve`).
     """
-    if section_column(result) is None:
-        return False
-    year, _ = _reported_years(result, country)
-    return year is not None
+    from studio.template_fill.survey import scope as scope_mod
 
-
-def _reported_years(result, country: str) -> Tuple[Optional[int], Optional[int]]:
-    """``(latest surveyed year, the one before it)`` for this country and carrier."""
-    base = _base_filters(result, country)
-    return _years_for(result, base) if base is not None else (None, None)
-
-
-def _years_for(result, filters: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
-    """``(latest surveyed year, the one before it)`` for an arbitrary survey cut."""
-    facts = _breakdown(result, (YEAR_COL,), filters)
-    years = sorted({int(f.dims[YEAR_COL]) for f in facts if f.dims.get(YEAR_COL) is not None})
-    if not years:
-        return None, None
-    latest = years[-1]
-    return latest, (latest - 1 if (latest - 1) in years else None)
+    return scope_mod.resolve(result, country) is not None
 
 
 def load_overall_score(result, countries: Sequence[str] = ()) -> Optional[float]:
-    """The subject's average survey score at its latest surveyed year — the overall KPI.
+    """The subject's average survey score for the run's own scope — the overall KPI tile.
 
     Scoped by ``countries`` when the run pins any, so the tile reports on the same book the
-    rest of the page does; carrier-wide otherwise. ``None`` whenever the survey book has
+    rest of the deck does, and by the run's own YEAR for the same reason: a tile reading
+    2025 on a 2024 deck is the failure this closes. ``None`` whenever the survey book has
     nothing to say for that scope — there is no premium-side number that could stand in for
     a survey score, so the caller takes the tile off the page instead.
     """
-    from studio.template_fill.survey import identity
+    from studio.template_fill.survey import identity, scope as scope_mod
 
     if section_column(result) is None:
         return None
-    scope = tuple(str(c) for c in countries if str(c).strip())
-    carrier = identity.resolve_carrier(result, scope)
+    markets = scope_mod.book_country_scope(result, countries)
+    if countries and not markets:
+        return None
+    carrier = identity.resolve_carrier(result, markets)
     if carrier is None:
         return None
     filters: Dict[str, Any] = {CARRIER_COL: carrier}
-    if scope:
-        filters[COUNTRY_COL] = scope
-    year, _ = _years_for(result, filters)
+    if markets:
+        filters[COUNTRY_COL] = markets
+    year, _ = scope_mod.reporting_years(scope_mod.surveyed_years(result, filters),
+                                        scope_mod.selected_years(result))
     if year is None:
         return None
     return _one(_breakdown(result, (), {**filters, YEAR_COL: int(year)}))
@@ -272,48 +252,94 @@ def _one(facts) -> Optional[float]:
     return float(facts[0].value) if facts else None
 
 
-def load_grid(result, country: str) -> Optional[ScoreGrid]:
+@dataclass(frozen=True)
+class SurveyAxes:
+    """What the subject is surveyed ON in one scope — the page's axes, before any layout.
+
+    Asked for BEFORE the grid because the page's rows and columns are the carrier's own
+    (:func:`studio.template_fill.survey.page.assign_axis`), and the grid's totals are only
+    honest once it knows which of them the page has room for.
+    """
+
+    year: int
+    prior_year: Optional[int] = None
+    sections: Tuple[str, ...] = ()
+    practices: Tuple[str, ...] = ()
+
+
+def load_axes(result, country: str) -> Optional[SurveyAxes]:
+    """The sections and practices this carrier is surveyed on in ``country``, or ``None``.
+
+    One cut. The labels are the BOOK's own — the page matches its authored wording against
+    them (:func:`norm_label`) rather than the other way round.
+    """
+    from studio.template_fill.survey import scope as scope_mod
+
+    section = section_column(result)
+    scope = scope_mod.resolve(result, country) if section is not None else None
+    if scope is None:
+        return None
+    body = _breakdown(result, (section, PRACTICE_COL), scope.filters())
+    if not body:
+        return None
+    return SurveyAxes(year=scope.year, prior_year=scope.prior_year,
+                      sections=_labels(body, section), practices=_labels(body, PRACTICE_COL))
+
+
+def _axis_filter(column: str, labels: Optional[Sequence[str]]) -> Dict[str, Any]:
+    """``{column: (labels…)}`` — the cut restricted to the axis the page shows, or ``{}``."""
+    wanted = tuple(str(label) for label in (labels or ()) if str(label).strip())
+    return {column: wanted} if wanted else {}
+
+
+def load_grid(result, country: str, *, sections: Optional[Sequence[str]] = None,
+              practices: Optional[Sequence[str]] = None) -> Optional[ScoreGrid]:
     """The table's numbers for ``country``, or ``None`` when it has no survey book.
+
+    ``sections`` / ``practices`` are the book labels the page HAS ROOM FOR (from
+    :func:`load_axes`, laid into the template's slots). Every total is computed over that
+    restriction, so the Total column averages exactly the row printed beside it and the
+    corner averages exactly the grid on the slide. Left out, the totals span the carrier's
+    whole book — which is the right answer only when the page shows all of it, and was the
+    wrong one on every page whose surplus rows or columns were trimmed away.
 
     Four cuts per year — the body, the two total axes and the corner — because a Total is
     an average over the ROWS in that cut, which no arithmetic on the body can reproduce
     once any cell is missing.
     """
-    section = section_column(result)
-    base = _base_filters(result, country) if section is not None else None
-    if base is None:
-        return None
-    year, prior_year = _reported_years(result, country)
-    if year is None:
-        return None
+    from studio.template_fill.survey import scope as scope_mod
 
-    body = _breakdown(result, (section, PRACTICE_COL), {**base, YEAR_COL: int(year)})
+    section = section_column(result)
+    scope = scope_mod.resolve(result, country) if section is not None else None
+    if scope is None:
+        return None
+    shown = {**_axis_filter(section, sections), **_axis_filter(PRACTICE_COL, practices)}
 
     def cuts(for_year: int):
-        filters = {**base, YEAR_COL: int(for_year)}
-        pairs = (body if for_year == year
-                 else _breakdown(result, (section, PRACTICE_COL), filters))
+        filters = {**scope.filters(for_year), **shown}
+        body = _breakdown(result, (section, PRACTICE_COL), filters)
         return (
-            _by_pair(pairs, section, PRACTICE_COL),
+            body,
+            _by_pair(body, section, PRACTICE_COL),
             _by_one(_breakdown(result, (section,), filters), section),
             _by_one(_breakdown(result, (PRACTICE_COL,), filters), PRACTICE_COL),
             _one(_breakdown(result, (), filters)),
         )
 
-    cells, section_totals, practice_totals, overall = cuts(year)
+    body, cells, section_totals, practice_totals, overall = cuts(scope.year)
     if not cells:
         return None
-    if prior_year is None:
-        prior: Tuple[Dict, Dict, Dict, Optional[float]] = ({}, {}, {}, None)
+    if scope.prior_year is None:
+        prior: Tuple[Any, Dict, Dict, Dict, Optional[float]] = ((), {}, {}, {}, None)
     else:
-        prior = cuts(prior_year)
+        prior = cuts(scope.prior_year)
 
     return ScoreGrid(
-        year=year, prior_year=prior_year,
-        cells=cells, prior_cells=prior[0],
-        section_totals=section_totals, prior_section_totals=prior[1],
-        practice_totals=practice_totals, prior_practice_totals=prior[2],
-        overall=overall, prior_overall=prior[3],
+        year=scope.year, prior_year=scope.prior_year,
+        cells=cells, prior_cells=prior[1],
+        section_totals=section_totals, prior_section_totals=prior[2],
+        practice_totals=practice_totals, prior_practice_totals=prior[3],
+        overall=overall, prior_overall=prior[4],
         sections=_labels(body, section), practices=_labels(body, PRACTICE_COL),
     )
 
@@ -328,6 +354,21 @@ def _surveyed_carriers(result, country: str, subject: str) -> Tuple[str, ...]:
                      for f in facts if f.dims.get(CARRIER_COL) is not None),
                     key=lambda pair: -pair[1])
     return tuple(name for name, _ in ranked if name != subject)
+
+
+def peer_group(result, country: str, subject: str) -> Tuple[str, ...]:
+    """The subject's peer group from the survey flow's own Peers table, in book names.
+
+    Keyed on ``Carrier`` and scoped to ``country`` — the survey flow's ``peer_columns``
+    (``core/registry/flows.yaml``). NOT ``Carrier_Group``: the premium key groups entities
+    the survey book records separately, so looking the group up here returns either nothing
+    or somebody else's peers.
+    """
+    from studio.data import peer_members
+
+    names = _safe(peer_members, SURVEY_FLOW, subject,
+                  country=str(country), engine=result.engine) or ()
+    return tuple(str(name) for name in names if str(name).strip() and str(name) != subject)
 
 
 def _peer_carriers(result, country: str, subject: str) -> Tuple[str, ...]:
@@ -351,10 +392,7 @@ def _peer_carriers(result, country: str, subject: str) -> Tuple[str, ...]:
     pinned = identity.resolve_peers(result, subject, (country,))
     if pinned:
         return pinned
-    from studio.data import peer_members
-
-    group = tuple(_safe(peer_members, SURVEY_FLOW, subject,
-                        country=str(country), engine=result.engine) or ())
+    group = peer_group(result, country, subject)
     if group:
         return group
     field = _surveyed_carriers(result, country, subject)
@@ -391,19 +429,22 @@ def load_ribbon(result, country: str, sections: Sequence[str]) -> Optional[ribbo
     query per authored label: the label has to match the warehouse's own wording, and a SQL
     equality cannot be told to ignore a dash flavour or a stray capital (see
     :func:`norm_label`). Cheaper too — one scan instead of one per row.
+
+    The country and year are the run's own (:mod:`studio.template_fill.survey.scope`), so
+    the chart ranks the same market and the same year as the table above it.
     """
+    from studio.template_fill.survey import scope as scope_mod
+
     section = section_column(result)
-    subject = subject_in_book(result, country) if section is not None else None
-    if section is None or subject is None:
+    scope = scope_mod.resolve(result, country) if section is not None else None
+    if scope is None:
         return None
-    year, _ = _reported_years(result, country)
-    if year is None:
-        return None
-    wanted = {subject, *(_peer_carriers(result, country, subject))}
+    subject = scope.carrier
+    wanted = {subject, *(_peer_carriers(result, scope.country, subject))}
 
     scored: Dict[str, List[Tuple[str, float]]] = {}
     for fact in _breakdown(result, (section, CARRIER_COL),
-                           {COUNTRY_COL: str(country), YEAR_COL: int(year)}):
+                           {COUNTRY_COL: scope.country, YEAR_COL: int(scope.year)}):
         carrier = str(fact.dims.get(CARRIER_COL))
         if fact.dims.get(section) is None or carrier not in wanted or fact.value is None:
             continue
