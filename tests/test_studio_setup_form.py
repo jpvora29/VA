@@ -179,10 +179,12 @@ def test_an_uploaded_dataset_has_no_survey_book(seeded_survey):
 # not the group shown above it either.
 
 
-def _peer_state(selected, basis="premium_survey", carrier="Zurich", chosen=None, record=None):
+def _peer_state(selected, basis="premium_survey", carrier="Zurich", chosen=None, record=None,
+                keep_choice=True):
     from studio.authoring.setup import survey_peer_state
 
-    return survey_peer_state(selected, basis, carrier, chosen, record)
+    return survey_peer_state(selected, basis, carrier, chosen, record,
+                             keep_choice=keep_choice)
 
 
 def test_the_peer_panel_is_prefilled_from_the_peers_table(seeded_survey):
@@ -235,6 +237,109 @@ def test_the_peer_panel_says_so_when_the_peers_table_has_no_row(seeded_survey):
     _o, value, note = _peer_state({"country": "Singapore"}, carrier="Nobody At All")
     assert value == []
     assert "No survey peer group" in _rendered(note)
+
+
+# ── a peer group belongs to the carrier it was chosen for ────────────────────
+#
+# The survey carrier is BOTH an Output of the panel and a State fed back into it, so the
+# form cannot tell "the author overrode the match" from "the form made this match last time
+# round" by value alone. Without the trigger, a match made for one carrier outlived it:
+# select Zurich, then select AIG, and the survey panel still said Zurich — and still offered
+# Zurich's peers.
+
+
+def _carrier_state(selected, basis="premium_survey", pinned=None, record=None, keep_pin=True):
+    from studio.authoring.setup import survey_panel_state
+
+    return survey_panel_state(selected, basis, pinned, record, keep_pin=keep_pin)
+
+
+def test_changing_the_carrier_rematches_the_survey_carrier(seeded_survey):
+    _s, _o, value, note = _carrier_state({"carrier": "AIG", "country": "Singapore"},
+                                         pinned="Zurich", keep_pin=False)
+    assert value == "AIG"
+    assert "Surveyed as AIG" in _rendered(note)
+
+
+def test_a_pin_still_survives_a_change_that_is_not_the_carrier(seeded_survey):
+    """The override is only discarded by the thing that invalidates it."""
+    _s, _o, value, _n = _carrier_state({"carrier": "Zurich", "country": "Singapore"},
+                                       pinned="Chubb", keep_pin=True)
+    assert value == "Chubb"
+
+
+def test_changing_the_carrier_drops_the_previous_carriers_peers(seeded_survey):
+    _o, value, _n = _peer_state({"carrier": "AIG", "country": "Singapore"}, carrier="AIG",
+                                chosen=["Chubb"], keep_choice=False)
+    from studio.data import peer_members
+
+    assert set(value) == set(peer_members("survey", "AIG", country=("Singapore",)))
+
+
+def test_the_callbacks_ask_dash_what_actually_changed():
+    """The rule lives in the callback, so assert it is wired — a `State` cannot carry it."""
+    import inspect
+
+    from studio.authoring import setup as S
+
+    src = inspect.getsource(S.register_setup)
+    assert 'keep_pin="carrier" not in changed_ids()' in src
+    assert "keep_choice=not ({\"carrier\", \"studio-survey-carrier\"} & changed)" in src
+
+
+# ── several countries, several peer groups ───────────────────────────────────
+#
+# The Peers table keys a group on (carrier, COUNTRY). A run over several markets therefore
+# has several groups, and one flat row of chips claimed a benchmark set that exists in no
+# market at all — the author could not see that Singapore and Japan rank against different
+# carriers.
+
+_MULTI = {"carrier": "Zurich", "country": ["Singapore", "Japan"]}
+
+
+def test_the_premium_panel_shows_one_peer_group_per_selected_country(seeded_survey):
+    from studio.authoring.setup import peer_panel_state
+
+    _opts, _style, body = peer_panel_state(_MULTI, "existing", None, {})
+    rendered = _rendered(body)
+    assert "Singapore" in rendered and "Japan" in rendered
+    assert "One peer group per market" in rendered
+
+
+def test_the_premium_groups_are_the_peers_table_s_own_per_country(seeded_survey):
+    from studio.authoring.setup import peer_groups
+    from studio.data import peer_members
+
+    groups = dict(peer_groups("gpr", "Zurich", _MULTI, None))
+    assert set(groups) == {"Singapore", "Japan"}
+    for country, members in groups.items():
+        assert set(members) <= set(peer_members("gpr", "Zurich", country=country))
+    assert groups["Singapore"] != groups["Japan"], "the seed gives these markets two groups"
+
+
+def test_the_survey_panel_shows_one_peer_group_per_selected_country(seeded_survey):
+    _opts, value, body = _peer_state(_MULTI)
+    rendered = _rendered(body)
+    assert "Singapore" in rendered and "Japan" in rendered
+    # Left EMPTY on purpose: a pinned set applies to EVERY survey page in the run, so
+    # pre-filling the union would rank Japan's page against Singapore's peers.
+    assert value == []
+    assert "each survey page benchmarks against its own" in rendered.lower()
+
+
+def test_the_survey_groups_are_the_peers_table_s_own_per_country(seeded_survey):
+    from studio.authoring.setup import _survey_result, survey_peer_group
+
+    result = _survey_result()
+    singapore = survey_peer_group(result, "Zurich", "Singapore")
+    japan = survey_peer_group(result, "Zurich", "Japan")
+    assert singapore and japan and singapore != japan
+    assert "Zurich" not in singapore + japan
+
+
+def test_one_country_still_pins_the_group_because_there_is_only_one(seeded_survey):
+    _opts, value, _body = _peer_state({"carrier": "Zurich", "country": ["Singapore"]})
+    assert value, "a single market has one right answer — pinning it changes nothing"
 
 
 def test_ai_assist_defaults_to_on():

@@ -233,6 +233,15 @@
 .qs-peer-note { font-size: 10.5px; line-height: 1.45; color: var(--muted); }
 .qs-peer-note.warn { color: var(--warn); }
 
+/* Several countries in scope = several peer groups, one per market. Stacked and labelled
+   so it reads as "these are the peers there", not as one benchmark set. */
+.qs-peer-groups { display: flex; flex-direction: column; gap: 8px; }
+.qs-peer-group { display: flex; flex-direction: column; gap: 5px; }
+.qs-peer-group-name {
+    font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--muted);
+}
+
 /* ── deck sections: one block per assembled axis (overall / product / country) ── */
 .qs-tsec-axes { display: flex; flex-direction: column; gap: 12px; }
 .qs-tsec-axis {

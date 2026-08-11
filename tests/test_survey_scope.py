@@ -380,3 +380,31 @@ def test_the_ribbon_ranks_against_the_peers_table_group(tmp_path):
                            "Country": "Singapore"}])
     spec = facts.load_ribbon(_result(engine, year=2024), "Singapore", ("Underwriting",))
     assert {b.carrier for b in spec.columns[0].boxes} == {_SUBJECT, "Third Carrier"}
+
+
+def test_each_market_s_page_ranks_against_that_market_s_own_peer_group(tmp_path):
+    """Why Setup leaves the survey peer dropdown EMPTY on a multi-country run: a pinned set
+    applies to every survey page, and the Peers table already answers per market."""
+    import pandas as pd
+    from sqlalchemy import create_engine
+
+    path = tmp_path / "twomarkets.db"
+    engine = _book(path, carriers=("Zurich", "Other Carrier", "Third Carrier"),
+                   peers=[{"Carrier": _SUBJECT, "Peers": "Other Carrier",
+                           "Country": "Singapore"},
+                          {"Carrier": _SUBJECT, "Peers": "Third Carrier", "Country": "Japan"}])
+    japan = [{"Region": "Asia", "SurveyCountry": "Japan", "Carrier": carrier,
+              "SurveyPractice": practice, "Sections": section, "Attributes": "Overall",
+              "SurveySegment": "Large", "Survey_Year": 2024, "Score": base, "NPS Score": base}
+             for carrier, base in (("Zurich", 7.0), ("Other Carrier", 6.0), ("Third Carrier", 5.0))
+             for practice in _PRACTICES for section in _SECTIONS]
+    pd.DataFrame(japan).to_sql("Carriers", create_engine(f"sqlite:///{path}"),
+                               index=False, if_exists="append")
+
+    def ranked(country):
+        result = _result(engine, country=country, year=2024)
+        spec = facts.load_ribbon(result, country, ("Underwriting",))
+        return {b.carrier for b in spec.columns[0].boxes}
+
+    assert ranked("Singapore") == {_SUBJECT, "Other Carrier"}
+    assert ranked("Japan") == {_SUBJECT, "Third Carrier"}

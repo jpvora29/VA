@@ -139,16 +139,41 @@ def _ai_control() -> html.Div:
 # ── peers ────────────────────────────────────────────────────────────────────
 
 
-def peer_set_body(names: Sequence[str], note: str = "", *, tone: str = "") -> html.Div:
+def _peer_chips(names: Sequence[str]) -> Optional[html.Div]:
+    return (html.Div([html.Span(str(n), className="qs-peer-chip") for n in names],
+                     className="qs-peer-chips") if names else None)
+
+
+def _peer_group_row(country: str, names: Sequence[str]) -> html.Div:
+    """One market's peer group: the country, then its own peers."""
+    return html.Div(
+        [
+            html.Div(str(country), className="qs-peer-group-name"),
+            _peer_chips(names) or html.Div("No peer group in this market.",
+                                           className="qs-peer-note warn"),
+        ],
+        className="qs-peer-group",
+    )
+
+
+def peer_set_body(names: Sequence[str] = (), note: str = "", *, tone: str = "",
+                  groups: Sequence[Tuple[str, Sequence[str]]] = ()) -> html.Div:
     """The peer-set read-out: the peer names as chips, plus one explanatory line.
 
     Used for BOTH modes — in "existing" it shows the carrier's peer group from the
     Peers table (names only, nothing to pick); in "custom" it shows the note that
-    tells the user to pick from the dropdown below."""
-    chips = [html.Span(str(n), className="qs-peer-chip") for n in names]
+    tells the user to pick from the dropdown below.
+
+    ``groups`` is ``[(country, [peer…])]`` and takes over the chip area when a run covers
+    several markets. The Peers table holds a group PER COUNTRY, so a multi-country run has
+    several of them, and one flat row of chips claimed a single benchmark set that exists in
+    no market at all — the author could not see that Singapore and Japan rank against
+    different carriers.
+    """
     return html.Div(
         [
-            html.Div(chips, className="qs-peer-chips") if chips else None,
+            html.Div([_peer_group_row(c, n) for c, n in groups], className="qs-peer-groups")
+            if groups else _peer_chips(names),
             html.Div(note, className="qs-peer-note" + (f" {tone}" if tone else "")) if note else None,
         ],
         className="qs-peer-body",

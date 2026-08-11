@@ -125,11 +125,38 @@ def cascade_filter_options(selected: dict, record) -> dict:
     return {fid: by_column[col] for fid, col in FILTER_COLUMN.items() if col in by_column}
 
 
+# ── the peer group, market by market ─────────────────────────────────────────
+#
+# The Peers table keys a peer group on (carrier, COUNTRY): Zurich is benchmarked against a
+# different set in Singapore than in Japan, which is the whole point of a country-scoped
+# group. A run over several markets therefore has several groups, and showing their union as
+# one row of chips claimed a benchmark set that exists in no market at all. Each is shown
+# under its own country instead — the same read-out the deck's per-country pages will use.
+
+
+def peer_groups(flow: str, carrier: str, selected: dict, record) -> list:
+    """``[(country, [peer…])]`` — the peer group for each selected market, in form order.
+
+    Every group is narrowed to the carriers that actually write IN THAT COUNTRY under the
+    REST of the selection (region, product line, segment…), so a peer listed for a market it
+    has since left is not offered as a benchmark there. One cascade per country, answered
+    from the cached filter cube.
+    """
+    out = []
+    for country in _as_tuple((selected or {}).get("country")):
+        writing = {str(o.get("value", "")).lower()
+                   for o in carriers_in_scope({**(selected or {}), "country": country}, record)}
+        members = peer_members(flow, carrier, country=str(country))
+        out.append((str(country), [m for m in members if str(m).lower() in writing]))
+    return out
+
+
 def peer_panel_state(selected: dict, mode, record, options: dict):
     """``(dropdown options, wrapper style, message)`` for the peer panel.
 
     Existing mode shows ONLY the carrier's peer group from the Peers table, as names —
-    there is nothing to choose, so the custom dropdown is hidden. Custom mode shows
+    there is nothing to choose, so the custom dropdown is hidden; with several countries in
+    scope it shows one group per country (see :func:`peer_groups`). Custom mode shows
     carriers that actually write under the current filters (country, region, product
     line…), never the whole database and never the subject itself. The Peers table is
     governed, so a custom dataset has no existing group and is told to pin its own.
@@ -151,6 +178,18 @@ def peer_panel_state(selected: dict, mode, record, options: dict):
             (), "Your data has no governed peer group — switch to Custom peers to benchmark.",
             tone="warn",
         )
+    countries = _as_tuple(country)
+    if len(countries) > 1:
+        groups = peer_groups("gpr", carrier, selected, record)
+        if not any(members for _, members in groups):
+            return opts, hidden, A.peer_set_body(
+                (), f"No peer group exists for {carrier} in these markets — switch to "
+                    f"Custom peers.", tone="warn")
+        return opts, hidden, A.peer_set_body(
+            groups=groups,
+            note="One peer group per market, from the Peers table — each country page "
+                 "benchmarks against its own.")
+
     members = peer_members("gpr", carrier, country=_hashable(country))
     if not members:
         return opts, hidden, A.peer_set_body(
@@ -201,12 +240,41 @@ def _on_survey_basis(basis) -> bool:
     return str(basis or "") == DATA_BASIS_WITH_SURVEY
 
 
-def survey_panel_state(selected: dict, basis: str, pinned_carrier, record):
+def changed_ids() -> set:
+    """Which controls fired this callback — a filter's ``col`` for the pattern-matched ones.
+
+    The survey panel needs this because "the author chose this carrier" and "the form
+    matched it last time round" arrive as the SAME value in a ``State``. Only the trigger
+    tells them apart, and without it a match made for one carrier outlived the carrier: pick
+    Zurich, then pick AIG, and the survey panel still said Zurich.
+    """
+    try:
+        from dash import ctx
+
+        triggered = ctx.triggered_prop_ids or {}
+    except Exception:  # noqa: BLE001 — called outside a callback (tests, first render)
+        return set()
+    out = set()
+    for ident in triggered.values():
+        if isinstance(ident, dict):
+            if ident.get("type") == "studio-filter":
+                out.add(str(ident.get("col")))
+        else:
+            out.add(str(ident))
+    return out
+
+
+def survey_panel_state(selected: dict, basis: str, pinned_carrier, record, *,
+                       keep_pin: bool = True):
     """``(section style, carrier options, carrier value, note)`` for SURVEY CARRIER.
 
     The carrier list is the survey book's own, narrowed to the countries in scope. The
     value is what the author pinned, else the match the deck would make on its own — shown
     rather than hidden, so a wrong match is visible BEFORE the deck is built.
+
+    ``keep_pin=False`` throws the pin away and matches afresh. The caller passes it when the
+    SUBJECT carrier is what changed: a pin is an override of the match for one carrier, and
+    it means nothing once the deck is about a different one.
     """
     from studio.template_fill.survey import identity
 
@@ -226,7 +294,7 @@ def survey_panel_state(selected: dict, basis: str, pinned_carrier, record):
         return {}, [], None, A.survey_note(
             "No survey book for this scope — the survey pages will be skipped.", tone="warn")
 
-    value = pinned_carrier if pinned_carrier in names else None
+    value = pinned_carrier if (keep_pin and pinned_carrier in names) else None
     if value is None and carrier:
         from dataclasses import replace
 
@@ -235,28 +303,45 @@ def survey_panel_state(selected: dict, basis: str, pinned_carrier, record):
     return {}, options, value, _survey_note_for(carrier, value)
 
 
-def survey_peer_state(selected: dict, basis: str, survey_carrier, chosen, record):
-    """``(peer options, peer value, note)`` for SURVEY PEERS — pre-filled from Peers.
+def survey_peer_group(result, carrier: str, country: str) -> list:
+    """One market's survey peer group, in the SURVEY book's own names (``""`` = every market).
 
-    The same promise the premium peer panel makes: the author sees the group the deck WILL
-    rank against before generating it, and can edit it. Pre-filling is the fix for a panel
-    that started empty and therefore said nothing about which peers the survey page would
-    end up using.
-
-    Keyed on ``Carrier`` and scoped to the selected countries — the survey flow's own
-    ``peer_columns`` (``core/registry/flows.yaml``). NOT ``Carrier_Group``: that is the
-    premium key, and it groups entities this book records separately, so looking a group up
-    here returns either nothing or another carrier's peers.
-
-    The author's own edit survives a filter change as long as every name in it is still
-    offered; a selection that has gone stale is replaced by the Peers table's answer rather
-    than left pointing at carriers this scope does not hold.
+    ``Peers.Carrier`` scoped to ``Country`` — the survey flow's own ``peer_columns``
+    (``core/registry/flows.yaml``). NOT ``Carrier_Group``: that is the premium key, and it
+    groups entities this book records separately, so looking a group up here returns either
+    nothing or another carrier's peers. Names the book does not survey in this market are
+    dropped, since they cannot be ranked there.
     """
     from studio.data import peer_members
     from studio.template_fill.survey import identity
 
+    surveyed = set(_safe_survey(identity.carrier_options, result, (country,)) or ())
+    members = _safe_peers(peer_members, "survey", str(carrier), country=(str(country),)) or []
+    return [str(m) for m in members if str(m) in surveyed and str(m) != carrier]
+
+
+def survey_peer_state(selected: dict, basis: str, survey_carrier, chosen, record, *,
+                      keep_choice: bool = True):
+    """``(peer options, peer value, read-out)`` for SURVEY PEERS — read from the Peers table.
+
+    The same promise the premium peer panel makes: the author sees the group the deck WILL
+    rank against before generating it, and can edit it. Showing it is the fix for a panel
+    that started empty and therefore said nothing about which peers the survey page used.
+
+    With ONE country in scope the group is pre-filled into the dropdown — there is a single
+    right answer and pinning it changes nothing. With SEVERAL, each market's group is shown
+    under its own country and the dropdown is left EMPTY on purpose: a pinned set applies to
+    every survey page in the run, so pre-filling the union would make Japan's page rank
+    against Singapore's peers. Left empty, each page resolves its own market's group
+    (:func:`studio.template_fill.survey.facts._peer_carriers`).
+
+    ``keep_choice=False`` discards the current selection — the caller passes it when the
+    carrier changed, because a peer group belongs to the carrier it was chosen for.
+    """
+    from studio.template_fill.survey import identity
+
     if not _on_survey_basis(basis) or record is not None or not survey_carrier:
-        return [], [], A.survey_note("")
+        return [], [], A.peer_set_body()
     result = _survey_result()
     countries = _as_tuple((selected or {}).get("country"))
     names = _safe_survey(identity.carrier_options, result, countries)
@@ -264,26 +349,32 @@ def survey_peer_state(selected: dict, basis: str, survey_carrier, chosen, record
     offered = {o["value"] for o in options}
 
     kept = [p for p in (chosen or []) if p in offered]
-    if kept and len(kept) == len(chosen or []):
-        return options, kept, _survey_peer_note(len(kept), "your selection")
+    if keep_choice and kept and len(kept) == len(chosen or []):
+        return options, kept, A.peer_set_body(kept, _peer_count(len(kept), "your selection"))
 
-    group = [str(m) for m in (_safe_peers(peer_members, "survey", str(survey_carrier),
-                                          country=countries) or [])]
-    matched = [m for m in group if m in offered]
-    if not matched:
-        return options, [], A.survey_note(
-            f"No survey peer group for {survey_carrier} in this scope — pick peers, or the "
-            f"page ranks it against every carrier surveyed in the market.", tone="warn")
-    absent = [m for m in group if m not in offered]
-    note = _survey_peer_note(len(matched), "the Peers table")
-    if absent:
-        note = A.survey_note(f"{len(matched)} peer(s) from the Peers table. "
-                             f"Not surveyed in this scope: {', '.join(absent)}.")
-    return options, matched, note
+    groups = [(c, survey_peer_group(result, str(survey_carrier), c)) for c in countries]
+    if len(groups) > 1:
+        if not any(members for _, members in groups):
+            return options, [], A.peer_set_body(
+                (), f"No survey peer group for {survey_carrier} in these markets — pick "
+                    f"peers, or each page ranks it against the field surveyed there.",
+                tone="warn")
+        return options, [], A.peer_set_body(
+            groups=groups,
+            note="One peer group per market, from the Peers table — each survey page "
+                 "benchmarks against its own. Pick peers to override all of them.")
+
+    group = groups[0][1] if groups else survey_peer_group(result, str(survey_carrier), "")
+    if not group:
+        return options, [], A.peer_set_body(
+            (), f"No survey peer group for {survey_carrier} in this scope — pick peers, or "
+                f"the page ranks it against every carrier surveyed in the market.",
+            tone="warn")
+    return options, group, A.peer_set_body(group, _peer_count(len(group), "the Peers table"))
 
 
-def _survey_peer_note(count: int, source: str):
-    return A.survey_note(f"{count} peer{'s' if count != 1 else ''} from {source}.")
+def _peer_count(count: int, source: str) -> str:
+    return f"{count} peer{'s' if count != 1 else ''} from {source}."
 
 
 def _safe_peers(fn, *args, **kwargs):
@@ -556,11 +647,17 @@ def register_setup(app):
         running=_busy(A.BUSY_FORM),
     )
     def refresh_survey(values, basis, ids, pinned, dataset_store):
-        """Match the selected carrier into the survey book."""
+        """Match the selected carrier into the survey book.
+
+        A pin made for the PREVIOUS carrier is dropped: it was an override of that carrier's
+        match, and keeping it left the survey panel naming a carrier the deck is no longer
+        about.
+        """
         from studio.dataset.source import dataset_in_use
 
         selected = {i["col"]: v for i, v in zip(ids or [], values or []) if v not in BLANK}
-        return survey_panel_state(selected, basis, pinned, dataset_in_use(dataset_store))
+        return survey_panel_state(selected, basis, pinned, dataset_in_use(dataset_store),
+                                  keep_pin="carrier" not in changed_ids())
 
     # Peers are their own callback so the SURVEY CARRIER above can drive them: a component
     # cannot be both an Input and an Output of one callback, and the peer group is a
@@ -578,12 +675,18 @@ def register_setup(app):
         running=_busy(A.BUSY_FORM),
     )
     def refresh_survey_peers(survey_carrier, values, basis, ids, chosen, dataset_store):
-        """Pre-fill the survey peer group from the Peers table, keyed on the carrier."""
+        """Read the survey peer group off the Peers table, keyed on the carrier.
+
+        A selection made for the previous carrier is discarded for the same reason the
+        carrier's own pin is: a peer group belongs to the carrier it was chosen for.
+        """
         from studio.dataset.source import dataset_in_use
 
         selected = {i["col"]: v for i, v in zip(ids or [], values or []) if v not in BLANK}
+        changed = changed_ids()
         return survey_peer_state(selected, basis, survey_carrier, chosen,
-                                 dataset_in_use(dataset_store))
+                                 dataset_in_use(dataset_store),
+                                 keep_choice=not ({"carrier", "studio-survey-carrier"} & changed))
 
     @app.callback(
         Output("studio-scope-preview", "children"),
