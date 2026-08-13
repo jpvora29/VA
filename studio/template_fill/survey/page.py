@@ -335,17 +335,19 @@ def _report_axes(page: SurveyPage, axes: Axes, book: facts.SurveyAxes) -> None:
                     f"; {spare} more in the book than the page has room for" if spare > 0 else "")
 
 
-def _ribbon_png(page: SurveyPage, result, country: str,
-                sections: Sequence[str]) -> Optional[bytes]:
+def _ribbon_png(page: SurveyPage, result, country: str, sections: Sequence[str],
+                practices: Sequence[str]) -> Optional[bytes]:
     """The ribbon image for this page, or ``None`` — a dead renderer costs the CHART only.
 
     The authored picture then stays, which is a visibly stale chart rather than a broken
-    deck; the table above it is filled either way. ``sections`` is the table's OWN row
-    order after :func:`axes_for`, so the chart reads down the page beside it.
+    deck; the table above it is filled either way. ``sections`` is the table's OWN row order
+    after :func:`axes_for`, so the chart reads down the page beside it, and ``practices`` is
+    the table's OWN column set, so each of the subject's boxes equals the section Total
+    printed above it.
     """
     if page.ribbon_id is None or not ribbon_mod.available():
         return None
-    spec = facts.load_ribbon(result, country, tuple(sections))
+    spec = facts.load_ribbon(result, country, tuple(sections), tuple(practices))
     if spec is None or not spec.columns:
         return None
     try:
@@ -399,8 +401,9 @@ def values(template: Template, result) -> Dict[str, Any]:
         trim = _trim(page, axes)
         if trim["rows"] or trim["cols"]:
             trims[f"{page.slide_idx}:{page.table_id}"] = trim
-        # The chart's columns are the table's OWN rows, so the two read together.
-        png = _ribbon_png(page, result, country, shown(axes.sections))
+        # The chart's columns are the table's OWN rows and its averages the table's OWN
+        # columns, so the two read together AND agree number for number.
+        png = _ribbon_png(page, result, country, shown(axes.sections), shown(axes.practices))
         if png:
             pictures[f"{page.slide_idx}:{page.ribbon_id}"] = png
     if cell_fills:

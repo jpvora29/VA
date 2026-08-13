@@ -7,8 +7,11 @@ picture's exact frame and swapping the blob (see :mod:`studio.template_fill.fill
 The shape of the chart is a bump/ribbon: one COLUMN per survey section, each a rank-ordered
 stack of score boxes (best at the top), with a curved band joining the same carrier's box
 across adjacent columns so a reader follows one carrier's rank left to right. The deck's
-subject is blue; every peer is grey and unnamed — ``flows.yaml`` sets
+subject is the palette's yellow; every peer is grey and unnamed — ``flows.yaml`` sets
 ``peer_names_allowed: false`` for the survey flow, so a box carries its SCORE and nothing else.
+
+The image is rendered on a TRANSPARENT canvas: it is swapped into a picture frame on the
+slide, and any canvas colour prints as a hard panel around the chart.
 
 Pure: no data access, no I/O beyond the render itself.
 """
@@ -18,14 +21,20 @@ import textwrap
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
-# Sampled from the authored picture so a refilled chart is indistinguishable in style.
-CARRIER_FILL = "#7BBCFC"
-CARRIER_BAND = "#BBDDFE"
+# The subject is the survey palette's yellow — the one colour on the page that means "this
+# carrier", so the eye finds its thread without reading a single score. Peers stay the
+# authored grey: they are unnamed by policy, and a neutral makes them read as context rather
+# than as six more findings.
+CARRIER_FILL = "#FFBE00"
+CARRIER_BAND = "#FFE9A8"                       # the same hue, dropped back so boxes lead
 PEER_FILL = "#BCB9B4"
 PEER_BAND = "#DDDBD9"
+
+# White on yellow fails at this size, so the subject's own score is set in the deck's navy.
 SCORE_TEXT = "#FFFFFF"
-AXIS_TEXT = "#444444"
-TITLE_TEXT = "#222222"
+CARRIER_SCORE_TEXT = "#1A1A1A"
+AXIS_TEXT = "#2B3A55"
+TITLE_TEXT = "#0B1F44"
 
 # The authored picture's pixel size — the render matches it so the swap needs no rescale.
 WIDTH_PX = 1162
@@ -33,14 +42,26 @@ HEIGHT_PX = 303
 
 TITLE = "Peers Ranked by Survey Scores (Section level)"
 
+# The deck's own face, with the sizes the slide is read at. The authored picture set its
+# labels in 11pt grey, which disappeared under a table whose own labels are twice that.
+FONT = "Arial"
+TITLE_PT = 16
+AXIS_PT = 12
+SCORE_PT = 12
+
 # Layout, as fractions of the image. A box occupies under half its column's pitch so the
 # ribbons have room to cross; the plot band stops short of the bottom to leave the wrapped
 # section labels somewhere to sit.
+#
+# The label band has to hold the LONGEST section name the book has. "Claims – Non-Claims
+# Professionals" wrapped to three lines at the old width and the third fell off the bottom
+# of the picture frame, so the wrap is wide enough to keep every authored section to two
+# lines and the plot floor is high enough to seat them.
 _BOX_SHARE = 0.46
 _ROW_SHARE = 0.74
 _PLOT_TOP = 0.88
-_PLOT_BOTTOM = 0.24
-_LABEL_WRAP = 18
+_PLOT_BOTTOM = 0.30
+_LABEL_WRAP = 22
 
 
 @dataclass(frozen=True)
@@ -164,19 +185,27 @@ def _box_shapes_and_labels(spec: RibbonSpec) -> Tuple[List[dict], List[dict]]:
             ))
             labels.append(dict(
                 xref="paper", yref="paper", x=(x0 + x1) / 2.0, y=(y0 + y1) / 2.0,
-                text=f"{box.score:.1f}", showarrow=False, xanchor="center", yanchor="middle",
-                font=dict(family="Arial", size=11, color=SCORE_TEXT),
+                text=(f"<b>{box.score:.1f}</b>" if box.highlight else f"{box.score:.1f}"),
+                showarrow=False, xanchor="center", yanchor="middle",
+                font=dict(family=FONT, size=SCORE_PT,
+                          color=(CARRIER_SCORE_TEXT if box.highlight else SCORE_TEXT)),
             ))
     return shapes, labels
 
 
 def _axis_labels(spec: RibbonSpec) -> List[dict]:
-    """The section name under each column (wrapped — some run to four words)."""
+    """The section name under each column (wrapped — some run to four words).
+
+    Set in the deck's navy at the table's own weight rather than as grey small print: these
+    are the chart's axis, and the reader matches them against the table's row labels
+    directly above.
+    """
     pitch, *_ = _metrics(spec)
     return [
-        dict(xref="paper", yref="paper", x=(i + 0.5) * pitch, y=_PLOT_BOTTOM - 0.04,
-             text=_wrap(column.label), showarrow=False, xanchor="center", yanchor="top",
-             font=dict(family="Arial", size=11, color=AXIS_TEXT))
+        dict(xref="paper", yref="paper", x=(i + 0.5) * pitch, y=_PLOT_BOTTOM - 0.05,
+             text=f"<b>{_wrap(column.label)}</b>", showarrow=False,
+             xanchor="center", yanchor="top", align="center",
+             font=dict(family=FONT, size=AXIS_PT, color=AXIS_TEXT))
         for i, column in enumerate(spec.columns)
     ]
 
@@ -190,9 +219,9 @@ def build_figure(spec: RibbonSpec):
     shapes = (_band_shapes(spec, ranks, highlight=False)
               + _band_shapes(spec, ranks, highlight=True)
               + boxes)
-    title = dict(xref="paper", yref="paper", x=0.0, y=1.0, text=spec.title,
+    title = dict(xref="paper", yref="paper", x=0.0, y=1.0, text=f"<b>{spec.title}</b>",
                  showarrow=False, xanchor="left", yanchor="top",
-                 font=dict(family="Arial", size=13, color=TITLE_TEXT))
+                 font=dict(family=FONT, size=TITLE_PT, color=TITLE_TEXT))
 
     fig = go.Figure()
     fig.update_layout(
@@ -201,7 +230,9 @@ def build_figure(spec: RibbonSpec):
         xaxis=dict(visible=False, range=[0, 1], fixedrange=True),
         yaxis=dict(visible=False, range=[0, 1], fixedrange=True),
         margin=dict(l=0, r=0, t=0, b=0),
-        paper_bgcolor="white", plot_bgcolor="white", showlegend=False,
+        # Transparent, both layers: the picture sits on the slide's own tinted background,
+        # and a white canvas printed a hard white panel around the chart.
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=False,
     )
     return fig
 

@@ -1436,12 +1436,31 @@ def _crop_pictures(prs, values: Dict[str, Any]) -> None:
 
 
 def _share_out(elements, attr: str, removed: int) -> None:
-    """Give ``removed`` EMU back to ``elements``, so the table still spans its frame."""
+    """Give ``removed`` EMU back to ``elements``, so the table still spans its frame.
+
+    IN PROPORTION to what each already has, not in equal slices. The Carrier Survey table's
+    first column holds section names and is several times the width of a score column;
+    splitting the freed width evenly grew that label column by as much as each number
+    column, so a table that lost three practices came back with a vast empty margin and the
+    scores crushed to one side. Growing every survivor by the same RATIO keeps the authored
+    proportions whatever is trimmed.
+    """
+    sizes = [int(el.get(attr) or 0) for el in elements]
+    total = sum(sizes)
     if not elements or removed <= 0:
         return
-    each, extra = divmod(removed, len(elements))
-    for i, el in enumerate(elements):
-        el.set(attr, str(int(el.get(attr) or 0) + each + (1 if i < extra else 0)))
+    if total <= 0:                    # nothing to be proportional to — fall back to equal
+        each, extra = divmod(removed, len(elements))
+        for i, el in enumerate(elements):
+            el.set(attr, str(each + (1 if i < extra else 0)))
+        return
+    # The last survivor takes the rounding remainder, so the table spans its frame exactly.
+    given = 0
+    for el, size in zip(elements[:-1], sizes[:-1]):
+        share = removed * size // total
+        el.set(attr, str(size + share))
+        given += share
+    elements[-1].set(attr, str(sizes[-1] + removed - given))
 
 
 def _drop_table_lines(prs, values: Dict[str, Any]) -> None:

@@ -45,6 +45,25 @@ SECTION_CANDIDATES: Tuple[str, ...] = ("Sections", "Section")
 # being legible at the picture's frame size.
 MAX_RIBBON_ROWS = 9
 
+# ── how thin a practice may be before it comes off the page ──────────────────
+#
+# A practice answered by a handful of people is not a finding: the average swings on one
+# response, and a named carrier's score in a market that thin can identify who answered.
+# A practice must beat this count to be reported — STRICTLY, so "greater than 4" is 5 or
+# more, which is what the rule says.
+MIN_RESPONSES = 4
+
+# What one response is keyed by, in preference order, resolved against the real table the
+# way the section column is. Counting ROWS instead is deliberately NOT a fallback: a
+# warehouse that stores one row per (section, practice, attribute) has a row count that is
+# the shape of the grid, not the number of people who answered, and thresholding on it would
+# drop practices for a reason that has nothing to do with how well they were answered. With
+# no response column the page reports every practice and says so — see :func:`well_answered`.
+RESPONSE_CANDIDATES: Tuple[str, ...] = (
+    "ResponseId", "Response_Id", "ResponseID", "RespondentId", "Respondent_Id",
+    "RespondentID", "Respondent", "Response", "ResponseCount", "Responses",
+)
+
 
 def _safe(fn, *args, **kwargs):
     try:
@@ -111,6 +130,73 @@ def section_column(result) -> Optional[str]:
         logger.warning("survey.facts: table %s has %s but flows.yaml does not declare it — "
                        "the survey page cannot be built", SURVEY_TABLE, undeclared)
     return None
+
+
+def response_column(result) -> Optional[str]:
+    """Which column identifies one survey response, or ``None`` when the table has none.
+
+    Same two-sided test as :func:`section_column`: the physical table must have it AND the
+    flow registry must declare it, because ``core.analytics.sql.safe_column`` refuses any
+    identifier the flow does not list. ``None`` is not a failure — it means a row IS a
+    response here, and the count falls back to counting rows.
+    """
+    from core.analytics.sql import flow_spec, resolve_engine, table_columns
+
+    columns = _safe(table_columns, _safe(resolve_engine, result.engine), SURVEY_TABLE) or frozenset()
+    spec = _safe(flow_spec, SURVEY_FLOW)
+    declared = set(spec.columns) if spec is not None else set()
+    return next((c for c in RESPONSE_CANDIDATES if c in columns and c in declared), None)
+
+
+def response_counts(result, filters: Dict[str, Any]) -> Dict[str, int]:
+    """``{practice: how many distinct responses stand behind it}`` for one cut of the book.
+
+    ``{}`` when the table carries no response column — the caller then reports everything
+    rather than thresholding on a number that does not mean what the rule means.
+
+    A COUNT DISTINCT, which the measure primitives do not express — they average or sum a
+    measure — so this is its own query, built through the same identifier allowlist and
+    parameter binding (:func:`core.analytics.sql.where_clause`) as every other survey query.
+    """
+    from core.analytics.sql import flow_spec, resolve_engine, run_rows, safe_column, where_clause
+
+    identity = response_column(result)
+    spec = _safe(flow_spec, SURVEY_FLOW)
+    engine = _safe(resolve_engine, result.engine)
+    if identity is None or spec is None or engine is None:
+        return {}
+    params: Dict[str, Any] = {}
+    where = where_clause(spec, filters, params)
+    practice, responses = safe_column(spec, PRACTICE_COL), safe_column(spec, identity)
+    sql = (f'SELECT "{practice}" AS practice, COUNT(DISTINCT "{responses}") AS n '
+           f'FROM "{spec.primary_table}"{where} GROUP BY "{practice}"')
+    rows = _safe(run_rows, engine, sql, params) or []
+    return {str(r["practice"]): int(r["n"] or 0)
+            for r in rows if r.get("practice") is not None}
+
+
+def well_answered(result, filters: Dict[str, Any],
+                  practices: Sequence[str]) -> Tuple[str, ...]:
+    """``practices`` minus the ones too few people answered (:data:`MIN_RESPONSES`).
+
+    Order is preserved. A book with no response column to count keeps EVERY practice: the
+    threshold exists to suppress an average that swings on one answer, and suppressing on a
+    number that is not a response count would drop practices for no reason the reader could
+    ever be told. The warning names what to configure.
+    """
+    counts = response_counts(result, filters)
+    if not counts:
+        logger.warning(
+            "survey.facts: %s has none of %s, so responses cannot be counted — every "
+            "practice is reported. Declare the response column in core/registry/flows.yaml "
+            "to apply the >%d rule.", SURVEY_TABLE, list(RESPONSE_CANDIDATES), MIN_RESPONSES)
+        return tuple(practices)
+    kept = tuple(p for p in practices if counts.get(str(p), 0) > MIN_RESPONSES)
+    thin = [(p, counts.get(str(p), 0)) for p in practices if p not in kept]
+    if thin:
+        logger.info("survey.facts: %d practice(s) at or below %d responses, not reported: %s",
+                    len(thin), MIN_RESPONSES, thin)
+    return kept
 
 
 def subject_in_book(result, country: str) -> Optional[str]:
@@ -270,8 +356,15 @@ class SurveyAxes:
 def load_axes(result, country: str) -> Optional[SurveyAxes]:
     """The sections and practices this carrier is surveyed on in ``country``, or ``None``.
 
-    One cut. The labels are the BOOK's own — the page matches its authored wording against
-    them (:func:`norm_label`) rather than the other way round.
+    One cut for the labels, one for the response counts. Only practices that clear
+    :data:`MIN_RESPONSES` come back: a practice answered by a handful of people is an
+    average that swings on one response, and reporting it beside six solid ones invites the
+    reader to compare them as equals.
+
+    The labels are the BOOK's own — the page matches its authored wording against them
+    (:func:`norm_label`) rather than the other way round. Filtering HERE is what keeps the
+    rest of the page consistent: the table's columns, its totals and the ribbon are all
+    built from what this returns, so a practice dropped here is dropped everywhere.
     """
     from studio.template_fill.survey import scope as scope_mod
 
@@ -282,8 +375,13 @@ def load_axes(result, country: str) -> Optional[SurveyAxes]:
     body = _breakdown(result, (section, PRACTICE_COL), scope.filters())
     if not body:
         return None
+    practices = well_answered(result, scope.filters(), _labels(body, PRACTICE_COL))
+    if not practices:
+        logger.info("survey.facts: no practice in %s clears %d responses — no survey page",
+                    scope.country, MIN_RESPONSES)
+        return None
     return SurveyAxes(year=scope.year, prior_year=scope.prior_year,
-                      sections=_labels(body, section), practices=_labels(body, PRACTICE_COL))
+                      sections=_labels(body, section), practices=practices)
 
 
 def _axis_filter(column: str, labels: Optional[Sequence[str]]) -> Dict[str, Any]:
@@ -419,11 +517,19 @@ def _capped(boxes: Sequence[ribbon_mod.RibbonBox]) -> Tuple[ribbon_mod.RibbonBox
     return tuple(kept)
 
 
-def load_ribbon(result, country: str, sections: Sequence[str]) -> Optional[ribbon_mod.RibbonSpec]:
+def load_ribbon(result, country: str, sections: Sequence[str],
+                practices: Optional[Sequence[str]] = None) -> Optional[ribbon_mod.RibbonSpec]:
     """The ranking chart's spec: one column per section, in the order ``sections`` gives.
 
     ``sections`` is the TEMPLATE's authored row order (minus its Total row), so the chart
     reads down the page in the same order as the table above it.
+
+    ``practices`` is the SAME restriction the table's totals use, and passing it is what
+    makes the subject's box in each column equal that section's Total on the table above.
+    Averaged over the carrier's whole book instead, the chart quietly disagreed with the
+    number printed directly above it — over practices the reader cannot see, so there was no
+    way to reconcile the two. It also keeps the ranking like-for-like: every carrier in a
+    column is averaged over the same practices.
 
     One query for the whole country-year, bucketed by section HERE rather than one filtered
     query per authored label: the label has to match the warehouse's own wording, and a SQL
@@ -441,10 +547,11 @@ def load_ribbon(result, country: str, sections: Sequence[str]) -> Optional[ribbo
         return None
     subject = scope.carrier
     wanted = {subject, *(_peer_carriers(result, scope.country, subject))}
+    cut = {COUNTRY_COL: scope.country, YEAR_COL: int(scope.year),
+           **_axis_filter(PRACTICE_COL, practices)}
 
     scored: Dict[str, List[Tuple[str, float]]] = {}
-    for fact in _breakdown(result, (section, CARRIER_COL),
-                           {COUNTRY_COL: scope.country, YEAR_COL: int(scope.year)}):
+    for fact in _breakdown(result, (section, CARRIER_COL), cut):
         carrier = str(fact.dims.get(CARRIER_COL))
         if fact.dims.get(section) is None or carrier not in wanted or fact.value is None:
             continue

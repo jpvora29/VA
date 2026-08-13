@@ -76,6 +76,23 @@ survey:
     Attribute: {role: entity, card_cap: 30, resolver: semantic}
     SurveySegment: {role: entity, card_cap: 30, resolver: semantic, aliases: [segment]}
     Survey_Year: {role: temporal, card_cap: 30}
+    # Response identity. A practice is only reported when MORE THAN 4 distinct responses
+    # stand behind it (studio.template_fill.survey.facts.well_answered) — an average over
+    # fewer swings on one answer, and in a thin market it can identify who gave it. The
+    # column is spelled differently across warehouses, so the candidates are all declared
+    # and the real one is resolved against the physical table at runtime; declaring only one
+    # would have the allowlist refuse the count query everywhere else. With NONE of them
+    # present the rule cannot be applied and every practice is reported (with a warning).
+    ResponseId: {role: entity, card_cap: 100000}
+    Response_Id: {role: entity, card_cap: 100000}
+    ResponseID: {role: entity, card_cap: 100000}
+    RespondentId: {role: entity, card_cap: 100000}
+    Respondent_Id: {role: entity, card_cap: 100000}
+    RespondentID: {role: entity, card_cap: 100000}
+    Respondent: {role: entity, card_cap: 100000}
+    Response: {role: entity, card_cap: 100000}
+    ResponseCount: {role: measure}
+    Responses: {role: measure}
     Score: {role: measure}
     NPS Score: {role: measure, aliases: [nps, net promoter score]}
 

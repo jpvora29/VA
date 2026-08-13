@@ -217,3 +217,38 @@ def test_a_malformed_box_costs_that_shape_only(boxed):
     prs, box = boxed
     F._resize_shapes(prs, {"resize_shapes": {f"0:{box.shape_id}": {"x": "not an emu"}}})
     assert box.left == Inches(1)
+
+
+def test_freed_space_is_shared_in_proportion_not_in_equal_slices(grid_deck):
+    """The Carrier Survey table's first column holds section names and is several times a
+    score column's width. Splitting the freed width evenly grew that label column as much as
+    each number column, so a table that lost three practices came back with a vast empty
+    margin and the scores crushed to one side."""
+    prs, table_id = grid_deck
+    table = prs.slides[0].shapes[0].table
+    table.columns[0].width = Inches(5)                 # a wide label column…
+    for c in range(1, 4):
+        table.columns[c].width = Inches(1)             # …and three narrow score columns
+    F._drop_table_lines(prs, {"drop_table_lines": {f"0:{table_id}": {"cols": [3]}}})
+
+    table = prs.slides[0].shapes[0].table
+    widths = [c.width for c in table.columns]
+    assert sum(widths) == Inches(8), "the table must still span its frame"
+    # The label column keeps its share of the table (5/7 of it), give or take rounding.
+    assert widths[0] / sum(widths) == pytest.approx(5 / 7, abs=0.01)
+    # The two score columns started equal and stay equal (bar the rounding remainder,
+    # which the last survivor absorbs so the table spans its frame exactly).
+    assert widths[1] == pytest.approx(widths[2], abs=8)
+
+
+def test_a_table_with_no_authored_sizes_still_spans_its_frame(grid_deck):
+    """Nothing to be proportional TO — the freed space is split evenly rather than lost."""
+    prs, table_id = grid_deck
+    table = prs.slides[0].shapes[0].table
+    for c in range(3):
+        table.columns[c].width = 0                     # the survivors have no size at all
+    table.columns[3].width = Inches(6)                 # …and the dropped column has all of it
+    F._drop_table_lines(prs, {"drop_table_lines": {f"0:{table_id}": {"cols": [3]}}})
+    widths = [c.width for c in prs.slides[0].shapes[0].table.columns]
+    assert sum(widths) == Inches(6)
+    assert len(widths) == 3 and max(widths) - min(widths) <= 1

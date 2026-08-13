@@ -25,7 +25,7 @@ _PRACTICES = ("Property", "Casualty")
 
 def _book(path, *, years=(2023, 2024, 2025), country="Singapore",
           carriers=("Zurich", "Other Carrier"), practices=_PRACTICES,
-          practices_by_carrier=None, peers=None):
+          practices_by_carrier=None, peers=None, responses=None):
     """A Carriers/Peers pair with control over the things a live warehouse varies.
 
     ``practices_by_carrier`` gives one carrier its own practice set — the case the page has
@@ -34,6 +34,12 @@ def _book(path, *, years=(2023, 2024, 2025), country="Singapore",
     A cell's score moves with the YEAR (so every cell has a real move to band) and varies by
     PRACTICE (so an average over the wrong set of practices is a different number, which is
     what the totals tests turn on).
+
+    ``responses`` is ``{practice: how many people answered it}``. Given, the table gains a
+    ``Respondent`` column and each cell is repeated once per respondent — which is how a
+    real book records them, and the only way to exercise the >4 rule. Omitted, the table has
+    no such column at all, which is the OTHER case that has to work: the rule cannot be
+    applied and every practice is reported.
     """
     import pandas as pd
     from sqlalchemy import create_engine
@@ -44,11 +50,13 @@ def _book(path, *, years=(2023, 2024, 2025), country="Singapore",
     rows = [{"Region": "Asia", "SurveyCountry": country, "Carrier": carrier,
              "SurveyPractice": practice, "Sections": section, "Attributes": "Overall",
              "SurveySegment": "Large", "Survey_Year": year,
-             "Score": base + 0.5 * (year - min(years)) + 0.1 * i, "NPS Score": base}
+             "Score": base + 0.5 * (year - min(years)) + 0.1 * i, "NPS Score": base,
+             **({"Respondent": f"{practice}-{n}"} if responses else {})}
             for carrier, base in zip(carriers, (7.0, 6.0, 5.0, 4.0))
             for i, practice in enumerate(by_carrier[carrier])
             for section in _SECTIONS
-            for year in years]
+            for year in years
+            for n in range(responses.get(practice, 0) if responses else 1)]
     pd.DataFrame(rows).to_sql("Carriers", engine, index=False, if_exists="replace")
     if peers is None:
         peers = [{"Carrier": _SUBJECT, "Peers": "Other Carrier", "Country": country}]
@@ -311,6 +319,124 @@ def test_a_total_spans_the_whole_book_when_the_page_shows_all_of_it(tmp_path):
     assert everything.section_totals == restricted.section_totals
 
 
+# ── a practice too few people answered ───────────────────────────────────────
+#
+# An average over four answers swings on any one of them, and in a thin market a named
+# carrier's score can identify who gave it. A practice is reported only when MORE THAN four
+# distinct responses stand behind it — and because the filter runs where the page's axes are
+# decided, a practice it drops is dropped from the table, its totals AND the ribbon at once.
+
+_THIN = {"Property": 9, "Casualty": 4}          # Casualty is at the threshold, not over it
+
+
+def test_a_practice_with_too_few_responses_is_not_reported(tmp_path):
+    engine = _book(tmp_path / "thin.db", responses=_THIN)
+    axes = facts.load_axes(_result(engine, year=2024), "Singapore")
+    assert axes.practices == ("Property",)
+
+
+def test_the_threshold_is_strictly_greater_than_four(tmp_path):
+    """"Greater than 4" is five, not four — the boundary the rule names."""
+    engine = _book(tmp_path / "edge.db", responses={"Property": 5, "Casualty": 4})
+    axes = facts.load_axes(_result(engine, year=2024), "Singapore")
+    assert axes.practices == ("Property",)
+    assert facts.MIN_RESPONSES == 4
+
+
+def test_responses_are_counted_DISTINCT_not_as_rows(tmp_path):
+    """One respondent answering every section is one response, not one per row. Counting
+    rows would pass a practice that a single person answered."""
+    engine = _book(tmp_path / "distinct.db", responses={"Property": 2, "Casualty": 9})
+    counts = facts.response_counts(
+        _result(engine, year=2024),
+        {facts.COUNTRY_COL: "Singapore", facts.CARRIER_COL: _SUBJECT, facts.YEAR_COL: 2024})
+    assert counts == {"Property": 2, "Casualty": 9}       # not 4 and 18, the row counts
+
+
+def test_the_count_is_scoped_to_the_reported_country_carrier_and_year(tmp_path):
+    engine = _book(tmp_path / "scoped.db", responses={"Property": 9, "Casualty": 9})
+    result = _result(engine, year=2024)
+    everything = facts.response_counts(result, {})
+    one_cut = facts.response_counts(
+        result, {facts.COUNTRY_COL: "Singapore", facts.CARRIER_COL: _SUBJECT,
+                 facts.YEAR_COL: 2024})
+    assert everything["Property"] == one_cut["Property"], "respondents are shared per practice"
+    assert one_cut and set(one_cut) == {"Property", "Casualty"}
+
+
+def test_a_book_with_no_response_column_reports_every_practice(tmp_path):
+    """The rule cannot be applied without something to count, and inventing a count from
+    the row shape would drop practices for a reason no reader could be told."""
+    engine = _book(tmp_path / "nocount.db")               # no Respondent column at all
+    result = _result(engine, year=2024)
+    assert facts.response_column(result) is None
+    assert facts.response_counts(result, {}) == {}
+    assert set(facts.load_axes(result, "Singapore").practices) == set(_PRACTICES)
+
+
+def test_the_response_column_must_be_declared_to_be_used(tmp_path):
+    """``safe_column`` refuses any identifier the flow does not declare, so a column the
+    registry has never heard of must not be reached for — the query would only fail."""
+    from core.analytics.sql import flow_spec, safe_column
+
+    spec = flow_spec("survey")
+    for candidate in facts.RESPONSE_CANDIDATES:
+        assert safe_column(spec, candidate) == candidate
+
+
+def test_a_practice_the_page_drops_is_dropped_from_the_ribbon_too(tmp_path):
+    engine = _book(tmp_path / "ribbonthin.db", responses=_THIN)
+    result = _result(engine, year=2024)
+    axes = facts.load_axes(result, "Singapore")
+    spec = facts.load_ribbon(result, "Singapore", _SECTIONS, axes.practices)
+    grid = facts.load_grid(result, "Singapore", practices=axes.practices)
+    subject = next(b.score for b in spec.columns[0].boxes if b.highlight)
+    assert subject == pytest.approx(grid.section_total(_SECTIONS[0]))
+
+
+# ── the ribbon agrees with the table above it ────────────────────────────────
+#
+# The subject's box in each ribbon column IS that section's Total on the table. Averaged
+# over the carrier's whole book while the table averaged the practices it shows, the chart
+# quietly disagreed with the number printed directly above it — over practices the reader
+# cannot see, so there was no way to reconcile the two.
+
+
+def test_every_ribbon_box_matches_its_row_total(tmp_path):
+    engine = _book(tmp_path / "agree.db",
+                   practices=("Property", "Casualty", "Marine", "Aviation"))
+    result = _result(engine, year=2024)
+    shown = ("Property", "Casualty")
+
+    grid = facts.load_grid(result, "Singapore", practices=shown)
+    spec = facts.load_ribbon(result, "Singapore", _SECTIONS, shown)
+
+    for column in spec.columns:
+        subject = next(b.score for b in column.boxes if b.highlight)
+        assert subject == pytest.approx(grid.section_total(column.label)), column.label
+
+
+def test_an_unrestricted_ribbon_still_averages_the_whole_book(tmp_path):
+    """The restriction narrows; passing none must not change the old answer."""
+    engine = _book(tmp_path / "wide.db", practices=("Property", "Casualty", "Marine"))
+    result = _result(engine, year=2024)
+    whole = facts.load_ribbon(result, "Singapore", _SECTIONS)
+    grid = facts.load_grid(result, "Singapore")
+    subject = next(b.score for b in whole.columns[0].boxes if b.highlight)
+    assert subject == pytest.approx(grid.section_total(_SECTIONS[0]))
+
+
+def test_the_peers_are_averaged_over_the_same_practices(tmp_path):
+    """A ranking is only fair if every carrier in a column is averaged over the same cut."""
+    engine = _book(tmp_path / "fair.db", carriers=("Zurich", "Other Carrier"),
+                   practices=("Property", "Casualty", "Marine"))
+    result = _result(engine, year=2024)
+    narrow = facts.load_ribbon(result, "Singapore", _SECTIONS, ("Property",))
+    wide = facts.load_ribbon(result, "Singapore", _SECTIONS, ("Property", "Marine"))
+    peer = lambda spec: next(b.score for b in spec.columns[0].boxes if not b.highlight)  # noqa: E731
+    assert peer(narrow) != pytest.approx(peer(wide))
+
+
 # ── the band colours, and the background they paint ──────────────────────────
 
 
@@ -345,8 +471,7 @@ def test_a_page_with_a_comparison_paints_real_colours(tmp_path):
     values = P.values(analyze("template/survey_template.pptx"),
                       _result(engine, year=2024))
     painted = [spec for specs in values["cell_fills"].values() for spec in specs]
-    legend = {bands.RED, bands.AMBER, bands.CREAM, bands.WHITE,
-              bands.LIGHT_GREEN, bands.GREEN, bands.DARK_GREEN}
+    legend = set(bands.LEGEND)
     assert painted and {spec["hex"] for spec in painted} <= legend
 
 

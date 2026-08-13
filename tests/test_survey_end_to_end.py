@@ -102,8 +102,7 @@ def test_the_scores_are_real_numbers_on_the_survey_scale(survey_deck):
 def test_cells_are_coloured_by_their_move_against_last_year(survey_deck):
     from studio.template_fill.survey import bands
 
-    legend = {bands.RED, bands.AMBER, bands.CREAM, bands.WHITE, bands.LIGHT_GREEN,
-              bands.GREEN, bands.DARK_GREEN}
+    legend = set(bands.LEGEND)
     seen = set()
     for slide in _survey_slides(survey_deck):
         for shape in slide.shapes:
