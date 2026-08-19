@@ -13,10 +13,23 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
+from studio import opportunity as O
 from studio.page.format import money, pct
 from studio.rules import load_rules
 
 Point = Dict[str, Any]
+
+
+def _observed(row: Dict[str, Any]) -> O.Opportunity:
+    """A whitespace row as what the premium book actually evidences about it.
+
+    The compute layer hands over ``{name, market}`` — Marsh premium placed in a line the
+    account does not write. That is the ladder's OBSERVED rung and nothing above it: the
+    warehouse holds no appetite or capacity input, so the deck may describe the gap and
+    recommend validating it, never entering it (:mod:`studio.opportunity`).
+    """
+    return O.Opportunity(name=row["name"], pool=row["market"],
+                         level=O.level_from_premium_only())
 
 
 def _fmt_total(result) -> str:
@@ -127,17 +140,13 @@ def whitespace_takeaways(result) -> List[Point]:
     if result.whitespace:
         ws_total = sum(w["market"] for w in result.whitespace)
         biggest = result.whitespace[0]
+        gap = _observed(biggest)
         pts.append({"label": "Scale.",
-                    "text": f"The market places {money(ws_total)} across "
+                    "text": f"Marsh places {money(ws_total)} across "
                             f"{len(result.whitespace)} industries the account does not write.",
                     "tone": "warn"})
-        pts.append({"label": "Priority.",
-                    "text": f"{biggest['name']} is the largest single gap, at "
-                            f"{money(biggest['market'])} of market premium.",
-                    "tone": "warn"})
-        pts.append({"label": "Action.",
-                    "text": f"Standing up an appetite statement and underwriting capacity for "
-                            f"{biggest['name']} is what would open it.",
+        pts.append({"label": "Priority.", "text": O.describe(gap, money=money), "tone": "warn"})
+        pts.append({"label": "Action.", "text": O.recommend(gap, money=money),
                     "tone": "neutral"})
     return pts
 
@@ -160,7 +169,7 @@ def build_swot(result):
     top_prem = sorted(rows, key=lambda r: r.get("premium") or 0, reverse=True)[:2]
     strengths = []
     if rank:
-        strengths.append(f"The account ranks {rank} in the market.")
+        strengths.append(f"The account ranks {rank} within the Marsh book.")
     strengths += [
         f"{r['name']} carries {money(r['premium'])} of the book, "
         f"{(r.get('premium') or 0) / total_prem * 100:.0f}% of everything written."
@@ -175,8 +184,7 @@ def build_swot(result):
                   f"most of that market is placed elsewhere." for r in low_sow]
     weaknesses += [f"The book is eroding in {m}." for m in lo]
 
-    opportunities = [f"{w['name']} is a {money(w['market'])} market the account does not "
-                     f"currently write." for w in result.whitespace[:3]]
+    opportunities = [O.describe(_observed(w), money=money) for w in result.whitespace[:3]]
     if hi:
         opportunities.append(f"There is room to put capacity behind {_and(hi)}.")
 
@@ -204,10 +212,12 @@ def build_initiatives(result) -> List[Mapping[str, Any]]:
     hi, lo = _significant_movers(rows)
 
     if result.whitespace:
-        w = result.whitespace[0]
-        cards.append({"tag": "ENTER", "tone": "warn", "title": f"Enter {w['name']}",
-                      "body": f"The market places {money(w['market'])} here and the account "
-                              f"writes none of it, so appetite and capacity have to come first."})
+        gap = _observed(result.whitespace[0])
+        verb = O.action_for(gap.level)
+        cards.append({"tag": verb.split()[0].upper(), "tone": "warn",
+                      "title": f"{verb} {gap.name}",
+                      "body": O.describe(gap, money=money) + " "
+                              + O.recommend(gap, money=money)})
     if hi:
         cards.append({"tag": "SCALE", "tone": "good", "title": f"Scale {_named(hi[0])}",
                       "body": f"{_as_clause(hi[0])}, and the rate environment still supports "
@@ -262,15 +272,12 @@ def build_commentary(result, *, page: str = "overall") -> Tuple[str, List[Point]
         points.append(
             {
                 "label": "Opportunity.",
-                "text": f"{names} are written by the market but not by {subject}, which is "
-                f"{money(ws_total)} of whitespace.",
+                "text": f"{names} are placed with other carriers rather than {subject}, "
+                f"which is {money(ws_total)} of Marsh premium the account does not write.",
                 "tone": "warn",
             }
         )
-        actions.append(
-            f"Build an appetite statement for {result.whitespace[0]['name']}, the largest "
-            f"single piece of whitespace at {money(result.whitespace[0]['market'])}."
-        )
+        actions.append(O.recommend(_observed(result.whitespace[0]), money=money))
 
     # Headline.
     lead = rows[0]["name"] if rows else None

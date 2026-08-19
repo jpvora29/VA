@@ -47,7 +47,10 @@ def _survey_slides(path):
     out = []
     for slide in prs.slides:
         texts = [sh.text_frame.text for sh in slide.shapes if sh.has_text_frame]
-        if any("carrier survey" in t.lower() for t in texts):
+        # The page's TITLE, not any mention: the summary page's survey pointer sentence
+        # ("Brokers scored ... in the 2025 carrier survey") is prose about the score, not
+        # the Carrier Survey page, and a substring match counted it as one.
+        if any(t.strip().lower().startswith("carrier survey") for t in texts):
             out.append(slide)
     return out
 

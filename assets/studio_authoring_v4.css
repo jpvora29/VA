@@ -1,0 +1,392 @@
+/* ============================================================================
+   V4 SKIN — the Studio as a modern product surface.
+
+   Loads last (alphabetically after studio_authoring_v3.css), so it is the final
+   word on chrome. It does three things:
+
+   1. RE-TARGETS the skin at the components Dash actually renders now. The older
+      layers were written for the previous dropdown/radio markup; Dash 3 emits
+      `dash-options-list` radios and a radix dropdown, so several rules — most
+      visibly the segmented-control one — were styling elements that no longer
+      exist, and the form fell back to native radio dots inside a grey bar.
+   2. Sets ONE geometry: a 4px spacing rhythm, a 10/14/18px radius ladder,
+      hairline rings instead of borders, and elevation only where something is
+      genuinely raised.
+   3. Adds the interaction detail an app is judged on — focus rings you can see,
+      hover that moves 1px, transitions at 150ms, numerals that line up.
+
+   Everything is scoped under `.qs-root` so nothing reaches the chatbot app, and
+   colour comes from the shared `--va-*` tokens (assets/theme_tokens.css) rather
+   than fresh hexes.
+   ========================================================================== */
+
+.qs-root {
+    --v4-ease: 150ms cubic-bezier(.32, .08, .24, 1);
+    --v4-canvas: #f2f5fa;
+    --v4-field: #f7f9fd;
+    --v4-hair: rgba(13, 27, 62, 0.09);
+    --v4-hair-strong: rgba(13, 27, 62, 0.16);
+    --v4-ring: 0 0 0 1px var(--v4-hair);
+    --v4-lift: 0 0 0 1px var(--v4-hair), 0 1px 2px rgba(10, 22, 54, 0.05), 0 10px 28px -14px rgba(10, 22, 54, 0.22);
+    --v4-pop: 0 0 0 1px var(--v4-hair), 0 16px 40px -12px rgba(10, 22, 54, 0.28);
+    --v4-focus: 0 0 0 3px rgba(11, 75, 255, 0.18);
+
+    background:
+        radial-gradient(1200px 460px at 82% -220px, rgba(11, 75, 255, 0.055), transparent 62%),
+        var(--v4-canvas);
+    font-feature-settings: "cv05" 1, "ss01" 1;
+}
+
+/* Numbers are read as quantities, so they line up wherever they appear. */
+.qs-root .qs-prev-value,
+.qs-root .qs-rail-count-num,
+.qs-root .qs-tchip-n,
+.qs-root .qs-tsec-axis-n,
+.qs-root .qs-rstat-num { font-variant-numeric: tabular-nums; }
+
+/* One visible focus ring, keyboard only — the app was navigable but not legibly so. */
+.qs-root :focus-visible {
+    outline: none;
+    box-shadow: var(--v4-focus), 0 0 0 1px var(--va-blue);
+    border-radius: 8px;
+}
+
+/* ── page frame ───────────────────────────────────────────────────────────── */
+
+.qs-root .qs-canvas-host { padding: 24px 30px 40px !important; }
+
+.qs-root .qs-setup-card {
+    border: none !important;
+    border-radius: 20px !important;
+    box-shadow: var(--v4-lift) !important;
+    background: var(--va-surface-0);
+}
+
+/* The page header: eyebrow, title, one line of intent — then a hairline. */
+.qs-root .qs-setup-head {
+    padding: 26px 30px 20px;
+    border-bottom: 1px solid var(--v4-hair);
+    background: linear-gradient(180deg, rgba(11, 75, 255, 0.028), transparent 70%);
+}
+.qs-root .qs-setup-eyebrow {
+    font-size: 9.5px; font-weight: 800; letter-spacing: 0.18em;
+    color: var(--va-blue); text-transform: uppercase;
+}
+.qs-root .qs-setup-title {
+    font-size: 22px; font-weight: 800; letter-spacing: -0.022em;
+    color: var(--va-navy); margin-top: 3px;
+}
+.qs-root .qs-setup-title i {
+    display: inline-grid; place-items: center; width: 30px; height: 30px;
+    margin-right: 4px; border-radius: 9px; font-size: 15px;
+    color: var(--va-blue); background: var(--va-blue-soft);
+    box-shadow: inset 0 0 0 1px rgba(11, 75, 255, 0.14);
+}
+.qs-root .qs-setup-sub { max-width: 62ch; font-size: 12.5px; line-height: 1.55; margin-top: 6px; }
+.qs-root .qs-govern-chip { align-self: flex-start; border-radius: 999px; padding: 6px 12px; font-size: 11px; }
+
+/* ── section cards ────────────────────────────────────────────────────────── */
+
+.qs-root .qs-setup-section {
+    border-radius: 16px !important;
+    padding: 0 !important;
+    background: var(--va-surface-0);
+    box-shadow: var(--v4-ring) !important;
+    overflow: hidden;
+    transition: box-shadow var(--v4-ease);
+}
+.qs-root .qs-setup-section:hover { box-shadow: var(--v4-lift) !important; }
+
+/* Head: icon tile, title, subtitle UNDER it — the old baseline row wrapped the
+   subtitle beside the title at narrow widths and read as one run-on line. */
+.qs-root .qs-sec-head {
+    display: block !important;
+    padding: 14px 18px 12px;
+    margin-bottom: 0 !important;
+    border-bottom: 1px solid var(--v4-hair);
+    background: linear-gradient(180deg, rgba(13, 27, 62, 0.018), transparent);
+}
+.qs-root .qs-sec-title {
+    font-size: 12.5px !important; font-weight: 800; letter-spacing: 0.055em;
+    text-transform: uppercase; color: var(--va-navy);
+}
+.qs-root .qs-sec-title i {
+    width: 27px !important; height: 27px !important; border-radius: 9px !important;
+    font-size: 13.5px !important;
+    box-shadow: inset 0 0 0 1px rgba(11, 75, 255, 0.14);
+}
+.qs-root .qs-sec-sub {
+    display: block; margin-top: 5px; padding-left: 35px;
+    font-size: 11.5px; line-height: 1.5; color: var(--va-ink-500);
+}
+.qs-root .qs-sec-body { padding: 16px 18px 18px; }
+
+/* ── labels & fields ──────────────────────────────────────────────────────── */
+
+.qs-root .studio-field-label,
+.qs-root .studio-field-label.sm {
+    font-size: 9.5px !important; font-weight: 800 !important; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--va-ink-400) !important; margin-bottom: 7px !important;
+}
+
+.qs-root .studio-dd .dash-dropdown-trigger {
+    min-height: 40px !important; border-radius: 11px !important;
+    padding-inline: 12px !important;
+    background: var(--v4-field) !important;
+    border: none !important;
+    box-shadow: inset 0 0 0 1px var(--v4-hair) !important;
+    font-size: 12.5px !important;
+    transition: box-shadow var(--v4-ease), background var(--v4-ease);
+}
+.qs-root .studio-dd .dash-dropdown-trigger:hover { box-shadow: inset 0 0 0 1px var(--v4-hair-strong) !important; }
+.qs-root .studio-dd:focus-within .dash-dropdown-trigger,
+.qs-root .studio-dd[aria-expanded="true"] .dash-dropdown-trigger {
+    background: var(--va-surface-0) !important;
+    box-shadow: inset 0 0 0 1.5px var(--va-blue), var(--v4-focus) !important;
+}
+/* A chosen value should read as chosen, not as placeholder grey. */
+.qs-root .studio-dd .dash-dropdown-value { font-weight: 600; color: var(--va-ink-800); }
+.qs-root .studio-dd .dash-dropdown-placeholder { font-weight: 500; color: var(--va-ink-400); }
+
+/* The menu is two elements: `dash-dropdown-content` is the popup SHELL (search box +
+   list) and `dash-dropdown-options` is the scrolling list inside it. Styling the list as
+   though it were the popup gave a rounded, shadowed card nested inside a square bordered
+   one — two boxes for one menu. The shell is the surface; the list is just a scroller. */
+.dash-dropdown-content {
+    border: none !important;
+    border-radius: 14px !important;
+    padding: 6px !important;
+    background: var(--va-surface-0) !important;
+    box-shadow: 0 0 0 1px rgba(13, 27, 62, 0.09), 0 18px 44px -14px rgba(10, 22, 54, 0.32) !important;
+    overflow: hidden;
+}
+.dash-dropdown-options {
+    border: none !important; border-radius: 0 !important; padding: 0 !important;
+    background: transparent !important; box-shadow: none !important;
+    max-height: 280px !important;
+}
+.dash-dropdown-content .dash-options-list-option {
+    border-radius: 9px !important; padding: 8px 11px !important; font-size: 12.5px !important;
+}
+.dash-dropdown-search-container {
+    margin-bottom: 4px;
+    border: none !important; border-radius: 9px !important;
+    background: var(--v4-field) !important;
+    box-shadow: inset 0 0 0 1px var(--v4-hair) !important;
+}
+.dash-dropdown-search-container:focus-within {
+    background: var(--va-surface-0) !important;
+    box-shadow: inset 0 0 0 1.5px var(--va-blue) !important;
+}
+.dash-dropdown-content input.dash-dropdown-search {
+    border: none !important; outline: none !important; box-shadow: none !important;
+    background: transparent !important; font-size: 12.5px !important;
+}
+.dash-dropdown-actions { display: flex; gap: 4px; padding: 2px 2px 6px; }
+.dash-dropdown-action-button {
+    border: none !important; border-radius: 7px !important;
+    padding: 4px 9px !important;
+    font-size: 10.5px !important; font-weight: 700; letter-spacing: 0.02em;
+    color: var(--va-blue) !important; background: var(--va-blue-soft) !important;
+    cursor: pointer; transition: background var(--v4-ease);
+}
+.dash-dropdown-action-button:hover { background: rgba(11, 75, 255, 0.14) !important; }
+
+/* The multi-select ticks are brand blue rather than the browser's default accent —
+   a violet checkbox in a navy-and-blue app reads as a stray control. */
+.dash-dropdown-content input[type="checkbox"],
+.qs-root .studio-report-radio input,
+.dash-options-list input[type="checkbox"] { accent-color: var(--va-blue); }
+
+.qs-root .studio-filter-grid {
+    grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)) !important;
+    gap: 14px 14px !important;
+}
+
+/* ── segmented controls ───────────────────────────────────────────────────────
+   THE fix that changes how the whole form reads. Dash renders each choice as
+   <label><span><input type=radio></span><span>text</span></label>, and the native
+   dot was still painted inside the pill — a segmented control with radio buttons
+   in it, which is the single strongest "unfinished form" signal on the page.
+   The input keeps its box (so it stays focusable and screen-reader visible) and
+   simply stops painting. */
+.qs-root .studio-report-radio {
+    display: inline-flex !important; width: auto !important; max-width: 100%;
+    flex-wrap: wrap; gap: 2px; padding: 3px;
+    background: rgba(13, 27, 62, 0.05);
+    border-radius: 12px;
+    box-shadow: inset 0 0 0 1px rgba(13, 27, 62, 0.045);
+}
+.qs-root .studio-report-radio .dash-options-list-option {
+    display: flex; align-items: center; gap: 0;
+    border: none !important; border-radius: 9px !important;
+    padding: 7px 14px !important;
+    font-size: 12px !important; font-weight: 600;
+    color: var(--va-ink-500) !important; background: transparent !important;
+    cursor: pointer; white-space: nowrap;
+    transition: color var(--v4-ease), background var(--v4-ease), box-shadow var(--v4-ease);
+}
+.qs-root .studio-report-radio .dash-options-list-option-wrapper { display: none; }
+.qs-root .studio-report-radio input[type="radio"] {
+    position: absolute; width: 1px; height: 1px; margin: 0;
+    opacity: 0; pointer-events: none;
+}
+.qs-root .studio-report-radio .dash-options-list-option:hover {
+    color: var(--va-ink-800) !important; background: rgba(255, 255, 255, 0.6) !important;
+}
+.qs-root .studio-report-radio .dash-options-list-option.selected,
+.qs-root .studio-report-radio .dash-options-list-option[aria-selected="true"] {
+    background: var(--va-surface-0) !important;
+    color: var(--va-navy) !important;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.10), 0 3px 10px -3px rgba(10, 22, 54, 0.16);
+}
+.qs-root .studio-report-radio .dash-options-list-option:has(input:focus-visible) {
+    box-shadow: var(--v4-focus);
+}
+.qs-root .studio-report-radio .dash-options-list-option-text { font: inherit; color: inherit; }
+
+/* The two source/basis choices are one decision — "what is this deck built from?" — so
+   they sit side by side instead of as two stacked full-width bars with a gap between. */
+.qs-root .qs-source-field {
+    display: flex; flex-direction: row; flex-wrap: wrap;
+    align-items: flex-start; gap: 16px 36px;
+}
+.qs-root .qs-source-field > .studio-field,
+.qs-root .qs-source-field .qs-basis-field { flex: 0 1 auto; }
+.qs-root .qs-source-field .qs-source-status { flex-basis: 100%; order: 3; }
+/* Its separator rule belonged to the stacked layout; side by side it drew a hairline
+   floating above DATA BASIS and attached to nothing. */
+.qs-root .qs-source-field .qs-basis-field {
+    order: 2; border-top: none; padding-top: 0;
+}
+
+.qs-root .qs-options-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 18px 26px; }
+
+/* checkbox: a real one, not the bootstrap default */
+.qs-root .studio-check .form-check-input {
+    width: 17px; height: 17px; margin-top: 1px;
+    border-radius: 6px; border: 1.5px solid var(--v4-hair-strong);
+    transition: all var(--v4-ease);
+}
+.qs-root .studio-check .form-check-input:checked { background-color: var(--va-blue); border-color: var(--va-blue); }
+.qs-root .studio-check .form-check-input:focus { box-shadow: var(--v4-focus); border-color: var(--va-blue); }
+.qs-root .studio-check .form-check-label { font-size: 12.5px; font-weight: 600; color: var(--va-ink-800); }
+.qs-root .qs-ai-note { font-size: 11.5px; line-height: 1.55; color: var(--va-ink-500); margin-top: 7px; }
+
+/* ── the aside: preview, action, sections ─────────────────────────────────── */
+
+.qs-root .qs-setup-aside { top: 18px; gap: 14px; }
+
+.qs-root .qs-scope-preview {
+    border-radius: 18px !important;
+    padding: 18px 18px 20px !important;
+    box-shadow: 0 0 0 1px rgba(120, 163, 255, 0.18), 0 18px 42px -16px rgba(2, 12, 46, 0.65) !important;
+}
+.qs-root .qs-preview-head { font-size: 12px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; }
+.qs-root .qs-preview-note { font-size: 11px; opacity: 0.62; margin-bottom: 14px; }
+
+/* Four figures, four equal tiles. They used to size to their content, so the two
+   long ones (a money total, a rank) towered over the two short ones and the card
+   read as a broken grid rather than a set of comparable readings. */
+.qs-root .qs-prev-grid { grid-template-columns: 1fr 1fr; gap: 10px; align-items: stretch; }
+.qs-root .qs-prev-tile {
+    display: flex; flex-direction: column; justify-content: flex-start; gap: 3px;
+    min-height: 84px; padding: 12px 13px !important;
+    background: rgba(255, 255, 255, 0.07) !important;
+    border: none !important;
+    border-radius: 13px !important;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10) !important;
+}
+.qs-root .qs-prev-label { font-size: 9px; font-weight: 800; letter-spacing: 0.13em; opacity: 0.68; }
+.qs-root .qs-prev-value { font-size: 19px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.18; }
+.qs-root .qs-prev-sub { font-size: 10.5px; opacity: 0.68; margin-top: auto; }
+.qs-root .qs-preview-empty { font-size: 11.5px; opacity: 0.72; display: flex; align-items: center; gap: 8px; }
+
+.qs-root .qs-setup-aside .qs-generate-btn {
+    position: relative; overflow: hidden;
+    padding: 15px !important; border-radius: 14px !important;
+    font-size: 14.5px !important; font-weight: 800 !important;
+    background: var(--va-grad-cta) !important;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.16), 0 12px 28px -10px rgba(11, 75, 255, 0.6) !important;
+    transition: box-shadow var(--v4-ease), transform var(--v4-ease);
+}
+.qs-root .qs-setup-aside .qs-generate-btn::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(120deg, transparent 30%, rgba(255, 255, 255, 0.22), transparent 70%);
+    transform: translateX(-120%);
+    transition: transform 620ms cubic-bezier(.3, .1, .2, 1);
+}
+.qs-root .qs-setup-aside .qs-generate-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(10, 22, 54, 0.16), 0 18px 36px -10px rgba(11, 75, 255, 0.62) !important;
+}
+.qs-root .qs-setup-aside .qs-generate-btn:hover::after { transform: translateX(120%); }
+.qs-root .qs-setup-aside .qs-generate-btn:active { transform: translateY(0); }
+
+.qs-root .qs-aside-card {
+    border: none !important; border-radius: 16px !important;
+    padding: 15px 16px 16px !important;
+    box-shadow: var(--v4-ring) !important;
+}
+.qs-root .qs-aside-card-head { font-size: 11px; letter-spacing: 0.09em; margin-bottom: 12px; }
+.qs-root .qs-tsec-summary { display: flex; gap: 8px; margin-bottom: 12px; }
+.qs-root .qs-tsec-total {
+    padding: 5px 10px; border-radius: 999px; font-size: 10.5px; font-weight: 600;
+    color: var(--va-ink-600); background: var(--v4-field);
+    box-shadow: inset 0 0 0 1px var(--v4-hair);
+}
+.qs-root .qs-tsec-total b { color: var(--va-navy); font-weight: 800; }
+.qs-root .qs-tsec-axis {
+    padding: 11px 12px 12px !important; border-radius: 13px !important;
+    background: var(--v4-field) !important;
+    box-shadow: inset 0 0 0 1px var(--v4-hair) !important;
+}
+.qs-root .qs-tchip {
+    border-radius: 9px; padding: 5px 8px; font-size: 11px; font-weight: 600;
+    color: var(--va-ink-700); background: var(--va-surface-0);
+    box-shadow: var(--v4-ring);
+}
+.qs-root .qs-tchip i { color: var(--va-blue); }
+.qs-root .qs-tchip-n {
+    min-width: 16px; padding: 0 4px; border-radius: 999px; font-size: 9.5px; font-weight: 800;
+    color: var(--va-blue); background: var(--va-blue-soft);
+}
+
+/* ── peers ───────────────────────────────────────────────────────────────── */
+
+.qs-root .qs-peer-chip {
+    padding: 5px 11px; border-radius: 999px; font-size: 11.5px; font-weight: 600;
+    background: var(--va-blue-soft);
+    box-shadow: inset 0 0 0 1px rgba(11, 75, 255, 0.16);
+}
+.qs-root .qs-peer-note { font-size: 11px; line-height: 1.5; }
+
+/* ── chrome: rail + topbar ───────────────────────────────────────────────── */
+
+.qs-root .qs-topbar {
+    padding: 12px 30px;
+    background: rgba(255, 255, 255, 0.82);
+    backdrop-filter: saturate(170%) blur(20px);
+    border-bottom: 1px solid var(--v4-hair);
+}
+.qs-root .qs-deck-name { font-size: 15px; font-weight: 700; letter-spacing: -0.014em; }
+.qs-root .qs-mode-btn.active .qs-mode-tile {
+    box-shadow: 0 0 0 1px rgba(120, 163, 255, 0.38), 0 8px 20px -6px rgba(11, 75, 255, 0.72);
+}
+.qs-root .qs-mode-label { font-size: 9.5px; letter-spacing: 0.05em; }
+
+/* ── motion discipline ───────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+    .qs-root *, .qs-root *::before, .qs-root *::after {
+        transition: none !important; animation: none !important;
+    }
+    .qs-root .qs-setup-aside .qs-generate-btn:hover { transform: none; }
+}
+
+/* ── narrow screens: the aside stops being a column ──────────────────────── */
+
+@media (max-width: 1180px) {
+    .qs-root .qs-setup-aside { position: static; }
+    .qs-root .qs-prev-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+}

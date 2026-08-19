@@ -75,7 +75,8 @@ def dataset_source(dataset_id: str):
     return frame_source(loaded, label=dataset_id)
 
 
-def _mapped_frame(dataset_id: str) -> Optional[pd.DataFrame]:
+def dataset_frame(dataset_id: str) -> Optional[pd.DataFrame]:
+    """The dataset's materialized table — what every Setup panel reads it from."""
     return get_repository().load_frame(dataset_id, table=MAPPED_TABLE)
 
 
@@ -87,7 +88,7 @@ def dataset_filter_options(
     Same shape as ``studio.authoring.generate._friendly_options`` — friendly
     form id → ``[{label, value}]`` — but distincts come from the user's data,
     so every dropdown reflects exactly what they uploaded."""
-    frame = _mapped_frame(dataset_id)
+    frame = dataset_frame(dataset_id)
     if frame is None:
         return {}
     options: Dict[str, List[Dict[str, Any]]] = {}
@@ -113,7 +114,7 @@ def dataset_cascade_options(
     from studio import filter_cube
     from studio.data import cube_columns
 
-    frame = _mapped_frame(dataset_id)
+    frame = dataset_frame(dataset_id)
     if frame is None:
         return {}
     spanned = tuple(c for c in cube_columns("gpr") if c in frame.columns)
@@ -139,7 +140,7 @@ def dataset_dependent_options(
 ) -> List[Dict[str, Any]]:
     """`[{label, value}]` for one column, constrained by the other selections —
     the pandas twin of ``studio.data.dependent_options`` for custom datasets."""
-    frame = _mapped_frame(dataset_id)
+    frame = dataset_frame(dataset_id)
     if frame is None or column not in frame.columns:
         return []
     for col, val in (where or {}).items():

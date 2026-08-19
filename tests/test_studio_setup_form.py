@@ -653,3 +653,54 @@ def test_the_overlay_is_shown_by_display_not_by_a_fade():
     assert ".qs-page-loader.is-on {" in css
     on_block = css.split(".qs-page-loader.is-on {", 1)[1].split("}", 1)[0]
     assert "display: flex" in on_block
+
+
+# ── the cascade sends only what changed ──────────────────────────────────────
+
+
+def _diff(options, signature, token="t1"):
+    from studio.authoring.setup import changed_options
+
+    return changed_options(options, signature, token)
+
+
+def test_the_first_cascade_sends_every_list():
+    from dash import no_update
+
+    fresh, signature = _diff({"carrier": [{"label": "AIG", "value": "AIG"}], "year": []}, None)
+    assert no_update not in fresh.values()
+    assert set(signature["digests"]) == {"carrier", "year"} and signature["token"] == "t1"
+
+
+def test_an_unchanged_list_is_not_sent_again():
+    """The saving: a filter change moves two or three of the ten lists, and re-sending the
+    rest costs payload and a re-render that both grow with the vocabulary."""
+    from dash import no_update
+
+    first = {"carrier": [{"label": "AIG", "value": "AIG"}],
+             "country": [{"label": "Japan", "value": "Japan"}]}
+    _, signature = _diff(first, None)
+
+    changed = {**first, "country": [{"label": "Japan", "value": "Japan"},
+                                    {"label": "Singapore", "value": "Singapore"}]}
+    fresh, _ = _diff(changed, signature)
+    assert fresh["carrier"] is no_update
+    assert fresh["country"] == changed["country"]
+
+
+def test_a_re_rendered_form_is_sent_everything_again():
+    """A re-render rebuilds the dropdowns from the UNFILTERED lists, so a signature from the
+    previous rendering describes something that is no longer on screen — skipping a list
+    there would leave the user looking at options the selection has ruled out."""
+    from dash import no_update
+
+    options = {"carrier": [{"label": "AIG", "value": "AIG"}]}
+    _, signature = _diff(options, None, token="render-1")
+    fresh, _ = _diff(options, signature, token="render-2")
+    assert fresh["carrier"] is not no_update
+
+
+def test_the_form_carries_a_token_that_changes_with_each_rendering():
+    from studio.page.authoring.setup import form_token
+
+    assert form_token().data != form_token().data

@@ -19,7 +19,6 @@ either way; only the speed differs.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,22 +27,19 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from sqlalchemy import text
 
 from logger import get_logger
+from studio import cube_core
 
 logger = get_logger(__name__)
 
 # Values that mean "no constraint" on a Setup control.
-BLANK = (None, "", "all", "All")
+BLANK = cube_core.BLANK
 # Above this many distinct combinations the cube stops being a shortcut (it would cost more
 # to ship and scan than the SQL it replaces), so we decline and let SQL handle it.
 _MAX_ROWS = 400_000
 
-
-def _as_values(value: Any) -> Tuple[str, ...]:
-    """A selection as a tuple of comparable strings (``()`` when it constrains nothing)."""
-    if value in BLANK:
-        return ()
-    values = value if isinstance(value, (list, tuple, set)) else (value,)
-    return tuple(str(v) for v in values if v not in BLANK)
+# How a selection becomes constraints is shared with the scope cube (``studio.cube_core``);
+# both slice the same filter grain, and they must agree on what "no constraint" means.
+_as_values = cube_core.as_values
 
 
 @dataclass(frozen=True)
@@ -73,15 +69,7 @@ class FilterCube:
 
     def _constraints(self, selected: Mapping[str, Any],
                      *, skip: Tuple[str, ...] = ()) -> List[Tuple[int, Tuple[str, ...]]]:
-        out: List[Tuple[int, Tuple[str, ...]]] = []
-        for column, value in (selected or {}).items():
-            if column in skip:
-                continue
-            i = self._index(column)
-            values = _as_values(value)
-            if i is not None and values:
-                out.append((i, values))
-        return out
+        return cube_core.constraints_for(self.columns, selected, skip=skip)
 
     def values(self, column: str, selected: Mapping[str, Any]) -> Optional[List[Any]]:
         """``column``'s values that survive every OTHER selection, or None if unknown here.
@@ -144,7 +132,7 @@ def _cube_from_rows(columns: Sequence[str], raw: Iterable[Sequence[Any]]) -> Fil
     for record in raw:
         keys = []
         for column, value in zip(columns, record):
-            key = "" if value is None else str(value)
+            key = cube_core.key_of(value)
             display[column].setdefault(key, value)
             keys.append(key)
         rows.append(tuple(keys))
@@ -194,24 +182,11 @@ _cache: Dict[Any, Optional[FilterCube]] = {}
 _DISK_DIR = Path(__file__).resolve().parent / "_cache"
 
 
-def _sql_fingerprint(engine, table: str) -> Any:
-    """A key that changes when the underlying database file does.
-
-    SQLite is a file, so size+mtime is a cheap, exact "has the data changed?" signal. A
-    non-file engine falls back to its URL, which simply means the cube lives for the process.
-    """
-    url = str(getattr(engine, "url", engine))
-    path = getattr(getattr(engine, "url", None), "database", None)
-    if path and Path(path).exists():
-        stat = Path(path).stat()
-        return (url, table, stat.st_size, int(stat.st_mtime))
-    return (url, table)
+_sql_fingerprint = cube_core.source_fingerprint
 
 
 def _disk_path(fingerprint: Any, columns: Sequence[str]) -> Path:
-    sig = hashlib.blake2s(repr((fingerprint, tuple(columns))).encode("utf-8"),
-                          digest_size=8).hexdigest()
-    return _DISK_DIR / f"cube_{sig}.json"
+    return cube_core.cache_path(_DISK_DIR, "cube", fingerprint, tuple(columns))
 
 
 def _read_disk(path: Path, columns: Sequence[str]) -> Optional[FilterCube]:

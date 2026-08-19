@@ -7,12 +7,13 @@ The scope-preview cards and template-sections panel are refreshed by app callbac
 from __future__ import annotations
 
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
+from uuid import uuid4
 
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
 from studio.compute import DATA_BASIS_PREMIUM, DATA_BASIS_WITH_SURVEY
-from studio.page.layout import _filter_grid, _scope_toggle
+from studio.page.layout import _filter_grid
 
 # ── the Setup busy overlay ───────────────────────────────────────────────────
 #
@@ -36,6 +37,19 @@ BUSY_FLAG_ON = f"{BUSY_FLAG_CLASS} is-busy"
 BUSY_FORM = "qs-busy-form"              # option cascade + peer panel
 BUSY_PREVIEW = "qs-busy-preview"        # the live scope figures
 BUSY_SECTIONS = "qs-busy-sections"      # the deck-section list
+
+
+def form_token() -> dcc.Store:
+    """A fresh id for THIS rendering of the form.
+
+    The cascade re-sends only the option lists that changed since its last answer
+    (``studio.authoring.setup.changed_options``), which is only sound while the dropdowns on
+    screen are the ones it last answered. A re-render rebuilds them from the unfiltered
+    lists, so the token changes with the DOM and the next cascade knows to send everything.
+    It travels WITH the form rather than as a separate write, so there is no ordering race
+    between "the form was rebuilt" and "here is what the form should show".
+    """
+    return dcc.Store(id="qs-form-token", data=uuid4().hex)
 
 
 def busy_overlay() -> html.Div:
@@ -581,7 +595,11 @@ def setup_body(
             _setup_section(
                 "bi-funnel", "Scope & filters",
                 "Every list narrows to what the selection above it writes in.",
-                html.Div([_scope_toggle(), _filter_grid(filter_options, filter_values)], className="qs-sec-stack"),
+                # No DATA SCOPE toggle here. It rendered two chips no callback ever read,
+                # directly under DATA BASIS — which is the real "premium or premium+survey"
+                # choice — so the form showed the same decision twice and only one of them
+                # worked. (The chips still exist for the standalone demo rail.)
+                _filter_grid(filter_options, filter_values),
                 span=True,
             ),
             _setup_section(
@@ -662,4 +680,4 @@ def setup_body(
         ],
         className="qs-setup-card",
     )
-    return html.Div([busy_overlay(), form], className="qs-setup-wrap")
+    return html.Div([busy_overlay(), form_token(), form], className="qs-setup-wrap")

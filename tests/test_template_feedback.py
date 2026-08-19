@@ -323,11 +323,15 @@ def test_composers_return_one_point_per_line(composer, facts):
     assert all(line.strip() for line in lines)
 
 
-def test_a_composer_with_nothing_to_say_returns_no_bullets():
+def test_a_composer_with_no_evidenced_challenge_falls_back_rather_than_blanking():
     # A book that grew, climbed the rank and already writes above the peer share average has
-    # no evidenced challenge — the column must stay empty rather than invent one (the
-    # template's own fill-me cue then shows through).
-    assert F._compose("challenges", _GROWING, F._PANEL_BULLETS) == ""
+    # no evidenced challenge. It still gets a column: a blank cell in a carrier's deck reads
+    # as an oversight, not as an absence of bad news. What it must NOT do is invent a
+    # negative — the fallback reports the position's age, every figure of it real.
+    text = F._compose("challenges", _GROWING, F._PANEL_BULLETS)
+    assert text, "the 'What's not' column shipped blank"
+    assert "3.2pp of the 11.6% share" in text
+    assert not any(word in text.lower() for word in ("fell", "slipped", "lost", "declin"))
 
 
 def test_a_growing_book_below_peer_share_still_reports_a_challenge():
@@ -615,3 +619,170 @@ def test_the_growth_quadrant_plots_only_the_selected_lines_of_business():
     everything = resolve_roles(compute_overall(
         filters={"carrier": "Zurich", "country": ["Singapore"]}))
     assert len({p["lob"] for p in everything["growth_bubble"]["points"]}) > len(picked)
+
+
+# ── no commentary cell ships blank ───────────────────────────────────────────
+# A composer answers its question only from the figures that support it, so a book with
+# no bad news left "What's not" empty on the page. These pin the rule that every
+# commentary column says something, and that what it says is still tied to a figure.
+
+
+_STRONG_FACTS = {
+    # Growing hard, gaining rank AND above the peer share benchmark: every one of
+    # _challenges_points' conditions is false, which is what produced the blank cell.
+    "carrier": {"current": 44e6, "pct": 97.3, "delta": 22e6},
+    "marsh": {"current": 300e6, "pct": 13.5},
+    "rank": {"current": 1, "delta": 5, "of_n": 12},
+    "sow": {"current": 14.7, "delta": 6.2},
+    "peer": {"sow": 11.5},
+}
+
+
+def test_a_book_with_no_bad_news_still_fills_the_challenges_column():
+    assert not F._challenges_points(_STRONG_FACTS), "fixture no longer exercises the gap"
+    said = F.points("challenges", _STRONG_FACTS)
+    assert said, "the 'What's not' column shipped blank"
+    assert "14.7" in said[0] and "6.2" in said[0], "the fallback carries no figure"
+
+
+def test_the_challenges_fallback_does_not_repeat_the_working_column():
+    """The fallback must contribute a claim of its own, not restate the peer benchmark
+    the successes column already gave."""
+    working = " ".join(F.points("working", _STRONG_FACTS))
+    fallback = F.points("challenges", _STRONG_FACTS)[0]
+    assert "peer average" in working and "peer average" not in fallback
+
+
+def test_every_commentary_kind_answers_for_a_strong_and_a_weak_book():
+    weak = {
+        "carrier": {"current": 37e6, "pct": -0.4, "delta": -150e3},
+        "marsh": {"current": 480e6, "pct": 10.2},
+        "rank": {"current": 6, "delta": 0, "of_n": 12},
+        "sow": {"current": 7.6, "delta": -0.8},
+        "peer": {"sow": 10.9},
+    }
+    for facts in (_STRONG_FACTS, weak):
+        for kind in ("working", "challenges", "growth", "key_messages", "highlights"):
+            assert F.points(kind, facts), f"{kind} said nothing"
+
+
+def test_a_bare_book_still_says_its_size():
+    """Nothing but a premium total — every composer still has one honest thing to say."""
+    bare = {"carrier": {"current": 19e6}, "marsh": {}, "rank": {}, "sow": {}}
+    for kind in ("working", "challenges", "growth", "key_messages"):
+        said = F.points(kind, bare)
+        assert said and "19M" in " ".join(said), f"{kind}: {said}"
+
+
+def test_no_commentary_cell_is_blank_in_a_generated_deck(tmp_path):
+    """End to end on the real templates: filters -> compute -> fill -> merged .pptx, with
+    every commentary column on every product page carrying prose."""
+    from pptx import Presentation
+
+    from studio.compute import compute_overall
+    from studio.template_fill import assemble as A
+    from studio.template_fill.binding_map import available
+
+    if not {"overall", "product"} <= set(available()):
+        pytest.skip("split templates not present")
+
+    result = compute_overall(
+        filters={"Carrier_Group": "Zurich", "Country": "Singapore", "Year": 2025})
+    out = A.assemble_deck(result, out_path=str(tmp_path / "deck.pptx"), scope="all")
+
+    headers = {"What’s working well", "What’s not", "Growth Opportunities"}
+    blank: list = []
+    for idx, slide in enumerate(Presentation(out).slides, 1):
+        for shape in slide.shapes:
+            if not getattr(shape, "has_table", False):
+                continue
+            columns = [c.text.strip() for c in shape.table.rows[0].cells]
+            if not headers & set(columns):
+                continue
+            for row in list(shape.table.rows)[1:]:
+                if not row.cells[0].text.strip():
+                    continue                      # an entity row this run does not use
+                for col, cell in zip(columns, row.cells):
+                    if col in headers and not cell.text.strip():
+                        blank.append(f"slide {idx} · {col}")
+    assert not blank, f"blank commentary cells: {blank}"
+
+
+# ── the portfolio thesis ─────────────────────────────────────────────────────
+# The summary page's job is not to report a part of the book but to state where the
+# account stands, as one claim a leadership team can argue with.
+
+
+_THESIS = {
+    "subject": "Zurich",
+    "carrier": {"current": 207.9e6, "pct": 28.6},
+    "marsh": {"current": 2.3e9, "pct": 9.9},
+    "sow": {"current": 9.1, "delta": 1.3},
+    "rank": {"current": 5, "of_n": 12},
+    "peer": {"sow": 10.8},
+}
+
+
+def _thesis(**over) -> str:
+    facts = {**_THESIS, **over}
+    said = F.points("thesis", facts)
+    assert len(said) == 1, "the thesis is one claim, not a list"
+    return said[0]
+
+
+def test_the_thesis_names_the_tension_between_growth_and_relevance():
+    """Growing hard while under-penetrated is the shape worth arguing about, and both
+    halves have to be in the same sentence or it is two unrelated facts."""
+    said = _thesis()
+    assert "grew 28.6% to $208M against a Marsh book that grew 9.9%" in said
+    assert "1.7pp behind the top-5 peer average of 10.8%" in said
+    assert "the growth is real and the relevance is not yet" in said
+
+
+def test_a_book_already_above_the_peer_benchmark_is_told_to_hold_it():
+    said = _thesis(sow={"current": 12.0, "delta": 1.3})
+    assert "writes above the top-5 peer average" in said
+    assert "holding that, not winning it" in said
+
+
+def test_a_book_trailing_the_market_from_behind_its_peers_is_told_so():
+    said = _thesis(carrier={"current": 207.9e6, "pct": 2.0})
+    assert "losing ground from a position already behind its peers" in said
+
+
+def test_a_strong_position_growing_slower_than_the_book_is_not_called_a_failure():
+    said = _thesis(carrier={"current": 207.9e6, "pct": 2.0},
+                   sow={"current": 12.0, "delta": -0.2})
+    assert "a strong position growing slower than the book around it" in said
+
+
+def test_without_a_peer_benchmark_the_thesis_still_states_the_direction():
+    said = _thesis(peer={})
+    assert "the book is taking share" in said
+    assert "peer average" not in said
+
+
+def test_the_thesis_never_ships_blank():
+    """No growth figures at all — the column still says the one thing that is true."""
+    said = F.points("thesis", {"carrier": {"current": 19e6}, "marsh": {}, "sow": {}})
+    assert said and "19M" in said[0]
+
+
+def test_the_summary_page_carries_the_thesis(tmp_path):
+    """End to end: the highlights/summary section's prose box states the thesis rather
+    than repeating a product statistic."""
+    from pptx import Presentation
+
+    from studio.compute import compute_overall
+    from studio.template_fill import assemble as A
+    from studio.template_fill.binding_map import available
+
+    if "overall" not in set(available()):
+        pytest.skip("split templates not present")
+
+    result = compute_overall(
+        filters={"Carrier_Group": "Zurich", "Country": "Singapore", "Year": 2025})
+    out = A.assemble_deck(result, out_path=str(tmp_path / "deck.pptx"), scope="overall")
+    text = " ".join(sh.text_frame.text for s in Presentation(out).slides
+                    for sh in s.shapes if sh.has_text_frame)
+    assert "against a Marsh book that grew" in text, "no thesis on the deck"

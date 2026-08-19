@@ -44,21 +44,14 @@ register_export(app)       # fill/assemble the template and download the .pptx
 if __name__ == "__main__":
     import os
 
-    # Bind DUAL-STACK (IPv6 + IPv4) rather than 127.0.0.1 only.
-    #
-    # "localhost" resolves to ::1 before 127.0.0.1 on Windows. With an IPv4-only socket the
-    # ::1 connection is refused and the browser silently retries on IPv4 — a flat ~300 ms
-    # penalty on EVERY callback, which dwarfed the callbacks themselves and read as "the
-    # filter pane is slow". Serving both stacks makes http://localhost as fast as
-    # http://127.0.0.1. Falls back to the IPv4 bind on a host without IPv6.
+    # Bind DUAL-STACK (IPv6 + IPv4), because "localhost" resolves to ::1 first on Windows
+    # and an IPv4-only socket makes every callback pay for the failed ::1 attempt — see
+    # ``studio.serve``, which owns the socket and the fallback.
     #
     # Hot-reload stays OFF: the long Generate assembly used to trigger a browser reload that
     # reset the in-memory view back to Setup mid-build, so the finished deck never showed.
     # See studio/authoring/layout.py (qs-view now persists).
-    port = int(os.environ.get("PORT", "8131"))
-    host = os.environ.get("HOST", "localhost")
-    try:
-        app.run(debug=True, dev_tools_hot_reload=False, use_reloader=False,
-                host=host, port=port)
-    except OSError:
-        app.run(debug=True, dev_tools_hot_reload=False, use_reloader=False, port=port)
+    from studio.serve import run_app
+
+    run_app(app, port=int(os.environ.get("PORT", "8131")),
+            debug=True, dev_tools_hot_reload=False)

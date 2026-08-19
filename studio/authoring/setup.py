@@ -112,6 +112,36 @@ def _cascade(record, columns, selected) -> dict:
     return cascade_options("gpr", columns, selected)
 
 
+def option_digest(options) -> str:
+    """A short, stable digest of one dropdown's option list."""
+    import hashlib
+
+    payload = repr([(o.get("label"), o.get("value")) for o in (options or [])])
+    return hashlib.blake2s(payload.encode("utf-8"), digest_size=8).hexdigest()
+
+
+def changed_options(options: dict, signature, token: str) -> tuple:
+    """``(per-column value-or-no_update, new signature)`` — only what the browser lacks.
+
+    A cascade recomputes all ten lists, but a filter change usually moves two or three of
+    them; the rest are byte-identical to what the dropdowns already show. Re-sending those
+    costs payload on the way down and a re-render on arrival, and both grow with the
+    vocabulary — on a warehouse with thousands of carriers the unchanged carrier list was the
+    bulk of every response. Comparing digests keeps the callback's answer to what changed.
+
+    ``token`` identifies the rendering of the form these dropdowns belong to
+    (:func:`studio.page.authoring.setup.form_token`). A re-render rebuilds them from the
+    UNFILTERED lists, so a signature from a previous rendering describes something that is no
+    longer on screen and every list is sent afresh.
+    """
+    signature = signature or {}
+    previous = signature.get("digests", {}) if signature.get("token") == token else {}
+    digests = {col: option_digest(opts) for col, opts in options.items()}
+    fresh = {col: (options[col] if digests[col] != previous.get(col) else no_update)
+             for col in options}
+    return fresh, {"token": token, "digests": digests}
+
+
 def cascade_filter_options(selected: dict, record) -> dict:
     """``{form filter id: options}`` — every dropdown narrowed to what the others allow.
 
@@ -436,31 +466,21 @@ def scope_preview_body(selected: dict, record):
 def _scope_figures(key: tuple, dataset_id):
     """The preview's four figures, cached per scope.
 
-    Two aggregate queries (a total and a market rank) that are pure functions of the
-    selection, so revisiting a scope — which happens constantly while a user tries filter
-    combinations — costs nothing the second time.
+    A total and a market rank that are pure functions of the selection, so revisiting a
+    scope — which happens constantly while a user tries filter combinations — costs nothing
+    the second time. Both come from the pre-aggregated rollup (:mod:`studio.scope`), so the
+    first visit to a scope does not scan the fact table either.
     """
-    from core.analytics.library import compute_breakdown, compute_rank
-    from core.analytics.types import PrimitiveArgs
     from studio.compute import _CARRIER_COL, _resolve_filters
     from studio.dataset.source import dataset_engine
     from studio.page.format import money
+    from studio.scope import scope_figures
 
     filters = {c: (list(v) if isinstance(v, tuple) else v) for c, v in key}
     eng = dataset_engine(dataset_id) if dataset_id else engine
     resolved = _resolve_filters(filters)
     subject = resolved.get(_CARRIER_COL)
-
-    total_facts = compute_breakdown(
-        PrimitiveArgs(flow="gpr", metric="premium", group_by=(), filters=resolved), engine=eng
-    )
-    total = total_facts[0].value if total_facts else 0.0
-    rank_filters = {k: v for k, v in resolved.items() if k != _CARRIER_COL}
-    rank_facts = compute_rank(
-        PrimitiveArgs(flow="gpr", metric="premium", group_by=(), filters=rank_filters), engine=eng
-    )
-    mine = next((f for f in rank_facts
-                 if str(f.dims.get("entity", "")).lower() == str(subject).lower()), None)
+    figures = scope_figures(resolved, flow="gpr", engine=eng, dataset_id=dataset_id)
 
     country = filters.get("country")
     n_countries = len(country) if isinstance(country, (list, tuple)) else (1 if country else "All")
@@ -471,8 +491,8 @@ def _scope_figures(key: tuple, dataset_id):
     else:
         year_disp = str(year_val) if year_val else "All"
     return (
-        {"label": "Total GWP", "value": money(total), "sub": str(subject)},
-        {"label": "Market rank", "value": (mine.rendered if mine else "—")},
+        {"label": "Total GWP", "value": money(figures.total), "sub": str(subject)},
+        {"label": "Market rank", "value": figures.rank_rendered},
         {"label": "Countries", "value": str(n_countries)},
         {"label": "Year", "value": year_disp},
     )
@@ -614,14 +634,21 @@ def register_setup(app):
         Output("studio-peer-custom", "options"),
         Output("studio-peer-custom-wrap", "style"),
         Output("studio-peer-msg", "children"),
+        Output("qs-filter-sig", "data"),
         Input({"type": "studio-filter", "col": ALL}, "value"),
         Input("studio-peer-mode", "value"),
         State({"type": "studio-filter", "col": ALL}, "id"),
         State("qs-dataset", "data"),
+        State("qs-filter-sig", "data"),
+        State("qs-form-token", "data"),
         running=_busy(A.BUSY_FORM),
     )
-    def refresh_form(values, mode, ids, dataset_store):
-        """Re-derive every dropdown's options and the peer panel — one cube pass."""
+    def refresh_form(values, mode, ids, dataset_store, signature, token):
+        """Re-derive every dropdown's options and the peer panel — one cube pass.
+
+        Only the lists that CHANGED are sent back; the rest answer ``no_update``, which
+        leaves the dropdown showing what it already has (:func:`changed_options`).
+        """
         from studio.dataset.source import dataset_in_use
 
         ids = ids or []
@@ -629,7 +656,9 @@ def register_setup(app):
         record = dataset_in_use(dataset_store)
         options = cascade_filter_options(selected, record)
         peer_opts, peer_style, peer_msg = peer_panel_state(selected, mode, record, options)
-        return [options.get(i["col"], no_update) for i in ids], peer_opts, peer_style, peer_msg
+        fresh, signature = changed_options(options, signature, token)
+        return ([fresh.get(i["col"], no_update) for i in ids],
+                peer_opts, peer_style, peer_msg, signature)
 
     # The survey panel is its own callback, not part of refresh_form: it queries a DIFFERENT
     # book, and only on the survey basis, so folding it in would make every premium-only

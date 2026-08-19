@@ -25,7 +25,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from logger import get_logger
 from studio.compute import DATA_BASIS_PREMIUM, DATA_BASIS_WITH_SURVEY
-from studio.template_fill import commentary, feedback, grids, gwp_page, kpi_band, lc_page, prune
+from studio.template_fill import (
+    commentary, commentary_qa, feedback, grids, gwp_page, kpi_band, lc_page, prune,
+)
 from studio.template_fill import roles as R
 from studio.template_fill.survey import facts as survey_facts
 from studio.template_fill.survey import kpi as survey_kpi
@@ -45,6 +47,7 @@ from studio.template_fill.bindings import (
     selected_products,
 )
 from studio.template_fill.fill import fill_template
+from studio.template_fill.ledger import ClaimLedger
 from studio.template_fill.merge import merge_to_file
 from studio.template_fill.model import _template_year
 
@@ -118,6 +121,21 @@ _PREMIUM_PROVIDERS = (grids.grid_values, gwp_page.values, lc_page.values,
                       feedback.values, commentary.values, survey_kpi.values)
 _SURVEY_PROVIDERS = (survey_page.values,)
 
+
+def _premium_providers(ledger, narratives=None):
+    """The premium providers with the deck's claim ledger bound into the two that write
+    prose, so a claim made on one page is not made again on the next.
+
+    The ledger is per-deck and threaded from :func:`assemble_deck` rather than kept in a
+    module global: two decks generated in the same process must not share a memory of
+    what has already been said.
+    """
+    return tuple(
+        {feedback.values: feedback.with_ledger(ledger),          # extras loaded per scope
+         commentary.values: commentary.with_ledger(ledger, narratives)}.get(provider, provider)
+        for provider in _PREMIUM_PROVIDERS
+    )
+
 # The fill-engine payloads more than one provider can write. Everything else a provider
 # returns is one role's own text and belongs to that provider alone; these are addressed by
 # SHAPE, so any page can contribute to them — and a plain dict update would let whichever
@@ -169,6 +187,9 @@ def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], la
         tyear = _template_year(template)
         if tyear is not None:
             values.setdefault("template_year", tyear)
+        # Report-only: the prose is already written and already faithful, and a judgement
+        # rule must never be allowed to delete a sentence (that is how a cell ends blank).
+        commentary_qa.log_issues(commentary_qa.check(values), label=label)
         hidden = tuple(prune.hidden_country_pages(template, _country_count(values)))
     except Exception as exc:  # noqa: BLE001 — grid/pruning must never break assembly
         logger.warning("assemble: grid/prune failed for %s: %s", template_name, exc)
@@ -223,18 +244,30 @@ def plan_subdecks(result, *, scope: Optional[str] = None,
         """Fold in the vocabulary the fill engine rewrites authored example names from."""
         return {**values, "carrier_vocab": carriers}
 
+    # One ledger for the whole deck, built here so it spans every sub-deck: the pages that
+    # repeated each other sit in DIFFERENT sub-decks (the overall block's highlights,
+    # trading summary and ranking pages all describe the same book), so a per-sub-deck
+    # memory would not have caught them.
+    # The narratives are collected across every sub-deck and checked ONCE at the end:
+    # "two slides doing the same job" is a whole-deck question, and the overall block's
+    # pages and a country block's pages can collide on it.
+    narratives: List[Any] = []
+    providers = _premium_providers(ClaimLedger(), narratives)
+
     decks: List[SubDeck] = []
     if OVERALL in axes and OVERALL in names:
         decks.append(_build_subdeck(OVERALL, result,
-                                    with_context(resolve_roles(result)), "overall"))
+                                    with_context(resolve_roles(result)), "overall",
+                                    providers=providers))
     for product in products:
         values = with_context(resolve_roles_for_product(result, product))
         values["product_vocab"] = vocab
-        decks.append(_build_subdeck(PRODUCT, scope_to_product(result, product), values, str(product)))
+        decks.append(_build_subdeck(PRODUCT, scope_to_product(result, product), values,
+                                    str(product), providers=providers))
     for country in countries:
         decks.append(_build_subdeck(COUNTRY, scope_to_country(result, country),
                                     with_context(resolve_roles_for_country(result, country)),
-                                    str(country)))
+                                    str(country), providers=providers))
         if want_survey and survey_facts.has_survey_data(result, country):
             decks.append(_build_subdeck(
                 SURVEY, scope_to_country(result, country),
@@ -244,6 +277,7 @@ def plan_subdecks(result, *, scope: Optional[str] = None,
                 providers=_SURVEY_PROVIDERS))
     if END in axes and END in names:
         decks.append(SubDeck(END, {}, label="end"))
+    commentary_qa.log_issues(commentary_qa.check_narratives(narratives), label="deck")
     return decks
 
 

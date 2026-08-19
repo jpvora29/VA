@@ -39,6 +39,39 @@ class SlideCommentary:
     def text(self) -> str:
         return " ".join(s.text for s in self.sentences)
 
+    def to_narrative(self, *, slide_role: str = ""):
+        """This slide's argument in the shared contract (:mod:`studio.narrative`).
+
+        The pipeline and the template-fill engine compose commentary differently and render
+        it differently; this is where they agree on WHAT a slide is claiming, so QA and any
+        review surface read one structure rather than two.
+
+        A slide the verifier emptied has no narrative — its data gap is the honest answer,
+        and inventing a claim to fill the contract would defeat the point of the gap.
+        """
+        from studio.narrative import Confidence, SlideNarrative
+
+        if not self.sentences:
+            return None
+        said = [s.text for s in self.sentences]
+        cited = tuple(dict.fromkeys(fid for s in self.sentences for fid in s.fact_ids))
+        # The recommendation is the drafter's own closing sentence when it opens with one of
+        # the contract's verbs; anything else is commentary, not an action.
+        from studio.narrative import ACTION_VERBS
+
+        action = next((t for t in reversed(said)
+                       if any(t.startswith(v) for v in ACTION_VERBS)), "")
+        body = [t for t in said if t != action]
+        return SlideNarrative(
+            slide_role=slide_role or self.purpose.replace("_", " "),
+            primary_claim=body[0] if body else said[0],
+            evidence_fact_ids=cited,
+            interpretation=body[1] if len(body) > 1 else "",
+            management_implication=body[2] if len(body) > 2 else "",
+            recommended_action=action,
+            confidence=Confidence.EVIDENCED if cited else Confidence.INFERRED,
+        )
+
 
 # ── deterministic drafting (the always-available author) ─────────────────────
 
@@ -83,12 +116,13 @@ def _why_it_matters(pack: EvidencePack, plan: SlideCommentaryPlan) -> Optional[C
     sows = _facts(pack, plan, "sow")
     if ranks and sows:
         return CommentarySentence(
-            f"That keeps {pack.subject} at {ranks[0].rendered} in the market with "
-            f"{sows[0].rendered} share of wallet.",
+            f"That keeps {pack.subject} at {ranks[0].rendered} within the Marsh book "
+            f"with {sows[0].rendered} share of wallet.",
             (ranks[0].fact_id, sows[0].fact_id))
     if ranks:
         return CommentarySentence(
-            f"{pack.subject} holds {ranks[0].rendered} in the market.", (ranks[0].fact_id,))
+            f"{pack.subject} holds {ranks[0].rendered} within the Marsh book.",
+            (ranks[0].fact_id,))
     if sows:
         return CommentarySentence(
             f"{pack.subject}'s share of wallet stands at {sows[0].rendered}.",
@@ -124,15 +158,25 @@ def _drivers(pack: EvidencePack, plan: SlideCommentaryPlan) -> Optional[Commenta
 
 
 def _watch_next(pack: EvidencePack, plan: SlideCommentaryPlan) -> Optional[CommentarySentence]:
+    """The largest gap, and the action its evidence earns — no stronger a verb.
+
+    A ``whitespace_market`` fact says premium was placed with somebody else. It does not
+    say the carrier could have written it, so the recommendation stops at validating
+    appetite and capacity (:mod:`studio.opportunity`); "enter" needs an input the premium
+    book does not hold.
+    """
+    from studio.opportunity import action_for, level_from_premium_only, qualifier_for
+
     if not plan.contract.allow_recommendations:
         return None
     ws = sorted(_facts(pack, plan, "whitespace_market"), key=lambda i: -i.value)
     if not ws:
         return None
     entity = next((str(v) for v in ws[0].dims.values()), "the largest gap")
+    level = level_from_premium_only()
     return CommentarySentence(
-        f"Leaders should watch {entity} — {ws[0].rendered} of market premium "
-        f"currently unwritten.",
+        f"{action_for(level)} {entity}: {ws[0].rendered} of Marsh premium is placed with "
+        f"other carriers, and {qualifier_for(level)}.",
         (ws[0].fact_id,))
 
 

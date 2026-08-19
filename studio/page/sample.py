@@ -124,7 +124,7 @@ def build_overall_demo() -> Any:
             {"label": "Momentum.", "text": "Cyber (+58.4%) and Financial Lines (+33.6%) drove growth; both clear the significance floor.", "tone": "good"},
             {"label": "Soft spots.", "text": "Marine (-6.2%) and Mining & Metals (-14.3%) declined against a flat-to-up market.", "tone": "danger"},
             {"label": "Penetration.", "text": "Share of wallet is strongest in Financial Services (22.7%) and weakest in Education (0.8%).", "tone": "neutral"},
-            {"label": "Opportunity.", "text": "Renewable Energy, Pharmaceuticals and Aviation are written by the market (> $5M each) but not by Zurich — $68.6M of whitespace.", "tone": "warn"},
+            {"label": "Opportunity.", "text": "Renewable Energy, Pharmaceuticals and Aviation are placed with other carriers (> $5M each) rather than Zurich — $68.6M of Marsh premium the account does not write.", "tone": "warn"},
         ],
         actions=[
             "Defend Marine renewals; review pricing against the -6.2% slide.",

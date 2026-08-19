@@ -52,6 +52,12 @@ def build_layout() -> html.Div:
             # itself lives server-side in the dataset repository, so it survives
             # restarts without the stale-temp-file failure mode.
             dcc.Store(id="qs-dataset", data=None, storage_type="local"),
+            # A digest of the option list each Setup dropdown is currently showing, so a
+            # cascade re-sends only the lists that actually changed. Most filter changes move
+            # two or three of the ten; shipping and re-rendering all ten every time is the
+            # cost that grows with the vocabulary (see ``studio.authoring.setup``). Session
+            # storage: it describes what is on screen, not the user's work.
+            dcc.Store(id="qs-filter-sig", data=None, storage_type="memory"),
             dcc.Download(id="studio-pptx-download"),
             # Hidden sink: the canvas JS writes select/move/resize actions here.
             dcc.Input(id="qs-cv-sink", style={"display": "none"}),

@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from logger import get_logger
 from studio.template_fill.model import materialize_fields
@@ -322,11 +322,35 @@ def _drop(pPr, *tags: str) -> None:
             pPr.remove(el)
 
 
-def _set_bullet(paragraph, *, bulleted: bool) -> None:
-    """Give ``paragraph`` a visible bullet, or explicitly none.
+def box_bullet(paragraphs) -> Tuple[str, str]:
+    """The ONE bullet a commentary box uses — ``(font, char)``.
 
-    Any bullet the author chose is left exactly as it is — only a paragraph with no bullet
-    (or an explicit ``<a:buNone>``) gets the default one, so the deck keeps its own look.
+    The author's own where any of their paragraphs sets one explicitly, the standard one
+    otherwise. Read once for the whole box and applied to every point, because a template
+    typically marks only its FIRST paragraph explicitly and lets the rest inherit: styling
+    each paragraph on its own then gave the first the author's Wingdings and the rest the
+    default dot, which surfaces the moment a column carries more points than the author drew.
+    """
+    from pptx.oxml.ns import qn
+
+    for paragraph in paragraphs:
+        pPr = paragraph._p.find(qn("a:pPr"))
+        if pPr is None:
+            continue
+        char = pPr.find(qn("a:buChar"))
+        if char is not None and char.get("char"):
+            font = pPr.find(qn("a:buFont"))
+            typeface = font.get("typeface") if font is not None else _DEFAULT_BULLET_FONT
+            return (typeface or _DEFAULT_BULLET_FONT, char.get("char"))
+    return (_DEFAULT_BULLET_FONT, _DEFAULT_BULLET_CHAR)
+
+
+def _set_bullet(paragraph, *, bulleted: bool, bullet=None) -> None:
+    """Give ``paragraph`` the box's bullet, or explicitly none.
+
+    ``bullet`` is the ``(font, char)`` :func:`box_bullet` chose for the whole box, so every
+    point in it carries the same marker. Indent is imposed only where the paragraph had no
+    bullet of its own — an authored list keeps the author's own spacing.
     """
     from pptx.oxml.ns import qn
 
@@ -337,16 +361,22 @@ def _set_bullet(paragraph, *, bulleted: bool) -> None:
             pPr.insert_element_before(pPr.makeelement(qn("a:buNone"), {}), *_AFTER_BU_CHAR)
         return
 
-    if pPr.find(qn("a:buChar")) is not None or pPr.find(qn("a:buAutoNum")) is not None:
-        return                                      # the author already bulleted this box
-    _drop(pPr, "a:buNone", "a:buFontTx")
-    if pPr.find(qn("a:buFont")) is None:
-        font = pPr.makeelement(qn("a:buFont"), {"typeface": _DEFAULT_BULLET_FONT})
+    if pPr.find(qn("a:buAutoNum")) is not None:
+        return                                      # an authored numbered list stays numbered
+    had_own = pPr.find(qn("a:buChar")) is not None
+    typeface, glyph = bullet or (_DEFAULT_BULLET_FONT, _DEFAULT_BULLET_CHAR)
+    _drop(pPr, "a:buNone", "a:buFontTx", "a:buChar")
+    existing_font = pPr.find(qn("a:buFont"))
+    if existing_font is None:
+        font = pPr.makeelement(qn("a:buFont"), {"typeface": typeface})
         pPr.insert_element_before(font, *_AFTER_BU_FONT)
-    char = pPr.makeelement(qn("a:buChar"), {"char": _DEFAULT_BULLET_CHAR})
+    else:
+        existing_font.set("typeface", typeface)
+    char = pPr.makeelement(qn("a:buChar"), {"char": glyph})
     pPr.insert_element_before(char, *_AFTER_BU_CHAR)
-    pPr.set("marL", str(_BULLET_INDENT_EMU))
-    pPr.set("indent", str(-_BULLET_INDENT_EMU))
+    if not had_own:
+        pPr.set("marL", str(_BULLET_INDENT_EMU))
+        pPr.set("indent", str(-_BULLET_INDENT_EMU))
 
 
 def _commentary_frame(shape, where: List[Any]):
@@ -375,6 +405,9 @@ def _write_bullets(frame, text: str, *, template_paragraph=None, ink=None) -> No
     lines = [ln for ln in str(text).split("\n")]
     paras = list(frame.paragraphs)
     source = template_paragraph if template_paragraph is not None else (paras[0] if paras else None)
+    # Read the box's marker BEFORE any paragraph is rewritten, from the authored
+    # paragraphs plus the clone source — whichever of them the author actually marked.
+    bullet = box_bullet(([source] if source is not None else []) + paras)
 
     for i, line in enumerate(lines):
         if i < len(paras):
@@ -386,7 +419,7 @@ def _write_bullets(frame, text: str, *, template_paragraph=None, ink=None) -> No
         else:
             target = frame.add_paragraph()
         _set_paragraph_text(target, line)
-        _set_bullet(target, bulleted=not _HEADING_LINE.search(line))
+        _set_bullet(target, bulleted=not _HEADING_LINE.search(line), bullet=bullet)
 
     for extra in paras[len(lines):]:
         extra._p.getparent().remove(extra._p)

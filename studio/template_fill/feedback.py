@@ -515,8 +515,9 @@ def _working_points(f: Dict[str, Any]) -> List[str]:
         parts.append(f"The increase was led by {risers}, out of a total book movement of "
                      f"{_money(c['delta'])}.")
     if (r.get("delta") or 0) > 0:
-        parts.append(f"Market rank improved {_places(int(r['delta']))} to {_rank_of(r)}, and "
-                     f"that came at competitors' expense rather than from a growing pool.")
+        parts.append(f"Rank within the Marsh book improved {_places(int(r['delta']))} to "
+                     f"{_rank_of(r)}, and that came at competitors' expense rather than "
+                     f"from a growing pool.")
     if (s.get("delta") or 0) > 0:
         line = f"Share of wallet rose {abs(s['delta']):.1f}pp to {s['current']:.1f}%"
         peer_sow = (f.get("peer") or {}).get("sow")
@@ -547,7 +548,8 @@ def _challenges_points(f: Dict[str, Any]) -> List[str]:
             line += f", while the wider Marsh book {_moved(m['pct'])}, so this is lost share"
         parts.append(line + ".")
     if (r.get("delta") or 0) < 0:
-        parts.append(f"Market rank slipped {_places(int(r['delta']))} to {_rank_of(r)}.")
+        parts.append(f"Rank within the Marsh book slipped {_places(int(r['delta']))} to "
+                     f"{_rank_of(r)}.")
     if (s.get("delta") or 0) < 0:
         parts.append(f"Share of wallet fell {abs(s['delta']):.1f}pp to {s['current']:.1f}%.")
     if (c.get("pct") is not None) and (m.get("pct") is not None) and m["pct"] > c["pct"] \
@@ -623,10 +625,20 @@ def _capture_gap(f: Dict[str, Any]) -> Optional[str]:
 
 
 def _key_messages_points(f: Dict[str, Any]) -> List[str]:
-    """Key messages: the four lines the account team should be able to say from memory."""
+    """Key messages: the four lines the account team should be able to say from memory.
+
+    Opens on the STANCE (:mod:`studio.template_fill.stance`) rather than on a premium
+    total: what the team needs to carry out of the room is what to do about this book, and
+    the figures behind that call follow in the lines beneath it.
+    """
+    from studio.template_fill.stance import book_posture_point
+
     c, r, s, peer = f["carrier"], f["rank"], f["sow"], f.get("peer") or {}
     m = f.get("marsh") or {}
     parts: List[str] = []
+    stance = book_posture_point(f)
+    if stance:
+        parts.append(stance)
     if c.get("current") is not None:
         year = f" in {int(c['current_year'])}" if c.get("current_year") else ""
         yoy = f", {_up_down(c['pct'])} on the year," if c.get("pct") is not None else ""
@@ -658,11 +670,137 @@ def _key_messages_points(f: Dict[str, Any]) -> List[str]:
     return parts
 
 
+def _thesis_points(f: Dict[str, Any]) -> List[str]:
+    """The portfolio thesis: the one tension the rest of the deck exists to discuss.
+
+    Every other column reports a part of the book. The summary page's job is different — it
+    states where the account STANDS, as a single claim a leadership team can agree or argue
+    with, and the tension in it is what the following pages then evidence. So this is a
+    synthesis of two facts that are usually reported apart: how the book is growing against
+    the Marsh pool, and how well it is penetrated against the peer benchmark. A book can be
+    winning one and losing the other, and that gap is the thesis.
+    """
+    c, m = f.get("carrier") or {}, f.get("marsh") or {}
+    s_, peer = f.get("sow") or {}, f.get("peer") or {}
+    if c.get("current") is None or c.get("pct") is None or m.get("pct") is None:
+        return []
+    share, peer_share = s_.get("current"), peer.get("sow")
+    outgrowing = c["pct"] > m["pct"]
+    lead = (f"{_subject(f, opening=True)} grew {_mag(c['pct'])} to {_money(c['current'])} "
+            f"against a Marsh book that {_moved(m['pct'])}")
+    if share is None or peer_share is None:
+        tail = (", so the book is taking share" if outgrowing
+                else ", so the book is giving share back")
+        return [lead + tail + "."]
+    behind = peer_share - share
+    if outgrowing and behind > 0:
+        # The common shape, and the one worth arguing about: winning the year, still
+        # under-represented on the book that matters.
+        return [f"{lead}, but at {share:.1f}% of the wallet it is still "
+                f"{behind:.1f}pp behind the top-5 peer average of {peer_share:.1f}% — the "
+                f"growth is real and the relevance is not yet."]
+    if outgrowing:
+        return [f"{lead}, and at {share:.1f}% of the wallet it already writes above the "
+                f"top-5 peer average of {peer_share:.1f}% — the question is holding that, "
+                f"not winning it."]
+    if behind > 0:
+        return [f"{lead}, and at {share:.1f}% of the wallet it sits {behind:.1f}pp behind "
+                f"the top-5 peer average of {peer_share:.1f}% — the book is losing ground "
+                f"from a position already behind its peers."]
+    return [f"{lead}, though at {share:.1f}% of the wallet it still writes above the "
+            f"top-5 peer average of {peer_share:.1f}% — a strong position growing slower "
+            f"than the book around it."]
+
+
 def _highlights_points(f: Dict[str, Any]) -> List[str]:
     """The one-cell "Key Highlights:" table — its heading line, then one point per theme."""
-    themes = (_working_points(f), _challenges_points(f), _growth_points(f))
-    points = [t[0] for t in themes if t]
-    return ["Key Highlights:"] + points if points else []
+    themes = (points("working", f), points("challenges", f), points("growth", f))
+    leads = [t[0] for t in themes if t]
+    return ["Key Highlights:"] + leads if leads else []
+
+
+# ── fallbacks: a commentary cell must never ship blank ───────────────────────
+# Each composer answers its question only from the figures that support it, so a book with
+# nothing negative to report leaves "What's not" empty — and a blank column on a carrier's
+# page reads as an oversight rather than as an absence of bad news. A fallback answers the
+# SAME question from the position the book actually holds. None of them invents a negative
+# or softens one: every fallback still carries the figure it is built on, and a book with a
+# real challenge never reaches them, because the primary composer already spoke.
+
+
+def _recent_gain(f: Dict[str, Any]) -> Optional[str]:
+    """A share position won inside one year is new rather than established.
+
+    The distinct thing to say about a book with no bad news: how much of its standing is
+    one year old. Both figures are the share facts already on the page, but the claim —
+    that the position is young — is one no other column makes.
+    """
+    s = f.get("sow") or {}
+    cur, delta = s.get("current"), s.get("delta")
+    if cur is None or delta is None or delta <= 0:
+        return None
+    return (f"{delta:.1f}pp of the {cur:.1f}% share was won in the last year alone, so the "
+            f"position is newly held rather than established.")
+
+
+def _defending_lead(f: Dict[str, Any]) -> Optional[str]:
+    """Above the peer benchmark, the exposure is holding the lead, not closing a gap."""
+    mine = (f.get("sow") or {}).get("current")
+    theirs = (f.get("peer") or {}).get("sow")
+    if mine is None or theirs is None or mine <= theirs:
+        return None
+    return (f"At {mine:.1f}% share of wallet the book sits {mine - theirs:.1f}pp above the "
+            f"top-5 peer average of {theirs:.1f}%, so the task here is defending a lead "
+            f"rather than closing a gap.")
+
+
+def _unplaced_headroom(f: Dict[str, Any]) -> Optional[str]:
+    """Even a leading book leaves most of the Marsh pool with other carriers."""
+    c, m = f.get("carrier") or {}, f.get("marsh") or {}
+    if c.get("current") is None or not m.get("current"):
+        return None
+    headroom = m["current"] - c["current"]
+    if headroom <= 0:
+        return None
+    return (f"{_money(headroom)} of the {_money(m['current'])} Marsh book is still placed "
+            f"with other carriers.")
+
+
+def _marsh_demand(f: Dict[str, Any]) -> Optional[str]:
+    """Where the pool itself is growing, the pool is the opportunity."""
+    m = f.get("marsh") or {}
+    if m.get("pct") is None or m["pct"] <= 0 or not m.get("current"):
+        return None
+    return (f"Marsh demand grew {_mag(m['pct'])} year on year to {_money(m['current'])}, so "
+            f"the pool to win from is getting larger.")
+
+
+def _book_held(f: Dict[str, Any]) -> Optional[str]:
+    """The last thing that is always true: the size of the book itself."""
+    c = f.get("carrier") or {}
+    if c.get("current") is None:
+        return None
+    return f"{_subject(f, opening=True)} holds {_money(c['current'])} of Marsh premium here."
+
+
+# Kind → the fallbacks to try, in order, when its composer produced nothing.
+_FALLBACKS: Dict[str, Tuple[Callable[[Dict[str, Any]], Optional[str]], ...]] = {
+    "working": (_book_held,),
+    "challenges": (_recent_gain, _defending_lead, _unplaced_headroom, _book_held),
+    "growth": (_unplaced_headroom, _marsh_demand, _book_held),
+    "key_messages": (_book_held,),
+    "thesis": (_book_held,),
+    "highlights": (),
+}
+
+
+def _fallback_points(kind: str, f: Dict[str, Any]) -> List[str]:
+    """The first fallback for ``kind`` that its figures can carry, as a one-point list."""
+    for build in _FALLBACKS.get(kind, ()):
+        line = build(f)
+        if line:
+            return [line]
+    return []
 
 
 _COMPOSERS: Dict[str, Callable[[Dict[str, Any]], List[str]]] = {
@@ -670,6 +808,7 @@ _COMPOSERS: Dict[str, Callable[[Dict[str, Any]], List[str]]] = {
     "challenges": _challenges_points,
     "growth": _growth_points,
     "key_messages": _key_messages_points,
+    "thesis": _thesis_points,
     "highlights": _highlights_points,
 }
 
@@ -677,12 +816,17 @@ _COMPOSERS: Dict[str, Callable[[Dict[str, Any]], List[str]]] = {
 def points(kind: str, f: Dict[str, Any]) -> List[str]:
     """The sentences a panel of ``kind`` is built from — ``[]`` for a KPI callout.
 
+    Falls back to :func:`_fallback_points` when the composer's own question has no figures
+    behind it, so a commentary cell is never rendered blank.
+
     Public because the summary page's prose columns ask the same questions of the same
     facts as these panels do (:mod:`studio.template_fill.commentary`), and the deck should
     answer them in one voice rather than two.
     """
     composer = _COMPOSERS.get(kind)
-    return list(composer(f)) if composer else []
+    if composer is None:
+        return []
+    return list(composer(f)) or _fallback_points(kind, f)
 
 
 def facts_for(result) -> Dict[str, Any]:
@@ -690,10 +834,22 @@ def facts_for(result) -> Dict[str, Any]:
     return _facts(result, _reporting_filters(result))
 
 
-def _compose(kind: str, f: Dict[str, Any], limit: int) -> str:
-    """One commentary cell's bullet list — the composer's points, trimmed to ``limit``."""
-    composer = _COMPOSERS.get(kind)
-    return _bullets(composer(f), limit) if composer else _kpi_cell(kind, f)
+def _compose(kind: str, f: Dict[str, Any], limit: int, ledger=None, extras=None) -> str:
+    """One commentary cell's bullet list — the composer's points, trimmed to ``limit``.
+
+    Goes through :func:`points` rather than the composer directly, so a cell whose own
+    question has no figures behind it still ships its fallback instead of a blank. With a
+    :class:`~studio.template_fill.ledger.ClaimLedger` the points are taken through it, so a
+    claim an earlier page already made gives way to this page's next-best one.
+    """
+    if kind not in _COMPOSERS:
+        return _kpi_cell(kind, f)
+    said = points(kind, f)
+    if extras is not None:
+        said = said + [line for line in extras.for_topic(kind) if line not in said]
+    if ledger is not None:
+        said = ledger.take(said, limit=limit)
+    return _bullets(said, limit)
 
 
 # ── value resolution ─────────────────────────────────────────────────────────
@@ -722,7 +878,28 @@ def _polish(text: str, kind: str, style: Optional[str]) -> str:
     return polish(text, node=f"feedback-{kind}", style=style)
 
 
-def values(template: Template, result) -> Dict[str, Any]:
+def _extras(result):
+    """This run's portfolio lines — empty for a single-product scope, so a product page
+    never describes a portfolio it is only one line of."""
+    from studio.template_fill.stance import portfolio_extras
+
+    return portfolio_extras(result)
+
+
+def with_ledger(ledger, extras=None):
+    """This provider bound to a deck's :class:`~studio.template_fill.ledger.ClaimLedger`.
+
+    The provider list is uniform ``(template, result)`` callables, so the per-deck ledger
+    is injected here rather than threaded through every provider's signature.
+    """
+    def provider(template: Template, result) -> Dict[str, Any]:
+        return values(template, result, ledger=ledger, extras=extras)
+
+    provider.__module__ = __name__
+    return provider
+
+
+def values(template: Template, result, *, ledger=None, extras=None) -> Dict[str, Any]:
     """``{fb-role: text}`` for every detected table cell, scoped per country row.
 
     Feedback-table rows are scoped to their ``Country (n)`` (within the sub-deck's own
@@ -762,7 +939,8 @@ def values(template: Template, result) -> Dict[str, Any]:
             limit = _CELL_BULLETS if ordn is not None else _PANEL_BULLETS
             if t["kind"] == "highlights":
                 limit = _HIGHLIGHT_BULLETS
-            text = _compose(t["kind"], facts_for(country), limit)
+            text = _compose(t["kind"], facts_for(country), limit, ledger,
+                            extras if extras is not None else _extras(result))
             text_cache[key] = _polish(text, t["kind"], style)
         # KPI callouts always write (a blank beats a stale "$xx.xM" placeholder);
         # an empty commentary keeps the template's ellipsis as a visible fill-me cue.

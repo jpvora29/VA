@@ -99,9 +99,9 @@ def _scoped_results(monkeypatch, result):
     seen = {}
     build = A._build_subdeck
 
-    def capture(template_name, scoped_result, values, label):
+    def capture(template_name, scoped_result, values, label, **kw):
         seen[label] = scoped_result
-        return build(template_name, scoped_result, values, label)
+        return build(template_name, scoped_result, values, label, **kw)
 
     monkeypatch.setattr(A, "_build_subdeck", capture)
     A.plan_subdecks(result)

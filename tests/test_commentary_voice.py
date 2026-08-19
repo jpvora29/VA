@@ -83,7 +83,9 @@ def test_an_immaterial_movement_is_not_named_as_a_finding():
                                     {"name": "Casualty", "delta": -145e3, "pct": -0.4}]}
     text = " ".join(F.points("working", noise))
     assert "Cyber" in text and "Casualty" not in text
-    assert not F.points("challenges", noise), "an immaterial faller is not a challenge"
+    # The challenges column still says something (no cell ships blank), but what it says is
+    # the position's own standing — never the $145K faller dressed up as a finding.
+    assert "Casualty" not in " ".join(F.points("challenges", noise))
 
 
 def test_named_movers_are_joined_so_the_pair_cannot_blur():
@@ -104,7 +106,9 @@ def test_the_carrier_is_named_where_the_facts_carry_its_name():
 
 def test_the_peer_average_benchmarks_the_share_not_the_rank():
     # A top-5 peer SHARE average says nothing about a rank, so it must never hang off one.
-    line = next(p for p in F.points("key_messages", _GROWING) if "ranks " in p)
+    # Selected on the WALLET clause: the stance line that now opens the column mentions the
+    # rank too, and this rule is about the sentence that carries the benchmark.
+    line = next(p for p in F.points("key_messages", _GROWING) if "of the wallet" in p)
     assert "ranks #2 of 12 and holds 11.6% of the wallet" in line
     assert line.index("top-5 peer average") > line.index("of the wallet")
 

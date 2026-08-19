@@ -19,7 +19,7 @@ produces the keyed text — both fold into the same doc the preview and fill con
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from logger import get_logger
 from studio.template_fill import roles as R
@@ -130,8 +130,8 @@ def _column_topic(slide: Slide, shape: Shape) -> str:
 # A prose box whose column header names no known topic falls back to its SECTION's topic:
 # a highlights/summary page wants the headline, a four-column page its key messages.
 _SECTION_DEFAULT_TOPIC: Dict[Section, str] = {
-    Section.HIGHLIGHTS: "reflections",
-    Section.SUMMARY: "reflections",
+    Section.HIGHLIGHTS: "thesis",
+    Section.SUMMARY: "thesis",
 }
 
 _HEADER_TOPICS: Tuple[Tuple[Tuple[str, ...], str], ...] = (
@@ -301,6 +301,9 @@ def _polish(text: str, *, node: str, style: Optional[str] = None) -> str:
 # (:func:`studio.template_fill.feedback.points`). One voice across the deck, and every
 # sentence already carries the figure behind it.
 _TOPIC_PANELS: Dict[str, Tuple[Tuple[str, int], ...]] = {
+    # The summary page states the thesis and then the movement behind it; every other page
+    # reports a part of the book. One page in a deck should say where the account stands.
+    "thesis": (("thesis", 1), ("working", 1)),
     "reflections": (("working", 1), ("challenges", 1), ("growth", 1)),
     "performance": (("working", 2), ("challenges", 2)),
     "priorities": (("growth", 3),),
@@ -382,11 +385,117 @@ def bullet_list(points: List[str]) -> str:
     return "\n".join(p.strip() for p in points if p and p.strip())
 
 
-def values(template: Template, result) -> Dict[str, Any]:
+def with_ledger(ledger, narratives: Optional[List[Any]] = None):
+    """This provider bound to a deck's claim ledger and narrative collector.
+
+    The provider list is uniform ``(template, result)`` callables, so the per-deck ledger
+    (:class:`~studio.template_fill.ledger.ClaimLedger`) and the list each page's
+    :class:`~studio.narrative.SlideNarrative` is appended to are injected here rather than
+    threaded through every provider's signature.
+    """
+    def provider(template: Template, result) -> Dict[str, Any]:
+        return values(template, result, ledger=ledger, narratives=narratives)
+
+    provider.__module__ = __name__
+    return provider
+
+
+def _page_narratives(targets: List[Dict[str, Any]], result, facts: Dict[str, Any]) -> List[Any]:
+    """One :class:`~studio.narrative.SlideNarrative` per prose-bearing PAGE.
+
+    Built from the FACTS rather than parsed back out of the rendered prose: the contract
+    describes the argument a page is making, and re-reading sentences to recover it would
+    be both lossy and one more thing to keep in step with the composers.
+
+    A page's job comes from its FIRST column's topic — the leftmost column is the one the
+    page leads on — which is what makes two pages doing the same job visible to QA.
+    """
+    from studio.template_fill.stance import narrative_for
+
+    if not facts:
+        return []
+    primary: Dict[int, str] = {}
+    for t in targets:                       # targets arrive in slide/reading order
+        primary.setdefault(t["slide_idx"], t["topic"])
+    name = str(getattr(result, "subject", "") or "")
+    out = []
+    for topic in primary.values():
+        narrative = narrative_for(facts, topic, name=name,
+                                  said=_topic_points(result, topic, facts))
+        if narrative is not None:
+            out.append(narrative)
+    return out
+
+
+# The topic whose column is about what to DO — where a portfolio stance belongs.
+_STANCE_TOPIC = "priorities"
+
+# What a prose column can hold before it stops being read. The extras below deliberately
+# offer MORE candidates than this — the ledger picks the first that are still unsaid, so a
+# column whose leading claims were spoken for on an earlier page still fills up here.
+_MAX_COLUMN_BULLETS = 4
+
+
+def _with_portfolio_stance(said: List[str], topic: str, result, extras=None) -> List[str]:
+    """A column opened on the portfolio's stance and DEEPENED with its own extra claims.
+
+    Two jobs, because they are two halves of one idea. The priorities column opens on the
+    management call over the whole book — what an executive summary is for, rather than
+    each product's growth rate restated in turn. And every overall column is then given
+    the portfolio lines only IT can make (per-product stances, the shape of the book,
+    where it is deep and thin).
+
+    The extras matter as much as the stance: the claim ledger keeps a claim off a second
+    page, so a deck drawing on a small pool leaves its later columns thin. The answer is a
+    BIGGER pool of distinct claims, not a looser ledger — these are appended after the
+    column's own points, so they are reached exactly when the leading claims are spoken
+    for, and a column ends up full rather than down to one line.
+    """
+    from studio.template_fill.stance import portfolio_posture_point
+
+    out = list(said)
+    if topic == _STANCE_TOPIC:
+        stance = portfolio_posture_point(result)
+        if stance:
+            out = [stance] + out
+    if extras is not None:
+        out += [line for line in extras.for_topic(topic) if line not in out]
+    return out
+
+
+def _portfolio_extras(result):
+    """The run's extra portfolio claims, loaded ONCE for every column that draws on them."""
+    from studio.template_fill.stance import portfolio_extras
+
+    return portfolio_extras(result)
+
+
+def _survey_pointer(template: Template, result) -> Tuple[Set[int], str]:
+    """``({slide indices that carry the survey score tile}, the survey sentence)``.
+
+    The line goes on the page that REPORTS the score, found the same way the tile itself is
+    — by its caption — so it follows the tile if the author moves it, and a template with no
+    tile (the product and country decks) gets no line. Empty on a premium-basis run.
+    """
+    from studio.template_fill.survey import kpi, pointer
+
+    tiles = kpi.tiles(template)
+    if not tiles:
+        return set(), ""
+    line = pointer.overall_point(result) or ""
+    return {int(t.split(":", 1)[0]) for t in tiles}, line
+
+
+def values(template: Template, result, *, ledger=None,
+           narratives: Optional[List[Any]] = None) -> Dict[str, Any]:
     """``{note-role: bullet list}`` for every commentary prose box in the deck.
 
     Each value is newline-separated — one bullet per line; the fill engine turns each line
     into its own bulleted paragraph.
+
+    With a ledger, each column takes its points through it: the highlights page, the
+    trading summary and the ranking page all describe the same book and each composed the
+    same opening sentence, so without one claim landed on four slides.
     """
     out: Dict[str, Any] = {}
     targets = _prose_targets(template)
@@ -394,17 +503,40 @@ def values(template: Template, result) -> Dict[str, Any]:
         return out
     style = getattr(result, "style", "balanced")
     facts = panel_facts(result)                 # loaded once; every topic reads the same book
-    cache: Dict[str, str] = {}
+    survey_slides, survey_line = _survey_pointer(template, result)
+    extras = _portfolio_extras(result)
+    # Keyed by TOPIC, not by topic-and-slide. A topic heading a column on two pages is the
+    # template asking the same question twice, and answering it twice from one shrinking
+    # pool of claims is worse than answering it once: measured over the shipped templates,
+    # splitting the cache per slide raised repeated sentences rather than lowering them,
+    # because each new consumer drained the pool until the ledger's keep-one floor had to
+    # repeat a claim. One answer per question, and the ledger keeps it off other pages.
+    #
+    # The ONE exception is the survey line, which belongs to a page rather than a topic —
+    # so the key carries whether this column is the one that gets it.
+    cache: Dict[Tuple[str, bool], str] = {}
     for t in targets:
         topic = t["topic"]
-        if topic not in cache:
+        wants_survey = bool(survey_line) and t["slide_idx"] in survey_slides
+        key = (topic, wants_survey)
+        if key not in cache:
             try:
-                base = bullet_list(_topic_points(result, topic, facts))
-                cache[topic] = _polish(base, node=f"commentary-{topic}", style=style) if base else ""
+                said = _topic_points(result, topic, facts)
+                said = _with_portfolio_stance(said, topic, result, extras)
+                if wants_survey:
+                    said = list(said) + [survey_line]
+                if ledger is not None:
+                    said = ledger.take(said, limit=min(len(said), _MAX_COLUMN_BULLETS))
+                else:
+                    said = said[:_MAX_COLUMN_BULLETS]
+                base = bullet_list(said)
+                cache[key] = _polish(base, node=f"commentary-{topic}", style=style) if base else ""
             except Exception as exc:  # noqa: BLE001 — commentary must never break the doc
                 logger.warning("commentary: topic %s failed: %s", topic, exc)
-                cache[topic] = ""
-        if cache[topic]:
-            out[_role(t["slide_idx"], t["shape_id"])] = cache[topic]
+                cache[key] = ""
+        if cache[key]:
+            out[_role(t["slide_idx"], t["shape_id"])] = cache[key]
+    if narratives is not None:
+        narratives.extend(_page_narratives(targets, result, facts))
     logger.info("commentary: filled %d prose box(es) across %d topic(s)", len(out), len(cache))
     return out
