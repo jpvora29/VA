@@ -138,7 +138,8 @@ def _draft(n: int) -> str:
 
 
 def test_a_rewrite_that_keeps_the_bullets_whole_is_accepted():
-    lines = ["The account grew its book 12.0%.", "Share of wallet rose 1.0pp."]
+    lines = ["The account grew its book 12.0%.",
+             "One point of wallet share came back, worth 1.0pp."]
     assert CM._accept(lines, wanted=2, node="t") == "\n".join(lines)
 
 
@@ -155,7 +156,89 @@ def test_a_rewrite_that_reads_as_generated_is_refused():
                       wanted=1, node="t") is None
 
 
-def test_the_polish_verifies_each_bullet_rather_than_the_whole_blob(monkeypatch):
+# ── the model may now EDIT, not just re-word ─────────────────────────────────
+#
+# The old contract was "return exactly the same number of lines", which left the model
+# nothing to do but swap adjectives — and threw away any rewrite that came back a line
+# short because the verifier had dropped an unfaithful bullet. Folding two thin claims into
+# one sentence is the single most consultant-like move available, so one merge is allowed.
+
+
+def test_one_merged_bullet_is_allowed():
+    lines = ["The book grew 12.0% while wallet share came back 1.0pp.",
+             "Cyber carried the gain.", "Marine gave premium back."]
+    assert CM._accept(lines, wanted=4, node="t") == "\n".join(lines)
+
+
+def test_two_merges_are_not_an_edit_but_a_different_page():
+    assert CM._accept(["The book grew 12.0%.", "Cyber carried it."],
+                      wanted=4, node="t") is None
+
+
+def test_a_short_column_is_never_halved():
+    """One merge on a two-bullet column would leave a single line — not an edit."""
+    assert CM.min_lines(4) == 3 and CM.min_lines(3) == 2
+    assert CM.min_lines(2) == 2 and CM.min_lines(1) == 1
+
+
+# ── the roll-call is refused ─────────────────────────────────────────────────
+
+
+def test_a_rewrite_that_names_the_carrier_on_every_line_is_refused():
+    """"Zurich wrote …", "Zurich ranks …" is the loudest generated-text tell there is."""
+    lines = ["Zurich grew its book 12.0% on the year.",
+             "Zurich ranks 2nd and holds 11.6% of the wallet."]
+    assert CM._accept(lines, wanted=2, node="t", subject="Zurich") is None
+
+
+def test_naming_the_carrier_once_is_how_a_column_introduces_itself():
+    lines = ["Zurich grew its book 12.0% on the year.",
+             "The book ranks 2nd and holds 11.6% of the wallet."]
+    assert CM._accept(lines, wanted=2, node="t", subject="Zurich") == "\n".join(lines)
+
+
+def test_a_rewrite_that_leaves_a_metric_read_out_is_refused():
+    """A measure and a value with a full stop on the end is a table row, not a sentence."""
+    assert CM._accept(["Rank within the Marsh book improved 4 places to 2nd."],
+                      wanted=1, node="t") is None
+    assert CM._accept(["Share of wallet rose 3.2pp to 11.6%."], wanted=1, node="t") is None
+
+
+def test_a_measure_that_says_why_or_so_what_is_kept():
+    """The gate targets read-outs, not measures. A gate on the OPENING alone refused good
+    rewrites too — and a refused rewrite sends the page back to the very draft we are
+    trying to improve on."""
+    earned = ["Momentum sits with Cyber, up $22M, so the renewal book there is what to "
+              "protect first."]
+    assert CM._accept(earned, wanted=1, node="t") == earned[0]
+
+
+def test_the_prompt_tells_the_model_the_rule_it_is_held_to():
+    """A gate the prompt never mentions just costs a call and falls back to the draft."""
+    system = CM._style_system("balanced", topic="challenges", wanted=4, subject="Zurich")
+    assert "Zurich" in system and "the book" in system
+    assert "bare measure and a value" in system
+    assert "merge two bullets" in system                  # the structural permission
+    assert "THIS COLUMN" in system and "MECHANISM" in system   # the column's own brief
+
+
+def test_every_column_is_briefed_differently():
+    """Key Messages and Challenges draw on the SAME six figures — without separate briefs
+    the model has no reason to write them apart, which is why they read alike."""
+    briefs = {t: CM._TOPIC_BRIEF[t] for t in ("key_messages", "challenges", "priorities",
+                                              "thesis", "performance", "reflections")}
+    assert len(set(briefs.values())) == len(briefs)
+    for topic, brief in briefs.items():
+        assert CM._style_system("balanced", topic=topic, wanted=3).count(brief) == 1
+
+
+def test_commentary_does_not_run_on_the_mechanical_tier():
+    """`fast` is the tier core.initialization reserves for inner-loop nodes; the commentary
+    IS the deliverable."""
+    assert CM._COMMENTARY_TIER == "balanced"
+
+
+def test_the_rewrite_verifies_each_bullet_rather_than_the_whole_blob(monkeypatch):
     """The whole-text verifier joins the sentences it keeps with spaces, which would flatten
     a four-bullet column into one line — and then fail the line count for the wrong reason,
     so no rewrite could ever land. Bullets are verified one by one."""
@@ -166,13 +249,29 @@ def test_the_polish_verifies_each_bullet_rather_than_the_whole_blob(monkeypatch)
                          "The account wrote $2M with Marsh, and held it."])
     monkeypatch.setattr(client, "llm_available", lambda: True)
     monkeypatch.setattr(client, "generate", lambda *a, **k: rewrite)
-    assert CM._polish(_draft(3), node="t") == rewrite
+    assert CM._rewrite(_draft(3), node="t") == rewrite
 
 
-def test_a_polished_bullet_with_an_invented_number_is_refused(monkeypatch):
+def test_a_rewritten_bullet_with_an_invented_number_is_refused(monkeypatch):
     from studio.ai import client
 
     monkeypatch.setattr(client, "llm_available", lambda: True)
     monkeypatch.setattr(client, "generate",
                         lambda *a, **k: "The account wrote $99M with Marsh, and held it.")
-    assert CM._polish(_draft(1), node="t") == _draft(1)
+    assert CM._rewrite(_draft(1), node="t") == _draft(1)
+
+
+def test_one_unfaithful_bullet_no_longer_discards_the_whole_column(monkeypatch):
+    """The verifier DROPS an unfaithful bullet, so the rewrite came back a line short and
+    the old exact-count rule threw the other three away with it."""
+    from studio.ai import client
+
+    rewrite = "\n".join(["The account wrote $0M with Marsh, and held it.",
+                         "The account wrote $1M with Marsh, and held it.",
+                         "The account wrote $2M with Marsh, and held it.",
+                         "The account wrote $77M with Marsh, and held it."])  # invented
+    monkeypatch.setattr(client, "llm_available", lambda: True)
+    monkeypatch.setattr(client, "generate", lambda *a, **k: rewrite)
+    kept = CM._rewrite(_draft(4), node="t")
+    assert kept and "$77M" not in kept
+    assert len(kept.split("\n")) == 3

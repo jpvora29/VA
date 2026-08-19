@@ -6,12 +6,20 @@ prose boxes are bound to ``note:<slot-key>`` roles and filled with whole sentenc
 are 100% faithful by construction — each column is composed by the SAME fact-grounded
 composers as the per-country feedback panels (:mod:`studio.template_fill.feedback`), so
 the deck argues in one voice; SWOT quadrants, and any column those composers cannot
-carry, fall back to the rule-based :mod:`studio.narrate.commentary`. When an LLM is
-configured the wording is polished and then re-checked — for faithfulness (every number
-must already appear in the deterministic draft) and for READING (whole sentences, none of
-the phrases that make prose sound generated); a rewrite that fails either is dropped and
-the draft stands. Qualitative-only sections (relationship Feedback) are deliberately left
-as placeholders — premium data can't honestly fill them.
+carry, fall back to the rule-based :mod:`studio.narrate.commentary`.
+
+When an LLM is configured it WRITES the column rather than re-wording it: given the draft
+and the column's own brief (:data:`_TOPIC_BRIEF`) it may fold two claims into one sentence
+or drop a line that adds nothing, within the bounds :func:`min_lines` sets. What comes back
+is checked — for faithfulness (every number must already appear in the deterministic
+draft), for READING (whole sentences, none of the phrases that make prose sound generated),
+and for SHAPE (one carrier-name opening per column, no bullet opening on a bare measure).
+A rewrite that fails any of those is dropped and the draft stands — and the draft has had
+its own repeated openings varied (:mod:`studio.template_fill.openings`), so the fallback is
+no longer the roll-call it used to be.
+
+Qualitative-only sections (relationship Feedback) are deliberately left as placeholders —
+premium data can't honestly fill them.
 
 Mirrors :mod:`studio.template_fill.grids`: ``augment`` re-binds slots, ``values``
 produces the keyed text — both fold into the same doc the preview and fill consume.
@@ -22,6 +30,7 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from logger import get_logger
+from studio.template_fill import openings
 from studio.template_fill import roles as R
 from studio.template_fill.analyze import Shape, Slide, Template
 from studio.template_fill.sections import Section, section_of
@@ -33,7 +42,7 @@ _ELLIPSIS = re.compile(r"…|\.{3,}")
 _COMMENTARY_SECTIONS = {
     Section.TRADING_SUMMARY, Section.SWOT, Section.HIGHLIGHTS, Section.SUMMARY,
 }
-# The commentary voice chosen in Setup → the instruction appended to the polish prompt.
+# The commentary voice chosen in Setup → the instruction appended to the writing prompt.
 # Every style keeps the same faithfulness guardrails; only the length shifts. Each style
 # still demands whole sentences: a QBR page is read aloud to an executive team, and a
 # telegraphic fragment ("Momentum: Cyber +97%") is not something a partner would say.
@@ -46,14 +55,94 @@ _STYLE_DIRECTIVE: Dict[str, str] = {
                 "what moved them, and what the account should do about it.",
 }
 
-# Commentary is written as BULLET POINTS, one per line, so the polish must preserve the line
-# structure exactly — the deck renders each line as its own bulleted paragraph.
-_BULLET_RULES = (
-    "The draft is a bullet list, ONE BULLET PER LINE. Return exactly the same number of "
-    "lines, in the same order, one polished bullet per line. Never merge, split, reorder or "
-    "add lines. Do not write any bullet character, dash or number at the start of a line — "
-    "the slide adds the bullet itself. "
-)
+# Commentary is written as BULLET POINTS, one per line — the deck renders each line as its
+# own bulleted paragraph, so the line structure is part of the contract.
+#
+# The model is allowed to MERGE or DROP one bullet, and that permission is the point. The
+# draft composes each claim to stand alone, so a column often carries two thin facts that a
+# writer would fold into one sentence, or a closing line that adds nothing once the others
+# are written. Forbidding every structural move — the old rule was "return exactly the same
+# number of lines" — left the model with nothing to do but swap adjectives, and any rewrite
+# that dropped an unverifiable figure came back a line short and was thrown away wholesale.
+def _bullet_rules(wanted: int) -> str:
+    """The line-structure contract for a column of ``wanted`` draft bullets."""
+    floor = min_lines(wanted)
+    room = ("You may merge two bullets that make one point, or drop a bullet that adds "
+            f"nothing once the others are written: return between {floor} and {wanted} "
+            "lines. " if floor < wanted else f"Return {wanted} line. ")
+    return (
+        "The draft is a bullet list, ONE BULLET PER LINE, in priority order. " + room +
+        "Keep the order. Do not write any bullet character, dash or number at the start of "
+        "a line — the slide adds the bullet itself. "
+    )
+
+
+def min_lines(wanted: int) -> int:
+    """The fewest bullets a rewrite of ``wanted`` may come back with.
+
+    One merge or one drop, never two, and never below two lines on a column that had them:
+    a rewrite that halves a page is not an edit, it is a different page.
+    """
+    return max(min(wanted, 2), wanted - 1)
+
+
+# What each column is FOR. The old prompt was identical for every topic, which is most of
+# why Key Messages and Challenges read the same: they draw on the same six figures, so
+# without a brief telling them apart the model has no reason to write them apart.
+#
+# Each brief says what question the column answers, the trap it falls into, and the move
+# that gets it out. Kept to what is true of the column regardless of carrier — anything
+# carrier-specific belongs in the facts, not the prompt.
+_TOPIC_BRIEF: Dict[str, str] = {
+    "thesis":
+        "THIS COLUMN: the one claim the rest of the deck exists to argue. State where this "
+        "account STANDS — a position a leadership team can agree with or push back on — and "
+        "name the tension inside it. Not a summary of the figures below it. ",
+    "key_messages":
+        "THIS COLUMN: what the account team must be able to say from memory in the room. "
+        "Each line is a POSITION, not a statistic — the figure is the evidence for the "
+        "claim, never the claim itself. Do not open a line with the carrier's name and a "
+        "number; lead with what is true and let the figure follow. ",
+    "challenges":
+        "THIS COLUMN: what threatens this book over the next twelve months. Name the "
+        "MECHANISM, not the metric — which line, at which renewal, losing to what. A "
+        "restated decline is not a challenge; the reason it will continue is. ",
+    # ``working`` and ``growth`` are composer kinds rather than template column headers:
+    # they fill the per-country feedback panels (studio.template_fill.feedback), which ask
+    # the same questions of a narrower book.
+    "working":
+        "THIS COLUMN: what is working, and whether it was won or merely carried by the "
+        "market. Growth that only matched the Marsh pool is not a success — say which of "
+        "the two this was, and what it cost to get. ",
+    "growth":
+        "THIS COLUMN: the headroom worth going after, and what taking it is worth in "
+        "premium. Whitespace is business somebody else already writes; say that plainly "
+        "rather than calling it addressable, and name where it sits. ",
+    "reflections":
+        "THIS COLUMN: an honest read on the year just closed — what the account got right, "
+        "what it misjudged, and what that says about how the next one should be run. Write "
+        "it as a partner who was in the room, not as a scorecard. ",
+    "performance":
+        "THIS COLUMN: how the book actually performed and WHY it moved. Every line should "
+        "carry a driver — a line of business, a renewal, a shift in the Marsh pool — so the "
+        "reader learns something the chart beside it does not already show. ",
+    "priorities":
+        "THIS COLUMN: what happens next. Each line names an ACTION, who has to move, and "
+        "the premium at stake. End on the ask — the one thing this carrier must do for the "
+        "next quarter to look different. Never close on advice true of any carrier. ",
+    "strengths":
+        "THIS COLUMN: what this carrier can defend, and against whom. A strength nobody "
+        "could take away is not worth a line. ",
+    "weaknesses":
+        "THIS COLUMN: where the book is exposed. Be specific about the exposure, not "
+        "apologetic about the number. ",
+    "opportunities":
+        "THIS COLUMN: headroom this carrier could realistically take, and what taking it "
+        "would be worth. Whitespace is premium someone else already writes — say that "
+        "plainly rather than calling it addressable. ",
+    "threats":
+        "THIS COLUMN: what could go wrong that is not already going wrong. Name the source. ",
+}
 
 # Who is writing. Insurer Consulting Group partners write for carrier boards: plain,
 # declarative, unhedged, and always answerable to the figure on the page.
@@ -86,9 +175,24 @@ _FAITHFULNESS = (
 )
 
 
-def _style_system(style: Optional[str]) -> str:
-    return _VOICE + _CRAFT + _FAITHFULNESS + _BULLET_RULES + _STYLE_DIRECTIVE.get(
-        (style or "balanced").lower(), _STYLE_DIRECTIVE["balanced"])
+def _style_system(style: Optional[str], *, topic: str = "", wanted: int = 1,
+                  subject: str = "") -> str:
+    """The system prompt for one column: voice, craft, faithfulness, shape, and its brief."""
+    return (_VOICE + _CRAFT + _FAITHFULNESS + _openings_rule(subject)
+            + _bullet_rules(wanted) + _TOPIC_BRIEF.get(topic, "")
+            + _STYLE_DIRECTIVE.get((style or "balanced").lower(),
+                                   _STYLE_DIRECTIVE["balanced"]))
+
+
+def _openings_rule(subject: str) -> str:
+    """The instruction behind the opening gate, so the model is told the rule it is held to."""
+    if not subject:
+        return ""
+    return (f"OPENINGS: name {subject} ONCE in this column and then write about 'the book'. "
+            f"At most one line may begin with '{subject}'. Never leave a line that is a bare "
+            f"measure and a value ('Rank improved to 4th.', 'Share of wallet rose 0.6pp.') — "
+            f"a line that opens on a measure must go on to say why it moved or what follows "
+            f"from it. ")
 
 
 def _cx(sh: Shape) -> float:
@@ -237,38 +341,77 @@ def _is_whole_sentence(line: str) -> bool:
     return line.rstrip().endswith((".", "?", "!"))
 
 
-def _accept(lines: List[str], *, wanted: int, node: str) -> Optional[str]:
-    """The polished bullets, or ``None`` when the rewrite is worse than the draft.
+# How many bullets in one column may open on the carrier's name. One: a column says who it
+# is about, then talks about the book.
+_MAX_SUBJECT_OPENINGS = 1
 
-    Three ways a rewrite is refused: it changed the bullet STRUCTURE (the slide's shape is
-    the draft's to decide), it left a line as a fragment, or it reached for one of the
-    phrases that make commentary read as generated.
+
+def _accept(lines: List[str], *, wanted: int, node: str, subject: str = "") -> Optional[str]:
+    """The rewritten bullets, or ``None`` when the rewrite is worse than the draft.
+
+    A rewrite is refused when it changed the column's SHAPE beyond one merge or drop
+    (:func:`min_lines`), left a line as a fragment, reached for one of the phrases that make
+    commentary read as generated, named the carrier at the head of more than one line, or
+    left a bullet that is a measure and a value and nothing else
+    (:func:`studio.template_fill.commentary_metrics.is_restatement`).
+
+    The last two are what make a page read as written rather than produced, and they are
+    enforced here rather than hoped for in the prompt for the same reason the AI tells are:
+    a model asked for a partner's voice will still reach for the roll-call unless the
+    roll-call is refused.
     """
-    if len(lines) != wanted:
-        logger.info("commentary: %s polish returned %d line(s) for %d bullet(s) — keeping "
-                    "the deterministic draft", node, len(lines), wanted)
+    from studio.template_fill import commentary_metrics
+
+    floor = min_lines(wanted)
+    if not floor <= len(lines) <= wanted:
+        logger.info("commentary: %s rewrite returned %d line(s) for %d bullet(s) (allowed "
+                    "%d-%d) — keeping the deterministic draft",
+                    node, len(lines), wanted, floor, wanted)
         return None
     fragment = next((ln for ln in lines if not _is_whole_sentence(ln)), None)
     if fragment is not None:
-        logger.info("commentary: %s polish left a fragment (%.40r) — keeping the "
+        logger.info("commentary: %s rewrite left a fragment (%.40r) — keeping the "
                     "deterministic draft", node, fragment)
         return None
     tell = _AI_TELLS.search("\n".join(lines))
     if tell is not None:
-        logger.info("commentary: %s polish reads as generated (%r) — keeping the "
+        logger.info("commentary: %s rewrite reads as generated (%r) — keeping the "
                     "deterministic draft", node, tell.group(0))
+        return None
+    named = openings.subject_openings(lines, subject) if subject else 0
+    if named > _MAX_SUBJECT_OPENINGS:
+        logger.info("commentary: %s rewrite opens %d line(s) on %r — keeping the "
+                    "deterministic draft", node, named, subject)
+        return None
+    readout = next((ln for ln in lines if commentary_metrics.is_restatement(ln)), None)
+    if readout is not None:
+        logger.info("commentary: %s rewrite left a metric read-out (%.40r) — keeping the "
+                    "deterministic draft", node, readout)
         return None
     return "\n".join(lines)
 
 
-def _polish(text: str, *, node: str, style: Optional[str] = None) -> str:
-    """LLM-polish ``text`` if available, keeping only verifier-faithful output.
+# Commentary is the deliverable, not an inner loop. The `fast` tier is the one
+# ``core.initialization`` describes as "the mechanical inner-loop nodes" — minimal reasoning
+# effort — and asking it for a partner's judgement got a partner's vocabulary over a
+# clerk's argument. `balanced` is the cheapest tier that can actually make the editorial
+# calls the rules above now allow (merge these two claims, cut that one, lead with the
+# consequence).
+_COMMENTARY_TIER = "balanced"
 
-    ``style`` (from Setup) tunes the length of the rewrite; the faithfulness guardrails are
-    identical across styles. ``text`` is a newline-separated BULLET LIST of whole sentences,
-    and the polish is only accepted when it comes back as the same list of whole sentences
-    (see :func:`_accept`) — the deterministic draft is already correct and already reads,
-    so a rewrite has to earn its place.
+
+def _rewrite(text: str, *, node: str, style: Optional[str] = None,
+             topic: str = "", subject: str = "") -> str:
+    """LLM-write ``text`` if available, keeping only verifier-faithful output.
+
+    ``text`` is a newline-separated BULLET LIST of whole sentences and the model is asked to
+    WRITE the column, not to swap its adjectives: it may fold two claims into one sentence
+    or drop a line that adds nothing, within the bounds :func:`min_lines` sets. What it may
+    never do is move a number — faithfulness is checked bullet by bullet against the figures
+    the draft already contains, and everything else is checked by :func:`_accept`.
+
+    ``topic`` selects the column's brief and ``style`` (from Setup) its length; both are
+    prompt-side. The deterministic draft stands whenever the rewrite is refused.
     """
     if not text:
         return text
@@ -276,19 +419,22 @@ def _polish(text: str, *, node: str, style: Optional[str] = None) -> str:
     from studio.ai.verifier import allowed_numbers, verify_bullets
 
     allowed = allowed_numbers(text)
-    system = _style_system(style)
     wanted = len(text.split("\n"))
+    system = _style_system(style, topic=topic, wanted=wanted, subject=subject)
 
     def call() -> Optional[str]:
-        out = client.generate(system, text, tier="fast", node=node)
+        out = client.generate(system, text, tier=_COMMENTARY_TIER, node=node)
         if not out:
             return None
         # Verified BULLET BY BULLET, not as one blob: the whole-text verifier joins the
         # sentences it keeps with spaces, which would flatten a four-bullet column into a
         # single paragraph — and then fail the line count below for the wrong reason.
         lines = [_LEADING_BULLET.sub("", ln).strip() for ln in out.split("\n") if ln.strip()]
-        clean, _ = verify_bullets(lines, allowed)
-        return _accept(clean, wanted=wanted, node=node)
+        clean, dropped = verify_bullets(lines, allowed)
+        if dropped:
+            logger.info("commentary: %s dropped %d unfaithful bullet(s): %s",
+                        node, len(lines) - len(clean), dropped[:3])
+        return _accept(clean, wanted=wanted, node=node, subject=subject)
 
     return client.run_or_fallback(call, lambda: text)
 
@@ -502,6 +648,7 @@ def values(template: Template, result, *, ledger=None,
     if not targets:
         return out
     style = getattr(result, "style", "balanced")
+    subject = str(getattr(result, "subject", "") or "")
     facts = panel_facts(result)                 # loaded once; every topic reads the same book
     survey_slides, survey_line = _survey_pointer(template, result)
     extras = _portfolio_extras(result)
@@ -529,8 +676,13 @@ def values(template: Template, result, *, ledger=None,
                     said = ledger.take(said, limit=min(len(said), _MAX_COLUMN_BULLETS))
                 else:
                     said = said[:_MAX_COLUMN_BULLETS]
+                # Trimmed to the column FIRST, then varied: which bullets survive decides
+                # which of them still names the carrier, so varying before the ledger has
+                # chosen would introduce "the book" with no introduction in front of it.
+                said = openings.vary_openings(said, subject)
                 base = bullet_list(said)
-                cache[key] = _polish(base, node=f"commentary-{topic}", style=style) if base else ""
+                cache[key] = _rewrite(base, node=f"commentary-{topic}", style=style,
+                                      topic=topic, subject=subject) if base else ""
             except Exception as exc:  # noqa: BLE001 — commentary must never break the doc
                 logger.warning("commentary: topic %s failed: %s", topic, exc)
                 cache[key] = ""

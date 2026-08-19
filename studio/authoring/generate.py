@@ -112,9 +112,11 @@ def _deck_for(selection_json: str) -> Optional[DeckSpec]:
         breakdowns=sel.get("breakdowns") or BREAKDOWNS,
         engine=_engine_for(sel),
         peers=sel.get("peers") or None,
+        peers_by_country=sel.get("peers_by_country") or None,
         style=sel.get("style") or "balanced",
         survey_carrier=sel.get("survey_carrier") or None,
         survey_peers=sel.get("survey_peers") or None,
+        survey_peers_by_country=sel.get("survey_peers_by_country") or None,
     )
     return build_deck(
         result,
@@ -161,9 +163,11 @@ def _tdoc_for(selection_json: str) -> Optional[Dict[str, Any]]:
         breakdowns=sel.get("breakdowns") or BREAKDOWNS,
         engine=_engine_for(sel),
         peers=sel.get("peers") or None,
+        peers_by_country=sel.get("peers_by_country") or None,
         style=sel.get("style") or "balanced",
         survey_carrier=sel.get("survey_carrier") or None,
         survey_peers=sel.get("survey_peers") or None,
+        survey_peers_by_country=sel.get("survey_peers_by_country") or None,
     )
     return new_template_doc(result, template_path=sel.get("template_path") or None,
                             use_ai=bool(sel.get("ai")))
@@ -215,9 +219,11 @@ def _assembled_for(selection_json: str) -> Optional[str]:
         breakdowns=selection.get("breakdowns") or BREAKDOWNS,
         engine=_engine_for(selection),
         peers=selection.get("peers") or None,
+        peers_by_country=selection.get("peers_by_country") or None,
         style=selection.get("style") or "balanced",
         survey_carrier=selection.get("survey_carrier") or None,
         survey_peers=selection.get("survey_peers") or None,
+        survey_peers_by_country=selection.get("survey_peers_by_country") or None,
     )
     subject = str(filters.get("carrier", "Carrier")).replace(" ", "_")
     tag = hashlib.sha1(selection_json.encode("utf-8")).hexdigest()[:8]

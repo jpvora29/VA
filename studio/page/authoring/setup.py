@@ -1,8 +1,9 @@
 """Setup mode — the real build form, wired to the DB.
 
-``setup_body`` composes the scope/filters, report, template, audience, sections,
-peers and AI-assist sections plus the live scope-preview aside and Generate button.
-The scope-preview cards and template-sections panel are refreshed by app callbacks.
+``setup_body`` composes the deck-shape questions, the data source, the scope
+filters, the peer sets and the survey identities, plus the live scope-preview
+aside and the Generate button. The scope-preview cards, the peer pickers and the
+template-sections panel are refreshed by app callbacks.
 """
 from __future__ import annotations
 
@@ -65,12 +66,50 @@ def busy_overlay() -> html.Div:
     )
 
 
-def _setup_section(icon: str, title: str, subtitle: str, children: Any, *, span: bool = False) -> html.Div:
+def info_tip(tip_id: str, text: str) -> html.Span:
+    """A small ⓘ beside a label that says, in plain words, what the control decides.
+
+    Every question on this form is a modelling choice with consequences downstream — which
+    books the figures come from, which pages get built, who the deck is written for — and
+    none of that is guessable from a three-word label. The explanation is a hover away
+    rather than a paragraph on the page, so the form stays a single screen.
+    """
+    return html.Span(
+        [
+            html.I(className="bi bi-info-circle", id=tip_id, tabIndex="0"),
+            dbc.Tooltip(text, target=tip_id, placement="top", class_name="qs-tip"),
+        ],
+        className="qs-info",
+    )
+
+
+def _label(text: str, *, tip_id: str = "", tip: str = "",
+           className: str = "studio-field-label qs-question") -> html.Div:
+    """A field label, asked as a question, with its ⓘ when the answer needs explaining.
+
+    ``qs-question`` drops the all-caps micro-label styling: a shouted question reads as
+    an instruction rather than something being asked.
+    """
+    return html.Div(
+        [html.Span(text), info_tip(tip_id, tip) if (tip_id and tip) else None],
+        className=className,
+    )
+
+
+def _setup_section(icon: str, title: str, subtitle: str, children: Any, *,
+                   span: bool = False, tip_id: str = "", tip: str = "") -> html.Div:
     return html.Div(
         [
             html.Div(
                 [
-                    html.Div([html.I(className=f"bi {icon}"), title], className="qs-sec-title"),
+                    html.Div(
+                        [
+                            html.I(className=f"bi {icon}"),
+                            html.Span(title),
+                            info_tip(tip_id, tip) if (tip_id and tip) else None,
+                        ],
+                        className="qs-sec-title",
+                    ),
                     html.Div(subtitle, className="qs-sec-sub") if subtitle else None,
                 ],
                 className="qs-sec-head",
@@ -81,10 +120,11 @@ def _setup_section(icon: str, title: str, subtitle: str, children: Any, *, span:
     )
 
 
-def _radio_field(label: str, cid: str, options: Sequence[Mapping[str, str]], value: str) -> html.Div:
+def _radio_field(label: str, cid: str, options: Sequence[Mapping[str, str]], value: str,
+                 *, tip_id: str = "", tip: str = "") -> html.Div:
     return html.Div(
         [
-            html.Div(label, className="studio-field-label"),
+            _label(label, tip_id=tip_id, tip=tip),
             dcc.RadioItems(
                 id=cid, options=list(options), value=value,
                 className="studio-report-radio", inputClassName="studio-report-input",
@@ -96,8 +136,12 @@ def _radio_field(label: str, cid: str, options: Sequence[Mapping[str, str]], val
 
 
 def _setup_options() -> html.Div:
-    """The compact 'options bar' — assembly scope, audience and commentary voice
-    as segmented pills in one dense auto-fitting row (keeps the form short).
+    """The three questions that decide the SHAPE of the deck, asked as questions.
+
+    They come first on the form because they are the ones an author answers from the
+    brief — how much of the deck, for whom, in what voice — before touching a filter.
+    "SCOPE / AUDIENCE / COMMENTARY STYLE" named the control rather than the decision,
+    which is exactly the label that needs a footnote; the question does not.
 
     There is no REPORT control: Full QBR is the only deliverable, so offering a
     one-option radio was pure noise. ``generate`` pins ``report="qbr"``.
@@ -105,18 +149,30 @@ def _setup_options() -> html.Div:
     return html.Div(
         [
             _template_control(),
-            _radio_field("AUDIENCE", "studio-audience", [
-                {"label": "Executive", "value": "executive"},
-                {"label": "Deal team", "value": "deal_team"},
-                {"label": "Board", "value": "board"},
-            ], "executive"),
+            _radio_field(
+                "Who is this deck for?", "studio-audience", [
+                    {"label": "Executive", "value": "executive"},
+                    {"label": "Deal team", "value": "deal_team"},
+                    {"label": "Board", "value": "board"},
+                ], "executive",
+                tip_id="qs-tip-audience",
+                tip="The reader the commentary is pitched at. Executive keeps to the "
+                    "headline movements, Deal team goes down to product and client "
+                    "detail, Board stays at portfolio level.",
+            ),
             # Commentary voice — words, not meeting minutes. Passed to the deck when the
             # qualitative prose is written (studio.template_fill.commentary).
-            _radio_field("COMMENTARY STYLE", "studio-commentary-style", [
-                {"label": "Concise", "value": "concise"},
-                {"label": "Balanced", "value": "balanced"},
-                {"label": "Detailed", "value": "detailed"},
-            ], "balanced"),
+            _radio_field(
+                "How should the commentary read?", "studio-commentary-style", [
+                    {"label": "Concise", "value": "concise"},
+                    {"label": "Balanced", "value": "balanced"},
+                    {"label": "Detailed", "value": "detailed"},
+                ], "balanced",
+                tip_id="qs-tip-style",
+                tip="How much prose each slide carries. Concise is one or two sentences "
+                    "per panel, Detailed explains the drivers behind every movement. "
+                    "Every number stays checked against the source facts either way.",
+            ),
         ],
         className="qs-options-grid",
     )
@@ -127,30 +183,81 @@ def _audience_length() -> html.Div:  # pragma: no cover - legacy shim
     return _setup_options()
 
 
-def _ai_control() -> html.Div:
-    """AI assist — ON by default; the narrative is the point of the deck.
-
-    It stays a checkbox so a user can still fall back to the purely deterministic
-    deck, but nobody should have to opt IN to the commentary."""
-    return html.Div(
-        [
-            dbc.Checkbox(
-                id="studio-ai-toggle",
-                label="AI-assisted narrative & layout",
-                value=True,
-                class_name="studio-check qs-ai-check",
-            ),
-            html.Div(
-                "Sharper commentary and slide layout — every number is checked against the "
-                "source facts, and it falls back to the deterministic deck when AI is unavailable.",
-                className="qs-ai-note",
-            ),
-        ],
-        className="qs-ai-field",
-    )
-
-
 # ── peers ────────────────────────────────────────────────────────────────────
+#
+# A peer group is a PER-MARKET statement: Zurich is benchmarked against a different set in
+# Singapore than in Japan, and the Peers table keys on (carrier, country) for exactly that
+# reason. Both halves of this panel therefore separate by market when a run covers several —
+# the existing groups are listed under their own country, and the custom picker is one
+# dropdown per country rather than one flat set silently applied to every page.
+
+# A benchmark of one or two carriers is not an aggregate — it is close enough to naming
+# them, which carrier-facing output may not do. Five is the floor the disclosure rule needs
+# and the smallest set an average means anything over.
+MIN_CUSTOM_PEERS = 5
+MIN_PEERS_MESSAGE = "Please select atleast 5 peers"
+
+
+def peer_min_note(values: Sequence[str]) -> str:
+    """The red under-minimum warning for one market's custom peer set (``""`` when fine)."""
+    chosen = [v for v in (values or []) if v]
+    return MIN_PEERS_MESSAGE if len(chosen) < MIN_CUSTOM_PEERS else ""
+
+
+# ``[(country, options, chosen)]`` — what both market pickers below are built from.
+PeerGroups = Sequence[Tuple[str, Sequence[Mapping[str, Any]], Sequence[str]]]
+
+
+def _market_pickers(groups: PeerGroups, kind: str, placeholder, *,
+                    minimum: bool = False) -> html.Div:
+    """One multi-select per market, headed by its country when there are several.
+
+    ``kind`` is the id ``type`` the callbacks pattern-match on, and ``placeholder`` is
+    called with ``(country, per_market)``. With ``minimum`` the picker also carries the
+    per-market "at least five" line, which its own MATCH callback rewrites.
+
+    ``country`` is ``""`` when the run pins no country; the ids stay pattern-matched either
+    way, so a callback reads one shape whether the run covers one market or five.
+    """
+    groups = list(groups) or [("", [], [])]
+    per_market = len(groups) > 1
+    blocks = [
+        html.Div(
+            [
+                html.Div(str(country), className="qs-peer-market-name") if per_market else None,
+                dcc.Dropdown(
+                    id={"type": kind, "country": str(country)},
+                    options=list(options),
+                    value=[str(c) for c in (chosen or [])],
+                    multi=True,
+                    placeholder=placeholder(country, per_market),
+                    className="studio-dd sm",
+                ),
+                html.Div(peer_min_note(chosen),
+                         id={"type": "studio-peer-min", "country": str(country)},
+                         className="qs-peer-min") if minimum else None,
+            ],
+            className="qs-peer-market",
+        )
+        for country, options, chosen in groups
+    ]
+    return html.Div(blocks, className="qs-peer-markets" + (" per-market" if per_market else ""))
+
+
+def custom_peer_picker(groups: PeerGroups = ()) -> html.Div:
+    """One custom-peer dropdown per market, each with its own minimum.
+
+    With several countries in scope, each gets its own picker under its own heading and its
+    own candidate list — a carrier that writes nothing in Japan is not offered as a Japanese
+    peer. A single flat dropdown could only pin one set for the whole run, so Japan's page
+    ranked against carriers chosen for Singapore.
+    """
+    return _market_pickers(
+        groups, "studio-peer-custom",
+        lambda country, per_market: f"Select at least {MIN_CUSTOM_PEERS} peer carriers"
+                                    + (f" in {country}" if per_market else ""),
+        minimum=True,
+    )
 
 
 def _peer_chips(names: Sequence[str]) -> Optional[html.Div]:
@@ -195,12 +302,13 @@ def peer_set_body(names: Sequence[str] = (), note: str = "", *, tone: str = "",
 
 
 def _peers_panel() -> html.Div:
-    """Peer-set chooser.
+    """Peer-set chooser — existing groups to read, or one custom set per market to pick.
 
     Existing peers are the carrier's group from the Peers table — names only, so the
-    custom dropdown is HIDDEN in that mode rather than sitting there full of every
-    carrier in the database. Custom peers pick carriers from the current scope.
-    Both lists are populated by ``studio.authoring.setup.peer_panel``.
+    custom pickers are HIDDEN in that mode rather than sitting there full of every carrier
+    in the database; with several countries in scope it lists one group per market. Custom
+    peers get one picker per market, each scoped to the carriers that write there. Both are
+    populated by :func:`studio.authoring.setup.peer_panel_state`.
     """
     return html.Div(
         [
@@ -221,14 +329,7 @@ def _peers_panel() -> html.Div:
                 className="studio-peer-msg",
             ),
             html.Div(
-                dcc.Dropdown(
-                    id="studio-peer-custom",
-                    options=[],
-                    value=[],
-                    multi=True,
-                    placeholder="Select peer carriers",
-                    className="studio-dd sm",
-                ),
+                custom_peer_picker(),
                 id="studio-peer-custom-wrap",
                 style={"display": "none"},
             ),
@@ -264,10 +365,16 @@ def _data_source_control(dataset_state: Optional[Mapping[str, Any]]) -> html.Div
         )
     return html.Div(
         [
-            _radio_field("DATA SOURCE", "studio-data-source", [
-                {"label": "Existing database", "value": "governed"},
-                {"label": "My uploaded data", "value": "custom"},
-            ], source),
+            _radio_field(
+                "Where should the numbers come from?", "studio-data-source", [
+                    {"label": "GPR / Survey", "value": "governed"},
+                    {"label": "Custom data", "value": "custom"},
+                ], source,
+                tip_id="qs-tip-source",
+                tip="GPR / Survey is the governed warehouse — the premium book and the "
+                    "carrier survey book behind it. Custom data builds the same deck from "
+                    "a spreadsheet you upload and map on the Data page.",
+            ),
             status,
             _data_basis_control(),
         ],
@@ -281,20 +388,26 @@ def _data_source_control(dataset_state: Optional[Mapping[str, Any]]) -> html.Div
 # is where the choice is read again — the form must not spell them a second time.
 DATA_BASIS_DEFAULT = DATA_BASIS_PREMIUM
 DATA_BASIS_OPTIONS = (
-    {"label": "Premium only", "value": DATA_BASIS_PREMIUM},
-    {"label": "Premium + survey", "value": DATA_BASIS_WITH_SURVEY},
+    {"label": "GPR", "value": DATA_BASIS_PREMIUM},
+    {"label": "GPR + Carrier Survey", "value": DATA_BASIS_WITH_SURVEY},
 )
 
 
 def _data_basis_control() -> html.Div:
-    """DATA BASIS — the premium book alone, or the premium book plus broker survey.
+    """Which BOOKS the deck draws on — GPR alone, or GPR plus the carrier survey.
 
-    Segmented pills like DATA SOURCE above it: the two are the same kind of decision
-    (what the deck is built FROM), so they read as one block.
+    Segmented pills like the source question above it: the two are the same kind of
+    decision (what the deck is built FROM), so they read as one block.
     """
     return html.Div(
-        [_radio_field("DATA BASIS", "studio-data-basis",
-                      list(DATA_BASIS_OPTIONS), DATA_BASIS_DEFAULT)],
+        [_radio_field(
+            "Which books should the deck draw on?", "studio-data-basis",
+            list(DATA_BASIS_OPTIONS), DATA_BASIS_DEFAULT,
+            tip_id="qs-tip-basis",
+            tip="GPR is the premium book alone — totals, growth, share of wallet and "
+                "rank. GPR + Carrier Survey adds a Carrier Survey page to each country "
+                "block and the overall survey-score tile, sourced from the survey book.",
+        )],
         className="qs-basis-field",
     )
 
@@ -307,6 +420,24 @@ def survey_note(text: str, *, tone: str = "") -> html.Div:
     return html.Div(text, className="qs-peer-note" + (f" {tone}" if tone else "")) if text else html.Div()
 
 
+def survey_peer_picker(groups: PeerGroups = ()) -> html.Div:
+    """One survey-peer dropdown per market.
+
+    The same per-market split the premium picker makes, for the same reason — a survey page
+    ranks the subject against the field surveyed IN THAT COUNTRY. Each market's dropdown is
+    pre-filled with its own group from the survey Peers table, so the author sees what each
+    page will rank against and edits only the market that is wrong. A market with no group
+    in the table stays empty, and its page ranks against every carrier surveyed there
+    (:mod:`studio.template_fill.survey.facts`). No minimum here: this set is not the author's
+    to invent — it is the surveyed field, and a market may hold only a handful of carriers.
+    """
+    return _market_pickers(
+        groups, "studio-survey-peer",
+        lambda country, per_market: "Ranked against the surveyed field"
+                                    + (f" in {country}" if per_market else ""),
+    )
+
+
 def _survey_panel() -> html.Div:
     """SURVEY — who the subject and its peers are IN THE SURVEY BOOK.
 
@@ -316,13 +447,20 @@ def _survey_panel() -> html.Div:
     resolution is shown and can be overridden here — a survey page reporting another
     carrier's scores under this carrier's name is the failure this panel prevents.
 
-    Shown only on the "Premium + survey" basis; the whole section is hidden otherwise.
+    Shown only on the "GPR + Carrier Survey" basis; the whole section is hidden otherwise.
     """
     return html.Div(
         [
             html.Div(
                 [
-                    html.Div("SURVEY CARRIER", className="studio-field-label"),
+                    _label(
+                        "Who is this carrier in the survey book?",
+                        tip_id="qs-tip-survey-carrier",
+                        tip="The survey book records the entity that was surveyed "
+                            "(\"Zurich Insurance Company Ltd\") where the premium book "
+                            "groups (\"Zurich\"). The deck matches them itself — this is "
+                            "the match it made, and your override if it is wrong.",
+                    ),
                     dcc.Dropdown(
                         id="studio-survey-carrier", options=[], value=None,
                         placeholder="Matched from the survey book",
@@ -335,17 +473,18 @@ def _survey_panel() -> html.Div:
             ),
             html.Div(
                 [
-                    html.Div("SURVEY PEERS", className="studio-field-label"),
-                    dcc.Dropdown(
-                        id="studio-survey-peers", options=[], value=[], multi=True,
-                        placeholder="Ranked against the surveyed field",
-                        className="studio-dd sm",
+                    _label(
+                        "Who should the survey pages rank it against?",
+                        tip_id="qs-tip-survey-peers",
+                        tip="The peer set in the SURVEY book's own names, one per market. "
+                            "Pre-filled from the survey Peers table; clear a market and "
+                            "that page ranks against every carrier surveyed there.",
                     ),
-                    # Pre-filled from the survey Peers table (keyed on Carrier, scoped to
-                    # the selected countries) as soon as a survey carrier is matched, so
-                    # the author sees the group the page will rank against — and can edit
-                    # it — before generating. Cleared, the page falls back to the whole
-                    # surveyed field.
+                    # Pre-filled from the survey Peers table (keyed on Carrier, scoped per
+                    # country) as soon as a survey carrier is matched, so the author sees
+                    # the group each page will rank against — and can edit it — before
+                    # generating. Cleared, that page falls back to the whole surveyed field.
+                    html.Div(survey_peer_picker(), id="studio-survey-peer-wrap"),
                     html.Div(survey_note(""), id="studio-survey-peer-msg",
                              className="studio-peer-msg"),
                 ],
@@ -427,7 +566,13 @@ def _template_control() -> html.Div:
     options = _scope_options()
     return html.Div(
         [
-            html.Div("SCOPE", className="studio-field-label"),
+            _label(
+                "How much of the deck should we build?",
+                tip_id="qs-tip-scope",
+                tip="Which fixed sub-decks to assemble and merge. All builds the overall "
+                    "block, one block per product line and one per country; the single "
+                    "choices build just that block.",
+            ),
             dcc.Dropdown(
                 id="studio-template",
                 options=options,
@@ -583,48 +728,66 @@ def setup_body(
     filter_values: Mapping[str, Any] | None = None,
     dataset: Optional[Mapping[str, Any]] = None,
 ) -> html.Div:
+    # Order follows how a deck is actually briefed: what shape is it and who is it for,
+    # then where the numbers come from, then which slice of them, then the benchmarks.
     sections = html.Div(
         [
             _setup_section(
+                "bi-sliders", "Scope, audience & voice",
+                "The three questions that decide the shape of the deck.",
+                _setup_options(), span=True,
+                tip_id="qs-tip-sec-shape",
+                tip="Answer these from the brief. They decide which sub-decks get "
+                    "assembled, who the commentary is pitched at, and how much prose "
+                    "each slide carries — before any filter is touched.",
+            ),
+            _setup_section(
                 "bi-database", "Data source",
-                "Build from the governed database or your own dataset, and choose which "
-                "books the deck draws on.",
+                "Which data the figures are computed from.",
                 _data_source_control(dataset),
                 span=True,
+                tip_id="qs-tip-sec-source",
+                tip="Every figure in the deck is computed from the source chosen here, "
+                    "and every cached build re-keys when it changes.",
             ),
             _setup_section(
                 "bi-funnel", "Scope & filters",
                 "Every list narrows to what the selection above it writes in.",
                 # No DATA SCOPE toggle here. It rendered two chips no callback ever read,
-                # directly under DATA BASIS — which is the real "premium or premium+survey"
-                # choice — so the form showed the same decision twice and only one of them
-                # worked. (The chips still exist for the standalone demo rail.)
+                # directly under the basis question — which is the real "GPR or GPR +
+                # survey" choice — so the form showed the same decision twice and only one
+                # of them worked. (The chips still exist for the standalone demo rail.)
                 _filter_grid(filter_options, filter_values),
                 span=True,
-            ),
-            _setup_section(
-                "bi-sliders", "Scope, audience & voice",
-                "How much of the deck to assemble, and who it is written for.",
-                _setup_options(), span=True,
+                tip_id="qs-tip-sec-filters",
+                tip="The slice of the book the deck reports on. The lists cascade, so "
+                    "each one only offers values that exist under the others. Country "
+                    "and Year accept several values; several countries build several "
+                    "country blocks — and several peer groups.",
             ),
             _setup_section(
                 "bi-people", "Peers",
                 "Confidential — aggregate benchmark only.",
                 _peers_panel(),
+                tip_id="qs-tip-sec-peers",
+                tip="Who the carrier is benchmarked against. Existing peers come from "
+                    "the governed Peers table, one group per market; custom peers are "
+                    "yours to pin, per market, with at least "
+                    f"{MIN_CUSTOM_PEERS} carriers each so the benchmark stays an "
+                    "aggregate. No peer is ever named in carrier-facing output.",
             ),
             html.Div(
                 _setup_section(
                     "bi-clipboard-data", "Survey",
                     "The survey book names carriers its own way — check the match.",
                     _survey_panel(),
+                    tip_id="qs-tip-sec-survey",
+                    tip="The survey book is a separate flow with its own carrier names "
+                        "and its own peer groups. Shown only when the deck draws on it, "
+                        "so a survey page never reports another carrier's scores.",
                 ),
                 id="studio-survey-section",
-                style={"display": "none"},          # shown on the Premium + survey basis
-            ),
-            _setup_section(
-                "bi-stars", "AI assist",
-                "On by default; faithfulness-verified.",
-                _ai_control(),
+                style={"display": "none"},          # shown on the GPR + Carrier Survey basis
             ),
         ],
         className="qs-setup-sections",
@@ -643,7 +806,7 @@ def setup_body(
             # Deck sections live in the aside so the main form stays a single screen.
             html.Div(
                 [
-                    html.Div([html.I(className="bi bi-collection"), "Deck sections"],
+                    html.Div([html.I(className="bi bi-collection"), "What's in your QBR"],
                              className="qs-aside-card-head"),
                     html.Div(template_sections_panel("all"), id="studio-template-sections"),
                 ],
@@ -659,12 +822,8 @@ def setup_body(
                     html.Div(
                         [
                             html.Div("QBR Studio", className="qs-setup-eyebrow"),
-                            html.Div([html.I(className="bi bi-database"), "Deck setup"], className="qs-setup-title"),
-                            html.P(
-                                "Choose the client, period and scope. Figures are computed "
-                                "deterministically from the governed dataset — no LLM, no invented numbers.",
-                                className="qs-setup-sub",
-                            ),
+                            html.Div([html.I(className="bi bi-magic"), "QBR Creator"],
+                                     className="qs-setup-title"),
                         ],
                         className="qs-setup-head-text",
                     ),

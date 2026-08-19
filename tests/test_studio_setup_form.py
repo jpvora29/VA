@@ -67,12 +67,16 @@ def test_generate_pins_the_report_to_qbr():
 # ── data basis: premium only, or premium + survey ────────────────────────────
 
 
-def test_the_form_offers_premium_only_or_premium_plus_survey():
+def test_the_form_offers_gpr_or_gpr_plus_carrier_survey():
+    """The labels name the BOOKS an author knows by name, not the internal measure."""
     form = _form()
     assert "studio-data-basis" in form
-    assert "Premium only" in form and "Premium + survey" in form
-    # It sits with DATA SOURCE — both answer "what is this deck built from?".
+    assert "GPR" in form and "GPR + Carrier Survey" in form
+    assert "Premium only" not in form and "Premium + survey" not in form
+    # It sits with the source question — both answer "what is this deck built from?".
     assert "studio-data-source" in form
+    assert "GPR / Survey" in form and "Custom data" in form
+    assert "Existing database" not in form and "My uploaded data" not in form
 
 
 def test_data_basis_defaults_to_premium_only():
@@ -110,7 +114,7 @@ def test_the_choice_reaches_the_selection_generate_builds_from():
 
 def test_the_survey_panel_is_in_the_form_but_hidden_by_default():
     form = _form()
-    assert "studio-survey-carrier" in form and "studio-survey-peers" in form
+    assert "studio-survey-carrier" in form and "studio-survey-peer" in form
     assert "studio-survey-section" in form
 
 
@@ -181,16 +185,26 @@ def test_an_uploaded_dataset_has_no_survey_book(seeded_survey):
 
 def _peer_state(selected, basis="premium_survey", carrier="Zurich", chosen=None, record=None,
                 keep_choice=True):
+    """``([(country, options, peers)], read-out)`` — the per-market survey peer groups."""
     from studio.authoring.setup import survey_peer_state
 
     return survey_peer_state(selected, basis, carrier, chosen, record,
                              keep_choice=keep_choice)
 
 
+def _one_market(selected, **kwargs):
+    """``(options, peers, read-out)`` for a scope that covers a single market."""
+    groups, note = _peer_state(selected, **kwargs)
+    if not groups:
+        return [], [], note
+    (_country, options, peers), = groups
+    return options, list(peers), note
+
+
 def test_the_peer_panel_is_prefilled_from_the_peers_table(seeded_survey):
     from studio.data import peer_members
 
-    options, value, note = _peer_state({"carrier": "Zurich", "country": "Singapore"})
+    options, value, note = _one_market({"carrier": "Zurich", "country": "Singapore"})
     assert value, "the survey peer group must be shown before the deck is built"
     # Keyed on Carrier and scoped to the country — the survey flow's own peer columns.
     assert set(value) == set(peer_members("survey", "Zurich", country=("Singapore",)))
@@ -200,41 +214,41 @@ def test_the_peer_panel_is_prefilled_from_the_peers_table(seeded_survey):
 
 def test_the_peer_panel_follows_the_survey_carrier_not_the_premium_one(seeded_survey):
     """Two carriers keep two different peer groups; the panel must track the survey one."""
-    zurich = _peer_state({"country": "Singapore"}, carrier="Zurich")[1]
-    aig = _peer_state({"country": "Singapore"}, carrier="AIG")[1]
+    zurich = _one_market({"country": "Singapore"}, carrier="Zurich")[1]
+    aig = _one_market({"country": "Singapore"}, carrier="AIG")[1]
     assert zurich and aig and set(zurich) != set(aig)
     assert "AIG" not in aig and "Zurich" not in zurich
 
 
 def test_an_edited_peer_selection_survives_a_filter_change(seeded_survey):
-    options, value, note = _peer_state({"carrier": "Zurich", "country": "Singapore"},
-                                       chosen=["Chubb"])
+    options, value, note = _one_market({"carrier": "Zurich", "country": "Singapore"},
+                                       chosen={"Singapore": ["Chubb"]})
     assert value == ["Chubb"]
     assert "your selection" in _rendered(note)
 
 
 def test_a_stale_peer_selection_is_replaced_by_the_peers_table(seeded_survey):
     """A name this scope does not survey is not a selection worth keeping."""
-    _o, value, _n = _peer_state({"carrier": "Zurich", "country": "Singapore"},
-                                chosen=["Someone Not Surveyed"])
+    _o, value, _n = _one_market({"carrier": "Zurich", "country": "Singapore"},
+                                chosen={"Singapore": ["Someone Not Surveyed"]})
     assert value and "Someone Not Surveyed" not in value
 
 
 def test_the_peer_panel_is_silent_off_the_survey_basis(seeded_survey):
-    options, value, note = _peer_state({"carrier": "Zurich"}, basis="premium")
+    options, value, note = _one_market({"carrier": "Zurich"}, basis="premium")
     assert options == [] and value == []
     assert "Peers table" not in _rendered(note)
 
 
 def test_the_peer_panel_waits_for_a_survey_carrier(seeded_survey):
-    options, value, _n = _peer_state({"country": "Singapore"}, carrier=None)
+    options, value, _n = _one_market({"country": "Singapore"}, carrier=None)
     assert options == [] and value == []
 
 
 def test_the_peer_panel_says_so_when_the_peers_table_has_no_row(seeded_survey):
     """Silence would read as "no peers needed"; the page would then rank against the whole
     surveyed field, which is a different statement and worth saying out loud."""
-    _o, value, note = _peer_state({"country": "Singapore"}, carrier="Nobody At All")
+    _o, value, note = _one_market({"country": "Singapore"}, carrier="Nobody At All")
     assert value == []
     assert "No survey peer group" in _rendered(note)
 
@@ -269,8 +283,8 @@ def test_a_pin_still_survives_a_change_that_is_not_the_carrier(seeded_survey):
 
 
 def test_changing_the_carrier_drops_the_previous_carriers_peers(seeded_survey):
-    _o, value, _n = _peer_state({"carrier": "AIG", "country": "Singapore"}, carrier="AIG",
-                                chosen=["Chubb"], keep_choice=False)
+    _o, value, _n = _one_market({"carrier": "AIG", "country": "Singapore"}, carrier="AIG",
+                                chosen={"Singapore": ["Chubb"]}, keep_choice=False)
     from studio.data import peer_members
 
     assert set(value) == set(peer_members("survey", "AIG", country=("Singapore",)))
@@ -317,14 +331,42 @@ def test_the_premium_groups_are_the_peers_table_s_own_per_country(seeded_survey)
     assert groups["Singapore"] != groups["Japan"], "the seed gives these markets two groups"
 
 
-def test_the_survey_panel_shows_one_peer_group_per_selected_country(seeded_survey):
-    _opts, value, body = _peer_state(_MULTI)
+def test_the_survey_panel_gives_each_selected_country_its_own_peer_group(seeded_survey):
+    """One dropdown per market, each pre-filled with THAT market's group.
+
+    The old flat dropdown could pin one set for the whole run, so it had to be left empty
+    here — pre-filling the union would have ranked Japan's page against Singapore's peers.
+    Per market there is a right answer everywhere, so every market shows one.
+    """
+    groups, body = _peer_state(_MULTI)
+    by_country = {c: list(peers) for c, _o, peers in groups}
+    assert set(by_country) == {"Singapore", "Japan"}
+    assert all(by_country.values()), "every market must show the group its page will use"
+    assert by_country["Singapore"] != by_country["Japan"]
     rendered = _rendered(body)
     assert "Singapore" in rendered and "Japan" in rendered
-    # Left EMPTY on purpose: a pinned set applies to EVERY survey page in the run, so
-    # pre-filling the union would rank Japan's page against Singapore's peers.
-    assert value == []
     assert "each survey page benchmarks against its own" in rendered.lower()
+
+
+def test_each_survey_market_only_offers_carriers_that_book_surveys_there(seeded_survey):
+    """A candidate list drawn from the whole run would offer Japan-only names in
+    Singapore — and the page cannot rank a carrier it has no score for."""
+    groups, _body = _peer_state(_MULTI)
+    for country, options, _peers in groups:
+        names = {o["value"] for o in options}
+        assert "Zurich" not in names, "a carrier is not its own peer"
+        assert names, f"{country} must offer survey peer candidates"
+
+
+def test_editing_one_survey_market_leaves_the_others_on_their_own_group(seeded_survey):
+    """The whole point of the split: overriding Japan must not touch Singapore."""
+    groups, _body = _peer_state(_MULTI, chosen={"Japan": ["Chubb"]})
+    by_country = {c: list(peers) for c, _o, peers in groups}
+    assert by_country["Japan"] == ["Chubb"]
+    from studio.authoring.setup import _survey_result, survey_peer_group
+
+    assert by_country["Singapore"] == list(
+        survey_peer_group(_survey_result(), "Zurich", "Singapore"))
 
 
 def test_the_survey_groups_are_the_peers_table_s_own_per_country(seeded_survey):
@@ -338,16 +380,22 @@ def test_the_survey_groups_are_the_peers_table_s_own_per_country(seeded_survey):
 
 
 def test_one_country_still_pins_the_group_because_there_is_only_one(seeded_survey):
-    _opts, value, _body = _peer_state({"carrier": "Zurich", "country": ["Singapore"]})
+    _opts, value, _body = _one_market({"carrier": "Zurich", "country": ["Singapore"]})
     assert value, "a single market has one right answer — pinning it changes nothing"
 
 
-def test_ai_assist_defaults_to_on():
-    from studio.page.authoring.setup import _ai_control
+def test_the_ai_assist_control_is_gone_and_generate_pins_it_on():
+    """The narrative IS the deck — nobody should have to opt in to the commentary, and
+    the checkbox that let them opt out was one more decision on an already long form."""
+    import inspect
 
-    checkbox = _ai_control().children[0]
-    assert checkbox.id == "studio-ai-toggle"
-    assert checkbox.value is True
+    from studio.authoring import setup as S
+
+    form = _form()
+    assert "studio-ai-toggle" not in form and "AI assist" not in form
+    src = inspect.getsource(S.register_setup)
+    assert 'State("studio-ai-toggle"' not in src
+    assert '"ai": True' in src
 
 
 # ── peers: existing = names from the Peers table, custom = a scoped dropdown ──
@@ -483,6 +531,275 @@ def test_existing_mode_hides_the_custom_peer_dropdown_on_first_paint():
     assert wrap.style == {"display": "none"}
 
 
+# ── custom peers, market by market ───────────────────────────────────────────
+#
+# A peer group is a per-country statement. One flat dropdown could only pin ONE set for the
+# whole run, so a two-market deck silently benchmarked Japan's page against carriers the
+# author chose for Singapore. Each market now gets its own picker, its own candidate list
+# and its own minimum.
+
+
+def _custom_groups(selected, record=None, chosen=None):
+    from studio.authoring.setup import custom_peer_groups
+
+    return custom_peer_groups(selected, record, chosen)
+
+
+def test_custom_peers_get_one_picker_per_selected_market():
+    assert [c for c, _o, _v in _custom_groups(_MULTI)] == ["Singapore", "Japan"]
+
+
+def test_one_country_needs_only_one_picker():
+    groups = _custom_groups({"carrier": "Zurich", "country": ["Japan"]})
+    assert [c for c, _o, _v in groups] == ["Japan"]
+    # …and a run with no country pinned has one market: all of them.
+    assert [c for c, _o, _v in _custom_groups({"carrier": "Zurich"})] == [""]
+
+
+def test_each_market_only_offers_carriers_that_write_there():
+    """The candidate list is what makes the choice correct — a carrier absent from Japan
+    must not be offered as a Japanese peer."""
+    for country, options, _v in _custom_groups(_MULTI):
+        names = {o["value"] for o in options}
+        expected = {o["value"] for o in
+                    carriers_in_scope({**_MULTI, "country": country}, None)}
+        assert names == expected
+        assert "Zurich" not in names, "a carrier is never its own peer"
+
+
+def test_a_markets_selection_survives_a_filter_change():
+    """The pickers are rebuilt on every filter change, so a rebuild must not be a reset."""
+    groups = _custom_groups(_MULTI, chosen={"Singapore": ["AIG", "Chubb"]})
+    by_country = {c: list(v) for c, _o, v in groups}
+    assert by_country["Singapore"] == ["AIG", "Chubb"]
+    assert by_country["Japan"] == []
+
+
+def test_a_peer_that_left_a_market_is_dropped_from_that_market():
+    groups = _custom_groups(_MULTI, chosen={"Singapore": ["AIG", "Not A Carrier"]})
+    assert {c: list(v) for c, _o, v in groups}["Singapore"] == ["AIG"]
+
+
+def test_the_panel_renders_a_picker_and_a_minimum_note_per_market():
+    from studio.authoring.setup import peer_panel_state
+
+    picker, style, _msg = peer_panel_state(_MULTI, "custom", None, {})
+    rendered = _rendered(picker)
+    assert style == {}, "custom mode shows the pickers"
+    assert rendered.count("studio-peer-custom") == 2
+    assert rendered.count("studio-peer-min") == 2
+    assert "Singapore" in rendered and "Japan" in rendered
+
+
+# ── at least five peers, or no deck ──────────────────────────────────────────
+#
+# A benchmark of one or two carriers is close enough to naming them, which carrier-facing
+# output may not do — and an average over two is not an aggregate. The rule is enforced
+# twice: live under each picker, and again at Generate, because a note is only a note.
+
+
+def test_a_thin_peer_set_is_called_out():
+    from studio.page.authoring.setup import MIN_PEERS_MESSAGE, peer_min_note
+
+    assert peer_min_note(["AIG", "Chubb"]) == MIN_PEERS_MESSAGE
+    assert peer_min_note([]) == MIN_PEERS_MESSAGE
+    assert peer_min_note(None) == MIN_PEERS_MESSAGE
+
+
+def test_five_peers_clears_the_warning():
+    from studio.page.authoring.setup import MIN_CUSTOM_PEERS, peer_min_note
+
+    assert MIN_CUSTOM_PEERS == 5
+    assert peer_min_note(["AIG", "Chubb", "Allianz", "AXA XL", "QBE"]) == ""
+
+
+def test_the_note_sits_in_a_class_the_stylesheet_paints_red():
+    from pathlib import Path
+
+    css = Path("assets/studio_authoring_v4.css").read_text(encoding="utf-8")
+    block = css.split(".qs-root .qs-peer-min {", 1)[1].split("}", 1)[0]
+    assert "--va-danger" in block
+    # …and takes no room at all while the rule is satisfied.
+    assert ".qs-root .qs-peer-min:empty { display: none; }" in css
+
+
+def test_the_live_check_answers_only_the_market_that_changed():
+    """MATCH, not ALL: rebuilding every picker on each pick would close the open menu."""
+    import inspect
+
+    from studio.authoring import setup as S
+
+    src = inspect.getsource(S.register_setup)
+    assert 'Output({"type": "studio-peer-min", "country": MATCH}, "children")' in src
+    assert 'Input({"type": "studio-peer-custom", "country": MATCH}, "value")' in src
+
+
+def test_every_market_on_the_form_is_checked_not_only_the_answered_ones():
+    """A run over two countries with peers pinned in ONE of them is exactly the case a
+    check over the answers alone waves through."""
+    from studio.authoring.setup import short_markets
+
+    five = ["AIG", "Chubb", "Allianz", "AXA XL", "QBE"]
+    assert short_markets({"Singapore": five}, countries=["Singapore", "Japan"]) == ["Japan"]
+    assert short_markets({"Singapore": five, "Japan": five},
+                         countries=["Singapore", "Japan"]) == []
+
+
+def test_no_selection_at_all_is_under_the_minimum():
+    from studio.authoring.setup import short_markets
+
+    assert short_markets({}, countries=[""]) == [""]
+    assert short_markets({}) == [""]
+
+
+def test_generate_refuses_a_thin_custom_peer_set():
+    """The message the author sees is the one they were asked for, in the warn tone."""
+    import inspect
+
+    from studio.authoring import setup as S
+    from studio.page.authoring.setup import MIN_PEERS_MESSAGE
+
+    warning = _rendered(S._short_peer_warning(["Japan"]))
+    assert MIN_PEERS_MESSAGE in warning and "warn" in warning
+    assert "Japan" in warning
+
+    src = inspect.getsource(S.register_setup)
+    assert "short_markets(" in src and "_short_peer_warning(short)" in src
+
+
+def test_the_union_is_what_the_overall_block_benchmarks_against():
+    """Per-market pins narrow the country pages; the overall page reports on the whole
+    selection, so it benchmarks against the whole pinned field."""
+    from studio.authoring.setup import flatten_peers, peers_by_country
+
+    ids = [{"type": "studio-peer-custom", "country": "Singapore"},
+           {"type": "studio-peer-custom", "country": "Japan"}]
+    by_country = peers_by_country(ids, [["AIG", "Chubb"], ["Sompo", "AIG"]])
+    assert by_country == {"Singapore": ["AIG", "Chubb"], "Japan": ["Sompo", "AIG"]}
+    assert flatten_peers(by_country) == ["AIG", "Chubb", "Sompo"]   # de-duplicated, in order
+
+
+def test_an_untouched_picker_contributes_no_market():
+    from studio.authoring.setup import peers_by_country
+
+    ids = [{"type": "studio-peer-custom", "country": "Singapore"},
+           {"type": "studio-peer-custom", "country": "Japan"}]
+    assert peers_by_country(ids, [["AIG"], []]) == {"Singapore": ["AIG"]}
+
+
+# ── a market's peers reach that market's pages ───────────────────────────────
+
+
+def test_a_country_sub_deck_benchmarks_against_its_own_pinned_peers():
+    """The whole point of the split. Without this the country pages all benchmarked
+    against the union — a field that exists in no market at all."""
+    from studio.compute import compute_overall
+    from studio.template_fill.bindings import scope_to_country
+
+    result = compute_overall(
+        filters={"carrier": "Zurich", "country": ["Singapore", "Japan"], "year": 2025},
+        peers=["AIG", "Chubb", "Sompo", "Tokio Marine"],
+        peers_by_country={"Singapore": ["AIG", "Chubb"], "Japan": ["Sompo", "Tokio Marine"]},
+        survey_peers_by_country={"Japan": ["Sompo"]},
+    )
+    assert scope_to_country(result, "Singapore").peers == ("AIG", "Chubb")
+    assert scope_to_country(result, "Japan").peers == ("Sompo", "Tokio Marine")
+    assert scope_to_country(result, "Japan").survey_peers == ("Sompo",)
+    assert result.peers == ("AIG", "Chubb", "Sompo", "Tokio Marine"), "the union is untouched"
+
+
+def test_a_market_left_empty_resolves_its_own_group_not_the_union():
+    """Once a run pins market by market, a market with no answer must NOT inherit what the
+    other markets add up to — that union is a benchmark set no market has."""
+    from studio.compute import compute_overall
+    from studio.template_fill.bindings import scope_to_country
+
+    result = compute_overall(
+        filters={"carrier": "Zurich", "country": ["Singapore", "Japan"]},
+        survey_peers=["Chubb", "Sompo"],
+        survey_peers_by_country={"Japan": ["Sompo"]},
+    )
+    assert scope_to_country(result, "Japan").survey_peers == ("Sompo",)
+    assert scope_to_country(result, "Singapore").survey_peers is None
+
+
+def test_a_market_with_no_pin_keeps_the_runs_peers():
+    """Nothing changes for a run that pinned no per-market peers — the flat pin (or the
+    Peers table, when there is none) still answers."""
+    from studio.compute import compute_overall
+    from studio.template_fill.bindings import scope_to_country
+
+    flat = compute_overall(filters={"carrier": "Zurich", "country": ["Singapore"]},
+                           peers=["AIG", "Chubb"])
+    assert scope_to_country(flat, "Singapore").peers == ("AIG", "Chubb")
+
+    none = compute_overall(filters={"carrier": "Zurich", "country": ["Singapore"]})
+    assert scope_to_country(none, "Singapore").peers is None
+
+
+def test_blank_markets_are_not_pinned_at_all():
+    from studio.compute import compute_overall
+
+    result = compute_overall(filters={"carrier": "Zurich"},
+                             peers_by_country={"Singapore": [], "": ["AIG"]})
+    assert result.peers_by_country is None
+
+
+# ── the Setup form asks questions, and explains every one of them ────────────
+
+
+def test_the_deck_shape_questions_come_first():
+    """They are answered from the brief, before any filter is touched."""
+    first = _rendered(setup_body([], filter_options={}, filter_values={}))
+    shape = first.index("studio-audience")
+    assert shape < first.index("studio-data-source") < first.index("studio-peer-mode")
+
+
+def test_the_controls_ask_questions_rather_than_naming_themselves():
+    form = _form()
+    for question in ("How much of the deck should we build?",
+                     "Who is this deck for?",
+                     "How should the commentary read?",
+                     "Where should the numbers come from?",
+                     "Which books should the deck draw on?"):
+        assert question in form, question
+    for label in ('"SCOPE"', '"AUDIENCE"', '"COMMENTARY STYLE"', '"DATA SOURCE"',
+                  '"DATA BASIS"', '"SURVEY CARRIER"', '"SURVEY PEERS"'):
+        assert label not in form, label
+
+
+def test_every_question_carries_an_explanation():
+    """A three-word answer to a modelling question is exactly what needs a footnote."""
+    form = _form()
+    for tip in ("qs-tip-scope", "qs-tip-audience", "qs-tip-style", "qs-tip-source",
+                "qs-tip-basis", "qs-tip-sec-peers", "qs-tip-sec-filters",
+                "qs-tip-survey-carrier", "qs-tip-survey-peers"):
+        assert tip in form, tip
+    assert "bi-info-circle" in form              # the ⓘ itself
+    assert form.count('"target"') >= 9           # …and a tooltip pointed at each one
+
+
+def test_the_page_is_named_for_what_it_makes():
+    form = _form()
+    assert "QBR Creator" in form and "Deck setup" not in form
+    assert "Deck sections" not in form
+    # …and the paragraph that explained the machinery is gone; the tooltips carry it now.
+    assert "no invented numbers" not in form
+
+
+def test_the_filter_pane_starts_its_second_line_with_year():
+    """Auto-fill made the wrap point a function of the window width, so Year — the filter
+    that decides the reporting PERIOD — could land anywhere."""
+    from pathlib import Path
+
+    from studio.page.layout import GPR_FILTERS
+
+    assert [f["id"] for f in GPR_FILTERS][:4] == ["region", "country", "carrier", "year"]
+    css = Path("assets/studio_authoring_v4.css").read_text(encoding="utf-8")
+    block = css.split(".qs-root .studio-filter-grid {", 1)[1].split("}", 1)[0]
+    assert "repeat(3, minmax(0, 1fr))" in block
+
+
 # ── deck sections track the assembly scope ───────────────────────────────────
 
 
@@ -581,6 +898,45 @@ def test_setup_selection_builds_the_assembled_deck(tmp_path):
     path = _assembled_export(selection)
     assert path, "the overall sub-deck must assemble"
     assert len(Presentation(path).slides) > 0
+
+
+def test_per_market_custom_peers_build_a_two_country_deck():
+    """The new selection shape, end to end: two markets, two pinned peer sets, one merged
+    deck — and each country block benchmarking against its own market's carriers."""
+    from pptx import Presentation
+
+    from studio.authoring.generate import _assembled_export, _generated_deck
+    from studio.template_fill.bindings import scope_to_country
+
+    pinned = {"Singapore": ["AIG", "AXA XL", "Allianz", "Chubb", "QBE"],
+              "Japan": ["AIG", "MS&AD", "Sompo", "Tokio Marine", "Chubb"]}
+    selection = {
+        "report": "qbr",
+        "filters": {"carrier": "Zurich", "country": ["Singapore", "Japan"], "year": 2025},
+        "breakdowns": ["Product_Line", "SIC_Major_Class"],
+        "cuts": [],
+        "peers": ["AIG", "AXA XL", "Allianz", "Chubb", "QBE", "MS&AD", "Sompo", "Tokio Marine"],
+        "peers_by_country": pinned,
+        "audience": "executive",
+        "meeting_length": "standard",
+        "style": "balanced",
+        "ai": False,                            # deterministic path for the test
+        "template_scope": "country",
+        "template_path": "template/country_template.pptx",
+        "dataset_id": None,
+    }
+
+    assert _generated_deck(selection).slides
+    path = _assembled_export(selection)
+    assert path and len(Presentation(path).slides) > 0
+
+    # …and the benchmark each country page computes is its own market's, not the union.
+    from studio.compute import compute_overall
+
+    result = compute_overall(filters=selection["filters"], peers=selection["peers"],
+                             peers_by_country=pinned)
+    for country, expected in pinned.items():
+        assert scope_to_country(result, country).peers == tuple(expected)
 
 
 def test_pinned_custom_peers_reach_the_deck():

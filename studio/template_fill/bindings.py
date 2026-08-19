@@ -291,8 +291,30 @@ def scope_to_product(result, product: Any):
 
 
 def scope_to_country(result, country: Any):
-    """``result`` re-scoped to a single country (for a ``country`` sub-deck)."""
-    return _rescope(result, _COUNTRY_COL, country)
+    """``result`` re-scoped to a single country (for a ``country`` or ``survey`` sub-deck).
+
+    A peer group is a per-market statement, so a run that pinned peers market by market
+    also narrows to THIS market's set here. Without it every country page benchmarked
+    against the union of every market's peers — a field that exists in none of them.
+    """
+    return _pin_market_peers(_rescope(result, _COUNTRY_COL, country), str(country))
+
+
+def _pin_market_peers(result, country: str):
+    """``result`` with ``peers`` / ``survey_peers`` narrowed to one market's pinned set.
+
+    Nothing changes when the run pinned no per-market peers at all: the flat pin (or the
+    Peers table, when there is none) still answers, exactly as before. But once a run DOES
+    pin market by market, every market is narrowed — including one the author left empty,
+    which becomes "no pin here" and resolves its own group rather than inheriting the union
+    the other markets' choices add up to.
+    """
+    updates = {}
+    for field, per_country in (("peers", getattr(result, "peers_by_country", None)),
+                               ("survey_peers", getattr(result, "survey_peers_by_country", None))):
+        if per_country:
+            updates[field] = tuple(per_country.get(country) or ()) or None
+    return replace(result, **updates) if updates else result
 
 
 def resolve_roles_for_product(result, product: Any) -> Dict[str, Any]:

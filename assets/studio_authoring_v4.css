@@ -198,10 +198,80 @@
 .qs-root .studio-report-radio input,
 .dash-options-list input[type="checkbox"] { accent-color: var(--va-blue); }
 
+/* The filter pane reads in fixed rows of three rather than "however many fit".
+   Auto-fill made the wrap point a function of the window width, so Year — the one
+   filter that decides the reporting PERIOD — could land anywhere. Three columns put
+   the identity filters (Region, Country, Carrier) on line one and start line two
+   with Year, every time. Two columns keep Year on line two as well; one column is
+   the phone fallback, where rows stop meaning anything. */
 .qs-root .studio-filter-grid {
-    grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)) !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
     gap: 14px 14px !important;
 }
+@media (max-width: 1180px) {
+    .qs-root .studio-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+}
+@media (max-width: 720px) {
+    .qs-root .studio-filter-grid { grid-template-columns: minmax(0, 1fr) !important; }
+}
+
+/* A question is asked, not shouted: the all-caps micro-label reads as an instruction
+   once the text is a full sentence, so question labels get their own size and case. */
+.qs-root .studio-field-label.qs-question,
+.qs-setup-section .studio-field-label.qs-question {
+    font-size: 12.5px !important; font-weight: 700 !important;
+    letter-spacing: -0.005em !important; text-transform: none !important;
+    color: var(--va-ink-700, #26324d) !important; margin-bottom: 8px !important;
+}
+
+/* ── ⓘ: what this control actually decides ───────────────────────────────────
+   Every question on the form is a modelling choice with consequences downstream.
+   The explanation sits on a hover/focus rather than in a paragraph, so the form
+   stays one screen and the labels stay short. */
+.qs-root .qs-info {
+    display: inline-flex; align-items: center; margin-left: 6px;
+    color: var(--va-ink-400, #7d8aa6);
+}
+.qs-root .qs-info .bi {
+    font-size: 12px; line-height: 1; cursor: help; opacity: 0.75;
+    transition: color var(--v4-ease), opacity var(--v4-ease);
+}
+.qs-root .qs-info .bi:hover, .qs-root .qs-info .bi:focus-visible {
+    color: var(--va-blue); opacity: 1; outline: none;
+}
+.qs-root .qs-info .bi:focus-visible { box-shadow: var(--v4-focus); border-radius: 999px; }
+.qs-sec-title .qs-info .bi { font-size: 11.5px; }
+.tooltip.qs-tip .tooltip-inner {
+    max-width: 300px; padding: 8px 11px; text-align: left;
+    font-size: 11.5px; line-height: 1.5; font-weight: 500;
+    background: var(--va-navy, #0d1b3e); border-radius: 10px;
+}
+.tooltip.qs-tip .tooltip-arrow::before { border-top-color: var(--va-navy, #0d1b3e); }
+
+/* ── peers, market by market ─────────────────────────────────────────────────
+   Several countries in scope = several peer sets, one per market. Each picker is
+   fenced and labelled so it reads as "the peers THERE" rather than as one long
+   list of controls the author has to keep straight. */
+.qs-root .qs-peer-markets { display: flex; flex-direction: column; gap: 10px; }
+.qs-root .qs-peer-markets.per-market { gap: 12px; }
+.qs-root .qs-peer-market { display: flex; flex-direction: column; gap: 6px; }
+.qs-root .qs-peer-markets.per-market .qs-peer-market {
+    padding: 10px 12px 12px;
+    border-radius: 12px;
+    background: rgba(13, 27, 62, 0.028);
+    box-shadow: inset 0 0 0 1px var(--v4-hair);
+}
+.qs-root .qs-peer-market-name {
+    font-size: 10.5px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--va-ink-500);
+}
+/* The under-minimum warning. Collapsed to nothing while the set is valid, so a
+   satisfied rule takes no space and a broken one is impossible to miss. */
+.qs-root .qs-peer-min {
+    font-size: 11px; font-weight: 600; line-height: 1.4;
+    color: var(--va-danger, #c0392b);
+}
+.qs-root .qs-peer-min:empty { display: none; }
 
 /* ── segmented controls ───────────────────────────────────────────────────────
    THE fix that changes how the whole form reads. Dash renders each choice as

@@ -26,7 +26,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from logger import get_logger
 from studio.compute import DATA_BASIS_PREMIUM, DATA_BASIS_WITH_SURVEY
 from studio.template_fill import (
-    commentary, commentary_qa, feedback, grids, gwp_page, kpi_band, lc_page, prune,
+    commentary, commentary_metrics, commentary_qa, feedback, grids, gwp_page, kpi_band,
+    lc_page, prune,
 )
 from studio.template_fill import roles as R
 from studio.template_fill.survey import facts as survey_facts
@@ -190,6 +191,10 @@ def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], la
         # Report-only: the prose is already written and already faithful, and a judgement
         # rule must never be allowed to delete a sentence (that is how a cell ends blank).
         commentary_qa.log_issues(commentary_qa.check(values), label=label)
+        # …and the same text scored on how it READS, so a commentary change is judged on a
+        # number rather than on a feeling (studio.template_fill.commentary_metrics).
+        commentary_metrics.log_score(
+            values, subject=str(getattr(scoped_result, "subject", "") or ""), label=label)
         hidden = tuple(prune.hidden_country_pages(template, _country_count(values)))
     except Exception as exc:  # noqa: BLE001 — grid/pruning must never break assembly
         logger.warning("assemble: grid/prune failed for %s: %s", template_name, exc)

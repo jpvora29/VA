@@ -86,6 +86,12 @@ class OverallResult:
     engine: Any = None
     # User-pinned custom peer set (Carrier_Group values); None → resolve from Peers table.
     peers: Optional[Tuple[str, ...]] = None
+    # The same pin MARKET BY MARKET, ``{country: (peer…)}``. A peer group is a per-country
+    # statement — a carrier is benchmarked against a different set in Singapore than in
+    # Japan — so a run over several markets pins several sets, and each country sub-deck
+    # narrows ``peers`` to its own (``studio.template_fill.bindings.scope_to_country``).
+    # ``peers`` stays the union, which is what the overall block reports against.
+    peers_by_country: Optional[Dict[str, Tuple[str, ...]]] = None
     # Every country the whole RUN covers, carried unchanged into each per-country sub-deck
     # so a page can tell a single-country run from a multi-country one (the country-vs-country
     # chart on the GWP-performance page needs several countries to mean anything).
@@ -110,6 +116,8 @@ class OverallResult:
     # "resolve it from the book" — the pin is the author's override, not the only route.
     survey_carrier: Optional[str] = None
     survey_peers: Optional[Tuple[str, ...]] = None
+    # …and the survey peer pin market by market, for the same reason as ``peers_by_country``.
+    survey_peers_by_country: Optional[Dict[str, Tuple[str, ...]]] = None
 
 
 _BLANK_VALS = (None, "", "all", "All")
@@ -699,6 +707,17 @@ def position_radar(*, totals=None, rankm=None, sowm=None, pg=None, conc=None) ->
     return {"labels": labels, "values": values}
 
 
+def _by_country(pinned: Optional[Mapping[str, Sequence[str]]]) -> Optional[Dict[str, Tuple[str, ...]]]:
+    """``{country: (peer…)}`` with blanks dropped — ``None`` when nothing is pinned.
+
+    Tuples because a result is copied with ``dataclasses.replace`` through every sub-deck,
+    and a shared mutable list would let one country's page edit another's benchmark.
+    """
+    out = {str(country): tuple(str(p) for p in (peers or ()) if str(p).strip())
+           for country, peers in (pinned or {}).items() if country and peers}
+    return {c: p for c, p in out.items() if p} or None
+
+
 def compute_overall(
     *,
     flow: str = "gpr",
@@ -706,9 +725,11 @@ def compute_overall(
     breakdowns: Optional[List[str]] = None,
     engine: Any = None,
     peers: Optional[Sequence[str]] = None,
+    peers_by_country: Optional[Mapping[str, Sequence[str]]] = None,
     style: str = "balanced",
     survey_carrier: Optional[str] = None,
     survey_peers: Optional[Sequence[str]] = None,
+    survey_peers_by_country: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> OverallResult:
     """Compute the Overall page from the live DB. Best-effort: a failing metric is
     logged and skipped, never fatal."""
@@ -722,8 +743,10 @@ def compute_overall(
     result = OverallResult(
         store=store, subject=subject, flow=flow, resolved_filters=dict(resolved),
         engine=engine, peers=tuple(peers) if peers else None, style=style or "balanced",
+        peers_by_country=_by_country(peers_by_country),
         survey_carrier=survey_carrier or None,
         survey_peers=tuple(survey_peers) if survey_peers else None,
+        survey_peers_by_country=_by_country(survey_peers_by_country),
     )
 
     try:

@@ -842,6 +842,8 @@ def _compose(kind: str, f: Dict[str, Any], limit: int, ledger=None, extras=None)
     :class:`~studio.template_fill.ledger.ClaimLedger` the points are taken through it, so a
     claim an earlier page already made gives way to this page's next-best one.
     """
+    from studio.template_fill.openings import vary_openings
+
     if kind not in _COMPOSERS:
         return _kpi_cell(kind, f)
     said = points(kind, f)
@@ -849,7 +851,10 @@ def _compose(kind: str, f: Dict[str, Any], limit: int, ledger=None, extras=None)
         said = said + [line for line in extras.for_topic(kind) if line not in said]
     if ledger is not None:
         said = ledger.take(said, limit=limit)
-    return _bullets(said, limit)
+    # Every composer opens on the subject, because every one is written to stand alone.
+    # Stacked into a cell they read as a roll-call, so all but the first are turned back
+    # into "the book" — the same rule the LLM rewrite is held to.
+    return _bullets(vary_openings(said[:limit], str(f.get("subject") or "")), limit)
 
 
 # ── value resolution ─────────────────────────────────────────────────────────
@@ -869,13 +874,18 @@ def _countries_in_scope(result) -> List[str]:
     return [r["name"] for r in _country_breakdown(result) if r.get("name")]
 
 
-def _polish(text: str, kind: str, style: Optional[str]) -> str:
-    """LLM re-word behind the faithfulness verifier; KPI cells stay deterministic."""
+def _polish(text: str, kind: str, style: Optional[str], subject: str = "") -> str:
+    """LLM re-write behind the faithfulness verifier; KPI cells stay deterministic.
+
+    The cell's ``kind`` IS its commentary topic, so it selects the same per-column brief the
+    summary page's columns use (``commentary._TOPIC_BRIEF``) — a country page's Challenges
+    cell is asked the same question, of a narrower book.
+    """
     if kind not in _COMPOSERS or kind == "highlights" or not text:
         return text
-    from studio.template_fill.commentary import _polish as polish
+    from studio.template_fill.commentary import _rewrite
 
-    return polish(text, node=f"feedback-{kind}", style=style)
+    return _rewrite(text, node=f"feedback-{kind}", style=style, topic=kind, subject=subject)
 
 
 def _extras(result):
@@ -941,7 +951,8 @@ def values(template: Template, result, *, ledger=None, extras=None) -> Dict[str,
                 limit = _HIGHLIGHT_BULLETS
             text = _compose(t["kind"], facts_for(country), limit, ledger,
                             extras if extras is not None else _extras(result))
-            text_cache[key] = _polish(text, t["kind"], style)
+            text_cache[key] = _polish(text, t["kind"], style,
+                                      str(getattr(result, "subject", "") or ""))
         # KPI callouts always write (a blank beats a stale "$xx.xM" placeholder);
         # an empty commentary keeps the template's ellipsis as a visible fill-me cue.
         if text_cache[key] or t["kind"] not in _COMPOSERS:
