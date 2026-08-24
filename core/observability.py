@@ -196,27 +196,6 @@ def reset_turn_sink(token: contextvars.Token) -> None:
 _usage_logger = logging.getLogger(__name__)
 
 
-def normalize_dspy_usage(total_by_lm: dict[str, Any]) -> dict[str, Optional[int]]:
-    """Flatten dspy's `UsageTracker.get_total_tokens()` to our standard shape.
-
-    dspy returns `{lm_name: {prompt_tokens, completion_tokens, total_tokens,
-    prompt_tokens_details: {cached_tokens, ...}, ...}}`. Sum across LMs into the
-    same `{input,output,total,cached}_tokens` keys `extract_token_usage` emits.
-    """
-    out = {key: 0 for key in _USAGE_KEYS}
-    seen = False
-    for entry in (total_by_lm or {}).values():
-        if not isinstance(entry, dict):
-            continue
-        seen = True
-        out["input_tokens"] += entry.get("prompt_tokens") or 0
-        out["output_tokens"] += entry.get("completion_tokens") or 0
-        out["total_tokens"] += entry.get("total_tokens") or 0
-        details = entry.get("prompt_tokens_details")
-        if isinstance(details, dict):
-            out["cached_tokens"] += details.get("cached_tokens") or 0
-    return out if seen else {key: None for key in _USAGE_KEYS}
-
 
 def accumulate_token_usage(usage: dict[str, Any], label: str) -> None:
     """Fold one call's usage into the active turn accumulator (no-op outside a turn)."""
@@ -230,8 +209,8 @@ def record_token_usage(
 ) -> None:
     """Log a per-call `llm_token_usage` line and accumulate it into the turn total.
 
-    Single entry point so every LM call site (LangChain or dspy) lands in both
-    the per-call log and the turn rollup.
+    Single entry point so every LM call site lands in both the per-call log and
+    the turn rollup.
     """
     if not any(usage.get(key) is not None for key in _USAGE_KEYS):
         return

@@ -10,7 +10,30 @@ analyst ``_solver_prompt``).
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
+
+
+def pinned_peers(
+    custom_peers: Optional[Dict[str, Any]],
+    flow: str,
+    *,
+    active: bool = True,
+) -> Tuple[str, ...]:
+    """The peer names pinned for `flow`, or ``()`` when there is no active override.
+
+    The one place that decides whether an override applies. The prompt directive
+    below renders it for the SQL path; the analytics tool path passes the same
+    tuple straight to the peer primitives, so both benchmark the identical set.
+    """
+    if not active or not custom_peers:
+        return ()
+    if (custom_peers.get("flow") or "").lower() != (flow or "").lower():
+        return ()
+    return tuple(
+        str(peer).strip()
+        for peer in (custom_peers.get("peers") or [])
+        if str(peer).strip()
+    )
 
 
 def custom_peer_directive(
@@ -26,17 +49,11 @@ def custom_peer_directive(
     carries no peers. ``flow`` is "gpr" or "survey"; the pinned peers are
     ``Carrier_Group`` values for GPR and ``Carrier`` values for survey.
     """
-    if not active or not custom_peers:
-        return ""
-    if (custom_peers.get("flow") or "").lower() != (flow or "").lower():
-        return ""
-    peers = [
-        str(p).strip() for p in (custom_peers.get("peers") or []) if str(p).strip()
-    ]
+    peers = pinned_peers(custom_peers, flow, active=active)
     if not peers:
         return ""
 
-    carrier = custom_peers.get("carrier") or "the selected carrier"
+    carrier = (custom_peers or {}).get("carrier") or "the selected carrier"
     country = custom_peers.get("country")
     peer_col = "Carrier_Group" if (flow or "").lower() == "gpr" else "Carrier"
     peer_list = ", ".join(f"'{p}'" for p in peers)

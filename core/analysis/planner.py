@@ -28,8 +28,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-import dspy
 
+from core.llm import Predictor
 from core.schemas.analysis import AnalysisPlan, AnalysisPlannerSignature
 from core.schemas.routing import RoutingContext
 
@@ -170,6 +170,14 @@ def get_lens_library() -> LensLibrary:
     return _default_library
 
 
+# Balanced tier: lens selection wants the deterministic client, the same one this
+# planner has always run on.
+_LENS_PLANNER = Predictor(
+    AnalysisPlannerSignature, tier="balanced", reasoning=True,
+    label="analysis_planner", node="analysis_planner",
+)
+
+
 def plan_analysis(
     user_query: str,
     routing_context: RoutingContext,
@@ -181,9 +189,8 @@ def plan_analysis(
     Returns an empty plan on failure so callers can fall back to the literal query.
     """
     library = get_lens_library()
-    predictor = dspy.ChainOfThought(AnalysisPlannerSignature)
     try:
-        result = predictor(
+        result = _LENS_PLANNER(
             user_query=user_query,
             routing_context=routing_context,
             lens_catalog=library.catalog(),

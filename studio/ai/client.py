@@ -1,15 +1,18 @@
 """LangChain client wrapper for the Studio AI agents — optional, fail-soft.
 
 Every Studio AI call goes through here so they share one availability gate, one
-graceful-fallback contract, and uniform logging. Mirrors the repo's LangChain
-pattern (`core/agents/analyst/insight_writer.py`): `Initialization.llm_*`
-(AzureChatOpenAI) + `SystemMessage`/`HumanMessage` + `.invoke()` /
-`.with_structured_output(Model)`, wrapped in try/except.
+graceful-fallback contract, and uniform logging. The call shape is the repo's LangChain
+pattern (`core/agents/analyst/insight_writer.py`): an AzureChatOpenAI client +
+`SystemMessage`/`HumanMessage` + `.invoke()` / `.with_structured_output(Model)`, wrapped
+in try/except.
 
-Key design point: `Initialization` (which triggers `dspy.configure` on import and
-needs Azure env) is imported **lazily, only after** `llm_available()` confirms a
-key — so importing this module, and the whole Studio app/tests, never depends on an
-LLM being configured.
+The client comes from the shared tier factory (`core.llm.clients`) rather than
+`core.initialization`, so importing the Studio app never builds the chatbot's database
+engine and session factory just to write a sentence.
+
+The client is still built **lazily, only after** `llm_available()` confirms a key, so
+importing this module — and the whole Studio app and its tests — never depends on an LLM
+being configured.
 """
 from __future__ import annotations
 
@@ -34,13 +37,10 @@ def llm_available() -> bool:
 
 
 def _tier_client(tier: str):
-    """The AzureChatOpenAI client for a tier (imported lazily — see module docstring)."""
-    from core.initialization import Initialization
+    """The AzureChatOpenAI client for a tier (built lazily — see module docstring)."""
+    from core.llm.clients import make_client
 
-    return {
-        "reason": Initialization.llm_reason,
-        "fast": Initialization.llm_fast,
-    }.get(tier, Initialization.llm_balanced)
+    return make_client(tier)
 
 
 def _log_usage(node: str, resp: object) -> None:

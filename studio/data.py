@@ -1,7 +1,7 @@
 """Studio data access — engine resolution + DB-derived filter options.
 
 LLM-free on purpose: this never imports ``core.initialization`` (which builds the
-Azure/dspy clients). It resolves a SQLite engine from the same ``DB_PATH`` the live
+chatbot's Azure clients). It resolves a SQLite engine from the same ``DB_PATH`` the live
 app uses, falling back to a deterministic seed DB for local dev. Filter dropdown
 options come straight from the DB (DISTINCT per column), so the form always
 reflects the real data — no dependency on the legacy ``config`` package.

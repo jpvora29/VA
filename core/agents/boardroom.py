@@ -31,9 +31,7 @@ import logging
 import re
 from typing import Any, Dict, List, Set, Tuple
 
-import dspy
-
-from core.initialization import Initialization
+from core.llm import Predictor
 from core.observability import log_event
 from core.schemas.boardroom import (
     BoardroomBattlecardsSignature,
@@ -54,32 +52,35 @@ logger = get_logger(__name__)
 # the digest only needs a representative sample to format KPIs from.
 _MAX_DIGEST_ROWS = 60
 
-# Stateless predictors — instantiate once and reuse across turns. The core keeps
-# ChainOfThought (it synthesises); the widgets are focused extractions, so plain
-# Predict keeps them cheap.
-_CORE_PREDICTOR = dspy.ChainOfThought(BoardroomCoreSignature)
-_WIDGET_PREDICTORS: Dict[str, Tuple[Any, str]] = {
-    "timeline": (dspy.Predict(BoardroomTimelineSignature), "timeline"),
-    "opportunity_map": (
-        dspy.Predict(BoardroomOpportunityMapSignature),
-        "opportunity_map",
-    ),
-    "opportunities": (
-        dspy.Predict(BoardroomOpportunitiesSignature),
-        "opportunities",
-    ),
-    "positioning": (dspy.Predict(BoardroomPositioningSignature), "positioning"),
-    "comparison": (dspy.Predict(BoardroomComparisonSignature), "comparison"),
-    "battlecards": (dspy.Predict(BoardroomBattlecardsSignature), "battlecards"),
+# Stateless predictors — instantiate once and reuse across turns.
+#
+# Tier + reasoning follow the work: the core call synthesises the headline,
+# insights and commentary, so it reasons on the reason tier; each widget fill is
+# a focused extraction, so it answers directly on the fast tier.
+_CORE_PREDICTOR = Predictor(
+    BoardroomCoreSignature, tier="reason", reasoning=True,
+    label="boardroom_core", node="boardroom",
+)
+
+
+# widget name -> (signature, the output field carrying its content).
+_WIDGET_SIGNATURES: Dict[str, Tuple[Any, str]] = {
+    "timeline": (BoardroomTimelineSignature, "timeline"),
+    "opportunity_map": (BoardroomOpportunityMapSignature, "opportunity_map"),
+    "opportunities": (BoardroomOpportunitiesSignature, "opportunities"),
+    "positioning": (BoardroomPositioningSignature, "positioning"),
+    "comparison": (BoardroomComparisonSignature, "comparison"),
+    "battlecards": (BoardroomBattlecardsSignature, "battlecards"),
 }
 
-# Tier assignment: the core call synthesises the headline/insights/commentary, so
-# it takes the reason tier; the per-widget fills are focused extractions, so they
-# take the fast tier. use_tier is a no-op until MODEL_TIERS=on (keeps the global
-# dspy LM, so dspy.context overrides in tests still apply).
-Initialization.use_tier(_CORE_PREDICTOR, "reason")
-for _predictor, _ in _WIDGET_PREDICTORS.values():
-    Initialization.use_tier(_predictor, "fast")
+_WIDGET_PREDICTORS: Dict[str, Tuple[Predictor, str]] = {
+    name: (
+        Predictor(signature, tier="fast", label=f"boardroom_widget:{name}",
+                  node="boardroom"),
+        field,
+    )
+    for name, (signature, field) in _WIDGET_SIGNATURES.items()
+}
 
 
 def _gather_commentary(state: AgentState) -> str:
@@ -298,10 +299,9 @@ def _fill_widgets(
     for name in sorted(signals):
         predictor, field = _WIDGET_PREDICTORS[name]
         try:
-            with Initialization.dspy_usage(f"boardroom_widget:{name}", node="boardroom"):
-                result = predictor(
-                    user_query=user_query, commentary=commentary, sql_output=rows
-                )
+            result = predictor(
+                user_query=user_query, commentary=commentary, sql_output=rows
+            )
             widgets[name] = _nullify_empty(name, getattr(result, field, None))
         except Exception as exc:  # noqa: BLE001 - one widget must never sink the dashboard
             log_event(
@@ -344,13 +344,12 @@ def boardroom_node(state: AgentState) -> Dict[str, Any]:
     core = None
     for attempt in (1, 2):
         try:
-            with Initialization.dspy_usage("boardroom_core", node="boardroom"):
-                core = _CORE_PREDICTOR(
-                    user_query=user_query,
-                    route=route,
-                    commentary=commentary,
-                    sql_output=rows,
-                ).core
+            core = _CORE_PREDICTOR(
+                user_query=user_query,
+                route=route,
+                commentary=commentary,
+                sql_output=rows,
+            ).core
             break
         except Exception as exc:  # noqa: BLE001 - never break the turn over a presentation step
             log_event(

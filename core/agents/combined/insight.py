@@ -3,10 +3,8 @@ from __future__ import annotations
 
 import logging
 
-import dspy
-
 from core.agents.common.directives import prose_suppressed
-from core.initialization import Initialization
+from core.llm import Predictor
 from core.observability import log_event
 from core.schemas.combined import CombinedInsightSignature
 from core.skills.loader import get_skill_loader
@@ -16,24 +14,30 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 
-class CombinedInsightNode(dspy.Module):
-    def __init__(self, rules: str = "") -> None:
-        super().__init__()
-        self.rules = rules
-        self.predictor = dspy.ChainOfThought(CombinedInsightSignature)
+class CombinedInsightNode:
+    """Fuses the survey and premium answers into one analysis.
 
-    def forward(
+    Creative tier: the fused narrative is the user-facing prose for a HYBRID turn.
+    """
+
+    def __init__(self, rules: str = "", predictor: Predictor | None = None) -> None:
+        self.rules = rules
+        self.predictor = predictor or Predictor(
+            CombinedInsightSignature, tier="creative", reasoning=True,
+            label="combined_insight", node="combined_insight",
+        )
+
+    def __call__(
         self, user_query, survey_output, gpr_output, survey_reasoning, gpr_reasoning
     ):
-        with dspy.context(lm=Initialization.dspy_creative):
-            result = self.predictor(
-                user_query=user_query,
-                rules=self.rules,
-                survey_output=survey_output or [],
-                gpr_output=gpr_output or [],
-                survey_reasoning=survey_reasoning or "",
-                gpr_reasoning=gpr_reasoning or "",
-            )
+        result = self.predictor(
+            user_query=user_query,
+            rules=self.rules,
+            survey_output=survey_output or [],
+            gpr_output=gpr_output or [],
+            survey_reasoning=survey_reasoning or "",
+            gpr_reasoning=gpr_reasoning or "",
+        )
         return result.combined_response
 
 

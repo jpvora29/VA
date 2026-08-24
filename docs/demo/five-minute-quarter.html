@@ -1,0 +1,459 @@
+<title>Five-Minute Quarter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+
+<style>
+:root{
+  --bg:#F5F5F8;
+  --surface:#FFFFFF;
+  --surface-2:#EFEFF5;
+  --ink:#14151C;
+  --ink-2:#333544;
+  --muted:#5C5E70;
+  --line:#E2E2EC;
+  --line-strong:#C9C9D8;
+  --accent:#A9700A;
+  --accent-ink:#7A5107;
+  --accent-wash:#FBF2DF;
+  --cue:#1C6A61;
+  --cue-wash:#E8F2F0;
+  --warn:#9B2C2C;
+  --shadow:0 1px 2px rgba(20,21,28,.05), 0 8px 24px -16px rgba(20,21,28,.28);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#101119;
+    --surface:#181A23;
+    --surface-2:#1F2230;
+    --ink:#ECECF3;
+    --ink-2:#C6C7D4;
+    --muted:#9698AB;
+    --line:#2A2D3A;
+    --line-strong:#3A3E4F;
+    --accent:#EDB84A;
+    --accent-ink:#F3CC7E;
+    --accent-wash:#2A2313;
+    --cue:#63C6B5;
+    --cue-wash:#132623;
+    --warn:#F08A8A;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -18px rgba(0,0,0,.9);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#101119;
+  --surface:#181A23;
+  --surface-2:#1F2230;
+  --ink:#ECECF3;
+  --ink-2:#C6C7D4;
+  --muted:#9698AB;
+  --line:#2A2D3A;
+  --line-strong:#3A3E4F;
+  --accent:#EDB84A;
+  --accent-ink:#F3CC7E;
+  --accent-wash:#2A2313;
+  --cue:#63C6B5;
+  --cue-wash:#132623;
+  --warn:#F08A8A;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -18px rgba(0,0,0,.9);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--ink);
+  font-family:"Source Serif 4",Georgia,"Times New Roman",serif;
+  font-size:17px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:920px;margin:0 auto;padding:clamp(28px,5vw,64px) clamp(18px,4vw,32px) 96px}
+
+/* ---------- masthead ---------- */
+.mast{border-bottom:2px solid var(--ink);padding-bottom:22px;margin-bottom:8px}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;
+  font-size:11.5px;font-weight:500;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--accent-ink);margin:0 0 14px;
+}
+h1{
+  font-family:Archivo,"Helvetica Neue",Arial,sans-serif;
+  font-weight:800;font-size:clamp(34px,6.2vw,56px);line-height:1.02;
+  letter-spacing:-.025em;margin:0;text-wrap:balance;
+}
+.dek{
+  margin:14px 0 0;max-width:60ch;color:var(--ink-2);font-size:18.5px;
+}
+.dek em{font-style:italic;color:var(--ink)}
+
+.facts{
+  display:flex;flex-wrap:wrap;gap:0;margin:26px 0 44px;
+  border:1px solid var(--line);border-radius:3px;background:var(--surface);
+  box-shadow:var(--shadow);overflow:hidden;
+}
+.fact{flex:1 1 150px;padding:14px 18px;border-right:1px solid var(--line)}
+.fact:last-child{border-right:0}
+.fact dt{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10.5px;font-weight:500;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 4px;
+}
+.fact dd{
+  margin:0;font-family:Archivo,sans-serif;font-weight:600;font-size:19px;
+  letter-spacing:-.01em;font-variant-numeric:tabular-nums;
+}
+
+/* ---------- run of show ---------- */
+.seg{
+  display:grid;grid-template-columns:104px minmax(0,1fr);gap:26px;
+  padding:30px 0;border-top:1px solid var(--line);
+}
+.seg:first-of-type{border-top:1px solid var(--line-strong)}
+
+.rail{position:sticky;top:14px;align-self:start}
+.rail .n{
+  font-family:Archivo,sans-serif;font-weight:800;font-size:13px;letter-spacing:.06em;
+  color:var(--accent);display:block;margin-bottom:6px;
+}
+.rail .clock{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-weight:600;font-size:16px;
+  font-variant-numeric:tabular-nums;letter-spacing:-.02em;display:block;color:var(--ink);
+}
+.rail .dur{
+  display:inline-block;margin-top:8px;padding:2px 7px;border-radius:2px;
+  background:var(--accent-wash);color:var(--accent-ink);
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11px;font-weight:600;
+  letter-spacing:.04em;
+}
+.rail .wc{
+  display:block;margin-top:8px;color:var(--muted);
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10.5px;letter-spacing:.05em;
+}
+
+h2{
+  font-family:Archivo,sans-serif;font-weight:700;font-size:24px;letter-spacing:-.02em;
+  margin:0 0 4px;line-height:1.2;text-wrap:balance;
+}
+.sub{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11px;font-weight:500;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:0 0 18px;
+}
+
+.say{margin:0 0 15px;font-size:18.5px;line-height:1.62;max-width:62ch}
+.say strong{font-weight:600;background:linear-gradient(transparent 62%,var(--accent-wash) 62%);padding:0 1px}
+.say .pause{color:var(--muted);font-style:italic;font-size:.85em}
+
+.do{
+  display:flex;gap:11px;align-items:flex-start;
+  margin:0 0 15px;padding:9px 13px;
+  background:var(--cue-wash);border-left:2px solid var(--cue);border-radius:0 3px 3px 0;
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:13px;line-height:1.55;
+  color:var(--ink-2);
+}
+.do b{
+  color:var(--cue);font-weight:600;flex:0 0 auto;
+  letter-spacing:.08em;font-size:11px;text-transform:uppercase;padding-top:2px;
+}
+.do span{min-width:0}
+
+.beat{
+  margin:0 0 15px;padding-left:14px;border-left:1px solid var(--line-strong);
+  color:var(--muted);font-size:15px;font-style:italic;max-width:58ch;
+}
+.beat b{font-style:normal;font-weight:600;color:var(--ink-2)}
+
+/* ---------- appendix ---------- */
+.apx{margin-top:64px;padding-top:34px;border-top:2px solid var(--ink)}
+h3{
+  font-family:Archivo,sans-serif;font-weight:700;font-size:20px;letter-spacing:-.015em;
+  margin:44px 0 6px;
+}
+h3:first-of-type{margin-top:0}
+.apx .lead{color:var(--muted);font-size:15.5px;margin:0 0 18px;max-width:62ch}
+
+.scroller{overflow-x:auto;border:1px solid var(--line);border-radius:3px;background:var(--surface);box-shadow:var(--shadow)}
+table{border-collapse:collapse;width:100%;min-width:520px}
+th,td{padding:11px 15px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10.5px;font-weight:600;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+  background:var(--surface-2);white-space:nowrap;
+}
+tr:last-child td{border-bottom:0}
+td:first-child{font-weight:600;color:var(--ink);width:34%}
+td{font-size:15.5px;color:var(--ink-2)}
+
+.blank{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.9em;font-weight:600;
+  color:var(--accent-ink);background:var(--accent-wash);padding:1px 5px;border-radius:2px;
+  white-space:nowrap;
+}
+
+ol.flight{list-style:none;counter-reset:f;padding:0;margin:0;display:grid;gap:9px}
+ol.flight li{
+  counter-increment:f;position:relative;padding:11px 15px 11px 44px;
+  background:var(--surface);border:1px solid var(--line);border-radius:3px;
+  font-size:15.5px;color:var(--ink-2);
+}
+ol.flight li::before{
+  content:counter(f,decimal-leading-zero);position:absolute;left:15px;top:12px;
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11px;font-weight:600;
+  color:var(--accent);letter-spacing:.04em;
+}
+ol.flight li b{color:var(--ink);font-weight:600}
+
+.warnbox{
+  margin-top:16px;padding:13px 16px;border:1px solid var(--line);border-left:2px solid var(--warn);
+  border-radius:0 3px 3px 0;background:var(--surface);font-size:15px;color:var(--ink-2);
+}
+.warnbox b{color:var(--warn);font-family:Archivo,sans-serif;font-size:12.5px;letter-spacing:.08em;text-transform:uppercase;display:block;margin-bottom:4px}
+
+.foot{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:14px;font-family:"IBM Plex Mono",ui-monospace,monospace}
+
+a{color:var(--accent-ink)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+@media (max-width:640px){
+  .seg{grid-template-columns:1fr;gap:12px}
+  .rail{position:static;display:flex;align-items:baseline;gap:10px}
+  .rail .n{margin:0}
+  .rail .dur,.rail .wc{margin-top:0}
+  .say{font-size:17.5px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+
+  <header class="mast">
+    <p class="eyebrow">QBR Virtual Analyst · Demo run of show</p>
+    <h1>Five-Minute Quarter</h1>
+    <p class="dek">A timed script for the six-part live demo. Short sentences, plain words, built to be heard once and remembered. <em>Every line below is meant to be said out loud.</em></p>
+  </header>
+
+  <dl class="facts">
+    <div class="fact"><dt>Total runtime</dt><dd>5 : 50</dd></div>
+    <div class="fact"><dt>Segments</dt><dd>6 + close</dd></div>
+    <div class="fact"><dt>Pace</dt><dd>~145 wpm</dd></div>
+    <div class="fact"><dt>Room</dt><dd>Mixed / carrier</dd></div>
+  </dl>
+
+  <!-- 1 -->
+  <section class="seg">
+    <div class="rail">
+      <span class="n">01</span>
+      <span class="clock">0:00–1:30</span>
+      <span class="dur">90 sec</span>
+      <span class="wc">~200 words</span>
+    </div>
+    <div>
+      <h2>The opening</h2>
+      <p class="sub">Hook · What you get · Scope · Money</p>
+
+      <div class="do"><b>Before</b><span>Screen showing the Setup page, untouched. Do not start on a slide.</span></div>
+
+      <p class="say">One question before I show you anything. <strong>Last quarter, how many working days did this team spend building QBR decks?</strong> <span class="pause">(beat — let someone answer)</span> Almost none of that was analysis. It was assembly. Pull the extract. Rebuild the same chart. Retype last quarter's paragraph with new numbers. Then check it three times, <strong>because one wrong figure in front of a carrier costs you the room.</strong></p>
+
+      <p class="say">So here is what you get. <strong>If you present: the story is ready the day the numbers land, not three weeks later. If you build: you stop being a copy-paste machine. If you are the carrier: you get your portfolio, benchmarked, with commentary you can challenge</strong> — because every sentence points at the figure behind it.</p>
+
+      <p class="say">Today it runs on our own data. Premium and the carrier survey. By country, product and year. Peers set market by market. Straight into our template. <strong>Next comes any template, your own data, an analyst you can ask questions to, and a meeting that writes itself up.</strong></p>
+
+      <p class="say">The money is simple. <span class="blank">[N]</span> people. <span class="blank">[H]</span> hours a deck. <span class="blank">[D]</span> decks a quarter. That is <span class="blank">[N×H×D×4]</span> hours a year that becomes minutes. <strong>And that is before the rework you don't do when a number changes in week three.</strong></p>
+
+      <div class="beat"><b>Why this lands:</b> you have priced their current way of working in their own numbers before showing a single feature. Everything after this is them buying time back, not buying software.</div>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section class="seg">
+    <div class="rail">
+      <span class="n">02</span>
+      <span class="clock">1:30–2:45</span>
+      <span class="dur">75 sec</span>
+      <span class="wc">~165 words</span>
+    </div>
+    <div>
+      <h2>QBR Generator — the Setup page</h2>
+      <p class="sub">Five answers. No numbers typed.</p>
+
+      <p class="say">This is the whole input. Not a spec. <strong>Five questions.</strong></p>
+
+      <div class="do"><b>Click</b><span>Audience → <i>Executive</i>. Then depth → <i>Concise</i>.</span></div>
+      <p class="say">Who it is for, and how deep. <strong>Same data, three different decks.</strong> The board version was never the deal-team version.</p>
+
+      <div class="do"><b>Click</b><span>Data source → <i>GPR + Carrier Survey</i>. Hover <i>Custom data</i>, don't click it.</span></div>
+      <p class="say">Where the numbers come from. Our governed data plus the survey. Or your own file, if the answer lives somewhere we don't reach yet.</p>
+
+      <div class="do"><b>Click</b><span>Country, then product, then year. Point out the lists narrowing.</span></div>
+      <p class="say">Scope. Each list only shows what the one above it contains. <strong>You cannot build a deck for a market with no data in it.</strong></p>
+
+      <div class="do"><b>Click</b><span>Peers panel → show the per-market peer set.</span></div>
+      <p class="say">Peers are set market by market, because the competition in one country is not the competition in another. And in anything the carrier sees, <strong>we show the peer group as a total. We never name a competitor.</strong> That is a rule in the system, not a setting.</p>
+
+      <div class="do"><b>Click</b><span>Template preview → sections + assembly axis. Then <i>Generate</i>.</span></div>
+      <p class="say">And here is what it will build. Executive summary. Highlights. Trading summary. Portfolio and ranking. Growth quadrant. SWOT. Carrier breakdown. Repeating per product and per country. <strong>I did not type a single number. I answered questions, and the deck is the result.</strong></p>
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section class="seg">
+    <div class="rail">
+      <span class="n">03</span>
+      <span class="clock">2:45–3:45</span>
+      <span class="dur">60 sec</span>
+      <span class="wc">~140 words</span>
+    </div>
+    <div>
+      <h2>Canvas — two pages that do the work</h2>
+      <p class="sub">The trust moment. Do not rush it.</p>
+
+      <div class="do"><b>Open</b><span>Pre-generated deck in the second tab. Land on <i>Trading summary</i>.</span></div>
+
+      <p class="say">This page usually takes an afternoon. The chart is calculated. The table is calculated. And this paragraph was written for it.</p>
+
+      <p class="say">Which brings the question you are already thinking. <strong>Can I put my name on a paragraph a machine wrote?</strong> Here is the answer.</p>
+
+      <div class="do"><b>Show</b><span>Trace a sentence back to its figure.</span></div>
+
+      <p class="say"><strong>The model never creates a number.</strong> It writes the sentence. The figures come from our data. <strong>Then every claim is checked back against that data before it is allowed on the page. If a sentence cannot be traced, it does not ship.</strong> That is the difference between AI you demo and AI you sign off.</p>
+
+      <div class="do"><b>Click</b><span>Growth quadrant (or Portfolio &amp; ranking). One breath, then move.</span></div>
+
+      <p class="say">And this one. Where you are winning. Where you are paying for share. Where someone is quietly taking your book. <strong>Same numbers, same rules, every quarter, for every carrier.</strong> No person can give you that at volume.</p>
+
+      <div class="beat"><b>Why this lands:</b> a doubtful exec buys the checking, not the design. Say "if it cannot be traced, it does not ship" slowly, and let it sit.</div>
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section class="seg">
+    <div class="rail">
+      <span class="n">04</span>
+      <span class="clock">3:45–4:30</span>
+      <span class="dur">45 sec</span>
+      <span class="wc">~100 words</span>
+    </div>
+    <div>
+      <h2>Chatbot — the analyst on call</h2>
+      <p class="sub">One question. One answer. Move on.</p>
+
+      <p class="say">A deck answers the questions we planned for. <strong>It never answers the one asked in the meeting.</strong></p>
+
+      <div class="do"><b>Type</b><span>"Which markets grew premium fastest but scored lowest on broker feedback?" — run this exact query beforehand to warm it.</span></div>
+
+      <p class="say">Chart, numbers, and the data behind them. <strong>From the same engine that built the deck.</strong> So the answer in the room cannot contradict the slide. And your analyst spends the meeting thinking, instead of promising to come back to you.</p>
+
+      <div class="beat"><b>Why this lands:</b> the line is "one source of truth for the deck and the conversation." Everyone here has been burned by two versions of the same number.</div>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section class="seg">
+    <div class="rail">
+      <span class="n">05</span>
+      <span class="clock">4:30–5:00</span>
+      <span class="dur">30 sec</span>
+      <span class="wc">~70 words</span>
+    </div>
+    <div>
+      <h2>Minutes of Meeting</h2>
+      <p class="sub">The part everybody hates</p>
+
+      <div class="do"><b>Show</b><span>Transcript in → structured minutes out. Point at owners and dates.</span></div>
+
+      <p class="say">Every QBR ends the same way. Someone offers to write it up. It arrives four days later, and the promises have gone soft. This takes the recording and gives you <strong>decisions, owners and dates, in our format, before the room empties. Actions you can chase beat notes you can file.</strong></p>
+    </div>
+  </section>
+
+  <!-- 6 -->
+  <section class="seg">
+    <div class="rail">
+      <span class="n">06</span>
+      <span class="clock">5:00–5:30</span>
+      <span class="dur">30 sec</span>
+      <span class="wc">~65 words</span>
+    </div>
+    <div>
+      <h2>Deck recap</h2>
+      <p class="sub">Sixty pages → one</p>
+
+      <div class="do"><b>Show</b><span>Finished deck in → one-page recap out.</span></div>
+
+      <p class="say">Last one. That deck is sixty pages, and your CEO will read one. This reads the finished deck and writes that page. The story. The three numbers that matter. The talking points for whoever presents it. <strong>Same deck. Thirty seconds of prep instead of an evening.</strong></p>
+    </div>
+  </section>
+
+  <!-- close -->
+  <section class="seg">
+    <div class="rail">
+      <span class="n">07</span>
+      <span class="clock">5:30–5:50</span>
+      <span class="dur">20 sec</span>
+      <span class="wc">~55 words</span>
+    </div>
+    <div>
+      <h2>The close</h2>
+      <p class="sub">Land it. Then ask.</p>
+
+      <p class="say">Five minutes ago we had an empty form. Now we have a full deck, commentary checked line by line, an analyst you can question, minutes, and a one-page recap. <strong>The quarter takes twelve weeks. Reporting on it should not take three.</strong></p>
+
+      <p class="say">What I need is one market, one carrier for next quarter, a data owner for a day, and your template. <strong>Give me those and you will see your own deck come out of this. Not mine.</strong></p>
+
+      <div class="beat"><b>Why this lands:</b> a small, specific, dated ask converts. "What do you think?" does not. Stop talking after the ask.</div>
+    </div>
+  </section>
+
+  <!-- ================= APPENDIX ================= -->
+  <div class="apx">
+
+    <h3>The money slide, filled in</h3>
+    <p class="lead">Swap every bracket for your real figures before you present. The argument only works if the numbers are theirs. Say the lines in this order.</p>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Line</th><th>How you say it</th></tr></thead>
+        <tbody>
+          <tr><td>Effort today</td><td><span class="blank">[N]</span> people × <span class="blank">[H]</span> hours a deck × <span class="blank">[D]</span> decks a quarter × 4 = <span class="blank">[total]</span> hours a year.</td></tr>
+          <tr><td>What it costs</td><td>At <span class="blank">[rate]</span> an hour, that is <span class="blank">[£X]</span> a year spent building slides, not advising.</td></tr>
+          <tr><td>What is left after</td><td>Setup plus review takes minutes. Say we only get <span class="blank">[70–85%]</span> back. That is <span class="blank">[£Y]</span>.</td></tr>
+          <tr><td>The rework line</td><td>Today, one restated figure means rebuilding the pack. Here it is one click. Add <span class="blank">[R]</span> rebuilds a year we don't do.</td></tr>
+          <tr><td>The error line</td><td>One wrong number in front of a carrier costs trust you cannot price. Checked commentary removes that risk completely.</td></tr>
+          <tr><td>The upside line</td><td>The real return is not the hours. It is <span class="blank">[N×D×4]</span> more client conversations we are actually ready for.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="warnbox"><b>Honesty check</b>Do not invent a payback figure on stage. If someone pushes, say: "Give me your deck count and your rate, and you will have it tonight." Then send it that night. The follow-through sells better than the estimate would have.</div>
+
+    <h3>Objections, answered in one breath</h3>
+    <p class="lead">Keep every answer short. Long answers sound defensive.</p>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>They say</th><th>You say</th></tr></thead>
+        <tbody>
+          <tr><td>"Can I trust AI with our numbers?"</td><td>The model never produces a number. It writes sentences around figures the engine calculated, and every claim is checked back against the data. If it cannot be traced, it never reaches the page.</td></tr>
+          <tr><td>"Our template is different."</td><td>Good. The template is an input, not a limit. You give it yours, it fills yours.</td></tr>
+          <tr><td>"Peer data is sensitive."</td><td>Carrier-facing output shows peer groups as totals only. No competitor is named. The system enforces it.</td></tr>
+          <tr><td>"Our data is not in your system."</td><td>Upload the file, map the columns once, and it runs the same way on your data.</td></tr>
+          <tr><td>"Does this replace analysts?"</td><td>It replaces the assembly, not the judgement. Your analyst stops building slide 34 and starts arguing about what slide 34 means.</td></tr>
+          <tr><td>"What if it gets something wrong?"</td><td>You catch it in the canvas before export, and the fix is one click. Today a wrong number costs you an afternoon.</td></tr>
+          <tr><td>"How long to get this live?"</td><td>One market, one carrier, your template. Next quarter's pack is the pilot.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Pre-flight — 15 minutes before</h3>
+    <p class="lead">A five-minute demo has no room to recover. Every item below has ruined one.</p>
+    <ol class="flight">
+      <li><b>Pre-generate the deck</b> in a second tab. Click Generate, then cut to the finished one. Never let the room watch a spinner.</li>
+      <li><b>Warm the cache</b> and run the chatbot question once, so the first live answer is not the slow one.</li>
+      <li><b>Pick a carrier with a story</b> — clear growth in one market, a clear weakness in another. A flat portfolio makes a good tool look boring.</li>
+      <li><b>Check the peer set is filled</b> for the market you demo, and that no competitor name is visible anywhere.</li>
+      <li><b>Close every other tab.</b> Notifications off. Zoom up one notch. Match the theme to the room's projector.</li>
+      <li><b>Pre-load the transcript and the recap output.</b> Those segments are thirty seconds each. They cannot survive a file dialog.</li>
+      <li><b>Say the opening question out loud first.</b> If the hook falls flat, the next five minutes are just a feature tour.</li>
+      <li><b>Know your one ask</b> and say it last. Market, carrier, template, data owner, next quarter.</li>
+    </ol>
+
+    <p class="foot">Run of show · 6 segments + close · 5:50 total · rehearse twice, cut the third-best line.</p>
+  </div>
+
+</div>

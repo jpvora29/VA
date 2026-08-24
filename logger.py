@@ -35,7 +35,6 @@ _NOISY_LOGGERS = (
     "langchain",
     "langchain_core",
     "langgraph",
-    "dspy",
     "LiteLLM",
     "litellm",
     "asyncio",

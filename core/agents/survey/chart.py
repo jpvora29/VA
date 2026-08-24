@@ -3,13 +3,12 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
 
-import dspy
-
 from core.agents.common.chart_spec import (
     ChartTypeSelectSignature,
     generate_chart_two_phase,
     stamp_intent,
 )
+from core.llm import Predictor
 from core.schemas.survey import SurveyChartSignature
 from core.skills.loader import get_skill_loader
 from logger import get_logger
@@ -17,7 +16,7 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 
-class SurveyChartNode(dspy.Module):
+class SurveyChartNode:
     # def __init__(self, carrier_schema: str, peer_schema: str, definitions: str, rules: str):
 
     def __init__(
@@ -25,13 +24,20 @@ class SurveyChartNode(dspy.Module):
         chart_creation_rules: str,
         detail_provider: Optional[Callable[[str], Optional[str]]] = None,
     ) -> None:
-        super().__init__()
         self.chart_creation_rules = chart_creation_rules
-        self.type_predictor = dspy.ChainOfThought(ChartTypeSelectSignature)
-        self.predictor = dspy.ChainOfThought(SurveyChartSignature)
+        # Both phases reason: picking the type walks a selection tree, and the
+        # spec has to map real columns onto x/y/series.
+        self.type_predictor = Predictor(
+            ChartTypeSelectSignature, tier="balanced", reasoning=True,
+            label="survey_chart_type", node="survey_chart",
+        )
+        self.predictor = Predictor(
+            SurveyChartSignature, tier="balanced", reasoning=True,
+            label="survey_chart_spec", node="survey_chart",
+        )
         self.detail_provider = detail_provider or get_skill_loader().chart_detail
 
-    def forward(self, user_query: str, sql_output: List[Dict[str, Any]]):
+    def __call__(self, user_query: str, sql_output: List[Dict[str, Any]]):
         # Two phases: pick the chart_type from the selection tree, then build the
         # spec with only that type's detail appended (see chart_spec).
         spec = generate_chart_two_phase(

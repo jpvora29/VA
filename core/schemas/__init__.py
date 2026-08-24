@@ -1,1 +1,1 @@
-"""Typed contracts (pydantic models + dspy signatures) for inter-node IO."""
+"""Typed contracts (pydantic models + LLM signatures) for inter-node IO."""

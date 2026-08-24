@@ -9,7 +9,6 @@ dependencies = [
     "dash-ag-grid>=35.3.0",
     "dash-bootstrap-components>=2.0.4",
     "deepagents>=0.6.12",
-    "dspy>=3.2.1",
     "langchain>=1.3.4",
     "langchain-openai>=1.2.2",
     "langgraph>=1.2.4",

@@ -400,41 +400,42 @@ def _accept(lines: List[str], *, wanted: int, node: str, subject: str = "") -> O
 _COMMENTARY_TIER = "balanced"
 
 
-def _rewrite(text: str, *, node: str, style: Optional[str] = None,
-             topic: str = "", subject: str = "") -> str:
-    """LLM-write ``text`` if available, keeping only verifier-faithful output.
+def _rewrite(text: str, *, node: str, style: Optional[str] = None, topic: str = "",
+             subject: str = "", facts: Optional[Dict[str, Any]] = None) -> str:
+    """The column as a model writes it from EVIDENCE, or the deterministic draft.
 
-    ``text`` is a newline-separated BULLET LIST of whole sentences and the model is asked to
-    WRITE the column, not to swap its adjectives: it may fold two claims into one sentence
-    or drop a line that adds nothing, within the bounds :func:`min_lines` sets. What it may
-    never do is move a number — faithfulness is checked bullet by bullet against the figures
-    the draft already contains, and everything else is checked by :func:`_accept`.
+    ``text`` is the rule composers' newline-separated bullet list. It is passed on as the
+    draft — the claims the composers selected and the order they put them in — but the
+    model is given the facts themselves (:mod:`studio.template_fill.commentary_evidence`)
+    and the ICG definitions of the terms in play (:mod:`core.definitions`), so what comes
+    back is written from the book rather than reworded from a sentence.
 
-    ``topic`` selects the column's brief and ``style`` (from Setup) its length; both are
-    prompt-side. The deterministic draft stands whenever the rewrite is refused.
+    Everything the model returns has to survive both verifiers (numbers against cited
+    facts, then claims and term use against the evidence and the glossary) and then
+    :func:`_accept`, which rules on shape and reading. If any of that refuses it, the
+    deterministic draft stands.
     """
     if not text:
         return text
     from studio.ai import client
-    from studio.ai.verifier import allowed_numbers, verify_bullets
+    from studio.template_fill import commentary_evidence as E
+    from studio.template_fill import commentary_writer as W
 
-    allowed = allowed_numbers(text)
-    wanted = len(text.split("\n"))
-    system = _style_system(style, topic=topic, wanted=wanted, subject=subject)
+    draft = tuple(ln for ln in text.splitlines() if ln.strip())
+    wanted = len(draft)
 
     def call() -> Optional[str]:
-        out = client.generate(system, text, tier=_COMMENTARY_TIER, node=node)
-        if not out:
+        pack = E.build_pack(facts or {})
+        if not pack.items:                  # nothing to cite — the draft is all we have
             return None
-        # Verified BULLET BY BULLET, not as one blob: the whole-text verifier joins the
-        # sentences it keeps with spaces, which would flatten a four-bullet column into a
-        # single paragraph — and then fail the line count below for the wrong reason.
-        lines = [_LEADING_BULLET.sub("", ln).strip() for ln in out.split("\n") if ln.strip()]
-        clean, dropped = verify_bullets(lines, allowed)
-        if dropped:
-            logger.info("commentary: %s dropped %d unfaithful bullet(s): %s",
-                        node, len(lines) - len(clean), dropped[:3])
-        return _accept(clean, wanted=wanted, node=node, subject=subject)
+        write = W.make_writer()
+        lines = list(write(W.ColumnRequest(
+            topic=topic, pack=pack, draft=draft, subject=subject, style=style or "balanced",
+            bullets=wanted, brief=_TOPIC_BRIEF.get(topic, ""),
+            voice=_style_system(style, topic=topic, wanted=wanted, subject=subject),
+        )))
+        return _accept([_LEADING_BULLET.sub("", ln).strip() for ln in lines],
+                       wanted=wanted, node=node, subject=subject)
 
     return client.run_or_fallback(call, lambda: text)
 
@@ -682,7 +683,8 @@ def values(template: Template, result, *, ledger=None,
                 said = openings.vary_openings(said, subject)
                 base = bullet_list(said)
                 cache[key] = _rewrite(base, node=f"commentary-{topic}", style=style,
-                                      topic=topic, subject=subject) if base else ""
+                                      topic=topic, subject=subject,
+                                      facts=facts) if base else ""
             except Exception as exc:  # noqa: BLE001 — commentary must never break the doc
                 logger.warning("commentary: topic %s failed: %s", topic, exc)
                 cache[key] = ""

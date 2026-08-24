@@ -1,4 +1,4 @@
-"""Pydantic + dspy schemas for the context filler, rephraser, and router nodes.
+"""Pydantic models + signatures for the context filler, rephraser, and router nodes.
 
 The routing-context flow:
     context_filler  -> RoutingContext (typed)
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-import dspy
+from core.llm import InputField, OutputField, Signature
 from pydantic import BaseModel, Field
 
 
@@ -296,7 +296,7 @@ class RoutingContext(BaseModel):
     )
 
 
-class ContextFillerSignature(dspy.Signature):
+class ContextFillerSignature(Signature):
     """
     [ROLE]
     You are the Context Filler Agent for an insurance analytics chatbot. You
@@ -400,19 +400,19 @@ class ContextFillerSignature(dspy.Signature):
     - For first-turn queries (empty history), inherited_* must all be null.
     """
 
-    static_context: str = dspy.InputField(
+    static_context: str = InputField(
         desc="Stable schemas dictionary + valid-values snapshot for entity matching."
     )
-    current_user_query: str = dspy.InputField(
+    current_user_query: str = InputField(
         desc="The latest user question — primary input to classify and contextualise."
     )
-    last_user_query: str = dspy.InputField(
+    last_user_query: str = InputField(
         desc="The immediately prior user query, or empty string if this is the first turn."
     )
-    conversation_history: List[str] = dspy.InputField(
+    conversation_history: List[str] = InputField(
         desc="Older user queries (oldest -> newest), excluding `last_user_query` and `current_user_query`. Empty list if not available."
     )
-    routing_context: RoutingContext = dspy.OutputField(
+    routing_context: RoutingContext = OutputField(
         desc="Structured routing decision + inherited filters + timeframe + intent + rationale."
     )
 
@@ -435,7 +435,7 @@ class DepthDecision(BaseModel):
     )
 
 
-class DepthClassifierSignature(dspy.Signature):
+class DepthClassifierSignature(Signature):
     """
     [ROLE]
     You are a focused query-depth classifier for an insurance analytics chatbot.
@@ -488,21 +488,21 @@ class DepthClassifierSignature(dspy.Signature):
       'lookup'; reserve 'analytical' for clear interpretive / multi-step intent.
     """
 
-    current_user_query: str = dspy.InputField(
+    current_user_query: str = InputField(
         desc="The latest user question to classify for depth."
     )
-    table_family: str = dspy.InputField(
+    table_family: str = InputField(
         desc="Routing family already decided upstream: survey | premium | both | fallback."
     )
-    intent_type: str = dspy.InputField(
+    intent_type: str = InputField(
         desc="Turn classification: new_question | followup | drilldown | topic_switch."
     )
-    depth_decision: DepthDecision = dspy.OutputField(
+    depth_decision: DepthDecision = OutputField(
         desc="The lookup-vs-analytical decision plus a one-line reason."
     )
 
 
-class RephaserNodeSignature(dspy.Signature):
+class RephaserNodeSignature(Signature):
     """
     [ROLE]
     You are the Rephraser Agent. You receive (a) the user's current query and
@@ -551,15 +551,15 @@ class RephaserNodeSignature(dspy.Signature):
     the downstream GROUP BY.
     """
 
-    routing_context: RoutingContext = dspy.InputField(
+    routing_context: RoutingContext = InputField(
         desc="Structured routing + inheritance context produced by the Context Filler. Use it to know what to inherit and what NOT to invent."
     )
-    construction_rules: str = dspy.InputField(
+    construction_rules: str = InputField(
         desc="Grammar / synonym / phrase-preservation rules for the final sentence."
     )
-    current_user_query: str = dspy.InputField(
+    current_user_query: str = InputField(
         desc="The latest user question — the sentence to rephrase."
     )
-    rephrased_query: str = dspy.OutputField(
+    rephrased_query: str = OutputField(
         desc="A single self-contained natural-language query for the SQL agents."
     )

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-import dspy
+from core.llm import InputField, OutputField, Signature
 from pydantic import BaseModel, Field
 
 
@@ -65,7 +65,7 @@ class ClarifyDecision(BaseModel):
     )
 
 
-class ClarifyDecisionSignature(dspy.Signature):
+class ClarifyDecisionSignature(Signature):
     """
     [ROLE]
     You are a conservative clarification gate for an insurance analytics chatbot.
@@ -111,15 +111,15 @@ class ClarifyDecisionSignature(dspy.Signature):
       "Product"), not a sentence. Keep allow_free_text = true.
     """
 
-    current_user_query: str = dspy.InputField(
+    current_user_query: str = InputField(
         desc="The latest user question to assess for genuine ambiguity."
     )
-    routing_context: object = dspy.InputField(
+    routing_context: object = InputField(
         desc="The RoutingContext (table_family + inherited carrier/country/year/metric). Inherited filters mean DO NOT ask for them."
     )
-    valid_values: dict = dspy.InputField(
+    valid_values: dict = InputField(
         desc="Valid carriers, carrier groups, countries, products, and segments for grounding options and detecting unknown entities."
     )
-    clarify_decision: ClarifyDecision = dspy.OutputField(
+    clarify_decision: ClarifyDecision = OutputField(
         desc="Conservative decision: whether to ask and, if so, the MCQ question grounded in valid values."
     )

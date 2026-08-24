@@ -330,7 +330,7 @@ def test_a_composer_with_no_evidenced_challenge_falls_back_rather_than_blanking(
     # negative — the fallback reports the position's age, every figure of it real.
     text = F._compose("challenges", _GROWING, F._PANEL_BULLETS)
     assert text, "the 'What's not' column shipped blank"
-    assert "3.2pp of the 11.6% share" in text
+    assert "3.2 percentage points of the 11.6% share" in text
     assert not any(word in text.lower() for word in ("fell", "slipped", "lost", "declin"))
 
 
@@ -339,8 +339,8 @@ def test_a_growing_book_below_peer_share_still_reports_a_challenge():
     # is a real, evidenced gap, and the quadrant must say so.
     behind = {**_GROWING, "sow": {"current": 7.1, "delta": 3.2}}
     text = F._compose("challenges", behind, F._PANEL_BULLETS)
-    assert "3.7pp below the top-5 peer average of 10.8%" in text
-    assert "$15M" in text                       # 3.7pp of the $411M Marsh book in scope
+    assert "3.7 percentage points below the top-5 peer average of 10.8%" in text
+    assert "$15M" in text          # 3.7 points of the $411M Marsh book in scope
 
 
 def test_a_panel_carries_more_of_the_argument_than_a_table_cell():
@@ -735,7 +735,7 @@ def test_the_thesis_names_the_tension_between_growth_and_relevance():
     halves have to be in the same sentence or it is two unrelated facts."""
     said = _thesis()
     assert "grew 28.6% to $208M against a Marsh book that grew 9.9%" in said
-    assert "1.7pp behind the top-5 peer average of 10.8%" in said
+    assert "1.7 percentage points behind the top-5 peer average of 10.8%" in said
     assert "the growth is real and the relevance is not yet" in said
 
 

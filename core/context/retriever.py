@@ -132,7 +132,7 @@ def llm_semantic_matcher(flow: str) -> Matcher:
         candidates = _candidate_values(flow, column)
         if not candidates:
             return []
-        from core.context.semantic import resolve_semantic_values  # lazy: pulls dspy
+        from core.context.semantic import resolve_semantic_values  # lazy: pulls the LLM layer
 
         return resolve_semantic_values(
             column=column, query=query, candidates=candidates

@@ -311,6 +311,27 @@ carrier, peers, a specific product/industry/practice).
 
 ## Phase 3 — Planner integration + orchestration
 
+> **Status: landed (2026-08-24), as TOOL CALLING.** The primitives are published to
+> the model as callable tools rather than described in a prompt, which is the same
+> idea with a tighter contract: the argument schemas are generated from
+> `flows.yaml`, so `group_by` / `metric` are closed enums and an invented column is
+> not expressible. See `core/analytics/tools/` (catalog → grounding → scope → rows),
+> `core/agents/common/analytics_tools.py` (selection strategies + the graph node),
+> and the `*_analytics_tools` nodes in the GPR/Survey subgraphs. The chat turn now
+> runs: normalizer → planner → **analytics tools** → (LLM-SQL only if uncovered).
+> Flag: `ANALYTICS_TOOLS` = `on` (default) | `plan` (no extra LLM call) | `off`.
+>
+> The analyst solver got the same treatment as one extra tool beside `run_sql`
+> (`core/agents/analyst/analytics_tool.py::compute_metric`), so the deep path stops
+> re-deriving covered recipes too. It is additive — `run_sql` is untouched and still
+> owns everything the library does not cover — and it honours a pinned custom peer
+> set the same way the prompt directive does.
+>
+> Two rules were added on top of the plan, both about not half-answering:
+> a selection with ANY rejected call falls back whole rather than computing part of
+> the question, and a filter value the registry cannot match to stored data blocks
+> the tool path instead of widening the query.
+
 **Goal:** planner selects primitives; orchestrator computes; LLM-SQL becomes fallback.
 
 - Extend `AnalyticalPlan` ([schemas/analytical.py:27](schemas/analytical.py)) with an

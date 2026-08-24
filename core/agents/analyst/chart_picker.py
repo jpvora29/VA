@@ -161,7 +161,7 @@ def pick_charts(question: str, evidence: List[Evidence]) -> List[Dict[str, Any]]
         try:
             if flow not in nodes:
                 nodes[flow] = _chart_node(flow, _chart_rules(flow, question))
-            # Always coerce to a plain dict: dspy can hand back a ChartOutput
+            # Always coerce to a plain dict: the model can hand back a ChartOutput
             # MODEL (or a list of specs), which the old `isinstance(dict)` check
             # silently skipped — so the analyst produced charts that never
             # rendered. normalize_chart_spec flattens model/list/dict to one dict.

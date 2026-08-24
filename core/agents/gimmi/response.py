@@ -4,9 +4,8 @@ from __future__ import annotations
 import logging
 import re
 
-import dspy
-
 from core.agents.common.directives import prose_suppressed
+from core.llm import Predictor
 from core.observability import log_event
 from core.rules.gimmi import GIMMIRules
 from core.schemas.gimmi import GIMMIResponseSignature
@@ -17,12 +16,17 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 
-class GIMMIResponseNode(dspy.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.predictor = dspy.ChainOfThought(GIMMIResponseSignature)
+class GIMMIResponseNode:
+    """Writes the market-rate commentary. Balanced tier and temperature 0 —
+    GIMMI reports factual rate data, so the wording should not drift."""
 
-    def forward(self, user_query, rules, sql_output) -> str:
+    def __init__(self, predictor: Predictor | None = None) -> None:
+        self.predictor = predictor or Predictor(
+            GIMMIResponseSignature, tier="balanced", reasoning=True,
+            label="gimmi_insight", node="gimmi",
+        )
+
+    def __call__(self, user_query, rules, sql_output) -> str:
         result = self.predictor(
             rules=rules, user_query=user_query, sql_output=sql_output
         )
@@ -30,8 +34,8 @@ class GIMMIResponseNode(dspy.Module):
         return result.gimmi_response
 
 
-# Stateless module/predictor — instantiate once and reuse across turns. GIMMI
-# stays deterministic (default LM) since it is factual market-rate data.
+# Stateless predictor — instantiate once and reuse across turns. GIMMI stays
+# deterministic (balanced tier, temperature 0) since it is factual rate data.
 _GIMMI_RESPONSE_NODE = GIMMIResponseNode()
 
 

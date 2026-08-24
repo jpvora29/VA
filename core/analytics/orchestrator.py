@@ -8,13 +8,15 @@ in `skipped` — the signal for the caller to fall through to the existing LLM-S
 path for that piece. One failing primitive never sinks the turn.
 
 Dependency-light by design: calls are duck-typed (a `PrimitiveCall` model OR a plain
-dict), so this module imports no dspy/LLM layer and unit-tests against an in-memory
+dict), so this module imports no LLM layer and unit-tests against an in-memory
 DB.
 """
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from functools import lru_cache
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from core.analytics.library import LIBRARY
 from core.analytics.types import AnalyticsFact, PrimitiveArgs
@@ -43,6 +45,34 @@ def _get(call: Any, key: str, default: Any) -> Any:
     return getattr(call, key, default)
 
 
+@lru_cache(maxsize=None)
+def _tuning_parameters(primitive: Callable) -> Tuple[str, ...]:
+    """The keyword-only tuning arguments a primitive accepts (`grain`, `top_n`…).
+
+    Read off the signature so a call's `options` can be passed through without the
+    orchestrator carrying a per-primitive table; anything the primitive does not
+    declare is dropped rather than raising.
+    """
+    try:
+        parameters = inspect.signature(primitive).parameters
+    except (TypeError, ValueError):  # pragma: no cover - builtins/stubs
+        return ()
+    return tuple(
+        name
+        for name, parameter in parameters.items()
+        if name not in {"args", "engine"}
+        and parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    )
+
+
+def _supported_options(primitive: Callable, options: Mapping[str, Any]) -> Dict[str, Any]:
+    """`options` narrowed to what this primitive declares."""
+    if not options:
+        return {}
+    accepted = _tuning_parameters(primitive)
+    return {key: value for key, value in options.items() if key in accepted}
+
+
 class AnalyticsOrchestrator:
     """Dispatches primitive calls over the library. `library` is injectable."""
 
@@ -56,14 +86,20 @@ class AnalyticsOrchestrator:
         flow: str,
         shared_filters: Optional[Mapping[str, Any]] = None,
         engine: Any = None,
+        subject: Optional[str] = None,
+        peers: Optional[Sequence[str]] = None,
     ) -> EvidenceSet:
         """Run each call; collect facts. Unknown/failed calls go to `skipped`.
 
         `shared_filters` is the turn's scope (e.g. carrier + country + year) applied
         to every call; a call's own `filters` take precedence on key collisions.
+        `subject` names the entity in focus and `peers` pins a hand-picked peer set
+        (the UI's custom-peer override), so peer primitives benchmark against
+        exactly that set instead of resolving the `Peers` table.
         """
         evidence = EvidenceSet()
         cache: Dict[Any, List[AnalyticsFact]] = {}
+        pinned = tuple(peers) if peers else None
         for call in calls or []:
             name = _get(call, "name", None)
             primitive = self._library.get(name) if name else None
@@ -77,13 +113,16 @@ class AnalyticsOrchestrator:
                 metric=_get(call, "metric", "") or "",
                 group_by=tuple(_get(call, "group_by", ()) or ()),
                 filters={**(shared_filters or {}), **(_get(call, "filters", {}) or {})},
+                subject=subject,
+                peers=pinned,
             )
+            options = _supported_options(primitive, _get(call, "options", {}) or {})
 
-            key = (name, args.cache_key())
+            key = (name, args.cache_key(), tuple(sorted(options.items())))
             result = cache.get(key)
             if result is None:
                 try:
-                    result = list(primitive(args, engine=engine))
+                    result = list(primitive(args, engine=engine, **options))
                 except Exception as exc:  # noqa: BLE001 - one primitive must not sink the turn
                     logger.debug("primitive %s failed: %s", name, exc)
                     evidence.skipped.append(name)

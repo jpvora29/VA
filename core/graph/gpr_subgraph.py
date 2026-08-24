@@ -1,4 +1,9 @@
-"""GPR LangGraph subgraph: normalizer → planner → SQL → execute (+ fixer loop)."""
+"""GPR LangGraph subgraph: normalizer → planner → analytics tools → (SQL + fixer loop).
+
+The analytics-tool node answers the turn by CALLING the deterministic primitive
+library; the LLM-SQL path below it is the fallback for questions the library does
+not cover. Set ``ANALYTICS_TOOLS=off`` to restore the pure SQL path.
+"""
 from __future__ import annotations
 
 import json
@@ -12,10 +17,12 @@ from sqlalchemy.sql import text
 from config.valid_values_config import *  # noqa: F401,F403 - preserves legacy globals (valid_year_quarter_gpr)
 from core.agents.common import (
     BaseSQLFixerNode,
+    analytics_covered,
     annotate_plan_notes,
     log_sql_failure,
     recalled_sql_examples,
     record_recovered_sql_fix,
+    run_analytics_tools,
 )
 from core.agents.common.directives import charts_suppressed
 from core.agents.common.peers import custom_peer_directive
@@ -209,12 +216,11 @@ class GPRSubGraph:
             rules=planner_rules,
         )
 
-        with Initialization.dspy_usage("gpr_planner_node", node="gpr"):
-            query_plan = planner_node(
-                user_query=question,
-                routing_context=state.get("routing_context"),
-                valid_year_quarter=valid_year_quarter_gpr,
-            )
+        query_plan = planner_node(
+            user_query=question,
+            routing_context=state.get("routing_context"),
+            valid_year_quarter=valid_year_quarter_gpr,
+        )
 
         # Deterministic, advisory grounding check: annotate (never block) the plan with
         # any tables/columns/filter values not present in the schema / valid values.
@@ -230,6 +236,20 @@ class GPRSubGraph:
         logger.debug("GPR reasoning plan: %s", query_plan)
 
         return {"gpr_reasoning": query_plan}
+
+    def gpr_analytics_tools(state: AgentState) -> AgentState:
+        """Answer the turn by calling the deterministic analytics primitives.
+
+        Clears the coverage key when the library does not cover the question, which
+        routes the turn to the LLM-SQL path below exactly as before.
+        """
+        return run_analytics_tools(state, flow="gpr", engine=Initialization.engine)
+
+    def gpr_analytics_router(state: AgentState) -> str:
+        """Computed facts skip SQL generation entirely; everything else falls back."""
+        if analytics_covered(state, "gpr"):
+            return "premium_chart_data_creation"
+        return "gpr_convert_to_sql"
 
     def gpr_convert_nl_to_sql(state: AgentState) -> AgentState:
         """Using LLM Converts the Natural Language Query to a SQL Query"""
@@ -272,12 +292,11 @@ class GPRSubGraph:
             few_shot=GPRRules.gpr_query_few_shots + recalled,
         )
 
-        with Initialization.dspy_usage("gpr_convert_nl_to_sql", node="gpr"):
-            sql_query_output = sql_agent(
-                user_query=question,
-                query_plan=query_plan,
-                valid_year_quarter=valid_year_quarter_gpr,
-            )
+        sql_query_output = sql_agent(
+            user_query=question,
+            query_plan=query_plan,
+            valid_year_quarter=valid_year_quarter_gpr,
+        )
 
         # state["gpr_sql_query"] = sql_query_output
 
@@ -475,6 +494,7 @@ class GPRSubGraph:
     gpr_graph.add_node("gpr_normalizer_agent", gpr_normalizer_agent)
     # gpr_graph.add_node("gpr_column_selector_agent", gpr_column_selector_agent)
     gpr_graph.add_node("gpr_planner_node", gpr_planner_node)
+    gpr_graph.add_node("gpr_analytics_tools", gpr_analytics_tools)
     gpr_graph.add_node("gpr_convert_to_sql", gpr_convert_nl_to_sql)
     gpr_graph.add_node("gpr_execute_sql", gpr_execute_sql)
     # gpr_graph.add_node("gpr_sql_join_rewriter", gpr_sql_join_rewriter)
@@ -485,7 +505,17 @@ class GPRSubGraph:
     gpr_graph.add_edge(START, "gpr_normalizer_agent")
     # gpr_graph.add_edge("gpr_normalizer_agent", "gpr_column_selector_agent")
     gpr_graph.add_edge("gpr_normalizer_agent", "gpr_planner_node")
-    gpr_graph.add_edge("gpr_planner_node", "gpr_convert_to_sql")
+    gpr_graph.add_edge("gpr_planner_node", "gpr_analytics_tools")
+
+    gpr_graph.add_conditional_edges(
+        "gpr_analytics_tools",
+        gpr_analytics_router,
+        {
+            "premium_chart_data_creation": "premium_chart_data_creation",
+            "gpr_convert_to_sql": "gpr_convert_to_sql",
+        },
+    )
+
     gpr_graph.add_edge("gpr_convert_to_sql", "gpr_execute_sql")
 
     # gpr_graph.add_conditional_edges(

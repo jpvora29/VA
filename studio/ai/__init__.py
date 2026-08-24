@@ -10,6 +10,8 @@ Two call shapes share the gate: one-shot calls (`client.generate` /
 `client.structured`) and the deepagents harness (`deep_agent.run_deep_agent`) for
 the multi-step semantic-judgment tasks — planning todos, skills from
 ``studio/skills``, retry and summarization included.
+
+Both run on the shared LangChain tier clients (`core.llm.clients.make_client`).
 """
 from __future__ import annotations
 

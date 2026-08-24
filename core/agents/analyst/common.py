@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
@@ -20,7 +20,9 @@ from core.agents.analyst.middleware import build_solver_middleware
 from core.context.bundle import schema_outline
 from core.context.engine import engine_enabled
 from core.initialization import Initialization
-from core.agents.common.peers import custom_peer_directive
+from core.agents.analyst.analytics_tool import build_compute_tool
+from core.agents.common.analytics_tools import analytics_tools_enabled
+from core.agents.common.peers import custom_peer_directive, pinned_peers
 from core.analysis import get_lens_library
 from core.mcp.tools import (
     audit_sql_filters,
@@ -96,12 +98,18 @@ def build_tools(
     *,
     peer_only: bool = False,
     guard_zero_rows: bool = False,
+    flow: str = "gpr",
+    peers: Sequence[str] = (),
 ):
     """Read-only LangChain tools for a solver; `evidence` collects executed rows.
 
     `peer_only` trims the toolset to the two tools the peer-comparison path
     actually needs (run_sql + resolve_value), so that specialist's context isn't
     cluttered with list/show-values tools it never calls.
+
+    `flow` + `peers` scope the `compute_metric` tool: `peers` is the session's
+    pinned custom peer set, so a computed peer average benchmarks exactly the group
+    the prompt directive pins for hand-written SQL.
 
     `guard_zero_rows` arms the zero-row guard (a 0-row result whose filter value
     looks wrong is returned as a "re-run with an exact value" warning instead of
@@ -235,8 +243,18 @@ def build_tools(
             return f"No skill named {name!r}. Use an exact name from the on-demand list."
         return body
 
+    # The deterministic library, offered alongside run_sql (same flag as the rails):
+    # for a covered metric the solver asks for the calculation by name instead of
+    # writing its SQL. Peer solvers get it too — the peer-average definition is the
+    # one this most often gets wrong by hand.
+    computed = []
+    if analytics_tools_enabled():
+        # `peers` carries a pinned custom peer set, so a computed peer average
+        # benchmarks the same group the prompt directive pins for run_sql.
+        computed = [build_compute_tool(evidence, lens, flow=flow, peers=peers)]
+
     if peer_only:
-        return [run_sql, resolve_value, consult_skill]
+        return [run_sql, *computed, resolve_value, consult_skill]
 
     @tool
     def list_values(flow: str, column: str) -> str:
@@ -248,7 +266,7 @@ def build_tools(
         """Return the precomputed valid column values for a flow."""
         return json.dumps(get_valid_values(flow), default=str)
 
-    return [run_sql, resolve_value, consult_skill, list_values, show_valid_values]
+    return [run_sql, *computed, resolve_value, consult_skill, list_values, show_valid_values]
 
 
 def domain_rules(route: str, primary_flow: str, trigger_text: str) -> str:
@@ -440,6 +458,8 @@ def run_solver(
         lens,
         peer_only=peer_only,
         guard_zero_rows=schema_slice.guard_zero_rows,
+        flow=flow,
+        peers=pinned_peers(custom_peers, flow, active=custom_peers_active),
     )
     system_prompt = _solver_prompt(
         role=role,

@@ -59,7 +59,7 @@ def test_keeps_valid_chart_type(monkeypatch):
 
 
 def test_keeps_chart_when_node_returns_pydantic_model(monkeypatch):
-    """The reported bug: dspy hands back a ChartOutput MODEL, not a dict.
+    """The reported bug: the model hands back a ChartOutput MODEL, not a dict.
 
     The old `isinstance(chart_data, dict)` gate silently dropped it. The picker
     must now coerce the model to a plain dict and keep the chart.

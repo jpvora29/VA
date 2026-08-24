@@ -13,10 +13,9 @@ artifact instead of an implicit signal hidden in the rephrased text.
 """
 from __future__ import annotations
 
-import dspy
 from langchain_core.messages import HumanMessage, RemoveMessage
 
-from core.initialization import Initialization
+from core.llm import Predictor
 from core.schemas.routing import RephaserNodeSignature, RoutingContext
 from core.state.agent_state import AgentState
 from logger import get_logger
@@ -24,14 +23,20 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 
-class RephraserAgentNode(dspy.Module):
-    """dspy module wrapping `RephaserNodeSignature` with ChainOfThought."""
+class RephraserAgentNode:
+    """Runs `RephaserNodeSignature` with chain-of-thought.
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.predictor = dspy.ChainOfThought(RephaserNodeSignature)
+    Stitching the inherited filters into one sentence without inventing any is a
+    reasoning step, so the model works it through before writing the sentence.
+    """
 
-    def forward(
+    def __init__(self, predictor: Predictor | None = None) -> None:
+        self.predictor = predictor or Predictor(
+            RephaserNodeSignature, tier="balanced", reasoning=True,
+            label="rephraser_agent", node="rephraser",
+        )
+
+    def __call__(
         self,
         routing_context: RoutingContext,
         construction_rules: str,
@@ -91,12 +96,11 @@ class QueryRephraseAgent:
         question = state["messages"][-1].content
         routing_context = state["routing_context"]
 
-        with Initialization.dspy_usage("rephraser_agent", node="rephraser"):
-            rephrased_output = _REPHRASER_NODE(
-                routing_context=routing_context,
-                construction_rules=QueryRephraseAgent.construction_rules,
-                current_user_query=question,
-            )
+        rephrased_output = _REPHRASER_NODE(
+            routing_context=routing_context,
+            construction_rules=QueryRephraseAgent.construction_rules,
+            current_user_query=question,
+        )
 
         last_msg = state["messages"][-1]
         logger.debug("Original user question: %s", question)

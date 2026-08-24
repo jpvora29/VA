@@ -12,7 +12,7 @@ For new code, import directly from the new modules instead:
 - `core.data.valid_values`         → `GetValidData`
 - `core.state.agent_state`         → `AgentState`
 - `core.state.pitch_state`         → `PitchAgentState`, `PitchQuestionResult`
-- `core.schemas.{routing,survey,gpr,gimmi,combined,pitch,fallback}` → pydantic + dspy schemas
+- `core.schemas.{routing,survey,gpr,gimmi,combined,pitch,fallback}` → pydantic models + LLM signatures
 - `core.rules.{survey,survey_chart,gpr,gpr_chart,gimmi}` → rule strings (Phase-2 migration target)
 - `core.agents.{rephraser,router,fallback}` and `core.agents.{survey,gpr,gimmi,combined}.*` → node classes
 - `core.graph.{main,pitch_question_graph,survey_subgraph,gpr_subgraph,combiner_subgraph}` → LangGraph workflows

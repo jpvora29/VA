@@ -1,0 +1,254 @@
+# ICG business glossary — what the numbers in this product actually MEAN.
+#
+# `core/data/valid_values.py` defines COLUMNS (what is in a field). This file defines the
+# derived business CONCEPTS an Insurer Consulting Group analyst reasons in — share of
+# wallet, rank, headroom, capture rate — none of which is a column and every one of which
+# is easy to overstate.
+#
+# It exists because prose is where a definition gets stretched. "Rank" quietly becomes
+# "market rank"; "headroom" becomes "addressable market"; "share of wallet" becomes "market
+# share". Each of those claims something the data cannot carry, and each one was found in
+# shipped commentary. So every term carries a `never` — the specific overstatement it
+# attracts — and the commentary writer is given both the definition and the ban.
+#
+# Fields
+#   label       what a reader should see it called
+#   aliases     other names for the same concept (search + resolution)
+#   definition  what it IS, in ICG terms
+#   formula     how THIS system computes it; "" when it is not computed from our data
+#   say         how to phrase it in commentary
+#   never       the overstatement this term attracts, stated as a ban
+#   unit        currency | percent | percentage_points | rank | score | ""
+#
+# Keep `definition` and `formula` true to the code. A glossary that drifts from the
+# computation is worse than none: it teaches the writer to say something the figures do
+# not support, and the verifier has no way to catch it.
+
+premium:
+  label: Premium
+  aliases: [gwp, gross written premium, written premium]
+  definition: >-
+    Gross written premium placed with Marsh by this carrier in the selected scope. It is
+    Marsh-placed business only — never the carrier's whole book, and never the open market.
+  formula: SUM(Premium) over the selected filters
+  say: >-
+    Say "wrote $X with Marsh" or "$X of Marsh-placed premium". The qualifier is not
+    optional: without it the sentence claims the carrier's entire book.
+  never: >-
+    Never present it as the carrier's total premium, its market premium, or its revenue.
+  unit: currency
+
+marsh_book:
+  label: The Marsh book
+  aliases: [marsh pool, the pool, wider marsh book, the book with marsh]
+  definition: >-
+    Total premium Marsh placed in the same scope across ALL carriers. It is the closest
+    market proxy available here, and it is a proxy — it is Marsh's flow, not the market.
+  formula: SUM(Premium) over the same filters with the carrier pin removed
+  say: >-
+    Say "the wider Marsh book" or "the Marsh book". Use it as the denominator a carrier's
+    movement is judged against.
+  never: >-
+    Never call it "the market", "total market premium", or "industry premium".
+  unit: currency
+
+share_of_wallet:
+  label: Share of wallet
+  aliases: [sow, wallet share, share of the wallet]
+  definition: >-
+    The share of the Marsh book in this scope that this carrier writes. It measures how
+    relevant the carrier is to Marsh's placement in that scope — not how large it is in the
+    market.
+  formula: carrier premium / Marsh book premium in the same scope, as a percent
+  say: >-
+    Say "holds X% of the wallet" or "X% share of wallet". Movement is in percentage points.
+  never: >-
+    Never call it market share, penetration of the market, or the carrier's share of the
+    industry.
+  unit: percent
+
+share_of_portfolio:
+  label: Share of portfolio
+  aliases: [portfolio share, mix, book mix, share of the book]
+  definition: >-
+    A line's share of THIS carrier's own Marsh-placed book — an internal mix measure. Share
+    of wallet looks outward at Marsh's placement; share of portfolio looks inward at how
+    the carrier's own premium is distributed.
+  formula: line premium / this carrier's total premium in scope, as a percent
+  say: >-
+    Say "X% of the carrier's book sits in Property". Use it for concentration and mix, not
+    for competitive standing.
+  never: >-
+    Never mix it with share of wallet in the same clause; they have different denominators
+    and a reader cannot tell them apart from the number alone.
+  unit: percent
+
+rank:
+  label: Rank
+  aliases: [position, standing, league position]
+  definition: >-
+    The carrier's position by premium WITHIN THE MARSH BOOK for this scope, among the
+    carriers Marsh placed business with there. A position in Marsh's flow, not in the market.
+  formula: dense rank of carrier premium among carriers in the same scope
+  say: >-
+    Say "ranks #5 of 12 in the Marsh book". Always carry the field size — "#5" alone is
+    meaningless, and "#5 of 12" and "#5 of 200" are different findings.
+  never: >-
+    Never write "market rank", "#5 in the market", "market leader", or "top-five carrier"
+    without the Marsh-book qualifier.
+  unit: rank
+
+peer_average:
+  label: Peer average
+  aliases: [peer benchmark, peer set average, top-5 peer average]
+  definition: >-
+    The mean of each peer carrier's total premium (or share) in the same scope, taken over
+    the peer group resolved from the Peers table for this carrier and country.
+  formula: AVG(SUM(Premium) per peer carrier) over the same filters
+  say: >-
+    Say "against a top-5 peer average of X%". Peers are discussed only as a set.
+  never: >-
+    Never name an individual peer, quote one peer's premium, share, rank or score, or say
+    anything that identifies which carriers are in the set.
+  unit: currency
+
+headroom:
+  label: Headroom
+  aliases: [placed elsewhere, unplaced premium, the rest of the book]
+  definition: >-
+    Premium in the Marsh book for this scope that is placed with OTHER carriers. It is
+    OBSERVED business — someone already writes it — not business this carrier could win.
+  formula: Marsh book premium in scope minus this carrier's premium in scope
+  say: >-
+    Say "$X of the Marsh book is placed with other carriers". State it as observation.
+  never: >-
+    Never call it addressable market, opportunity, winnable premium, or potential — all
+    four assert appetite, capacity or access that premium data cannot show.
+  unit: currency
+
+whitespace:
+  label: Whitespace
+  aliases: [gaps, openings, unwritten segments]
+  definition: >-
+    Segments where the Marsh book has meaningful premium and this carrier writes little or
+    none. An observation about where the carrier is absent, nothing more.
+  formula: segments ranked by Marsh book premium where carrier premium is zero or thin
+  say: >-
+    Say "the carrier writes nothing in X, where Marsh placed $Y". Name the segment and the
+    Marsh figure.
+  never: >-
+    Never qualify it as addressable or as an opportunity the carrier can take without
+    appetite, capacity or validation evidence to cite alongside it.
+  unit: currency
+
+appetite:
+  label: Appetite
+  aliases: [risk appetite, underwriting appetite, willingness to write]
+  definition: >-
+    A carrier's stated willingness to underwrite a class of risk — its underwriting
+    strategy, capacity and authority. It is NOT derivable from premium data.
+  formula: ""
+  say: >-
+    Only discuss appetite when the source is something the carrier or the account team
+    said. Otherwise write about what the carrier DID write, which is what the data shows.
+  never: >-
+    Never infer appetite from premium. Writing nothing in a class may mean no appetite, no
+    access, no capacity, or no submission flow — the premium figure cannot tell them apart.
+  unit: ""
+
+capture_rate:
+  label: Capture rate
+  aliases: [capture gap, share of growth, take rate]
+  definition: >-
+    The share of the Marsh book's GROWTH in a segment that this carrier took. The capture
+    gap is where the Marsh book grew hardest and the carrier took least of it.
+  formula: carrier premium movement / Marsh book premium movement in the same segment
+  say: >-
+    Say "Marsh premium in Cyber grew $X while the carrier took $Y of it". It is the lever
+    behind a flat share on a growing book.
+  never: >-
+    Never present it as a win rate or a hit ratio — those are submission-level measures
+    this data does not hold.
+  unit: percent
+
+renewal_book:
+  label: Renewal book
+  aliases: [renewals, the renewal, expiring book]
+  definition: >-
+    Premium already on risk that comes up for renewal in the coming period — what the
+    carrier has to defend rather than win.
+  formula: ""
+  say: >-
+    Use it when the point is defence: "the renewal book in Cyber is what to protect first".
+  never: >-
+    Never state a renewal or retention FIGURE — the premium data here has no new-versus-
+    renewal split, so any retention percentage would be invented.
+  unit: currency
+
+placement:
+  label: Placement
+  aliases: [placed, placing]
+  definition: >-
+    The act of Marsh putting a client's risk with a carrier. Every premium figure in this
+    product is placement premium.
+  say: >-
+    Use it to keep the frame honest: the deck describes what Marsh placed, not what the
+    carrier sold.
+  never: Never use it interchangeably with the carrier's own production or distribution.
+  formula: ""
+  unit: ""
+
+yoy:
+  label: Year on year
+  aliases: [yoy, year-over-year, annual movement]
+  definition: >-
+    The movement between the reporting year and the one before it, on the same filters.
+  formula: (current - prior) / prior, as a percent
+  say: >-
+    Say "grew 12.4% year on year". Put the direction in the verb, never in a plus or minus
+    sign glued to the number.
+  never: >-
+    Never compare a part year against a full year without saying so.
+  unit: percent
+
+percentage_point:
+  label: Percentage point
+  aliases: [pp, ppt, points of share, basis points]
+  definition: >-
+    The unit of movement for anything already measured in percent. Share of wallet moving
+    from 7.8% to 9.1% moved 1.3 percentage points — it did not move 1.3 percent.
+  formula: current percent minus prior percent
+  say: >-
+    Write it out: "1.3 percentage points", or "1.3 points of share" where the sentence has
+    already established that share is the subject.
+  never: >-
+    Never abbreviate it to "pp" or "ppt" in carrier-facing prose, and never write it as a
+    percent — "share rose 1.3%" is a different and wrong claim.
+  unit: percentage_points
+
+survey_score:
+  label: Survey score
+  aliases: [broker score, perception score, service score]
+  definition: >-
+    A 1-9 score from the Carrier Survey, in which brokers rate carriers on service
+    attributes. A SEPARATE book from premium, with its own carrier vocabulary and its own
+    peer groups.
+  formula: AVG(Score) over the survey book for the scope
+  say: >-
+    Keep it visibly separate from premium: a carrier can be growing premium and slipping on
+    service, and that tension is usually the most useful thing on the page.
+  never: >-
+    Never blend a survey score with a premium figure in one claim, and never carry a
+    premium-side peer group onto a survey ranking — the two books name carriers differently.
+  unit: score
+
+nps:
+  label: NPS
+  aliases: [net promoter score]
+  definition: >-
+    Net Promoter Score from the survey book, on a 0-10 likelihood-to-recommend scale.
+    Promoters score 9-10, passives 7-8, detractors 0-6.
+  formula: standard NPS over survey respondents in scope
+  say: Report it as a survey finding, alongside the score rather than instead of it.
+  never: Never present NPS as a premium or commercial outcome.
+  unit: score

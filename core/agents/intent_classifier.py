@@ -22,12 +22,11 @@ from __future__ import annotations
 
 from typing import List
 
-import dspy
 from langchain_core.messages import HumanMessage
 
 from core.agents.common.directives import apply_directives
 from core.agents.common.meta_intent import detect_conversation_intent
-from core.initialization import Initialization
+from core.llm import Predictor
 from core.observability import log_event
 from core.schemas.routing import DepthClassifierSignature
 from core.state.agent_state import AgentState
@@ -36,7 +35,7 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 
-class DepthClassifierNode(dspy.Module):
+class DepthClassifierNode:
     """Dedicated lookup-vs-analytical classifier.
 
     Split out of the monolithic context-filler call so depth gets its own
@@ -46,14 +45,15 @@ class DepthClassifierNode(dspy.Module):
     filler guessed.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.predictor = dspy.ChainOfThought(DepthClassifierSignature)
-        # Fast tier: a focused lookup-vs-analytical classification. use_tier is a
-        # no-op until MODEL_TIERS=on (keeps the global dspy LM).
-        Initialization.use_tier(self.predictor, "fast")
+    def __init__(self, predictor: Predictor | None = None) -> None:
+        # Fast tier: a focused lookup-vs-analytical classification, reasoned
+        # through so a comparison is not mistaken for a plain breakdown.
+        self.predictor = predictor or Predictor(
+            DepthClassifierSignature, tier="fast", reasoning=True,
+            label="depth_classifier", node="intent_classifier",
+        )
 
-    def forward(
+    def __call__(
         self, current_user_query: str, table_family: str, intent_type: str
     ) -> str:
         # HYBRID is always analytical — a narrow deterministic floor (not a broad
@@ -104,14 +104,11 @@ class IntentClassifier:
         # the guess. `fallback` queries keep whatever value — they never route to
         # the analyst agent anyway.
         if routing_context.table_family != "fallback":
-            with Initialization.dspy_usage(
-                "depth_classifier", node="intent_classifier"
-            ):
-                routing_context.analysis_depth = self._depth_classifier(
-                    current_user_query=question,
-                    table_family=routing_context.table_family,
-                    intent_type=routing_context.intent_type,
-                )
+            routing_context.analysis_depth = self._depth_classifier(
+                current_user_query=question,
+                table_family=routing_context.table_family,
+                intent_type=routing_context.intent_type,
+            )
 
         # Deterministic directive overlay: fold every detector over the RAW query
         # (the rephraser may strip "without a chart" later) onto output_directives,

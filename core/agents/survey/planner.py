@@ -8,10 +8,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-import dspy
-
 from core.agents.common.planner import BasePlannerNode
 from core.data.valid_values import GetValidData
+from core.llm import Example
 
 
 class PlannerNode(BasePlannerNode):
@@ -20,7 +19,7 @@ class PlannerNode(BasePlannerNode):
         carriers_schema: List[Dict[str, Any]],
         peers_schema: List[Dict[str, Any]],
         rules: str,
-        demos: Optional[List[dspy.Example]] = None,
+        demos: Optional[List[Example]] = None,
     ) -> None:
         super().__init__(
             flow="survey",

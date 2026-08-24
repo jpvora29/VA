@@ -238,40 +238,116 @@ def test_commentary_does_not_run_on_the_mechanical_tier():
     assert CM._COMMENTARY_TIER == "balanced"
 
 
-def test_the_rewrite_verifies_each_bullet_rather_than_the_whole_blob(monkeypatch):
-    """The whole-text verifier joins the sentences it keeps with spaces, which would flatten
-    a four-bullet column into one line — and then fail the line count for the wrong reason,
-    so no rewrite could ever land. Bullets are verified one by one."""
+# ── the model now writes from EVIDENCE, and both verifiers rule on it ────────
+#
+# `_rewrite` no longer hands the model a sentence to re-word. It builds an evidence pack
+# from the same facts the composers used, hands over the ICG definitions of the terms in
+# play, and takes back cited sentences — so these stub `client.structured`, not `generate`.
+
+
+def _facts(**over):
+    base = {
+        "subject": "Zurich",
+        "carrier": {"current": 208e6, "pct": 28.6, "delta": 46e6, "current_year": 2025},
+        "marsh": {"current": 2.3e9, "pct": 9.9},
+        "rank": {"current": 5, "delta": 1, "of_n": 12},
+        "sow": {"current": 9.1, "delta": 1.3},
+        "peer": {"current": 180e6, "sow": 10.8},
+        "movers": [{"name": "Cyber", "delta": 22e6, "pct": 97.3}],
+        "pool": [{"name": "Casualty", "delta": 45e6}],
+    }
+    base.update(over)
+    return base
+
+
+def _column(*bullets):
+    """A `CommentaryColumn` as the model would return it, citing nothing in particular."""
+    from studio.ai.models import CommentaryBullet, CommentaryColumn
+
+    return CommentaryColumn(bullets=[CommentaryBullet(text=b, fact_ids=[]) for b in bullets])
+
+
+def _stub_model(monkeypatch, column, *, verdicts=None):
+    """Point the writer at a canned column and the claim judge at canned verdicts."""
     from studio.ai import client
+    from studio.ai.models import CommentaryColumn, CommentaryVerdicts
 
-    rewrite = "\n".join(["The account wrote $0M with Marsh, and held it.",
-                         "The account wrote $1M with Marsh, and held it.",
-                         "The account wrote $2M with Marsh, and held it."])
     monkeypatch.setattr(client, "llm_available", lambda: True)
-    monkeypatch.setattr(client, "generate", lambda *a, **k: rewrite)
-    assert CM._rewrite(_draft(3), node="t") == rewrite
+
+    def structured(model, system, user, **kw):
+        if model is CommentaryColumn:
+            return column
+        if model is CommentaryVerdicts:
+            return verdicts
+        return None
+
+    monkeypatch.setattr(client, "structured", structured)
 
 
-def test_a_rewritten_bullet_with_an_invented_number_is_refused(monkeypatch):
+def test_the_model_writes_the_column_from_the_evidence(monkeypatch):
+    written = ("The book outgrew the Marsh pool by nearly nineteen points, taking $46M more "
+               "premium in a market that grew 9.9%.",
+               "At 9.1% of the wallet it still sits behind a top-5 peer average of 10.8%.")
+    _stub_model(monkeypatch, _column(*written))
+    out = CM._rewrite(_draft(2), node="t", subject="Zurich", facts=_facts())
+    assert out.splitlines() == list(written)
+
+
+def test_an_invented_figure_is_dropped_before_the_judge_ever_sees_it(monkeypatch):
+    """The numeric verifier runs FIRST — cheap, exact, and it removes the worst failure."""
+    _stub_model(monkeypatch, _column(
+        "The book grew to $208M with Marsh, taking share as it went.",
+        "Share of wallet reached 44.4%, well clear of the field."))          # invented
+    out = CM._rewrite(_draft(2), node="t", subject="Zurich", facts=_facts())
+    assert out == _draft(2), "one line left is below the floor, so the draft stands"
+
+
+def test_the_claim_judge_drops_an_unsupported_claim(monkeypatch):
+    """No bad number, but 'market leader' is a definitional overstatement — exactly what
+    the deterministic verifier cannot see and the model verifier exists for."""
+    from studio.ai.models import CommentaryVerdict, CommentaryVerdicts
+
+    kept = ("The book outgrew the Marsh pool and took $46M more premium than a year ago.",
+            "Cyber carried $22M of that, so the renewal there is what to defend first.",
+            "At 9.1% of the wallet the book still trails a top-5 peer average of 10.8%.")
+    _stub_model(
+        monkeypatch,
+        _column(*kept, "That makes the carrier the market leader in this segment."),
+        verdicts=CommentaryVerdicts(verdicts=[
+            CommentaryVerdict(keep=True), CommentaryVerdict(keep=True),
+            CommentaryVerdict(keep=True),
+            CommentaryVerdict(keep=False, reason="rank is a Marsh-book position, not the market"),
+        ]),
+    )
+    out = CM._rewrite(_draft(4), node="t", subject="Zurich", facts=_facts())
+    assert out.splitlines() == list(kept) and "market leader" not in out
+
+
+def test_a_judge_that_answers_nonsense_is_ignored_rather_than_obeyed(monkeypatch):
+    """A verdict list that does not line up must not be read as 'drop everything' — that
+    blanks the page, which is worse than any sentence it might have caught."""
+    from studio.ai.models import CommentaryVerdict, CommentaryVerdicts
+
+    written = ("The book took $46M more premium than a year ago, ahead of the Marsh pool.",
+               "At 9.1% of the wallet it still trails a top-5 peer average of 10.8%.")
+    _stub_model(monkeypatch, _column(*written),
+                verdicts=CommentaryVerdicts(verdicts=[CommentaryVerdict(keep=False)]))
+    assert CM._rewrite(_draft(2), node="t", subject="Zurich",
+                       facts=_facts()).splitlines() == list(written)
+
+
+def test_with_no_evidence_the_draft_stands(monkeypatch):
+    """A thin book builds no pack, so there is nothing to write from and nothing to cite."""
+    _stub_model(monkeypatch, _column("Anything at all, really, in a whole sentence."))
+    assert CM._rewrite(_draft(2), node="t", subject="Zurich", facts={}) == _draft(2)
+
+
+def test_ai_off_never_calls_a_model(monkeypatch):
+    """`STUDIO_AI=off` is a factory decision, not a branch in the caller."""
     from studio.ai import client
+    from studio.template_fill import commentary_writer as W
 
-    monkeypatch.setattr(client, "llm_available", lambda: True)
-    monkeypatch.setattr(client, "generate",
-                        lambda *a, **k: "The account wrote $99M with Marsh, and held it.")
-    assert CM._rewrite(_draft(1), node="t") == _draft(1)
-
-
-def test_one_unfaithful_bullet_no_longer_discards_the_whole_column(monkeypatch):
-    """The verifier DROPS an unfaithful bullet, so the rewrite came back a line short and
-    the old exact-count rule threw the other three away with it."""
-    from studio.ai import client
-
-    rewrite = "\n".join(["The account wrote $0M with Marsh, and held it.",
-                         "The account wrote $1M with Marsh, and held it.",
-                         "The account wrote $2M with Marsh, and held it.",
-                         "The account wrote $77M with Marsh, and held it."])  # invented
-    monkeypatch.setattr(client, "llm_available", lambda: True)
-    monkeypatch.setattr(client, "generate", lambda *a, **k: rewrite)
-    kept = CM._rewrite(_draft(4), node="t")
-    assert kept and "$77M" not in kept
-    assert len(kept.split("\n")) == 3
+    monkeypatch.setattr(client, "llm_available", lambda: False)
+    monkeypatch.setattr(client, "structured", lambda *a, **k: pytest.fail("model was called"))
+    assert CM._rewrite(_draft(3), node="t", subject="Zurich", facts=_facts()) == _draft(3)
+    assert W.make_writer() is W.compose_from_rules

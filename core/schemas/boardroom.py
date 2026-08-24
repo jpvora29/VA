@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any, List, Literal, Optional
 
-import dspy
+from core.llm import InputField, OutputField, Signature
 from pydantic import BaseModel, Field
 
 Tone = Literal["good", "warn", "danger", "neutral"]
@@ -348,7 +348,7 @@ class BoardroomCore(BaseModel):
     )
 
 
-class BoardroomCoreSignature(dspy.Signature):
+class BoardroomCoreSignature(Signature):
     """
     [ROLE]
     You are an executive briefing designer. You receive an analyst's finished
@@ -387,16 +387,16 @@ class BoardroomCoreSignature(dspy.Signature):
       the subject carrier are fine).
     """
 
-    user_query: str = dspy.InputField(desc="The user's original question.")
-    route: str = dspy.InputField(desc="Which analytical lens produced the answer (survey/premium/both/analyst/fallback).")
-    commentary: str = dspy.InputField(desc="The finished written analysis to distil (may carry several lenses, each under a '## Lens' heading).")
-    sql_output: Any = dspy.InputField(desc=_SQL_OUTPUT_DESC)
-    core: BoardroomCore = dspy.OutputField(
+    user_query: str = InputField(desc="The user's original question.")
+    route: str = InputField(desc="Which analytical lens produced the answer (survey/premium/both/analyst/fallback).")
+    commentary: str = InputField(desc="The finished written analysis to distil (may carry several lenses, each under a '## Lens' heading).")
+    sql_output: Any = InputField(desc=_SQL_OUTPUT_DESC)
+    core: BoardroomCore = OutputField(
         desc="The core dashboard content, faithful to the commentary."
     )
 
 
-class BoardroomTimelineSignature(dspy.Signature):
+class BoardroomTimelineSignature(Signature):
     """
     Build the Insight Timeline for a boardroom dashboard: the carrier's major
     movements across periods (premium growth, rank moves, score shifts, product
@@ -407,15 +407,15 @@ class BoardroomTimelineSignature(dspy.Signature):
     from the carrier's perspective. Peers stay aggregated (never name one).
     """
 
-    user_query: str = dspy.InputField(desc="The user's original question.")
-    commentary: str = dspy.InputField(desc="The finished written analysis.")
-    sql_output: Any = dspy.InputField(desc=_SQL_OUTPUT_DESC)
-    timeline: List[TimelineEvent] = dspy.OutputField(
+    user_query: str = InputField(desc="The user's original question.")
+    commentary: str = InputField(desc="The finished written analysis.")
+    sql_output: Any = InputField(desc=_SQL_OUTPUT_DESC)
+    timeline: List[TimelineEvent] = OutputField(
         desc="Chronological movements; empty only if the periods carry no movement worth showing."
     )
 
 
-class BoardroomOpportunityMapSignature(dspy.Signature):
+class BoardroomOpportunityMapSignature(Signature):
     """
     Build the Market Opportunity Map for a boardroom dashboard: a
     country×product whitespace/growth-priority heatmap. The data ALREADY spans
@@ -426,15 +426,15 @@ class BoardroomOpportunityMapSignature(dspy.Signature):
     or rows; never fabricate. Peers stay aggregated.
     """
 
-    user_query: str = dspy.InputField(desc="The user's original question.")
-    commentary: str = dspy.InputField(desc="The finished written analysis.")
-    sql_output: Any = dspy.InputField(desc=_SQL_OUTPUT_DESC)
-    opportunity_map: OpportunityMap = dspy.OutputField(
+    user_query: str = InputField(desc="The user's original question.")
+    commentary: str = InputField(desc="The finished written analysis.")
+    sql_output: Any = InputField(desc=_SQL_OUTPUT_DESC)
+    opportunity_map: OpportunityMap = OutputField(
         desc="The heatmap; leave rows/cols/cells empty only if no grid can be grounded."
     )
 
 
-class BoardroomOpportunitiesSignature(dspy.Signature):
+class BoardroomOpportunitiesSignature(Signature):
     """
     Build the Opportunity Radar for a boardroom dashboard: concrete whitespace
     where the carrier's premium/presence is LOW while Marsh-book or peer
@@ -445,15 +445,15 @@ class BoardroomOpportunitiesSignature(dspy.Signature):
     aggregated (never name one).
     """
 
-    user_query: str = dspy.InputField(desc="The user's original question.")
-    commentary: str = dspy.InputField(desc="The finished written analysis.")
-    sql_output: Any = dspy.InputField(desc=_SQL_OUTPUT_DESC)
-    opportunities: List[Opportunity] = dspy.OutputField(
+    user_query: str = InputField(desc="The user's original question.")
+    commentary: str = InputField(desc="The finished written analysis.")
+    sql_output: Any = InputField(desc=_SQL_OUTPUT_DESC)
+    opportunities: List[Opportunity] = OutputField(
         desc="Detected whitespace gaps; empty when none is grounded in the data."
     )
 
 
-class BoardroomPositioningSignature(dspy.Signature):
+class BoardroomPositioningSignature(Signature):
     """
     Build the Peer Positioning Matrix (2x2: premium strength on x, broker
     perception on y, both 0-100) for a boardroom dashboard. The data ALREADY
@@ -465,15 +465,15 @@ class BoardroomPositioningSignature(dspy.Signature):
     never one point per named peer.
     """
 
-    user_query: str = dspy.InputField(desc="The user's original question.")
-    commentary: str = dspy.InputField(desc="The finished written analysis.")
-    sql_output: Any = dspy.InputField(desc=_SQL_OUTPUT_DESC)
-    positioning: PositioningMatrix = dspy.OutputField(
+    user_query: str = InputField(desc="The user's original question.")
+    commentary: str = InputField(desc="The finished written analysis.")
+    sql_output: Any = InputField(desc=_SQL_OUTPUT_DESC)
+    positioning: PositioningMatrix = OutputField(
         desc="The 2x2 matrix; leave points empty only if a signal is genuinely missing."
     )
 
 
-class BoardroomComparisonSignature(dspy.Signature):
+class BoardroomComparisonSignature(Signature):
     """
     Build the side-by-side Comparison view for a boardroom dashboard. The
     answer compares two or more entities (carrier vs peer set, several
@@ -484,15 +484,15 @@ class BoardroomComparisonSignature(dspy.Signature):
     carriers are not. Use ONLY values present in the commentary or rows.
     """
 
-    user_query: str = dspy.InputField(desc="The user's original question.")
-    commentary: str = dspy.InputField(desc="The finished written analysis.")
-    sql_output: Any = dspy.InputField(desc=_SQL_OUTPUT_DESC)
-    comparison: ComparisonView = dspy.OutputField(
+    user_query: str = InputField(desc="The user's original question.")
+    commentary: str = InputField(desc="The finished written analysis.")
+    sql_output: Any = InputField(desc=_SQL_OUTPUT_DESC)
+    comparison: ComparisonView = OutputField(
         desc="The aligned comparison; leave subjects empty only if nothing is comparable."
     )
 
 
-class BoardroomBattlecardsSignature(dspy.Signature):
+class BoardroomBattlecardsSignature(Signature):
     """
     Build competitive Battlecards for a boardroom dashboard: one profile for
     the subject carrier (and the aggregated peer set ONLY if the analysis
@@ -502,9 +502,9 @@ class BoardroomBattlecardsSignature(dspy.Signature):
     Empty list for non-carrier answers.
     """
 
-    user_query: str = dspy.InputField(desc="The user's original question.")
-    commentary: str = dspy.InputField(desc="The finished written analysis.")
-    sql_output: Any = dspy.InputField(desc=_SQL_OUTPUT_DESC)
-    battlecards: List[Battlecard] = dspy.OutputField(
+    user_query: str = InputField(desc="The user's original question.")
+    commentary: str = InputField(desc="The finished written analysis.")
+    sql_output: Any = InputField(desc=_SQL_OUTPUT_DESC)
+    battlecards: List[Battlecard] = OutputField(
         desc="Grounded competitive profiles; empty when no carrier is discussed."
     )

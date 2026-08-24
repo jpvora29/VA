@@ -4,8 +4,6 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-import dspy
-
 from core.agents.common import (
     BaseSQLFixerNode,
     log_sql_failure,
@@ -15,6 +13,7 @@ from core.agents.common import (
 from core.data.general import GeneralFunctions
 from core.data.valid_values import GetValidData
 from core.initialization import Initialization
+from core.llm import Predictor
 from core.mcp.tools import execute_sql
 from core.observability import log_event, sql_metadata
 from core.rules.gimmi import GIMMIRules
@@ -30,7 +29,7 @@ logger = get_logger(__name__)
 _GIMMI_MAX_ATTEMPTS = 3
 
 
-class GIMMISQLAgentNode(dspy.Module):
+class GIMMISQLAgentNode:
     # def __init__(self, carrier_schema: str, peer_schema: str, definitions: str, rules: str):
 
     def __init__(
@@ -41,7 +40,6 @@ class GIMMISQLAgentNode(dspy.Module):
         valid_values: Dict[str, Any],
         recalled_examples: str = "",
     ) -> None:
-        super().__init__()
         self.gimmi_schema = gimmi_schema
         self.definitions = definitions
         self.rules = rules
@@ -49,9 +47,12 @@ class GIMMISQLAgentNode(dspy.Module):
         # Text block of the user's past verified fixes for similar GIMMI queries.
         self.recalled_examples = recalled_examples
 
-        self.predictor = dspy.ChainOfThought(GIMMISQLAgentSignature)
+        self.predictor = Predictor(
+            GIMMISQLAgentSignature, tier="balanced", reasoning=True,
+            label="gimmi_sql_agent", node="gimmi_sql_agent",
+        )
 
-    def forward(self, user_query: str) -> str:
+    def __call__(self, user_query: str) -> str:
         # Combine context into a single training/inference context
         context = (
             f"GIMMI Schema:\n{self.gimmi_schema}\n"

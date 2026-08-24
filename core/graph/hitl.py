@@ -37,13 +37,13 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Protocol, Sequence
 
-import dspy
 from langchain_core.messages import HumanMessage, RemoveMessage
 from langgraph.types import interrupt
 from pydantic import BaseModel
 
 from core.agents.common.mandatory_filters import MandatoryFilterGate
 from core.data.valid_values import GetValidData
+from core.llm import Predictor
 from core.observability import log_event
 from core.schemas.hitl import ClarifyDecision, ClarifyDecisionSignature
 from logger import get_logger
@@ -54,14 +54,17 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-class ClarifyDecider(dspy.Module):
-    """Conservative ambiguity classifier (ChainOfThought over the signature)."""
+class ClarifyDecider:
+    """Conservative ambiguity classifier — reasons over the signature before
+    deciding, because asking the user a needless question is the costly error."""
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.predictor = dspy.ChainOfThought(ClarifyDecisionSignature)
+    def __init__(self, predictor: Predictor | None = None) -> None:
+        self.predictor = predictor or Predictor(
+            ClarifyDecisionSignature, tier="balanced", reasoning=True,
+            label="clarify_decider", node="hitl",
+        )
 
-    def forward(self, current_user_query, routing_context, valid_values) -> ClarifyDecision:
+    def __call__(self, current_user_query, routing_context, valid_values) -> ClarifyDecision:
         result = self.predictor(
             current_user_query=current_user_query,
             routing_context=routing_context,

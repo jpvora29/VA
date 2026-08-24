@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import List
 
-import dspy
+from core.llm import InputField, OutputField, Signature
 from pydantic import BaseModel, Field
 
 from core.schemas.routing import RoutingContext
@@ -55,7 +55,7 @@ class AnalysisPlan(BaseModel):
     )
 
 
-class AnalysisPlannerSignature(dspy.Signature):
+class AnalysisPlannerSignature(Signature):
     """
     [ROLE]
     You are the Analysis Planner for an insurance analytics system. Given a user's
@@ -83,17 +83,17 @@ class AnalysisPlannerSignature(dspy.Signature):
       query or routing_context.
     """
 
-    user_query: str = dspy.InputField(desc="The user's analytical question.")
-    routing_context: RoutingContext = dspy.InputField(
+    user_query: str = InputField(desc="The user's analytical question.")
+    routing_context: RoutingContext = InputField(
         desc="Routing + inherited filters (carrier/country/year/metric) and intent."
     )
-    lens_catalog: str = dspy.InputField(
+    lens_catalog: str = InputField(
         desc="Available lenses: name, description, and applies_when for each."
     )
-    analyst_principles: str = dspy.InputField(
+    analyst_principles: str = InputField(
         desc="Always-on analytical heuristics to apply to every plan."
     )
-    mode: str = dspy.InputField(desc='"chat" (focused) or "comprehensive" (pitch).')
-    analysis_plan: AnalysisPlan = dspy.OutputField(
+    mode: str = InputField(desc='"chat" (focused) or "comprehensive" (pitch).')
+    analysis_plan: AnalysisPlan = OutputField(
         desc="Ordered, dependency-aware derived analyses + synthesis focus."
     )

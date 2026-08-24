@@ -134,7 +134,9 @@ def _winning_share(x: PostureInput) -> Optional[str]:
     if not (on_share or outgrowing):
         return None
     if on_share and x.share is not None:
-        return f"share of wallet rose {x.share_change:.1f}pp to {x.share:.1f}%"
+        from studio.template_fill.units import points
+
+        return f"share of wallet rose {points(x.share_change)} to {x.share:.1f}%"
     return (f"the book grew {x.growth_pct:.1f}% against a Marsh book that grew "
             f"{x.pool_growth_pct:.1f}%, and the rank moved with it")
 

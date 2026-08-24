@@ -1,6 +1,6 @@
 """LLM value resolver — the semantic half of the hybrid retriever (decision #4).
 
-A single thin dspy module: given a column, the user's query, and the column's
+A single thin signature: given a column, the user's query, and the column's
 real distinct values, return the subset the query refers to *by meaning*. This
 is the rescue path for conceptual queries that string-distance cannot bridge —
 "manufacturing companies" -> the relevant `SIC_Major_Class` values, "professional
@@ -8,8 +8,8 @@ liability" -> the matching `Cover_Line` values.
 
 It is invoked ONLY by `EntityResolver` after fuzzy misses on a registry
 `resolver: semantic` column, and ONLY when `CONTEXT_ENGINE_SEMANTIC` is on, so
-the call is rare and scoped. The module imports without credentials (dspy import
-is creds-free); the configured global LM is resolved at call time.
+the call is rare and scoped. The module imports without credentials; the tier's
+client is resolved at call time.
 
 Hard guard: the model can only ever *select from the supplied candidates*. Any
 value it returns that is not in the candidate list is dropped, so the resolver
@@ -19,8 +19,7 @@ from __future__ import annotations
 
 from typing import List, Sequence
 
-import dspy
-
+from core.llm import InputField, OutputField, Predictor, Signature
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -30,7 +29,7 @@ logger = get_logger(__name__)
 MAX_CANDIDATES = 200
 
 
-class SemanticValueMatch(dspy.Signature):
+class SemanticValueMatch(Signature):
     """Select the column values a conceptual query refers to.
 
     The query describes a category or concept (e.g. an industry, a line of
@@ -39,14 +38,20 @@ class SemanticValueMatch(dspy.Signature):
     that is not in `candidates` verbatim.
     """
 
-    column: str = dspy.InputField(desc="The column being filtered (for context).")
-    query: str = dspy.InputField(desc="The user's natural-language query.")
-    candidates: List[str] = dspy.InputField(
+    column: str = InputField(desc="The column being filtered (for context).")
+    query: str = InputField(desc="The user's natural-language query.")
+    candidates: List[str] = InputField(
         desc="The column's exact valid values. Choose only from these."
     )
-    selected: List[str] = dspy.OutputField(
+    selected: List[str] = OutputField(
         desc="The subset of `candidates` the query refers to; [] if none."
     )
+
+
+# A mechanical selection: no chain-of-thought, and the deterministic client this
+# rescue call has always used.
+_MATCH = Predictor(SemanticValueMatch, tier="balanced", label="semantic_value_match",
+                   node="entity_resolver")
 
 
 def resolve_semantic_values(
@@ -63,8 +68,7 @@ def resolve_semantic_values(
         return []
 
     try:
-        predictor = dspy.Predict(SemanticValueMatch)
-        result = predictor(column=column, query=query, candidates=candidate_list)
+        result = _MATCH(column=column, query=query, candidates=candidate_list)
         selected = result.selected or []
     except Exception as exc:  # noqa: BLE001 - rescue is best-effort, never fatal
         logger.debug("resolve_semantic_values(%s) failed: %s", column, exc)

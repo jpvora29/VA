@@ -1,4 +1,4 @@
-"""Pydantic + dspy schemas for the Survey flow.
+"""Pydantic models + signatures for the Survey flow.
 
 Contains all typed contracts for survey planner, SQL agent, chart, response,
 plus the shared `ChartOutput` model (used by both Survey and GPR chart nodes).
@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-import dspy
+from core.llm import InputField, OutputField, Signature
 from pydantic import BaseModel, Field
 
 
@@ -147,7 +147,7 @@ class ChartOutput(BaseModel):
     )
 
 
-class SurveyChartSignature(dspy.Signature):
+class SurveyChartSignature(Signature):
     """
     [ROLE]
     You are an Expert Data Visualization Analyst specialized in interpreting survey data within the insurance domain.
@@ -163,19 +163,19 @@ class SurveyChartSignature(dspy.Signature):
 
     """
 
-    chart_creation_rules: str = dspy.InputField(
+    chart_creation_rules: str = InputField(
         desc="# Predefined guidelines or heuristics for choosing chart types, axis mapping, aggregation, and sorting."
     )
-    user_query: str = dspy.InputField(desc="User's natural language question or query")
-    sql_output: List[Dict[str, Any]] = dspy.InputField(
+    user_query: str = InputField(desc="User's natural language question or query")
+    sql_output: List[Dict[str, Any]] = InputField(
         desc="Structured SQL query result as a list of dictionaries, where each dict represents a row of data."
     )
-    chart_data: ChartOutput = dspy.OutputField(
+    chart_data: ChartOutput = OutputField(
         desc="Structured chart data based on the chart creation rules"
     )
 
 
-class SurveyResponseSignature(dspy.Signature):
+class SurveyResponseSignature(Signature):
     """
     ROLE:
     You are a SENIOR INSURANCE CONSULTING LEADER (20+ years, McKinsey/Bain calibre) working as a strategic partner to a carrier's leadership team.
@@ -220,16 +220,16 @@ class SurveyResponseSignature(dspy.Signature):
     - No preamble. Start directly with the "### 📌 Executive Summary" heading.
     """
 
-    rules: str = dspy.InputField(
+    rules: str = InputField(
         desc="Important instruction for the response generation"
     )
-    user_query: str = dspy.InputField(desc="User's natural language question or query")
-    sql_output: Dict[str, Any] = dspy.InputField(
+    user_query: str = InputField(desc="User's natural language question or query")
+    sql_output: Dict[str, Any] = InputField(
         desc="The resultant data based on user query"
     )
-    query_plan: str = dspy.InputField(
+    query_plan: str = InputField(
         desc="Structured query plan to create the sql query"
     )
-    response: str = dspy.OutputField(
+    response: str = OutputField(
         desc="Consulting-grade Markdown response with the 5 mandatory sections (Executive Summary, Key Insights, Business Interpretation, Recommendations, Supporting Data)."
     )

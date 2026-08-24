@@ -11,7 +11,6 @@ from core.observability import (
     bind_trace,
     get_trace_fields,
     log_event,
-    normalize_dspy_usage,
     record_token_usage,
     redact_text,
     redact_value,
@@ -68,37 +67,6 @@ def test_bind_trace_merges_and_token_resets():
 
 
 # ── token accounting ─────────────────────────────────────────────────────────
-
-
-def test_normalize_dspy_usage_sums_across_lms():
-    out = normalize_dspy_usage(
-        {
-            "azure/gpt-41-mini": {
-                "prompt_tokens": 100,
-                "completion_tokens": 20,
-                "total_tokens": 120,
-                "prompt_tokens_details": {"cached_tokens": 80},
-            },
-            "azure/other": {
-                "prompt_tokens": 5,
-                "completion_tokens": 1,
-                "total_tokens": 6,
-            },
-        }
-    )
-    assert out["input_tokens"] == 105
-    assert out["output_tokens"] == 21
-    assert out["total_tokens"] == 126
-    assert out["cached_tokens"] == 80
-
-
-def test_normalize_dspy_usage_empty_is_all_none():
-    assert normalize_dspy_usage({}) == {
-        "input_tokens": None,
-        "output_tokens": None,
-        "total_tokens": None,
-        "cached_tokens": None,
-    }
 
 
 def test_turn_emits_token_total_with_per_agent_breakdown(caplog):

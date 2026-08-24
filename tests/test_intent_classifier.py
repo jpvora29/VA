@@ -9,26 +9,11 @@ Run:  pytest tests/test_intent_classifier.py -q -o pythonpath=.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
-
-import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from core.agents import intent_classifier as ic
 from core.schemas.routing import RoutingContext
 
-
-@pytest.fixture(autouse=True)
-def _no_op_usage(monkeypatch):
-    """The node wraps the depth call in `Initialization.dspy_usage`, which needs a
-    configured dspy LM. Tests inject a stub classifier, so neutralize the token
-    tracker to a no-op context manager."""
-
-    @contextmanager
-    def _noop(*args, **kwargs):
-        yield
-
-    monkeypatch.setattr(ic.Initialization, "dspy_usage", _noop)
 
 
 def _classifier(depth: str = "analytical") -> ic.IntentClassifier:

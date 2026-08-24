@@ -55,3 +55,29 @@ class CriticIssue(BaseModel):
 
 class CriticReport(BaseModel):
     issues: List[CriticIssue] = Field(default_factory=list)
+
+
+# ── Commentary writer + verifier ─────────────────────────────────────────────
+
+
+class CommentaryBullet(BaseModel):
+    text: str = Field(description="One complete sentence, ending in a full stop")
+    fact_ids: List[str] = Field(
+        default_factory=list,
+        description="Ids of the evidence facts this sentence's figures and claims come from",
+    )
+
+
+class CommentaryColumn(BaseModel):
+    bullets: List[CommentaryBullet] = Field(default_factory=list)
+
+
+class CommentaryVerdict(BaseModel):
+    keep: bool = Field(description="True to keep the sentence, False to drop it")
+    reason: str = Field(default="", description="Why it is dropped; empty when kept")
+
+
+class CommentaryVerdicts(BaseModel):
+    verdicts: List[CommentaryVerdict] = Field(
+        default_factory=list, description="One verdict per sentence, in the order given"
+    )

@@ -1,4 +1,9 @@
-"""Survey LangGraph subgraph: normalizer → planner → SQL → execute (+ fixer loop)."""
+"""Survey LangGraph subgraph: normalizer → planner → analytics tools → (SQL + fixer loop).
+
+The analytics-tool node answers the turn by CALLING the deterministic primitive
+library; the LLM-SQL path below it is the fallback for questions the library does
+not cover. Set ``ANALYTICS_TOOLS=off`` to restore the pure SQL path.
+"""
 from __future__ import annotations
 
 import json
@@ -12,10 +17,12 @@ from sqlalchemy.sql import text
 from config.valid_values_config import *  # noqa: F401,F403 - preserves legacy globals
 from core.agents.common import (
     BaseSQLFixerNode,
+    analytics_covered,
     annotate_plan_notes,
     log_sql_failure,
     recalled_sql_examples,
     record_recovered_sql_fix,
+    run_analytics_tools,
 )
 from core.agents.common.directives import charts_suppressed
 from core.agents.common.peers import custom_peer_directive
@@ -218,6 +225,20 @@ class SurveySubGraph:
 
         return {"survey_reasoning": plan}
 
+    def survey_analytics_tools(state: AgentState) -> AgentState:
+        """Answer the turn by calling the deterministic analytics primitives.
+
+        Clears the coverage key when the library does not cover the question, which
+        routes the turn to the LLM-SQL path below exactly as before.
+        """
+        return run_analytics_tools(state, flow="survey", engine=Initialization.engine)
+
+    def survey_analytics_router(state: AgentState) -> str:
+        """Computed facts skip SQL generation entirely; everything else falls back."""
+        if analytics_covered(state, "survey"):
+            return "survey_chart_data_creation"
+        return "survey_convert_to_sql"
+
     def survey_convert_nl_to_sql(state: AgentState) -> AgentState:
         """Using LLM Converts the Natural Language Query to a SQL Query"""
 
@@ -259,12 +280,11 @@ class SurveySubGraph:
             few_shot=SurveyRules.survey_query_few_shots + recalled,
         )
 
-        with Initialization.dspy_usage("survey_convert_nl_to_sql", node="survey"):
-            sql_query_output = sql_agent(
-                user_query=question,
-                query_plan=query_plan,
-                valid_year_quarter=valid_years,
-            )
+        sql_query_output = sql_agent(
+            user_query=question,
+            query_plan=query_plan,
+            valid_year_quarter=valid_years,
+        )
 
         # state["survey_sql_query"] = sql_query_output
 
@@ -506,6 +526,7 @@ class SurveySubGraph:
     survey_graph.add_node("survey_normalizer_agent", survey_normalizer_agent)
     # survey_graph.add_node("survey_column_selector_agent", survey_column_selector_agent)
     survey_graph.add_node("survey_planner", survey_planner_node)
+    survey_graph.add_node("survey_analytics_tools", survey_analytics_tools)
     survey_graph.add_node("survey_convert_to_sql", survey_convert_nl_to_sql)
     survey_graph.add_node("survey_execute_sql", survey_execute_sql)
     survey_graph.add_node("survey_chart_data_creation", survey_chart_data_creation)
@@ -516,7 +537,16 @@ class SurveySubGraph:
     survey_graph.add_edge(START, "survey_normalizer_agent")
     # survey_graph.add_edge("survey_normalizer_agent", "survey_column_selector_agent")
     survey_graph.add_edge("survey_normalizer_agent", "survey_planner")
-    survey_graph.add_edge("survey_planner", "survey_convert_to_sql")
+    survey_graph.add_edge("survey_planner", "survey_analytics_tools")
+
+    survey_graph.add_conditional_edges(
+        "survey_analytics_tools",
+        survey_analytics_router,
+        {
+            "survey_chart_data_creation": "survey_chart_data_creation",
+            "survey_convert_to_sql": "survey_convert_to_sql",
+        },
+    )
 
     survey_graph.add_edge("survey_convert_to_sql", "survey_execute_sql")
 

@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 from typing import List
 
-import dspy
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
@@ -28,6 +27,7 @@ from core.context.bundle import schema_outline
 from core.context.engine import engine_enabled
 from core.data.general import GeneralFunctions
 from core.initialization import Initialization
+from core.llm import Predictor
 from core.observability import log_event
 from core.schemas.routing import (
     ContextFillerSignature,
@@ -40,14 +40,21 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 
-class ContextFillerNode(dspy.Module):
-    """dspy module wrapping `ContextFillerSignature` with ChainOfThought."""
+class ContextFillerNode:
+    """Runs `ContextFillerSignature` with chain-of-thought.
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.predictor = dspy.ChainOfThought(ContextFillerSignature)
+    Routing and inheritance are a judgement call across the query and the history,
+    so the model reasons before it answers; the reasoning stays in the prediction
+    and only the typed `RoutingContext` leaves this node.
+    """
 
-    def forward(
+    def __init__(self, predictor: Predictor | None = None) -> None:
+        self.predictor = predictor or Predictor(
+            ContextFillerSignature, tier="balanced", reasoning=True,
+            label="context_filler_agent", node="context_filler",
+        )
+
+    def __call__(
         self,
         static_context: str,
         current_user_query: str,
@@ -63,7 +70,7 @@ class ContextFillerNode(dspy.Module):
         routing = result.routing_context
         if isinstance(routing, BaseModel):
             return routing
-        # Fallback: dspy returned a dict shape — coerce to the model.
+        # Fallback: the model answered with a dict shape — coerce to the model.
         if isinstance(routing, dict):
             return RoutingContext(**routing)
         # As a last resort, surface a default "new_question" / fallback state
@@ -128,8 +135,8 @@ class ContextFillingAgent:
         ]
         # `last_user_query` is the turn just before the current one. Older
         # context goes into `conversation_history`. We deliberately pass empty
-        # string / empty list (NOT None) — dspy's Optional handling is
-        # inconsistent across adapters.
+        # string / empty list (NOT None) so the prompt shows an empty turn rather
+        # than the renderer's "(not provided)" placeholder.
         if len(user_messages) > 1:
             last_user_query = user_messages[-2]
             conversation_history = user_messages[:-2][-5:]
@@ -151,13 +158,12 @@ class ContextFillingAgent:
             f"Routing + Inheritance Rules:\n{ContextFillingAgent.history_policy_rules}\n"
         )
 
-        with Initialization.dspy_usage("context_filler_agent", node="context_filler"):
-            routing_context = _CONTEXT_FILLER_NODE(
-                static_context=static_context,
-                current_user_query=question,
-                last_user_query=last_user_query,
-                conversation_history=conversation_history,
-            )
+        routing_context = _CONTEXT_FILLER_NODE(
+            static_context=static_context,
+            current_user_query=question,
+            last_user_query=last_user_query,
+            conversation_history=conversation_history,
+        )
 
         # NOTE: analysis_depth, output_directives, and conversation_intent are
         # finalized downstream by the IntentClassifier (Layer 2) — this node owns

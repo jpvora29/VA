@@ -1,7 +1,7 @@
 """Pydantic models for the pitch builder structured-output calls.
 
 These are used directly with `llm.with_structured_output(...)` rather than
-through dspy; the pitch flow does not currently use dspy signatures.
+through the LLM layer; the pitch flow does not currently declare signatures.
 """
 from __future__ import annotations
 

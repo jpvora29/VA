@@ -26,6 +26,7 @@ from logger import get_logger
 from studio import compute as C
 from studio.template_fill import roles as R
 from studio.template_fill.analyze import Shape, Template
+from studio.template_fill import units as U
 from studio.template_fill.render import _money
 from studio.template_fill.slots import Slot
 
@@ -519,12 +520,12 @@ def _working_points(f: Dict[str, Any]) -> List[str]:
                      f"{_rank_of(r)}, and that came at competitors' expense rather than "
                      f"from a growing pool.")
     if (s.get("delta") or 0) > 0:
-        line = f"Share of wallet rose {abs(s['delta']):.1f}pp to {s['current']:.1f}%"
+        line = f"Share of wallet rose {U.points(s['delta'])} to {s['current']:.1f}%"
         peer_sow = (f.get("peer") or {}).get("sow")
         if peer_sow is not None:
             side = "above" if s["current"] >= peer_sow else "below"
-            line += (f", which leaves the book {abs(s['current'] - peer_sow):.1f}pp {side} the "
-                     f"top-5 peer average of {peer_sow:.1f}%")
+            line += (f", which leaves the book {U.points(s['current'] - peer_sow)} {side} "
+                     f"the top-5 peer average of {peer_sow:.1f}%")
         parts.append(line + ".")
     if not parts and c.get("current"):
         parts.append(f"{_subject(f, opening=True)} held its book with Marsh at "
@@ -551,7 +552,7 @@ def _challenges_points(f: Dict[str, Any]) -> List[str]:
         parts.append(f"Rank within the Marsh book slipped {_places(int(r['delta']))} to "
                      f"{_rank_of(r)}.")
     if (s.get("delta") or 0) < 0:
-        parts.append(f"Share of wallet fell {abs(s['delta']):.1f}pp to {s['current']:.1f}%.")
+        parts.append(f"Share of wallet fell {U.points(s['delta'])} to {s['current']:.1f}%.")
     if (c.get("pct") is not None) and (m.get("pct") is not None) and m["pct"] > c["pct"] \
             and (c.get("pct") or 0) >= 0:
         parts.append(f"Growth of {_mag(c['pct'])} trails a wider Marsh book that "
@@ -566,8 +567,8 @@ def _challenges_points(f: Dict[str, Any]) -> List[str]:
     gap = _peer_share_gap(f)
     point = _point_of_share(f)
     if gap is not None:
-        line = (f"At {s['current']:.1f}% share of wallet the book sits {gap:.1f}pp below the "
-                f"top-5 peer average of {f['peer']['sow']:.1f}%")
+        line = (f"At {s['current']:.1f}% share of wallet the book sits {U.points(gap)} "
+                f"below the top-5 peer average of {f['peer']['sow']:.1f}%")
         if point:
             line += f", which is about {_money(gap * point)} of premium in scope"
         parts.append(line + ".")
@@ -590,8 +591,8 @@ def _growth_points(f: Dict[str, Any]) -> List[str]:
                          f"placed with other carriers{share}{worth}.")
     gap, point = _peer_share_gap(f), _point_of_share(f)
     if gap is not None and point:
-        parts.append(f"Closing the {gap:.1f}pp gap to the top-5 peer average would add roughly "
-                     f"{_money(gap * point)} of GWP at today's market size.")
+        parts.append(f"Closing the {U.points(gap)} gap to the top-5 peer average would add "
+                     f"roughly {_money(gap * point)} of GWP at today's market size.")
     capture = _capture_gap(f)
     if capture:
         parts.append(capture)
@@ -650,7 +651,7 @@ def _key_messages_points(f: Dict[str, Any]) -> List[str]:
     if r.get("current") is not None:
         pos.append(f"ranks {_rank_of(r)}")
     if s.get("current") is not None:
-        moved = (f", {'up' if s['delta'] >= 0 else 'down'} {abs(s['delta']):.1f}pp"
+        moved = (f", {'up' if s['delta'] >= 0 else 'down'} {U.points_of_share(s['delta'])}"
                  if s.get("delta") is not None else "")
         # The peer average benchmarks the SHARE, so it hangs off the share clause — never
         # off a rank, which it says nothing about.
@@ -665,8 +666,8 @@ def _key_messages_points(f: Dict[str, Any]) -> List[str]:
                      f"protect first.")
     gap, point = _peer_share_gap(f), _point_of_share(f)
     if gap is not None and point:
-        parts.append(f"Reaching peer parity means winning {gap:.1f}pp of share, worth about "
-                     f"{_money(gap * point)} of GWP.")
+        parts.append(f"Reaching peer parity means winning {U.points_of_share(gap)}, worth "
+                     f"about {_money(gap * point)} of GWP.")
     return parts
 
 
@@ -697,16 +698,16 @@ def _thesis_points(f: Dict[str, Any]) -> List[str]:
         # The common shape, and the one worth arguing about: winning the year, still
         # under-represented on the book that matters.
         return [f"{lead}, but at {share:.1f}% of the wallet it is still "
-                f"{behind:.1f}pp behind the top-5 peer average of {peer_share:.1f}% — the "
-                f"growth is real and the relevance is not yet."]
+                f"{U.points(behind)} behind the top-5 peer average of {peer_share:.1f}% — "
+                f"the growth is real and the relevance is not yet."]
     if outgrowing:
         return [f"{lead}, and at {share:.1f}% of the wallet it already writes above the "
                 f"top-5 peer average of {peer_share:.1f}% — the question is holding that, "
                 f"not winning it."]
     if behind > 0:
-        return [f"{lead}, and at {share:.1f}% of the wallet it sits {behind:.1f}pp behind "
-                f"the top-5 peer average of {peer_share:.1f}% — the book is losing ground "
-                f"from a position already behind its peers."]
+        return [f"{lead}, and at {share:.1f}% of the wallet it sits {U.points(behind)} "
+                f"behind the top-5 peer average of {peer_share:.1f}% — the book is losing "
+                f"ground from a position already behind its peers."]
     return [f"{lead}, though at {share:.1f}% of the wallet it still writes above the "
             f"top-5 peer average of {peer_share:.1f}% — a strong position growing slower "
             f"than the book around it."]
@@ -739,8 +740,8 @@ def _recent_gain(f: Dict[str, Any]) -> Optional[str]:
     cur, delta = s.get("current"), s.get("delta")
     if cur is None or delta is None or delta <= 0:
         return None
-    return (f"{delta:.1f}pp of the {cur:.1f}% share was won in the last year alone, so the "
-            f"position is newly held rather than established.")
+    return (f"{U.points(delta)} of the {cur:.1f}% share was won in the last year alone, so "
+            f"the position is newly held rather than established.")
 
 
 def _defending_lead(f: Dict[str, Any]) -> Optional[str]:
@@ -749,8 +750,8 @@ def _defending_lead(f: Dict[str, Any]) -> Optional[str]:
     theirs = (f.get("peer") or {}).get("sow")
     if mine is None or theirs is None or mine <= theirs:
         return None
-    return (f"At {mine:.1f}% share of wallet the book sits {mine - theirs:.1f}pp above the "
-            f"top-5 peer average of {theirs:.1f}%, so the task here is defending a lead "
+    return (f"At {mine:.1f}% share of wallet the book sits {U.points(mine - theirs)} above "
+            f"the top-5 peer average of {theirs:.1f}%, so the task here is defending a lead "
             f"rather than closing a gap.")
 
 
@@ -874,7 +875,8 @@ def _countries_in_scope(result) -> List[str]:
     return [r["name"] for r in _country_breakdown(result) if r.get("name")]
 
 
-def _polish(text: str, kind: str, style: Optional[str], subject: str = "") -> str:
+def _polish(text: str, kind: str, style: Optional[str], subject: str = "",
+            facts: Optional[Dict[str, Any]] = None) -> str:
     """LLM re-write behind the faithfulness verifier; KPI cells stay deterministic.
 
     The cell's ``kind`` IS its commentary topic, so it selects the same per-column brief the
@@ -885,7 +887,8 @@ def _polish(text: str, kind: str, style: Optional[str], subject: str = "") -> st
         return text
     from studio.template_fill.commentary import _rewrite
 
-    return _rewrite(text, node=f"feedback-{kind}", style=style, topic=kind, subject=subject)
+    return _rewrite(text, node=f"feedback-{kind}", style=style, topic=kind,
+                    subject=subject, facts=facts)
 
 
 def _extras(result):
@@ -952,7 +955,8 @@ def values(template: Template, result, *, ledger=None, extras=None) -> Dict[str,
             text = _compose(t["kind"], facts_for(country), limit, ledger,
                             extras if extras is not None else _extras(result))
             text_cache[key] = _polish(text, t["kind"], style,
-                                      str(getattr(result, "subject", "") or ""))
+                                      str(getattr(result, "subject", "") or ""),
+                                      facts_for(country))
         # KPI callouts always write (a blank beats a stale "$xx.xM" placeholder);
         # an empty commentary keeps the template's ellipsis as a visible fill-me cue.
         if text_cache[key] or t["kind"] not in _COMPOSERS:

@@ -1,4 +1,4 @@
-"""Unified, typed dspy schemas shared by the GPR and Survey analytical flows.
+"""Unified, typed schemas shared by the GPR and Survey analytical flows.
 
 These replace the near-duplicate planner / SQL-agent signatures that used to live
 in `core.schemas.gpr` and `core.schemas.survey`. Both flows now share:
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-import dspy
+from core.llm import InputField, OutputField, Signature
 from pydantic import BaseModel, Field
 
 from core.schemas.routing import RoutingContext
@@ -103,7 +103,7 @@ class AnalyticalPlan(BaseModel):
     )
 
 
-class PlannerSignature(dspy.Signature):
+class PlannerSignature(Signature):
     """
     [ROLE]
     You are an Analytical Reasoning & Planning Agent for the Insurance Domain.
@@ -137,37 +137,37 @@ class PlannerSignature(dspy.Signature):
     value into the plan that is absent from `table_schema` / `valid_values`.
     """
 
-    table_schema: Dict[str, Any] = dspy.InputField(
+    table_schema: Dict[str, Any] = InputField(
         desc="Schema for this flow as {table_name: [column metadata]}."
     )
-    definitions: Dict[str, str] = dspy.InputField(
+    definitions: Dict[str, str] = InputField(
         desc="Business definitions for the columns of the relevant table(s)."
     )
-    valid_values: Dict[str, Any] = dspy.InputField(
+    valid_values: Dict[str, Any] = InputField(
         desc="Valid column values, used to pin filters to exact entries and avoid hallucination."
     )
-    valid_year_quarter: List[str] = dspy.InputField(
+    valid_year_quarter: List[str] = InputField(
         desc=(
             "Valid unique year (or year+quarter) values in ascending order; the most "
             "recent period is the last element. Use it to resolve timeframe context."
         )
     )
-    routing_context: RoutingContext = dspy.InputField(
+    routing_context: RoutingContext = InputField(
         desc=(
             "Structured routing + inheritance context from the context filler: inherited "
             "filters, timeframe_hint, and intent_type. Use it to carry prior-turn context."
         )
     )
-    rules: str = dspy.InputField(
+    rules: str = InputField(
         desc="Flow-specific business / planning rules and worked examples."
     )
-    user_query: str = dspy.InputField(desc="User's natural language question or query")
-    plan: AnalyticalPlan = dspy.OutputField(
+    user_query: str = InputField(desc="User's natural language question or query")
+    plan: AnalyticalPlan = OutputField(
         desc="Structured analytical plan based on the rules, schema, and domain logic."
     )
 
 
-class SQLAgentSignature(dspy.Signature):
+class SQLAgentSignature(Signature):
     """
     [ROLE]
     You are an SQL generation agent specialized in creating valid and efficient SQLite
@@ -180,29 +180,29 @@ class SQLAgentSignature(dspy.Signature):
     `valid_year_quarter` to frame timeframe filters.
     """
 
-    table_schema: Dict[str, Any] = dspy.InputField(
+    table_schema: Dict[str, Any] = InputField(
         desc="Schema for this flow as {table_name: [column metadata]}."
     )
-    rules: str = dspy.InputField(
+    rules: str = InputField(
         desc="Flow-specific query-construction rules."
     )
-    few_shot: Any = dspy.InputField(
+    few_shot: Any = InputField(
         desc="Worked few-shot query examples for this flow (may be empty)."
     )
-    valid_values: Dict[str, Any] = dspy.InputField(
+    valid_values: Dict[str, Any] = InputField(
         desc="Valid column values, used to keep filter values exact."
     )
-    valid_year_quarter: List[str] = dspy.InputField(
+    valid_year_quarter: List[str] = InputField(
         desc=(
             "Valid unique year (or year+quarter) values in ascending order; the most "
             "recent period is the last element."
         )
     )
-    query_plan: str = dspy.InputField(
+    query_plan: str = InputField(
         desc="Structured JSON query plan to build the SQL query — follow it exactly."
     )
-    user_query: str = dspy.InputField(desc="User's natural language question or query")
-    sql_query: str = dspy.OutputField(
+    user_query: str = InputField(desc="User's natural language question or query")
+    sql_query: str = OutputField(
         desc="SQL output for the user query with no codeblocks like ```sql```"
     )
 

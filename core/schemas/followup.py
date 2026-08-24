@@ -1,4 +1,4 @@
-"""dspy signature for the follow-up suggestion node.
+"""Signature for the follow-up suggestion node.
 
 Runs at the end of the chat workflow with full turn context (question, route,
 final answer, and the SQL evidence) so the suggestions are grounded in what the
@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from typing import List
 
-import dspy
+from core.llm import InputField, OutputField, Signature
 
 
-class FollowupSignature(dspy.Signature):
+class FollowupSignature(Signature):
     """
     ROLE:
     You anticipate the NEXT questions a business user would naturally ask after
@@ -36,16 +36,16 @@ class FollowupSignature(dspy.Signature):
     - Prefer a mix: one drill-down, one comparison, one trend/time question.
     """
 
-    user_query: str = dspy.InputField(
+    user_query: str = InputField(
         desc="The user's question that was just answered."
     )
-    route: str = dspy.InputField(
+    route: str = InputField(
         desc="Which data lens answered it: survey, premium, both, or fallback."
     )
-    answer: str = dspy.InputField(desc="The final answer text shown to the user.")
-    evidence: str = dspy.InputField(
+    answer: str = InputField(desc="The final answer text shown to the user.")
+    evidence: str = InputField(
         desc="Compact summary of the SQL result rows / analytical plan used."
     )
-    followups: List[str] = dspy.OutputField(
+    followups: List[str] = OutputField(
         desc="Exactly three concise, domain-relevant follow-up questions."
     )

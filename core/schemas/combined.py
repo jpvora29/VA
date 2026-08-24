@@ -1,12 +1,12 @@
-"""dspy signature for the combined Survey + GPR insight node ('both' route)."""
+"""Signature for the combined Survey + GPR insight node ('both' route)."""
 from __future__ import annotations
 
 from typing import Any
 
-import dspy
+from core.llm import InputField, OutputField, Signature
 
 
-class CombinedInsightSignature(dspy.Signature):
+class CombinedInsightSignature(Signature):
     """
     ROLE:
     You are a SENIOR INSURANCE CONSULTING LEADER (20+ years, McKinsey/Bain calibre) producing a UNIFIED
@@ -64,22 +64,22 @@ class CombinedInsightSignature(dspy.Signature):
     - No preamble. Start directly with "### 📌 Executive Summary".
     """
 
-    user_query: str = dspy.InputField(desc="The user's original question.")
-    rules: str = dspy.InputField(
+    user_query: str = InputField(desc="The user's original question.")
+    rules: str = InputField(
         desc="Authoritative domain rules and confidentiality constraints to obey verbatim."
     )
-    survey_output: Any = dspy.InputField(
+    survey_output: Any = InputField(
         desc="Survey SQL result rows (list of dicts) or empty list if unavailable."
     )
-    gpr_output: Any = dspy.InputField(
+    gpr_output: Any = InputField(
         desc="GPR/Premium SQL result rows (list of dicts) or empty list if unavailable."
     )
-    survey_reasoning: str = dspy.InputField(
+    survey_reasoning: str = InputField(
         desc="The analytical plan used to query the survey table."
     )
-    gpr_reasoning: str = dspy.InputField(
+    gpr_reasoning: str = InputField(
         desc="The analytical plan used to query the premium/GPR table."
     )
-    combined_response: str = dspy.OutputField(
+    combined_response: str = OutputField(
         desc="Unified consulting-grade Markdown with the 5 mandatory sections, correlating perception and performance."
     )

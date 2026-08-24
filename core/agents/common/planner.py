@@ -1,8 +1,8 @@
-"""Unified analytical planner — one flow-parameterized dspy module for GPR + Survey.
+"""Unified analytical planner — one flow-parameterized node for GPR + Survey.
 
 Replaces the near-duplicate `GPRPlannerNode` and survey `PlannerNode`. Domain
 differences come from the data passed in (schema slice, definitions, valid_values,
-rules), not from separate classes. Inputs are typed `dspy.InputField`s via
+rules), not from separate classes. Inputs are typed `InputField`s via
 `PlannerSignature` instead of one flattened `context` blob, and the upstream
 `RoutingContext` is threaded in so the planner stops re-deriving timeframe and correctly
 carries inherited follow-up filters.
@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-import dspy
 from pydantic import BaseModel
 
 from core.analytics.timeframe import (
@@ -19,11 +18,12 @@ from core.analytics.timeframe import (
     timeframe_resolution_enabled,
 )
 from core.context.gate import gate_enabled, gated_valid_values
+from core.llm import Example, Predictor
 from core.schemas.analytical import PlannerSignature
 from core.schemas.routing import RoutingContext
 
 
-class BasePlannerNode(dspy.Module):
+class BasePlannerNode:
     """Flow-parameterized analytical planner.
 
     Args:
@@ -32,7 +32,7 @@ class BasePlannerNode(dspy.Module):
         definitions: Business definitions for those columns.
         valid_values: Valid column values for grounding filters.
         rules: Flow-specific planning rules / worked examples (skills or `core.rules.*`).
-        demos: Optional dspy few-shot examples, passed straight to the predictor.
+        demos: Optional few-shot examples, passed straight to the predictor.
     """
 
     def __init__(
@@ -42,32 +42,29 @@ class BasePlannerNode(dspy.Module):
         definitions: Dict[str, str],
         valid_values: Dict[str, Any],
         rules: str,
-        demos: Optional[List[dspy.Example]] = None,
+        demos: Optional[List[Example]] = None,
     ) -> None:
-        super().__init__()
         self.flow = flow
         self.schema_tables = schema_tables
         self.definitions = definitions
         self.valid_values = valid_values
         self.rules = rules
-        self.planner = dspy.ChainOfThought(PlannerSignature)
         # Reason tier: planning is the hardest reasoning on the analytical path.
-        # Lazy import keeps this module free of the LLM/init layer at import time;
-        # use_tier is a no-op until MODEL_TIERS=on (keeps the global dspy LM).
-        from core.initialization import Initialization
-
-        Initialization.use_tier(self.planner, "reason")
+        self.planner = Predictor(
+            PlannerSignature, tier="reason", reasoning=True,
+            label=f"{flow}_planner_node", node=flow,
+        )
         if demos:
-            self.planner.demos = demos
+            self.planner = self.planner.with_examples(demos)
 
-    def forward(
+    def __call__(
         self,
         user_query: str,
         routing_context: Optional[RoutingContext] = None,
         valid_year_quarter: Optional[List[str]] = None,
     ) -> str:
-        # dspy's Optional handling is inconsistent across adapters; pass a concrete
-        # RoutingContext / list rather than None.
+        # Pass a concrete RoutingContext / list rather than None, so the prompt
+        # shows real defaults instead of the renderer's "(not provided)".
         if routing_context is None:
             routing_context = RoutingContext(
                 table_family="fallback", intent_type="new_question"

@@ -1,7 +1,7 @@
-"""Normalize a chart node's dspy output into a single plain-dict spec.
+"""Normalize a chart node's output into a single plain-dict spec.
 
 Both chart nodes (`GPRChartNode` / `SurveyChartNode`) declare a single
-`ChartOutput` OutputField, but dspy does not strictly enforce that: depending on
+`ChartOutput` OutputField, but that is not strictly enforced: depending on
 the model and adapter the parsed value can arrive as the pydantic model, a plain
 dict, or — when the LLM emits more than one chart — a *list* of either. Every
 downstream consumer (the analyst `pick_charts`, the deterministic chart stores,
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
 
-import dspy
+from core.llm import InputField, OutputField, Signature
 from pydantic import BaseModel
 
 
@@ -84,7 +84,7 @@ CHART_TYPES = frozenset(
 )
 
 
-class ChartTypeSelectSignature(dspy.Signature):
+class ChartTypeSelectSignature(Signature):
     """
     [ROLE]
     You are a data-visualization analyst. Decide ONLY the single best chart_type
@@ -97,14 +97,14 @@ class ChartTypeSelectSignature(dspy.Signature):
     no categorical/time column to put on an axis.
     """
 
-    chart_type_rules: str = dspy.InputField(
+    chart_type_rules: str = InputField(
         desc="The chart-type-selection decision tree (how to choose the type)."
     )
-    user_query: str = dspy.InputField(desc="User's natural language question.")
-    sql_output: List[Dict[str, Any]] = dspy.InputField(
+    user_query: str = InputField(desc="User's natural language question.")
+    sql_output: List[Dict[str, Any]] = InputField(
         desc="SQL result rows (list of dicts) to be visualized."
     )
-    chart_type: str = dspy.OutputField(
+    chart_type: str = OutputField(
         desc="One of: bar, line, pie, donut, scatter, waterfall, combo, none."
     )
 
@@ -136,7 +136,7 @@ def generate_chart_two_phase(
 ) -> Dict[str, Any]:
     """Run select→detail and return a single normalized chart spec dict.
 
-    ``type_predictor`` and ``spec_predictor`` are dspy predictors (or any callable
+    ``type_predictor`` and ``spec_predictor`` are predictors (or any callable
     matching their signatures, so this is unit-testable with stubs). On a concrete
     type, only that type's detail is appended to ``base_rules`` and the decided
     type is stamped onto the result. ``none`` returns ``{}`` (skip). If phase one

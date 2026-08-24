@@ -11,10 +11,8 @@ import json
 import logging
 from typing import Any, List, Tuple
 
-import dspy
-
 from core.agents.common.directives import followups_suppressed
-from core.initialization import Initialization
+from core.llm import Predictor
 from core.observability import log_event
 from core.schemas.followup import FollowupSignature
 from core.state.agent_state import AgentState
@@ -88,25 +86,29 @@ def _clean(items: Any) -> List[str]:
     return cleaned[:3]
 
 
-class FollowupNode(dspy.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.predictor = dspy.ChainOfThought(FollowupSignature)
+class FollowupNode:
+    """Suggests grounded next questions. Creative tier so the chips vary
+    turn to turn rather than settling into the same three phrasings."""
 
-    def forward(
+    def __init__(self, predictor: Predictor | None = None) -> None:
+        self.predictor = predictor or Predictor(
+            FollowupSignature, tier="creative", reasoning=True,
+            label="followup_agent", node="followup",
+        )
+
+    def __call__(
         self, user_query: str, route: str, answer: str, evidence: str
     ) -> List[str]:
-        with dspy.context(lm=Initialization.dspy_creative):
-            result = self.predictor(
-                user_query=user_query,
-                route=route,
-                answer=answer,
-                evidence=evidence,
-            )
+        result = self.predictor(
+            user_query=user_query,
+            route=route,
+            answer=answer,
+            evidence=evidence,
+        )
         return result.followups
 
 
-# Stateless module/predictor — instantiate once and reuse across turns.
+# Stateless predictor — instantiate once and reuse across turns.
 _FOLLOWUP_NODE = FollowupNode()
 
 

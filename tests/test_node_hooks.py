@@ -31,7 +31,7 @@ def test_validate_sql_accepts_select_rejects_writes():
     assert validate_sql("SELECT 1") is None
     assert validate_sql("WITH t AS (SELECT 1) SELECT * FROM t") is None
     assert validate_sql("DELETE FROM gpr") is not None
-    # Reads the sql off a dspy Prediction-like result too.
+    # Reads the sql off a Prediction-like result too.
     assert validate_sql(types.SimpleNamespace(sql_query="SELECT 1")) is None
     assert validate_sql(types.SimpleNamespace(sql_query="DROP TABLE gpr")) is not None
 
@@ -171,7 +171,7 @@ def test_base_sql_agent_runs_hooks_around_predictor():
     # Stub the predictor so no LLM call happens.
     node.predictor = lambda **kwargs: types.SimpleNamespace(sql_query="SELECT 1")
 
-    sql = node.forward(user_query="Zurich premium", query_plan="plan")
+    sql = node(user_query="Zurich premium", query_plan="plan")
     assert sql == "SELECT 1"
     assert spy.before == 1
     assert spy.after == [("gpr_sql_agent", "sql")]

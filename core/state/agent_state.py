@@ -70,6 +70,13 @@ class AgentState(TypedDict):
     gpr_chart: Dict
     combined_chart: Dict
 
+    # Provenance for a turn answered by the analytics tool path (deterministic
+    # primitives instead of generated SQL): {"calls", "scope", "facts"}. Present
+    # ⇒ the numbers came from the library, and `*_query_result` holds the rows the
+    # facts were folded into. Absent ⇒ the turn fell back to the LLM-SQL path.
+    gpr_analytics: Optional[Dict]
+    survey_analytics: Optional[Dict]
+
     # Up to 3 chart specs produced by the analyst agent's chart-picker, each
     # {"title", "rows", "chart_data"}. The deterministic rails use the per-flow
     # *_chart fields above; the analyst path carries its own multi-chart list.

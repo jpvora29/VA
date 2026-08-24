@@ -7,10 +7,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-import dspy
-
 from core.agents.common.planner import BasePlannerNode
 from core.data.valid_values import GetValidData
+from core.llm import Example
 
 
 class GPRPlannerNode(BasePlannerNode):
@@ -19,7 +18,7 @@ class GPRPlannerNode(BasePlannerNode):
         gpr_schema: List[Dict[str, Any]],
         peers_schema: List[Dict[str, Any]],
         rules: str,
-        demos: Optional[List[dspy.Example]] = None,
+        demos: Optional[List[Example]] = None,
     ) -> None:
         super().__init__(
             flow="gpr",

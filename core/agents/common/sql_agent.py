@@ -1,18 +1,16 @@
 """Unified SQL agent + SQL fixer — one flow-parameterized path for GPR + Survey.
 
-Replaces the near-duplicate `GPRSQLAgentNode` / survey `SQLAgentNode` (and fixes the
-survey `self.sql_query = dspy.ChainOfThought(...)` misnaming) and the two near-identical
-inline SQL-fixer prompts in the subgraphs. Both flows now receive `valid_values` and
+Replaces the near-duplicate `GPRSQLAgentNode` / survey `SQLAgentNode` and the two
+near-identical inline SQL-fixer prompts in the subgraphs. Both flows now receive `valid_values` and
 `valid_year_quarter` via typed fields instead of a flattened `context` blob.
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-import dspy
-
 from core.agents.common.node_hooks import NodeHooks, with_node_hooks, _DEFAULT_NODE_HOOKS
 from core.context.gate import gate_enabled, gated_valid_values
+from core.llm import Example, Predictor
 from core.schemas.analytical import SQLAgentSignature, SQLFixerOutput
 from logger import get_logger
 
@@ -29,7 +27,7 @@ logger = get_logger(__name__)
 def recalled_sql_examples(
     user_id: Any, route: str, question: str, k: int = 3
 ) -> List[Any]:
-    """Past verified fixes for similar questions, as ``dspy.Example`` few-shots."""
+    """Past verified fixes for similar questions, as few-shot examples."""
     if not user_id:
         return []
     try:
@@ -37,9 +35,8 @@ def recalled_sql_examples(
 
         fixes = episodic_store.recall_sql_fixes(user_id, route, question, k=k)
         return [
-            dspy.Example(user_query=f["question"], sql_query=f["sql"]).with_inputs(
-                "user_query"
-            )
+            Example(inputs={"user_query": f["question"]},
+                    outputs={"sql_query": f["sql"]})
             for f in fixes
         ]
     except Exception:  # pragma: no cover - recall must never break generation
@@ -111,7 +108,7 @@ def record_recovered_sql_fix(state: dict, route: str, working_sql: str) -> None:
         logger.exception("record_recovered_sql_fix failed")
 
 
-class BaseSQLAgentNode(dspy.Module):
+class BaseSQLAgentNode:
     """Flow-parameterized SQL generation agent.
 
     Args:
@@ -137,14 +134,12 @@ class BaseSQLAgentNode(dspy.Module):
         self.rules = rules
         self.valid_values = valid_values
         self.few_shot = few_shot or []
-        self.predictor = dspy.ChainOfThought(SQLAgentSignature)
         # Balanced tier: SQL generation wants accuracy without the latency of the
-        # full reasoning effort the planner/writer use. Lazy import preserves this
-        # module's import-time independence from the LLM layer (see fixer below);
-        # use_tier is a no-op until MODEL_TIERS=on (keeps the global dspy LM).
-        from core.initialization import Initialization
-
-        Initialization.use_tier(self.predictor, "balanced")
+        # full reasoning effort the planner/writer use.
+        self.predictor = Predictor(
+            SQLAgentSignature, tier="balanced", reasoning=True,
+            label=f"{flow}_sql_agent", node=f"{flow}_sql_agent",
+        )
         # Phase 4 hook parity: the rails run the SAME before/after-model contract
         # as the analyst middleware. after_model traces the step + advisory-checks
         # the SQL is read-only (validate_sql wraps assert_read_only); generation
@@ -152,7 +147,7 @@ class BaseSQLAgentNode(dspy.Module):
         # authoritative.
         self._hooks = hooks
 
-    def forward(
+    def __call__(
         self,
         user_query: str,
         query_plan: str,

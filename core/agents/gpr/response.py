@@ -5,11 +5,9 @@ from typing import Any, Dict, List
 
 import logging
 
-import dspy
-
 from config.valid_values_config import *  # noqa: F401,F403 - preserves legacy globals (valid_year_quarter_gpr)
 from core.agents.common.directives import prose_suppressed
-from core.initialization import Initialization
+from core.llm import Predictor
 from core.observability import log_event
 from core.rules.gpr import GPRRules
 from core.schemas.gpr import GPRResponseSignature
@@ -20,14 +18,20 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 
-class GPRResponseNode(dspy.Module):
-    # def __init__(self, carrier_schema: str, peer_schema: str, definitions: str, rules: str):
+class GPRResponseNode:
+    """Writes the premium analysis from the plan and the SQL output.
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.predictor = dspy.ChainOfThought(GPRResponseSignature)
+    Creative tier: this is the prose the user reads, so phrasing should vary
+    naturally rather than repeat a template turn after turn.
+    """
 
-    def forward(
+    def __init__(self, predictor: Predictor | None = None) -> None:
+        self.predictor = predictor or Predictor(
+            GPRResponseSignature, tier="creative", reasoning=True,
+            label="gpr_insight", node="gpr",
+        )
+
+    def __call__(
         self,
         user_query: str,
         query_plan: str,
@@ -38,15 +42,13 @@ class GPRResponseNode(dspy.Module):
 
         # Combine context into a single training/inference context
 
-        with dspy.context(lm=Initialization.dspy_creative):
-            result = self.predictor(
-                rules=rules,
-                user_query=user_query,
-                query_plan=query_plan,
-                valid_year_quarter=valid_year_quarter,
-                sql_output=sql_output,
-            )
-
+        result = self.predictor(
+            rules=rules,
+            user_query=user_query,
+            query_plan=query_plan,
+            valid_year_quarter=valid_year_quarter,
+            sql_output=sql_output,
+        )
         return result.response
 
 
@@ -68,14 +70,13 @@ def gpr_insight(state: AgentState) -> AgentState:
     response_rules = skill_rules if skill_rules else GPRRules.response_rules
 
     try:
-        with Initialization.dspy_usage("gpr_insight", node="gpr"):
-            gpr_response = _GPR_RESPONSE_NODE(
-                user_query=question,
-                query_plan=reasoning_plan,
-                rules=response_rules,
-                valid_year_quarter=valid_year_quarter_gpr,
-                sql_output=query_output,
-            )
+        gpr_response = _GPR_RESPONSE_NODE(
+            user_query=question,
+            query_plan=reasoning_plan,
+            rules=response_rules,
+            valid_year_quarter=valid_year_quarter_gpr,
+            sql_output=query_output,
+        )
     except Exception as exc:
         log_event(
             logger, "gpr_insight_error", logging.ERROR, route="premium", error=str(exc)

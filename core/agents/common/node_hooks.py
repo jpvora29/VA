@@ -47,7 +47,7 @@ AfterModelValidator = Callable[[Any], Optional[str]]
 
 
 def _sql_text(output: Any) -> str:
-    """Pull the SQL string off a raw string or a dspy Prediction-like result."""
+    """Pull the SQL string off a raw string or a Prediction-like result."""
     if isinstance(output, str):
         return output
     return str(getattr(output, "sql_query", "") or "")

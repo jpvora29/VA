@@ -3,7 +3,7 @@
 Proves the acceptance criteria: known primitives produce identical numbers across
 repeated runs (determinism), duplicate calls compute once (caching), unknown/failed
 calls land in `skipped` (LLM-SQL fallback signal), and shared scope filters apply to
-every call. Calls are passed as plain dicts to keep the test dspy-free.
+every call. Calls are passed as plain dicts to keep the test LLM-free.
 
 Run:  pytest tests/analytics/test_orchestrator.py -q
 """

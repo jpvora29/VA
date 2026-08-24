@@ -4,10 +4,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-import dspy
-
 from core.agents.common.directives import prose_suppressed
-from core.initialization import Initialization
+from core.llm import Predictor
 from core.observability import log_event
 from core.rules.survey import SurveyRules
 from core.schemas.survey import SurveyResponseSignature
@@ -18,27 +16,31 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 
-class SurveyResponseNode(dspy.Module):
-    # def __init__(self, carrier_schema: str, peer_schema: str, definitions: str, rules: str):
+class SurveyResponseNode:
+    """Writes the broker-perception analysis from the plan and the SQL output.
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.predictor = dspy.ChainOfThought(SurveyResponseSignature)
+    Creative tier: this is prose the user reads, so phrasing varies naturally
+    instead of repeating a template turn after turn.
+    """
 
-    def forward(
+    def __init__(self, predictor: Predictor | None = None) -> None:
+        self.predictor = predictor or Predictor(
+            SurveyResponseSignature, tier="creative", reasoning=True,
+            label="survey_insight", node="survey",
+        )
+
+    def __call__(
         self, user_query: str, query_plan: str, rules: str, sql_output: Dict[str, Any]
     ) -> str:
 
         # Combine context into a single training/inference context
 
-        with dspy.context(lm=Initialization.dspy_creative):
-            result = self.predictor(
-                rules=rules,
-                user_query=user_query,
-                query_plan=query_plan,
-                sql_output=sql_output,
-            )
-
+        result = self.predictor(
+            rules=rules,
+            user_query=user_query,
+            query_plan=query_plan,
+            sql_output=sql_output,
+        )
         return result.response
 
 
@@ -74,13 +76,12 @@ def survey_insight(state: AgentState) -> AgentState:
     response_rules = skill_rules if skill_rules else SurveyRules.response_rules
 
     try:
-        with Initialization.dspy_usage("survey_insight", node="survey"):
-            survey_response = _SURVEY_RESPONSE_NODE(
-                user_query=question,
-                query_plan=reasoning_plan,
-                rules=response_rules,
-                sql_output=query_output,
-            )
+        survey_response = _SURVEY_RESPONSE_NODE(
+            user_query=question,
+            query_plan=reasoning_plan,
+            rules=response_rules,
+            sql_output=query_output,
+        )
     except Exception as exc:
         log_event(
             logger, "survey_insight_error", logging.ERROR, route="survey", error=str(exc)
