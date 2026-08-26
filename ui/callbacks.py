@@ -65,6 +65,7 @@ from ui.components.sidebar import (
     app_sidebar,
     conversation_list_children,
 )
+from ui.draft_text import draft_text
 from core.store.users import get_or_create_user
 from core.store.conversations import (
     list_conversations,
@@ -1692,8 +1693,18 @@ def _live_draft(text: str, boardroom_mode: bool = False):
     chat answer — surfacing them token-by-token is noisy and clashes with the
     polished card that lands at the end. So we show a tidy "building" placeholder
     instead; poll_job swaps in the committed Boardroom card on completion.
+
+    The draft is deliberately PLAIN TEXT, not `dcc.Markdown`. Half-written markdown
+    is not markdown: mid-stream, `**bol` renders as literal asterisks, a table is a
+    wall of pipes until its last row lands, and an unclosed ``` swallows the rest of
+    the answer. Re-parsing that from scratch every tick made the bubble flicker and
+    re-flow — the answer appeared to thrash rather than type. A text node under
+    `white-space: pre-wrap` only ever has characters appended, so React touches one
+    node and the text grows smoothly. `draft_text` softens the leftover syntax so the
+    draft still reads as prose, and the committed message renders as full markdown the
+    moment the turn finishes — formatting lands once, instead of being re-guessed.
     """
-    text = (text or "").strip()
+    text = draft_text(text or "").strip()
     if not text:
         return []
     if boardroom_mode:
@@ -1707,10 +1718,7 @@ def _live_draft(text: str, boardroom_mode: bool = False):
             ],
             className="message gpt-message bm-building-card",
         )
-    return html.Div(
-        dcc.Markdown(text),
-        className="message gpt-message streaming-draft",
-    )
+    return html.Div(text, className="message gpt-message streaming-draft")
 
 
 def _fmt_elapsed(seconds: int) -> str:

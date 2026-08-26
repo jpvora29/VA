@@ -54,6 +54,10 @@ class ToolSpec:
     # Extra tuning arguments this primitive accepts (e.g. "grain", "top_n").
     options: Tuple[str, ...] = ()
     groupable: bool = True
+    # False for the period-reach tools: "what is the latest quarter?" is a question
+    # about the calendar, not about a measure, so offering `metric` would only invite
+    # a meaningless argument.
+    measured: bool = True
 
     def metric_for(self, flow: str) -> str:
         return self.default_metric.get(flow, "")
@@ -82,10 +86,55 @@ _SPECS: Tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         name="compute_yoy",
-        summary="Year-over-year % change of the measure, per cut.",
-        use_when="the question asks about growth, decline, or change between years.",
+        summary="Year-over-year % change of the measure, per cut, over WHOLE years.",
+        use_when=(
+            "the question asks about growth, decline, or change between complete "
+            "years. If the latest year is partial, prefer compute_yoy_to_date."
+        ),
         flows=("gpr", "survey"),
         default_metric={"gpr": "premium", "survey": "score"},
+    ),
+    ToolSpec(
+        name="compute_yoy_to_date",
+        summary=(
+            "Like-for-like year-over-year %: each year cut off at the same quarter "
+            "(or month) the latest year reaches — Q1-Q2 2025 vs Q1-Q2 2024."
+        ),
+        use_when=(
+            "the data stops part-way through the latest year, so a whole-year "
+            "comparison would read a partial year as a decline. On a complete year "
+            "it returns the same answer as compute_yoy, so it is always safe."
+        ),
+        flows=("gpr",),
+        default_metric={"gpr": "premium"},
+        options=_GRAIN,
+    ),
+    ToolSpec(
+        name="get_latest_year",
+        summary="The most recent year the data actually reaches.",
+        use_when=(
+            "you need to know how current the data is, or the question says "
+            "'latest', 'current', or 'most recent' without naming a year."
+        ),
+        flows=("gpr", "survey"),
+        groupable=False,
+        measured=False,
+    ),
+    ToolSpec(
+        name="get_latest_quarter",
+        summary=(
+            "The most recent quarter reached, and whether that year is complete "
+            "(dims.complete is false when the latest year is only partly loaded)."
+        ),
+        use_when=(
+            "the question asks how current the data is, names a quarter, or asks "
+            "for growth — check this first to see whether the latest year is "
+            "partial, and if it is, use compute_yoy_to_date rather than compute_yoy."
+        ),
+        flows=("gpr",),
+        options=_GRAIN,
+        groupable=False,
+        measured=False,
     ),
     ToolSpec(
         name="compute_period_series",
@@ -230,13 +279,13 @@ def _parameters(
     tool: ToolSpec, spec: FlowSpec, dimensions: Tuple[str, ...]
 ) -> Dict[str, Any]:
     """JSON schema for one tool's arguments, with registry-derived enums."""
-    properties: Dict[str, Any] = {
-        "metric": {
+    properties: Dict[str, Any] = {}
+    if tool.measured:
+        properties["metric"] = {
             "type": "string",
             "enum": list(metric_names(spec)),
             "description": "Measure to compute over. Omit to use this flow's default.",
         }
-    }
     if tool.groupable:
         properties["group_by"] = {
             "type": "array",

@@ -23,8 +23,11 @@ from core.analytics.library import (
     compute_share_of_portfolio,
     compute_share_of_wallet,
     compute_yoy,
+    compute_yoy_to_date,
     find_service_gaps,
     find_whitespace,
+    get_latest_quarter,
+    get_latest_year,
 )
 from core.analytics.library import LIBRARY
 from core.analytics.orchestrator import AnalyticsOrchestrator, EvidenceSet
@@ -58,6 +61,9 @@ __all__ = [
     "compute_breakdown",
     "compute_rank",
     "compute_yoy",
+    "compute_yoy_to_date",
+    "get_latest_year",
+    "get_latest_quarter",
     "compute_share_of_portfolio",
     "compute_market_presence",
     "compute_peer_average",

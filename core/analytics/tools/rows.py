@@ -30,6 +30,12 @@ _LABELS: Dict[str, Callable[[AnalyticsFact], str]] = {
     "ttm": lambda f: "TTM",
     "rank": lambda _f: "Rank",
     "yoy": lambda _f: "YoY_%",
+    # Named for the span it covers, so a partial-year comparison is self-describing
+    # in the table and the reader is never shown a bare "YoY" over half a year.
+    "yoy_to_date": lambda f: f"YoY_%_through_{f.dims.get('through') or 'period'}",
+    "latest_year": lambda _f: "Latest_Year",
+    "latest_quarter": lambda _f: "Latest_Quarter",
+    "latest_month": lambda _f: "Latest_Month",
     "period_change": lambda _f: "Change_%",
     "share_of_portfolio": lambda _f: "Share_of_Portfolio_%",
     "share_of_wallet": lambda _f: "Share_of_Wallet_%",

@@ -1728,10 +1728,11 @@ body {
 }
 
 /* ---------- Live streaming draft (the answer typing itself in) ----------
-   poll_job re-renders this container each ~350ms tick as tokens arrive. The
-   bubble element keeps the same type + class across ticks, so React reconciles
-   in place: the entrance animation fires once and the caret keeps blinking
-   smoothly while the text grows. Collapses to nothing between turns. */
+   poll_job re-renders this container as tokens arrive. The bubble keeps the same
+   type + class across ticks, so React reconciles in place: the entrance animation
+   fires once and only the text node grows. Collapses to nothing between turns.
+   The draft is plain text (see `_live_draft`) — markdown is applied once, to the
+   committed answer, rather than re-parsed mid-sentence on every tick. */
 .live-draft {
     display: flex;
     flex-direction: column;
@@ -1745,14 +1746,23 @@ body {
     display: none;
 }
 
-/* Blinking caret trailing the last streamed line, so it reads as "live". */
-.streaming-draft p:last-of-type::after,
-.streaming-draft li:last-of-type::after {
+/* The streamed text is one text node, so newlines and runs of spaces have to be
+   honoured here rather than by markdown's block elements. `break-word` stops a
+   long unbroken token (a URL, a wide number) from widening the bubble mid-stream. */
+.streaming-draft {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+
+/* Blinking caret trailing the streamed text, so it reads as "live". Attached to
+   the bubble itself, not to `p:last-of-type` — with plain text there are no block
+   children, and under markdown the caret used to jump around as the last block
+   changed type mid-stream. */
+.streaming-draft::after {
     content: '▋';
-    display: inline-block;
+    display: inline;
     margin-left: 2px;
     color: var(--marsh-blue-2);
-    transform: translateY(1px);
     animation: streamCaret 1.05s steps(1, end) infinite;
 }
 

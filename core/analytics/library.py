@@ -743,6 +743,242 @@ def compute_ttm(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[An
     return facts
 
 
+# ── How far the data actually reaches, and like-for-like YoY ────────────────
+#
+# A warehouse loaded mid-year holds a PARTIAL latest year. Comparing that stub
+# against a complete prior year is the classic false decline: eight months of 2025
+# against twelve of 2024 reads as -33% when nothing has actually changed. These
+# three answer "how far does the data go?" deterministically, and compare only the
+# span both years share.
+
+_PERIODS_PER_YEAR = {"quarter": 4, "month": 12}
+
+
+def _period_columns(spec) -> frozenset:
+    """The flow's date-ish column names (year, quarter, month, date)."""
+    return frozenset(str(name) for name in spec.date_columns.values() if name)
+
+
+def _without_period_filters(spec, filters: Dict[str, Any]) -> Dict[str, Any]:
+    """The scope minus its period filters.
+
+    "What is the latest quarter?" has to be answered over the whole history: with the
+    turn's year still applied, the primitive would only ever hand back the year it was
+    given. Every OTHER filter stays, because the latest period genuinely can differ by
+    carrier or market — one carrier's book may be loaded a quarter behind another's.
+    """
+    blocked = {name.lower() for name in _period_columns(spec)}
+    return {k: v for k, v in (filters or {}).items() if str(k).lower() not in blocked}
+
+
+def _year_expr(spec) -> Optional[str]:
+    """SQL for the calendar year — the declared year column, else read off the date."""
+    year = spec.date_columns.get("year")
+    if year:
+        return f'CAST("{safe_column(spec, year)}" AS INTEGER)'
+    date_col = spec.date_columns.get("date")
+    if date_col:
+        return f"CAST(strftime('%Y', \"{safe_column(spec, date_col)}\") AS INTEGER)"
+    return None
+
+
+def _period_in_year_expr(spec, grain: str) -> Optional[str]:
+    """SQL for the period's position WITHIN its year: 1-4 quarterly, 1-12 monthly.
+
+    Prefers a declared quarter column (GIMMI stores ``Quarter``, as "Q2" or 2 — the
+    strip handles both), else derives it from the flow's date column. Returns None
+    when the flow carries neither, so a year-only flow (the survey has just
+    ``Survey_Year``) degrades to "no period alignment" instead of raising.
+    """
+    quarter = spec.date_columns.get("quarter")
+    date_col = spec.date_columns.get("date")
+    if grain == "quarter":
+        if quarter:
+            col = safe_column(spec, quarter)
+            return f"CAST(replace(replace(\"{col}\", 'Q', ''), 'q', '') AS INTEGER)"
+        if date_col:
+            col = safe_column(spec, date_col)
+            return f"((CAST(strftime('%m', \"{col}\") AS INTEGER) + 2) / 3)"
+        return None
+    if grain == "month":
+        if date_col:
+            col = safe_column(spec, date_col)
+            return f"CAST(strftime('%m', \"{col}\") AS INTEGER)"
+        return None
+    raise ValueError(f"unknown period grain {grain!r}")
+
+
+def _period_label(grain: str, position: Any) -> str:
+    """``2`` → "Q2" (quarterly) or "M02" (monthly) — the span a comparison ran to."""
+    try:
+        number = int(position)
+    except (TypeError, ValueError):
+        return ""
+    return f"Q{number}" if grain == "quarter" else f"M{number:02d}"
+
+
+@_on_frames(P.get_latest_year)
+def get_latest_year(
+    args: PrimitiveArgs, *, engine: Optional[Any] = None
+) -> List[AnalyticsFact]:
+    """The most recent year the data actually reaches for this scope."""
+    spec = flow_spec(args.flow)
+    eng = resolve_engine(engine)
+    year_sql = _year_expr(spec)
+    if year_sql is None:
+        return []
+    params: Dict[str, Any] = {}
+    where = where_clause(spec, _without_period_filters(spec, args.filters), params)
+    rows = run_rows(
+        eng, f'SELECT MAX({year_sql}) AS yr FROM "{spec.primary_table}"{where}', params
+    )
+    year = rows[0].get("yr") if rows else None
+    if year is None:
+        return []
+    return [
+        AnalyticsFact(
+            name="latest_year",
+            value=float(year),
+            unit="year",
+            rendered=str(int(year)),
+            dims={"year": int(year)},
+            support=[{"year": int(year)}],
+            formula=f"MAX({spec.date_columns.get('year') or 'year(date)'})",
+        )
+    ]
+
+
+@_on_frames(P.get_latest_quarter)
+def get_latest_quarter(
+    args: PrimitiveArgs, *, grain: str = "quarter", engine: Optional[Any] = None
+) -> List[AnalyticsFact]:
+    """The most recent quarter (or month) reached, and whether its year is complete.
+
+    ``dims["complete"]`` is the flag that matters downstream: when it is False the
+    latest year is a stub, and a whole-year comparison against it is misleading —
+    use :func:`compute_yoy_to_date` instead of :func:`compute_yoy`.
+    """
+    spec = flow_spec(args.flow)
+    eng = resolve_engine(engine)
+    year_sql, pin_sql = _year_expr(spec), _period_in_year_expr(spec, grain)
+    if year_sql is None or pin_sql is None:
+        return []
+    params: Dict[str, Any] = {}
+    where = where_clause(spec, _without_period_filters(spec, args.filters), params)
+    sql = f"""
+        WITH base AS (
+            SELECT {year_sql} AS yr, {pin_sql} AS pin
+            FROM "{spec.primary_table}"{where}
+        )
+        SELECT (SELECT MAX(yr) FROM base) AS yr,
+               MAX(CASE WHEN yr = (SELECT MAX(yr) FROM base) THEN pin END) AS pin_max,
+               COUNT(DISTINCT CASE WHEN yr = (SELECT MAX(yr) FROM base)
+                                   THEN pin END) AS pin_count
+        FROM base
+    """
+    rows = run_rows(eng, sql, params)
+    if not rows or rows[0].get("yr") is None or rows[0].get("pin_max") is None:
+        return []
+    row = rows[0]
+    year, position = int(row["yr"]), int(row["pin_max"])
+    label = _period_label(grain, position)
+    complete = position >= _PERIODS_PER_YEAR[grain]
+    return [
+        AnalyticsFact(
+            name=f"latest_{grain}",
+            value=float(position),
+            unit=grain,
+            rendered=f"{label} {year}",
+            dims={
+                "year": year,
+                grain: position,
+                "period": f"{year}-{label}",
+                "complete": complete,
+                "periods_present": int(row.get("pin_count") or 0),
+            },
+            support=[dict(row)],
+            formula=f"MAX({grain} of the latest year)",
+        )
+    ]
+
+
+@_on_frames(P.compute_yoy_to_date)
+def compute_yoy_to_date(
+    args: PrimitiveArgs, *, grain: str = "quarter", engine: Optional[Any] = None
+) -> List[AnalyticsFact]:
+    """Like-for-like YoY: every year truncated to the span the newest year reaches.
+
+    If the data stops at Q2 2025, this compares Q1-Q2 2025 against Q1-Q2 2024 — not
+    against the whole of 2024. On a complete year the cutoff is Q4, so it returns
+    exactly what :func:`compute_yoy` does; it is safe to prefer unconditionally.
+
+    Period filters are dropped from the scope for the same reason they are in
+    :func:`get_latest_year` — a comparison needs both years, so a turn pinned to one
+    of them would have nothing to compare against.
+    """
+    spec = flow_spec(args.flow)
+    eng = resolve_engine(engine)
+    column, agg = resolve_measure(spec, args.metric)
+    year_sql, pin_sql = _year_expr(spec), _period_in_year_expr(spec, grain)
+    if year_sql is None or pin_sql is None:
+        return []
+    cuts = _cut_columns(spec, args.group_by)
+    params: Dict[str, Any] = {}
+    where = where_clause(spec, _without_period_filters(spec, args.filters), params)
+    cut_sel = ", ".join(f'"{c}"' for c in cuts)
+    cut_tail = ", " + cut_sel if cut_sel else ""
+    partition = f"PARTITION BY {cut_sel} " if cut_sel else ""
+    sql = f"""
+        WITH base AS (
+            SELECT {year_sql} AS yr, {pin_sql} AS pin{cut_tail},
+                   "{column}" AS m
+            FROM "{spec.primary_table}"{where}
+        ),
+        bounds AS (
+            SELECT MAX(pin) AS pin_max FROM base
+            WHERE yr = (SELECT MAX(yr) FROM base)
+        ),
+        agg AS (
+            SELECT yr{cut_tail}, {agg}(m) AS measure
+            FROM base, bounds
+            WHERE base.pin IS NOT NULL AND base.pin <= bounds.pin_max
+            GROUP BY yr{cut_tail}
+        )
+        SELECT *, (SELECT pin_max FROM bounds) AS pin_max,
+               LAG(measure) OVER ({partition}ORDER BY yr) AS prev
+        FROM agg
+        ORDER BY yr
+    """
+    rows = run_rows(eng, sql, params)
+    facts: List[AnalyticsFact] = []
+    for row in rows:
+        prev = row.get("prev")
+        if prev in (None, 0) or _num(prev) == 0.0:
+            continue
+        pct = round((_num(row["measure"]) - _num(prev)) / _num(prev) * 100, 1)
+        through = _period_label(grain, row.get("pin_max"))
+        facts.append(
+            AnalyticsFact(
+                name="yoy_to_date",
+                value=pct,
+                unit="%",
+                rendered=f"{pct:+.1f}%",
+                dims={
+                    "year": row["yr"],
+                    "through": through,
+                    "grain": grain,
+                    **{c: row[c] for c in cuts},
+                },
+                support=[row],
+                formula=(
+                    f"(current - prior) / prior * 100, by year, "
+                    f"both truncated to {through or grain}"
+                ),
+            )
+        )
+    return facts
+
+
 # ── Dispatch ───────────────────────────────────────────────────────────────
 # Name → primitive, all callable as ``fn(args, engine=engine)`` (composites carry
 # defaulted tuning kwargs). The orchestrator dispatches over this map; the planner
@@ -751,6 +987,9 @@ LIBRARY: Dict[str, Any] = {
     "compute_breakdown": compute_breakdown,
     "compute_rank": compute_rank,
     "compute_yoy": compute_yoy,
+    "compute_yoy_to_date": compute_yoy_to_date,
+    "get_latest_year": get_latest_year,
+    "get_latest_quarter": get_latest_quarter,
     "compute_period_series": compute_period_series,
     "compute_period_change": compute_period_change,
     "compute_ttm": compute_ttm,

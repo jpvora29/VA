@@ -528,6 +528,151 @@ def compute_period_change(source: FrameSource, args: PrimitiveArgs,
     return facts
 
 
+# ── How far the data reaches, and like-for-like YoY ──────────────────────────
+#
+# The pandas twins of `library.get_latest_year` / `get_latest_quarter` /
+# `compute_yoy_to_date`. Same contract, same facts: an uploaded book that stops in
+# May must not read as a collapse against a full prior year.
+
+_PERIODS_PER_YEAR = {"quarter": 4, "month": 12}
+
+
+def _period_filter_columns(spec) -> List[str]:
+    """The flow's date-ish columns — the filters a "latest period" question drops."""
+    return [str(name) for name in spec.date_columns.values() if name]
+
+
+def _year_series(frame: pd.DataFrame, spec) -> Optional[pd.Series]:
+    """The calendar year per row — declared year column, else read off the date."""
+    year = spec.date_columns.get("year")
+    if year and _has(frame, year):
+        return pd.to_numeric(frame[year], errors="coerce").astype("Int64")
+    date_column = spec.date_columns.get("date")
+    if date_column and _has(frame, date_column):
+        return pd.to_datetime(frame[date_column], errors="coerce").dt.year.astype("Int64")
+    return None
+
+
+def _position_series(frame: pd.DataFrame, spec, grain: str) -> Optional[pd.Series]:
+    """The period's position within its year: 1-4 quarterly, 1-12 monthly."""
+    quarter = spec.date_columns.get("quarter")
+    date_column = spec.date_columns.get("date")
+    if grain == "quarter" and quarter and _has(frame, quarter):
+        cleaned = frame[quarter].astype(str).str.replace(r"(?i)q", "", regex=True)
+        return pd.to_numeric(cleaned, errors="coerce").astype("Int64")
+    if not (date_column and _has(frame, date_column)):
+        return None
+    stamps = pd.to_datetime(frame[date_column], errors="coerce")
+    if grain == "quarter":
+        return stamps.dt.quarter.astype("Int64")
+    if grain == "month":
+        return stamps.dt.month.astype("Int64")
+    raise ValueError(f"unknown period grain {grain!r}")
+
+
+def _period_label(grain: str, position: Any) -> str:
+    """``2`` → "Q2" (quarterly) or "M02" (monthly)."""
+    try:
+        number = int(position)
+    except (TypeError, ValueError):
+        return ""
+    return f"Q{number}" if grain == "quarter" else f"M{number:02d}"
+
+
+def get_latest_year(source: FrameSource, args: PrimitiveArgs) -> List[AnalyticsFact]:
+    """The most recent year the data reaches for this scope."""
+    spec = flow_spec(args.flow)
+    _spec, frame, _column, _agg = _prepared(
+        args, source, drop=_period_filter_columns(spec)
+    )
+    if frame is None or frame.empty:
+        return []
+    years = _year_series(frame, spec)
+    if years is None or years.dropna().empty:
+        return []
+    year = int(years.max())
+    return [
+        _fact("latest_year", float(year), "year", str(year), {"year": year},
+              f"MAX({spec.date_columns.get('year') or 'year(date)'})", {"year": year})
+    ]
+
+
+def get_latest_quarter(source: FrameSource, args: PrimitiveArgs,
+                       *, grain: str = "quarter") -> List[AnalyticsFact]:
+    """The most recent quarter (or month) reached, and whether its year is complete."""
+    spec = flow_spec(args.flow)
+    _spec, frame, _column, _agg = _prepared(
+        args, source, drop=_period_filter_columns(spec)
+    )
+    if frame is None or frame.empty:
+        return []
+    years, positions = _year_series(frame, spec), _position_series(frame, spec, grain)
+    if years is None or positions is None or years.dropna().empty:
+        return []
+    year = int(years.max())
+    in_latest = positions[years == year].dropna()
+    if in_latest.empty:
+        return []
+    position = int(in_latest.max())
+    label = _period_label(grain, position)
+    return [
+        _fact(f"latest_{grain}", float(position), grain, f"{label} {year}",
+              {"year": year, grain: position, "period": f"{year}-{label}",
+               "complete": position >= _PERIODS_PER_YEAR[grain],
+               "periods_present": int(in_latest.nunique())},
+              f"MAX({grain} of the latest year)",
+              {"yr": year, "pin_max": position})
+    ]
+
+
+def compute_yoy_to_date(source: FrameSource, args: PrimitiveArgs,
+                        *, grain: str = "quarter") -> List[AnalyticsFact]:
+    """Like-for-like YoY: every year truncated to the span the newest year reaches."""
+    spec = flow_spec(args.flow)
+    _spec, frame, column, agg = _prepared(
+        args, source, drop=_period_filter_columns(spec)
+    )
+    cuts = _cuts(spec, _primary(source, spec), args.group_by)
+    if frame is None or cuts is None or frame.empty:
+        return []
+    years, positions = _year_series(frame, spec), _position_series(frame, spec, grain)
+    if years is None or positions is None or years.dropna().empty:
+        return []
+    latest = int(years.max())
+    in_latest = positions[years == latest].dropna()
+    if in_latest.empty:
+        return []
+    cutoff = int(in_latest.max())
+    through = _period_label(grain, cutoff)
+
+    aligned = frame[positions.notna() & (positions <= cutoff)]
+    if aligned.empty:
+        return []
+    year_column = "_yoy_year"
+    aligned = aligned.assign(**{year_column: years[aligned.index]})
+    totals = _aggregate(aligned, column, agg, [year_column, *cuts])
+
+    facts: List[AnalyticsFact] = []
+    for cut_key, group in _by_cut(totals, year_column, cuts).items():
+        series = sorted(((row[year_column], value) for row, value in group),
+                        key=lambda pair: _sortable(pair[0]))
+        for (_, prior), (current_year, current) in zip(series, series[1:]):
+            if not prior:
+                continue
+            pct = round((current - prior) / prior * 100, 1)
+            facts.append(
+                _fact("yoy_to_date", pct, "%", f"{pct:+.1f}%",
+                      {"year": current_year, "through": through, "grain": grain,
+                       **dict(cut_key)},
+                      f"(current - prior) / prior * 100, by year, "
+                      f"both truncated to {through or grain}",
+                      {"yr": current_year, "measure": current, "prev": prior,
+                       "pin_max": cutoff})
+            )
+    facts.sort(key=lambda fact: (_sortable(fact.dims["year"]), _dims_order(fact, cuts)))
+    return facts
+
+
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 # Primitive name → its pandas implementation. ``library`` reads this map to decide
 # what it can route; a name absent here simply stays on SQL.
@@ -535,6 +680,9 @@ PANDAS_LIBRARY: Dict[str, Any] = {
     "compute_breakdown": compute_breakdown,
     "compute_rank": compute_rank,
     "compute_yoy": compute_yoy,
+    "compute_yoy_to_date": compute_yoy_to_date,
+    "get_latest_year": get_latest_year,
+    "get_latest_quarter": get_latest_quarter,
     "compute_share_of_portfolio": compute_share_of_portfolio,
     "compute_market_presence": compute_market_presence,
     "compute_share_of_wallet": compute_share_of_wallet,
