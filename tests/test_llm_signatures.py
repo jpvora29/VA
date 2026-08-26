@@ -56,10 +56,12 @@ class FakeClient:
         self.answer = answer or {}
         self.messages: List[Any] = []
         self.schema: Any = None
+        self.method: str | None = None
 
-    def with_structured_output(self, model, include_raw=False):
+    def with_structured_output(self, model, method=None, include_raw=False):
         assert include_raw, "usage can only be read from the raw response"
         self.schema = model
+        self.method = method
         return self
 
     def invoke(self, messages):
@@ -202,6 +204,72 @@ def test_an_unparseable_answer_raises_rather_than_returning_a_half_result():
 
     with pytest.raises(ValueError, match="did not parse"):
         run(SentenceSignature, {"draft": "d"}, client=Broken())
+
+
+# ── the schema must reach the model in a mode it can express ─────────────────
+
+
+def test_the_schema_is_sent_by_tool_calling_not_strict_structured_output():
+    """Regression: langchain-openai defaults to `json_schema`, which sends a Pydantic
+    class through the OpenAI SDK's STRICT conversion. Azure then rejects any signature
+    whose output carries an open-ended map or defaulted nested objects."""
+    client = FakeClient({"rewritten": "x"})
+    run(SentenceSignature, {"draft": "d"}, client=client)
+    assert client.method == "function_calling"
+
+
+def test_an_open_ended_dict_output_survives_the_conversion_intact():
+    """`RoutingContext.resolved_filters` is `Dict[str, List[str]]` keyed by arbitrary
+    column names. Strict mode cannot express that; tool calling must keep it, or the
+    context filler silently loses every resolved filter."""
+    import json
+
+    from langchain_core.utils.function_calling import convert_to_openai_function
+
+    from core.schemas.routing import ContextFillerSignature
+
+    model = build_response_model(ContextFillerSignature, reasoning=True)
+    schema = convert_to_openai_function(model)["parameters"]
+
+    routing = schema["properties"]["routing_context"]["properties"]
+    resolved = routing["resolved_filters"]
+    assert resolved["type"] == "object"
+    # The map's VALUE schema is still a list-of-strings, not stripped to nothing.
+    assert resolved["additionalProperties"] == {"type": "array",
+                                                "items": {"type": "string"}}
+    assert json.dumps(schema)      # and the whole thing is wire-serialisable
+
+
+def test_every_signature_converts_for_the_wire():
+    """No signature may produce a schema the client cannot send — a failure here is a
+    hard 400 at request time, not a degraded answer."""
+    import importlib
+    import inspect as _inspect
+    import json
+
+    from langchain_core.utils.function_calling import convert_to_openai_function
+
+    from core.llm.signature import Signature as _Signature
+
+    modules = [
+        "core.schemas.routing", "core.schemas.analytical", "core.schemas.boardroom",
+        "core.schemas.combined", "core.schemas.followup", "core.schemas.gimmi",
+        "core.schemas.gpr", "core.schemas.hitl", "core.schemas.survey",
+        "core.schemas.analysis", "core.context.semantic",
+        "core.agents.common.chart_spec",
+    ]
+    checked = 0
+    for name in modules:
+        module = importlib.import_module(name)
+        for attr, obj in vars(module).items():
+            if not (_inspect.isclass(obj) and issubclass(obj, _Signature)
+                    and obj is not _Signature and obj.__module__ == name):
+                continue
+            for reasoning in (False, True):
+                model = build_response_model(obj, reasoning=reasoning)
+                json.dumps(convert_to_openai_function(model))
+                checked += 1
+    assert checked == 48, f"expected 24 signatures x 2 modes, converted {checked}"
 
 
 # ── the predictor a node holds ───────────────────────────────────────────────

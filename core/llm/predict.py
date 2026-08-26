@@ -31,6 +31,24 @@ from core.observability import extract_token_usage, record_token_usage
 
 REASONING_FIELD = "reasoning"
 
+# How the schema is put to the model. `function_calling` (tool calling) is a
+# deliberate choice over langchain-openai's `json_schema` default, which sends
+# OpenAI/Azure *strict* structured outputs — a mode these signatures cannot express:
+#
+#   * Strict requires every object's `required` to list every one of its properties.
+#     Our output models are almost entirely defaulted fields, and LangChain's strict
+#     fixer only patches the TOP level, so nested objects (`query_intent`,
+#     `output_directives`, `entities`) arrive with no `required` at all and Azure
+#     rejects the request.
+#   * Strict has no way to express an open-ended map. `RoutingContext.resolved_filters`
+#     and `QueryIntent.filters` are `Dict[str, List[str]]` keyed by arbitrary column
+#     names; strict demands fixed properties + `additionalProperties: false`, so the
+#     map is stripped to an empty object.
+#
+# Tool calling keeps optional fields optional and open-ended dicts intact, which is
+# what these models were written for.
+STRUCTURED_OUTPUT_METHOD = "function_calling"
+
 
 class Prediction(Mapping):
     """One model answer, addressed by the signature's output names.
@@ -145,7 +163,7 @@ def run(
 
     response_model = build_response_model(signature, reasoning=reasoning)
     chat = (client or tier_client(tier)).with_structured_output(
-        response_model, include_raw=True
+        response_model, method=STRUCTURED_OUTPUT_METHOD, include_raw=True
     )
     result = chat.invoke([
         SystemMessage(content=build_system_prompt(signature, reasoning=reasoning)),
