@@ -590,6 +590,7 @@ _SECTION_META: Mapping[str, Tuple[str, str, str]] = {
     "summary": ("Executive summary", "bi-grid-1x2", ""),
     "highlights": ("Highlights", "bi-stars", "Commentary auto-written"),
     "trading_summary": ("Trading summary", "bi-chat-square-text", "Commentary auto-written"),
+    "gwp_performance": ("GWP performance", "bi-graph-up-arrow", ""),
     "portfolio": ("Portfolio analysis", "bi-pie-chart", ""),
     "feedback": ("Feedback", "bi-clipboard-heart", "Qualitative — filled by hand"),
     "ranking": ("Portfolio & ranking", "bi-trophy", "Chart edited in PowerPoint"),
@@ -598,6 +599,7 @@ _SECTION_META: Mapping[str, Tuple[str, str, str]] = {
     "country_divider": ("Country divider", "bi-signpost-split", ""),
     "breakdown": ("Carrier breakdown", "bi-table", "Per-product, per-country"),
     "carrier_title": ("Section title", "bi-bookmark", ""),
+    "survey": ("Carrier Survey", "bi-clipboard-data", "Sourced from the survey book"),
     "other": ("Other", "bi-file-earmark", ""),
 }
 
@@ -609,6 +611,7 @@ _AXIS_META: Mapping[str, Tuple[str, str, str]] = {
     "overall": ("Overall", "bi-grid-1x2", "built once"),
     "product": ("Product", "bi-box-seam", "repeats per product line"),
     "country": ("Country", "bi-globe2", "repeats per country"),
+    "survey": ("Carrier Survey", "bi-clipboard-data", "repeats per country"),
 }
 
 # Scope choice → the axes it assembles, in deck order.
@@ -620,13 +623,30 @@ _SCOPE_AXES: Mapping[str, Tuple[str, ...]] = {
 }
 
 
-def scope_axes(scope: Optional[str]) -> Tuple[str, ...]:
-    """The registered axes a scope choice assembles (unregistered ones dropped)."""
+def deck_axes(scope: Optional[str], basis: Optional[str] = None) -> Tuple[str, ...]:
+    """The registered sub-decks a scope AND data basis assemble, in deck order.
+
+    Mirrors ``studio.template_fill.assemble.plan_subdecks``, which is where the deck is
+    really built: the Carrier Survey block is NOT a scope choice but a BASIS one, so it
+    is gated separately and rides along with whichever country blocks the chosen scope
+    already builds. Reading the basis is what makes "What's in your QBR" answer the
+    survey question — before this, picking GPR + Carrier Survey changed the deck but
+    not the panel describing it.
+    """
     from studio.template_fill.binding_map import available
 
     registered = set(available())
     wanted = _SCOPE_AXES.get(scope or "all", _SCOPE_AXES["all"])
-    return tuple(axis for axis in wanted if axis in registered)
+    axes = tuple(axis for axis in wanted if axis in registered)
+    with_survey = str(basis or DATA_BASIS_DEFAULT) == DATA_BASIS_WITH_SURVEY
+    if with_survey and "country" in axes and "survey" in registered:
+        axes += ("survey",)
+    return axes
+
+
+def scope_axes(scope: Optional[str]) -> Tuple[str, ...]:
+    """The registered axes a SCOPE choice assembles, on the default (premium) basis."""
+    return deck_axes(scope, DATA_BASIS_DEFAULT)
 
 
 def _section_counts(axis: str) -> Optional[List[Tuple[str, int]]]:
@@ -673,7 +693,8 @@ def _axis_block(axis: str, counts: Sequence[Tuple[str, int]]) -> html.Div:
                 [
                     html.I(className=f"bi {icon}"),
                     html.Span(label, className="qs-tsec-axis-name"),
-                    html.Span(f"{pages} pages", className="qs-tsec-axis-n"),
+                    html.Span(f"{pages} page" + ("s" if pages != 1 else ""),
+                              className="qs-tsec-axis-n"),
                 ],
                 className="qs-tsec-axis-head",
             ),
@@ -684,15 +705,19 @@ def _axis_block(axis: str, counts: Sequence[Tuple[str, int]]) -> html.Div:
     )
 
 
-def template_sections_panel(scope: Optional[str] = "all") -> html.Div:
-    """The sections the CURRENT SCOPE will produce, one block per assembled axis.
+def template_sections_panel(
+    scope: Optional[str] = "all", basis: Optional[str] = None
+) -> html.Div:
+    """The sections the current SCOPE and BASIS will produce, one block per axis.
 
     Selection is driven by the templates themselves, not a static list. "All" builds
     the overall, product and country sub-decks and merges them, so all three are
     listed — previewing only the overall template (the old behaviour) made switching
-    Scope back to "All" look like nothing had happened.
+    Scope back to "All" look like nothing had happened. Choosing GPR + Carrier Survey
+    adds the survey block for the same reason: the deck gains those pages, so the
+    panel that describes the deck has to gain them too.
     """
-    axes = scope_axes(scope)
+    axes = deck_axes(scope, basis)
     blocks, base_pages = [], 0
     for axis in axes:
         counts = _section_counts(axis)

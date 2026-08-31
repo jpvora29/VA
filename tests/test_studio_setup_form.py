@@ -15,7 +15,9 @@ import json
 import pytest
 
 from studio.authoring.setup import carriers_in_scope
+from studio.compute import DATA_BASIS_PREMIUM, DATA_BASIS_WITH_SURVEY
 from studio.page.authoring.setup import (
+    deck_axes,
     peer_set_body,
     scope_axes,
     setup_body,
@@ -807,6 +809,30 @@ def test_scope_axes_maps_all_to_every_registered_axis():
     assert scope_axes("all") == ("overall", "product", "country")
     assert scope_axes("product") == ("product",)
     assert scope_axes(None) == ("overall", "product", "country")
+
+
+def test_the_survey_basis_adds_the_survey_block_to_whats_in_your_qbr():
+    """Regression: "What's in your QBR" listened to Scope alone, so choosing
+    GPR + Carrier Survey changed the deck that gets built but not the panel that
+    describes it — the survey pages appeared only after Generate."""
+    gpr = _rendered(template_sections_panel("all", DATA_BASIS_PREMIUM))
+    survey = _rendered(template_sections_panel("all", DATA_BASIS_WITH_SURVEY))
+
+    assert "Carrier Survey" not in gpr
+    assert "Carrier Survey" in survey
+    assert _rendered(template_sections_panel("all", DATA_BASIS_PREMIUM)) == gpr
+
+
+def test_the_survey_block_is_gated_the_way_the_assembler_gates_it():
+    """``assemble.plan_subdecks`` builds the survey block only on the survey basis AND
+    only alongside country blocks (it rides along with them). The panel must not
+    promise pages the assembler will not build."""
+    assert deck_axes("all", DATA_BASIS_WITH_SURVEY)[-1] == "survey"
+    assert deck_axes("country", DATA_BASIS_WITH_SURVEY) == ("country", "survey")
+    # No country blocks -> no survey block, whatever the basis says.
+    assert "survey" not in deck_axes("overall", DATA_BASIS_WITH_SURVEY)
+    assert "survey" not in deck_axes("product", DATA_BASIS_WITH_SURVEY)
+    assert "survey" not in deck_axes("all", DATA_BASIS_PREMIUM)
 
 
 def test_deck_sections_round_trip_between_all_and_a_single_axis():

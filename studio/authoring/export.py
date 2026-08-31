@@ -132,21 +132,23 @@ def register_export(app):
     @app.callback(
         Output("studio-template-sections", "children"),
         Input("studio-template", "value"),
-        # Same full-page cue as the other Setup controls: changing the scope re-derives
-        # the section list, and the user should see that it is happening.
+        Input("studio-data-basis", "value"),
+        # Same full-page cue as the other Setup controls: changing either input
+        # re-derives the section list, and the user should see that it is happening.
         running=[(Output(A.BUSY_SECTIONS, "className"), A.BUSY_FLAG_ON, A.BUSY_FLAG_CLASS)],
         prevent_initial_call=True,
     )
-    def template_sections(scope):
-        """Refresh the 'Deck sections' list when the assembly scope changes.
+    def template_sections(scope, basis):
+        """Refresh "What's in your QBR" when the scope OR the data basis changes.
 
-        The scope carries an axis set ("all" → overall + product + country); the panel
-        lists EVERY axis that scope assembles. Previewing only the overall template
-        made switching back to "All" look like the panel had stopped updating.
+        Two inputs because two choices change the deck. The scope carries an axis set
+        ("all" → overall + product + country); the basis decides whether each country
+        block is followed by a Carrier Survey page. The panel lists every axis the pair
+        assembles — see ``A.deck_axes``, which mirrors ``assemble.plan_subdecks``.
         """
         if not scope:
             return no_update
-        return A.template_sections_panel(scope)
+        return A.template_sections_panel(scope, basis)
 
     @app.callback(
         Output("qs-view", "data", allow_duplicate=True),

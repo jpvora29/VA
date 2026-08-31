@@ -555,9 +555,11 @@ body {
 
 /* The step numeral sits OUTSIDE its tile (top/right -5px). At the 2px row gap the
    stepper uses when expanded, each badge landed on the tile above it — so the
-   collapsed column opens the gap enough to clear the badge on both sides. */
+   collapsed column opens the gap well clear of the badge on both sides, and drops
+   from under the toggle rather than butting straight up against it. */
 .va-rails-collapsed .qs-mode-rail .qs-mode-list {
-    gap: 10px;
+    gap: 18px;
+    padding-top: 14px;
 }
 
 .va-rails-collapsed .va-rail-step-num {
