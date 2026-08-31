@@ -2175,8 +2175,12 @@ body {
     }
 }
 
-/* ---------- Generic tables outside insight card (fallback) ---------- */
-table {
+/* ---------- Generic tables outside insight card (fallback) ----------
+   Scoped to .main-content on purpose. Unscoped, these reached every <table> on
+   the page — including Studio's deck, canvas and template-fill tables, which now
+   share this document. .main-content is the chat / board / recap content host, so
+   markdown tables in an answer still get the fallback and Studio keeps its own. */
+.main-content table {
     border-collapse: separate;
     border-spacing: 0;
     width: 100%;
@@ -2184,14 +2188,14 @@ table {
     font-size: 14px;
 }
 
-th,
-td {
+.main-content th,
+.main-content td {
     border-bottom: 1px solid var(--border-soft);
     padding: 10px 12px;
     text-align: left;
 }
 
-th {
+.main-content th {
     background-color: #f3f6fc;
     color: var(--marsh-blue);
     font-weight: 700;
@@ -2621,24 +2625,9 @@ th {
    ==================================================================== */
 
 /* ---------- App shell layout ----------
-   Keep the shell a plain block (NOT a column flex): .custom-navbar has
-   flex-grow:1, which in a column flex would balloon the navbar vertically.
-   The navbar sits on top in normal flow; .app-body is the horizontal split. */
-.app-shell {
-    min-height: 100vh;
-}
-
-.app-body {
-    display: flex;
-    height: calc(100vh - 58px);
-}
-
-.app-body .main-container {
-    height: 100%;
-    flex: 1 1 auto;
-    min-width: 0;
-    width: auto;
-}
+   The shell (.va-app), the pane split (.va-pane-split) and the content host all
+   moved to assets/va_shell.css when Studio and the Chatbot became one page — the
+   old .app-shell / .app-body rules used to live here. */
 
 /* ---------- Login screen ---------- */
 .login-screen {
@@ -2957,26 +2946,13 @@ th {
     color: var(--marsh-blue-2);
 }
 
-/* ---------- Shift fixed composer to respect the sidebar ----------
-   .input-area is position:fixed (full viewport width by default), so it would
-   sit under the sidebar. Offset its left edge by the sidebar width and let it
-   stretch to the right edge instead of forcing width:100%. */
-.app-body .input-area {
-    left: 264px;
-    width: auto;
-    transition: left var(--transition-med);
-}
-
-/* Collapsed rail: narrower offset. app-sidebar is a sibling of .main-container. */
-.app-sidebar-collapsed ~ .main-container .input-area {
-    left: 60px;
-}
-
-@media (max-width: 768px) {
-    .app-body .input-area {
-        left: 0;
-    }
-}
+/* ---------- Composer position ----------
+   Three rules used to sit here offsetting the fixed composer past the sidebar
+   (left: 264px, and a narrower value for the collapsed rail). They were dead: a
+   later `.input-area` rule in this file re-anchors the composer with
+   `position: absolute !important; left: 0 !important`, so it is positioned
+   against `.main-content` — which already starts after the rail — and no offset
+   is needed or possible. Verified in the browser during the app merge. */
 
 /* ====================================================================
    Custom Peers — composer "+" menu, dialog, and active cue

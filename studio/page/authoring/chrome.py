@@ -7,13 +7,19 @@ from dash import html
 
 from studio.deck.model import DeckSpec
 
+from ui.shell.rail import rail_frame, rail_section
+
 from studio.page.authoring.constants import MODES
 from studio.page.authoring.derive import deck_counts
 
 
 def mode_rail(active: str, counts: Mapping[str, int]) -> html.Aside:
-    # The modes ARE a sequence (build pipeline: Setup → Data → Canvas → Review),
-    # so the rail renders as a numbered stepper — tile, step numeral, connector.
+    """Studio's left rail, in the shared ``va-rail`` frame (``ui.shell.rail``).
+
+    The modes ARE a sequence (Setup -> Data -> Canvas -> Review), so they render as a
+    numbered stepper: tile, step numeral, label. The brand block that used to head this
+    rail is gone — the merged application names itself once, in the navbar.
+    """
     items = [
         html.Button(
             [
@@ -22,7 +28,13 @@ def mode_rail(active: str, counts: Mapping[str, int]) -> html.Aside:
                      html.Span(str(i), className="qs-step-num")],
                     className="qs-mode-tile",
                 ),
-                html.Span(m["label"], className="qs-mode-label"),
+                html.Span(
+                    [
+                        html.Span(m["label"], className="qs-mode-label"),
+                        html.Span(m["hint"], className="qs-mode-hint"),
+                    ],
+                    className="qs-mode-text",
+                ),
             ],
             id={"type": "qs-mode", "mode": m["id"]},
             className="qs-mode-btn" + (" active" if m["id"] == active else ""),
@@ -30,13 +42,10 @@ def mode_rail(active: str, counts: Mapping[str, int]) -> html.Aside:
         )
         for i, m in enumerate(MODES, 1)
     ]
-    return html.Aside(
+    return rail_frame(
+        "Studio",
         [
-            html.Div(
-                [html.Div("Q", className="qs-mark"), html.Span("Studio", className="qs-mark-word")],
-                className="qs-rail-brand",
-            ),
-            html.Div(items, className="qs-mode-list"),
+            rail_section("Build", [html.Div(items, className="qs-mode-list")]),
             html.Div(
                 [
                     html.Div(str(counts.get("total", 0)), className="qs-rail-count-num"),

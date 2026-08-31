@@ -1,0 +1,635 @@
+/* ============================================================================
+   THE APPLICATION SHELL — one navbar, four workspaces, one left rail.
+
+   Studio and the Chatbot were two Dash apps with two shells. This file is what
+   makes them one product: it owns the frame (navbar, pane, rail) and then
+   re-dresses the two pre-existing rails into that one frame.
+
+   Loads LAST — Dash serves /assets sorted, and `va_shell.css` sorts after
+   `style.css`, `studio_*.css` and `theme_tokens.css` — so it is the final word
+   on chrome. It relies on that for exactly one job: overriding the navy rail and
+   the full-viewport heights the two apps declared when each owned the page.
+
+   Colour comes from the shared --va-* tokens (assets/theme_tokens.css). Nothing
+   here introduces a hex that is not already in the brand.
+   ========================================================================== */
+
+/* ── the page ─────────────────────────────────────────────────────────────── */
+
+html,
+body {
+    height: 100%;
+    overflow: hidden;                 /* panes scroll, the page never does */
+}
+
+#react-entry-point,
+#react-entry-point > div {
+    height: 100%;
+}
+
+.va-app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* ── navbar ───────────────────────────────────────────────────────────────── */
+
+.va-navbar {
+    flex: 0 0 var(--va-navbar-h);
+    height: var(--va-navbar-h);
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    padding: 0 18px;
+    background: linear-gradient(100deg, var(--va-navy) 0%, var(--va-navy-2) 100%);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.07), 0 6px 20px rgba(0, 15, 71, 0.22);
+    z-index: 100;
+}
+
+.va-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 0 0 auto;
+    min-width: 0;
+}
+
+.va-brand-mark {
+    width: 30px;
+    height: 30px;
+    flex: 0 0 auto;
+    border-radius: 9px;
+    display: grid;
+    place-items: center;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    color: #fff;
+    background: var(--va-grad-cta);
+    box-shadow: 0 4px 14px -3px rgba(11, 75, 255, 0.65);
+}
+
+.va-brand-name {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: #fff;
+    white-space: nowrap;
+}
+
+/* The tabs are the app's primary navigation, so they sit in the optical centre
+   and read as one segmented control rather than four loose links. */
+.va-tabs {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+.va-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    border: none;
+    border-radius: var(--va-radius-pill);
+    background: transparent;
+    color: rgba(255, 255, 255, 0.66);
+    font-family: var(--va-font);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.005em;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background var(--va-transition-fast), color var(--va-transition-fast);
+}
+
+.va-tab i {
+    font-size: 14px;
+}
+
+.va-tab:hover {
+    background: rgba(255, 255, 255, 0.10);
+    color: #fff;
+}
+
+.va-tab-active,
+.va-tab-active:hover {
+    background: rgba(255, 255, 255, 0.16);
+    color: #fff;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
+.va-tab:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--va-navy), 0 0 0 4px rgba(255, 255, 255, 0.6);
+}
+
+/* The signed-in user lives here, once, because it is the same on every tab. */
+.va-user-chip {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding-left: 12px;
+}
+
+.va-user-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--va-radius-pill);
+    display: grid;
+    place-items: center;
+    font-size: 12px;
+    font-weight: 700;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.16);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.26);
+}
+
+.va-user-name {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.86);
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.va-logout-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 14px;
+    cursor: pointer;
+    transition: background var(--va-transition-fast), color var(--va-transition-fast);
+}
+
+.va-logout-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+}
+
+@media (max-width: 900px) {
+    .va-brand-name,
+    .va-user-name { display: none; }
+    .va-tab-label { display: none; }
+    .va-tab { padding: 7px 11px; }
+}
+
+/* ── panes ────────────────────────────────────────────────────────────────── */
+
+.va-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    position: relative;
+    background: var(--va-surface-1);
+}
+
+.va-pane {
+    height: 100%;
+    min-height: 0;
+}
+
+/* Hidden, not unmounted: a half-built deck, an unsent message and a running chat
+   turn all survive a trip to another tab and back. */
+.va-pane-hidden {
+    display: none !important;
+}
+
+.va-pane-split {
+    display: flex;
+    height: 100%;
+    min-height: 0;
+}
+
+.va-pane-full {
+    height: 100%;
+    min-height: 0;
+}
+
+/* Studio's Generate spinner is a sibling of the `qs-app` mount inside the pane
+   (see studio.authoring.layout.generating_loader). Its wrapper is a normal block
+   when nothing is loading, so it has to take no room or it pushes Studio down. */
+.va-pane-full > .qs-gen-loader {
+    height: 0;
+    overflow: visible;
+}
+
+/* The Chatbot's content host used to size itself against the viewport, back when
+   there was no navbar above it. Inside a pane it is simply full height. */
+.va-pane-split > .main-container {
+    height: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto;
+}
+
+/* ── the shared left rail ─────────────────────────────────────────────────── */
+
+.va-rail {
+    flex: 0 0 var(--va-rail-w);
+    width: var(--va-rail-w);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--va-rail-bg);
+    box-shadow: inset -1px 0 0 var(--va-border-soft);
+    overflow: hidden;
+    transition: width var(--va-transition-med), flex-basis var(--va-transition-med);
+}
+
+.va-rail-head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 13px 16px 9px;
+}
+
+.va-rail-title {
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: -0.005em;
+    color: var(--va-navy);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.va-rail-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+.va-rail-section {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+}
+
+.va-rail-group {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 0 8px 8px;
+}
+
+.va-rail-label {
+    padding: 8px 18px 6px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--va-ink-300);
+    white-space: nowrap;
+}
+
+.va-rail-foot {
+    flex: 0 0 auto;
+    padding: 12px 14px;
+    border-top: 1px solid var(--va-border-soft);
+}
+
+/* ── Studio's rail, re-dressed into that frame ────────────────────────────
+   It was a 76px navy icon stepper; it is now a 264px light row list, so the left
+   edge of the app does not change identity between tabs. The markup and every
+   pattern-matching id are untouched (studio/page/authoring/chrome.py). */
+
+.va-rail.qs-mode-rail {
+    padding: 0;
+    gap: 0;
+    align-items: stretch;
+    height: 100%;
+    position: static;
+    background: var(--va-rail-bg);
+    border-right: none;
+}
+
+.qs-mode-rail .qs-mode-list {
+    flex-direction: column;
+    gap: 2px;
+    padding: 0;
+}
+
+/* v3 drew a vertical thread between the icon tiles; a row list does not need it. */
+.qs-mode-rail .qs-mode-list::before {
+    display: none;
+}
+
+.qs-mode-rail .qs-mode-btn {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 11px;
+    width: 100%;
+    padding: 7px 10px;
+    border-radius: 10px;
+    background: transparent;
+    box-shadow: none;
+    color: var(--va-ink-600);
+    text-align: left;
+    transition: background var(--va-transition-fast), color var(--va-transition-fast);
+}
+
+.qs-mode-rail .qs-mode-btn:hover {
+    background: rgba(11, 75, 255, 0.06);
+    color: var(--va-ink-900);
+}
+
+.qs-mode-rail .qs-mode-btn.active {
+    background: var(--va-blue-soft);
+    color: var(--va-navy);
+    box-shadow: none;
+}
+
+.qs-mode-rail .qs-mode-tile {
+    position: relative;
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    display: grid;
+    place-items: center;
+    background: var(--va-surface-0);
+    box-shadow: inset 0 0 0 1px var(--va-border-mid);
+    color: var(--va-ink-500);
+    transform: none;
+}
+
+.qs-mode-rail .qs-mode-btn:hover .qs-mode-tile {
+    box-shadow: inset 0 0 0 1px var(--va-border-mid);
+    transform: none;
+}
+
+.qs-mode-rail .qs-mode-btn.active .qs-mode-tile {
+    background: var(--va-grad-cta);
+    color: #fff;
+    box-shadow: 0 4px 12px -3px rgba(11, 75, 255, 0.5);
+}
+
+.qs-mode-rail .qs-mode-btn i {
+    font-size: 14px;
+}
+
+.qs-mode-rail .qs-step-num {
+    top: -5px;
+    right: -5px;
+    background: var(--va-surface-0);
+    color: var(--va-ink-400);
+    box-shadow: inset 0 0 0 1px var(--va-border-mid);
+}
+
+.qs-mode-rail .qs-mode-btn.active .qs-step-num {
+    background: var(--va-navy);
+    color: #fff;
+    box-shadow: none;
+}
+
+.qs-mode-rail .qs-mode-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 1px;
+}
+
+.qs-mode-rail .qs-mode-label {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0;
+    color: inherit;
+}
+
+.qs-mode-rail .qs-mode-hint {
+    font-size: 10.5px;
+    font-weight: 500;
+    color: var(--va-ink-400);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* The page count closes the rail, the way the chat rail's list does. */
+.qs-mode-rail .qs-rail-count {
+    margin-top: auto;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 12px 18px;
+    border-top: 1px solid var(--va-border-soft);
+    text-align: left;
+}
+
+.qs-mode-rail .qs-rail-count-num {
+    font-size: 17px;
+    font-weight: 800;
+    color: var(--va-navy);
+}
+
+.qs-mode-rail .qs-rail-count-lbl {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--va-ink-400);
+}
+
+/* Canvas mode painted its top bar navy, back when it was the topmost bar on the
+   page. Under the app navbar that stacked two navy bands; the mode bar goes light
+   so there is one dark band in the product, and it is the navbar. */
+.qs-root.mode-canvas .qs-topbar {
+    color: var(--va-ink-800);
+    background: var(--va-surface-0);
+    border-bottom: 1px solid var(--va-border-soft);
+}
+
+.qs-root.mode-canvas .qs-deck-name { color: var(--va-navy); }
+.qs-root.mode-canvas .qs-deck-period { color: var(--va-ink-500); opacity: 1; }
+
+.qs-root.mode-canvas .qs-template-chip,
+.qs-root.mode-canvas .qs-autosave {
+    color: var(--va-ink-500);
+    border-color: var(--va-border-soft);
+    border-radius: var(--va-radius-pill);
+}
+
+.qs-root.mode-canvas .qs-btn-ghost {
+    color: var(--va-ink-700);
+    border-color: var(--va-border-mid);
+    border-radius: 9px;
+}
+
+/* ── the Chatbot's rail in the same frame ─────────────────────────────────── */
+
+.va-rail.app-sidebar {
+    background: var(--va-rail-bg);
+    border-right: none;
+}
+
+.va-rail.app-sidebar .sidebar-top {
+    padding: 0 8px 8px;
+}
+
+.va-rail.app-sidebar .conversation-list {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.va-rail.app-sidebar-collapsed {
+    flex-basis: var(--va-rail-w-collapsed);
+    width: var(--va-rail-w-collapsed);
+}
+
+.va-rail.app-sidebar-collapsed .va-rail-title,
+.va-rail.app-sidebar-collapsed .va-rail-label {
+    display: none;
+}
+
+.va-rail.app-sidebar-collapsed .va-rail-head {
+    justify-content: center;
+    padding: 13px 8px 9px;
+}
+
+/* One active row, one look. The Chatbot's rail used a grey pill plus a navy
+   accent bar; Studio's used a blue-soft pill. Two treatments for the same state
+   in the same rail is exactly the seam this merge is meant to remove. */
+.va-rail .sidebar-nav-active {
+    background: var(--va-blue-soft);
+    color: var(--va-navy) !important;
+}
+
+.va-rail .sidebar-nav-active::before {
+    display: none;
+}
+
+.va-rail .sidebar-nav-active .bi {
+    color: var(--va-blue) !important;
+}
+
+/* ── the not-yet-built workspaces (Recap, MoM) ────────────────────────────── */
+
+.va-rail-step {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 7px 10px;
+    border-radius: 10px;
+    color: var(--va-ink-400);
+}
+
+.va-rail-step-num {
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    display: grid;
+    place-items: center;
+    font-size: 12px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--va-ink-400);
+    background: var(--va-surface-0);
+    box-shadow: inset 0 0 0 1px var(--va-border-soft);
+}
+
+.va-rail-step-label {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.va-empty-host {
+    /* .main-container is a flex row, so the host has to claim the row before it
+       can centre anything inside it. */
+    flex: 1 1 auto;
+    width: 100%;
+    height: 100%;
+    display: grid;
+    place-items: center;
+    padding: 32px;
+    overflow-y: auto;
+}
+
+.va-empty-card {
+    max-width: 560px;
+    padding: 34px 36px 30px;
+    border-radius: var(--va-radius-lg);
+    background: var(--va-surface-0);
+    box-shadow: 0 0 0 1px var(--va-border-soft), var(--va-shadow-md);
+}
+
+.va-empty-icon {
+    width: 46px;
+    height: 46px;
+    border-radius: 14px;
+    display: grid;
+    place-items: center;
+    font-size: 20px;
+    color: var(--va-blue);
+    background: var(--va-blue-soft);
+}
+
+.va-empty-eyebrow {
+    margin-top: 18px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--va-blue);
+}
+
+.va-empty-title {
+    margin: 5px 0 0;
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: -0.022em;
+    color: var(--va-navy);
+}
+
+.va-empty-blurb {
+    margin: 10px 0 0;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--va-ink-600);
+}
+
+.va-empty-list {
+    margin: 16px 0 0;
+    padding: 16px 0 0 18px;
+    border-top: 1px solid var(--va-border-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--va-ink-500);
+}
+
+/* ── the login gate, now covering all four workspaces ─────────────────────── */
+
+/* The page itself no longer scrolls (panes do), so the sign-in card has to own
+   its own overflow or a short viewport clips it with no way to reach the button. */
+.login-screen {
+    height: 100vh;
+    overflow-y: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .va-tab,
+    .va-rail,
+    .qs-mode-rail .qs-mode-btn,
+    .va-logout-btn { transition: none; }
+}

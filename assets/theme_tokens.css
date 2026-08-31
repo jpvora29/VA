@@ -62,4 +62,14 @@
     /* ── primary action (one CTA look everywhere) ── */
     --va-grad-cta: linear-gradient(135deg, var(--va-blue) 0%, #0838c9 55%, #001f52 140%);
     --va-focus-ring: 0 0 0 3px rgba(11, 75, 255, 0.18);
+
+    /* ── app shell geometry (assets/va_shell.css) ──────────────────────────
+       ONE navbar sits above every workspace, so nothing may assume it owns the
+       viewport: a pane is `--va-shell-h` tall, never `100vh`. Both left rails
+       are `--va-rail-w` wide so the content edge does not jump between tabs. */
+    --va-navbar-h: 56px;
+    --va-shell-h: calc(100vh - var(--va-navbar-h));
+    --va-rail-w: 264px;
+    --va-rail-w-collapsed: 64px;
+    --va-rail-bg: linear-gradient(180deg, #ffffff 0%, #f7f9fd 100%);
 }

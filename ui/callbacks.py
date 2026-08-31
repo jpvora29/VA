@@ -32,7 +32,6 @@ import dash_bootstrap_components as dbc
 from dash.development.base_component import Component
 
 from ui.components.chatbot import (
-    chatbot_page,
     clarify_card,
     clarify_questions_of,
     followup_suggestions,
@@ -40,9 +39,7 @@ from ui.components.chatbot import (
     user_message,
     chart_block,
     welcome_hero,
-    pitch_builder_drawer,
     boardroom_mode_cue,
-    custom_peers_modal,
     custom_peers_cue,
 )
 
@@ -52,18 +49,17 @@ from ui.components.chatbot import (
 from ui.boardroom.figures import figures_for_specs as boardroom_figures_for_specs
 from ui.boardroom.render import render_document as render_boardroom_document
 from ui.boardroom.builder import build_document_from_digest as build_boardroom_document
-from ui.boardroom.editor import all_modals as boardroom_modals
 from ui.boardroom import callbacks as boardroom_callbacks  # noqa: F401  (registers callbacks)
 
 # Decision Board package. Importing `decision_callbacks` registers its CRUD +
 # view-router callbacks (side effect). Separate from chat/agent memory by design.
-from ui.decisions.render import decision_board_view, decision_modals
 from ui.decisions import callbacks as decision_callbacks  # noqa: F401  (registers callbacks)
-from ui.components.navbar import build_navbar
+from ui.shell.layout import app_shell
+from ui.shell.tabs import resolve_tab
 from ui.components.sidebar import (
     login_screen,
-    app_sidebar,
     conversation_list_children,
+    sidebar_class,
 )
 from ui.draft_text import draft_text
 from core.store.users import get_or_create_user
@@ -1013,60 +1009,23 @@ def _current_user(user_store: dict[str, Any] | None) -> tuple[Optional[int], str
     return uid, (user_store.get("username") or "")
 
 
-def _app_shell(user_id: int, username: str) -> Component:
-    """Full post-login layout: navbar + sidebar + chat + pitch drawer."""
-    conversations = list_conversations(user_id)
-    starters = generate_starter_questions(user_id)
-    return html.Div(
-        [
-            build_navbar(),
-            html.Div(
-                [
-                    app_sidebar(conversations, username, collapsed=False),
-                    html.Div(
-                        html.Div(
-                            [
-                                # Two panes share main-content; the view-router
-                                # callback toggles visibility (chat keeps its DOM
-                                # + stores instead of being torn down on switch).
-                                html.Div(
-                                    chatbot_page(username, starters),
-                                    id="view-chat",
-                                    className="view-pane",
-                                ),
-                                html.Div(
-                                    decision_board_view(),
-                                    id="view-board",
-                                    className="view-pane view-hidden",
-                                ),
-                            ],
-                            id="main-content",
-                            className="main-content",
-                        ),
-                        className="main-container",
-                    ),
-                ],
-                className="app-body",
-            ),
-            pitch_builder_drawer(),
-            custom_peers_modal(),
-            boardroom_modals(),
-            decision_modals(),
-        ],
-        className="app-shell",
-    )
-
-
 @callback(
     Output("app-root", "children"),
     Input("user-store", "data"),
+    State("active-tab", "data"),
 )
-def render_app_root(user_store: dict[str, Any] | None) -> Component:
-    """Login gate: show the sign-in screen until a username is chosen."""
+def render_app_root(
+    user_store: dict[str, Any] | None, active_tab: str | None
+) -> Component:
+    """Login gate: one sign-in covers all four workspaces.
+
+    The shell itself lives in ``ui.shell`` — this callback only decides between the
+    sign-in card and the signed-in application.
+    """
     user_id, username = _current_user(user_store)
     if user_id is None:
         return login_screen()
-    return _app_shell(user_id, username)
+    return app_shell(user_id, username, resolve_tab(active_tab))
 
 
 @callback(
@@ -1220,27 +1179,14 @@ clientside_callback(
 )
 
 clientside_callback(
-    """
-    function(collapsed) {
-        return collapsed ? 'app-sidebar app-sidebar-collapsed' : 'app-sidebar';
-    }
+    f"""
+    function(collapsed) {{
+        return collapsed ? '{sidebar_class(True)}' : '{sidebar_class(False)}';
+    }}
     """,
     Output("app-sidebar", "className"),
     Input("sidebar-collapsed", "data"),
 )
-
-
-# 1b. -------------------------- RENDER PAGE (legacy nav link) ---------------------------------------
-
-
-@callback(
-    Output("nav-chatbot", "active"),
-    Input("nav-chatbot", "n_clicks"),
-    prevent_initial_call=True,
-)
-def render_page(chatbot_clicks: int) -> bool:
-    # The single nav item stays active; the chat page is mounted by the app shell.
-    return True
 
 
 # 2. -------------------------- TRIGGER WOKFLOW + CHAT-STORE UPDATION ---------------------------------------

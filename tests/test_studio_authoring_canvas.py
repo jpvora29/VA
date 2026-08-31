@@ -462,7 +462,11 @@ def test_canvas_mode_contains_scrolling_to_inner_panels():
     ).read_text(encoding="utf-8")
 
     assert ".qs-root.mode-canvas {" in css
-    assert "height: 100vh;" in css
+    # The frame is a FIXED height so the panels inside it scroll instead of the page.
+    # Since Studio became a tab under the app navbar it is the shell height, not the
+    # viewport: `--va-shell-h` is `100vh` minus the navbar (assets/theme_tokens.css).
+    assert "height: var(--va-shell-h);" in css
+    assert "100vh" not in css, "Studio no longer owns the viewport"
     assert ".qs-root.mode-canvas .qs-canvas-viewport" in css
     viewport_rule = css.split(
         ".qs-root.mode-canvas .qs-canvas-viewport", 1

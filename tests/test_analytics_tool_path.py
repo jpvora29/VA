@@ -443,3 +443,134 @@ def test_a_previous_turn_cannot_misroute_the_next_one(engine):
         carried_over, flow="gpr", runner=runner_with([]), engine=engine
     )
     assert analytics_covered({**carried_over, **uncovered}, "gpr") is False
+
+
+# ── the latest-year default ─────────────────────────────────────────────────
+#
+# The flows' timeframe skills have always said: when the query names no period,
+# answer for the latest year, never an all-years aggregate. `turn_scope` only reads
+# a literal four-digit year out of the plan, so before this a blank timeframe — and
+# a relative one like "latest year" — silently summed every year in the book.
+
+
+def _scope_year(engine, question, timeframe=""):
+    """The Year the scope ends up pinned to for a question, or None if unpinned."""
+    from core.agents.common.analytics_tools import _pin_latest_year
+    from core.analytics.tools import turn_scope
+
+    scope = turn_scope(
+        "gpr",
+        resolved_filters={"Carrier_Group": ["ZURICH GROUP"]},
+        timeframe=timeframe,
+    )
+    return _pin_latest_year(
+        "gpr", scope, user_query=question, engine=engine
+    ).filters.get("Year")
+
+
+def test_a_question_naming_no_period_defaults_to_the_latest_year(engine):
+    assert _scope_year(engine, "What is Zurich's premium in Canada?") == 2024
+
+
+def test_a_relative_latest_timeframe_pins_the_latest_year(engine):
+    """The planner writing "latest year" used to leave the scope wide open, because
+    `years_in` finds no digits in it — the worst case, since the planner got it right."""
+    assert _scope_year(engine, "Zurich premium latest year", "latest year") == 2024
+    assert _scope_year(engine, "Zurich premium, most recent", "most recent") == 2024
+
+
+def test_an_explicit_year_is_never_overridden(engine):
+    assert _scope_year(engine, "Zurich premium in 2023", "2023") == 2023
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Zurich premium YoY",
+        "premium growth for Zurich",
+        "Zurich premium trend across years",
+        "Zurich premium last year",
+        "rolling 12 months for Zurich",
+        "Zurich premium in Q2",
+    ],
+)
+def test_a_multi_period_question_is_left_unpinned(engine, question):
+    """Pinning one year would break every one of these: they need more than one."""
+    assert _scope_year(engine, question) is None
+
+
+def test_the_default_reads_the_data_not_a_hard_coded_year(engine):
+    """Load one more year and the default follows it — no list to keep in sync."""
+    with engine.begin() as conn:
+        conn.execute(
+            text('INSERT INTO GPR (Carrier_Group, Country, Product_Line, Year, Premium) '
+                 'VALUES (:cg, :co, :pl, :yr, :pr)'),
+            dict(cg="ZURICH GROUP", co="Canada", pl="Property", yr=2025, pr=10.0),
+        )
+    assert _scope_year(engine, "What is Zurich's premium in Canada?") == 2025
+
+
+def test_the_default_respects_the_rest_of_the_scope(engine):
+    """A carrier with no rows has no latest year, so nothing is pinned rather than
+    a year borrowed from somebody else's book."""
+    from core.agents.common.analytics_tools import _pin_latest_year
+    from core.analytics.tools import TurnScope
+
+    scope = TurnScope(filters={"Carrier_Group": "NOBODY"})
+    pinned = _pin_latest_year("gpr", scope, user_query="premium", engine=engine)
+    assert "Year" not in pinned.filters
+
+
+def test_the_answer_is_one_year_not_every_year(engine):
+    """The end of the bug: a bare question must not fold 2023 and 2024 together."""
+    runner = runner_with([{"name": "compute_breakdown", "args": {"metric": "premium"}}])
+    update = run_analytics_tools(
+        state(question="What is Zurich's premium in Canada?",
+              gpr_reasoning=json.dumps({"metric": "premium", "filters": {
+                  "Carrier_Group": "ZURICH GROUP", "Country": "Canada"}, "timeframe": ""})),
+        flow="gpr",
+        runner=runner,
+        engine=engine,
+    )
+    rows = update["gpr_query_result"]
+    total = sum(float(r[c]) for r in rows for c in r if str(c).lower() == "premium")
+    only_2024 = sql_value(
+        engine,
+        'SELECT SUM(Premium) FROM GPR WHERE Carrier_Group = :cg AND Country = :co '
+        'AND Year = 2024',
+        cg="ZURICH GROUP", co="Canada",
+    )
+    assert total == pytest.approx(only_2024)      # 200.0, not 300.0
+
+
+def test_the_turn_states_the_year_it_defaulted_to(engine):
+    """The timeframe skill requires the answer to name the year it fell back to. A
+    silent default is worse than none — the reader cannot tell 2024 from all-time."""
+    runner = runner_with([{"name": "compute_breakdown", "args": {"metric": "premium"}}])
+    update = run_analytics_tools(
+        state(question="What is Zurich's premium in Canada?",
+              gpr_reasoning=json.dumps({"metric": "premium", "filters": {
+                  "Carrier_Group": "ZURICH GROUP", "Country": "Canada"}, "timeframe": ""})),
+        flow="gpr",
+        runner=runner,
+        engine=engine,
+    )
+    # The plan the writer receives now carries the resolved year.
+    assert json.loads(update["gpr_reasoning"])["timeframe"] == "2024"
+    assert update["gpr_analytics"]["scope"]["Year"] == 2024
+    # And the displayed provenance shows the scope the numbers were computed under.
+    assert "'Year': 2024" in update["gpr_sql_query"]
+
+
+def test_an_explicitly_dated_turn_leaves_the_plan_alone(engine):
+    """Nothing was defaulted, so nothing is rewritten."""
+    runner = runner_with([{"name": "compute_breakdown", "args": {"metric": "premium"}}])
+    plan = json.dumps({"metric": "premium", "filters": {
+        "Carrier_Group": "ZURICH GROUP", "Country": "Canada"}, "timeframe": "2023"})
+    update = run_analytics_tools(
+        state(question="What is Zurich's premium in Canada in 2023?", gpr_reasoning=plan),
+        flow="gpr",
+        runner=runner,
+        engine=engine,
+    )
+    assert "gpr_reasoning" not in update

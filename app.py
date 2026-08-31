@@ -1,70 +1,80 @@
-# Load environment (LOG_LEVEL, etc.) before any module configures logging at import time.
+"""ICG Virtual Analyst — the single application.
+
+Four workspaces behind one navbar: **Studio** (build a QBR deck), **Chatbot** (ask the
+analyst), **Recap** and **MoM**. They used to be two Dash apps on two ports with two
+shells; they are now one app, one sign-in, one left rail and one theme.
+
+The wiring is all this file does:
+
+    stores + shell   ui.shell.layout.root_layout
+    chat callbacks   ui.callbacks           (registered by import, via @callback)
+    shell callbacks  ui.shell.register_router
+    studio callbacks studio.authoring.register_*(app)
+
+Everything else lives in the package that owns it.
+
+    python app.py   →   http://localhost:8080
+"""
+# Load environment (LOG_LEVEL, DB_PATH, …) before any module configures logging or
+# builds a database engine at import time — ``studio.authoring.config`` does exactly
+# that, and without .env applied first it silently falls back to the seed DB.
 from dotenv import load_dotenv
 
 load_dotenv()
 
 import dash
-from dash import html, dcc, Input, Output, State, ctx, callback_context, ALL, callback
 import dash_bootstrap_components as dbc
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+
+from studio.authoring.config import ASSETS
 
 app = dash.Dash(
     __name__,
+    assets_folder=ASSETS,
     external_stylesheets=[
         dbc.themes.BOOTSTRAP,
         dbc.icons.BOOTSTRAP,
         dbc.icons.FONT_AWESOME,
     ],
     suppress_callback_exceptions=True,
+    title="ICG Virtual Analyst",
 )
 
+from ui.shell.layout import root_layout  # noqa: E402  (after `app`, by Dash convention)
 
-app.layout = html.Div(
-    [
-        # ── Global, persistent stores ───────────────────────────────────────
-        # user-store uses *session* storage: it survives a page refresh within the
-        # same browser tab, but clears when the tab/window is closed — so every
-        # fresh launch lands on the login page instead of silently auto-signing-in.
-        dcc.Store(id="user-store", storage_type="session"),
-        dcc.Store(id="active-conversation", storage_type="local"),
-        dcc.Store(id="sidebar-collapsed", storage_type="local", data=False),
-        dcc.Store(id="filter-store", storage_type="session"),
-        dcc.Store(id="pitch-builder-open", data=False),
-        dcc.Store(id="pitch-builder-store", data={}),
-        dcc.Store(id="pitch-options-cache", data={}, storage_type="session"),
-        # Boardroom Mode toggle: when on, the next answer renders as an inline
-        # dashboard card instead of plain commentary. Memory storage (not session)
-        # so every fresh launch starts in normal mode — the user opts in per visit.
-        dcc.Store(id="boardroom-mode-store", data=False),
-        # Editable Boardroom builder state.
-        dcc.Store(id="boardroom-edit-mode", data=False),
-        dcc.Store(id="boardroom-edit-target", data=None),
-        dcc.Store(id="boardroom-add-target", data=None),
-        # Remembers each boardroom card's current page so edits don't jump to page 0.
-        dcc.Store(id="boardroom-active-page", data={}),
-        # Drag-and-drop drop events from assets/boardroom_dnd.js (set_props).
-        dcc.Store(id="bm-dnd", data=None),
-        dcc.Store(id="custom-peers-open", data=False),
-        # Decision Board: which content pane is showing (chat | board), plus the
-        # currently-open detail / editor target and a counter bumped after any
-        # decision mutation to force the board to repaint.
-        dcc.Store(id="active-view", data="chat"),
-        dcc.Store(id="decision-detail-target", data=None),
-        dcc.Store(id="decision-edit-target", data=None),
-        dcc.Store(id="decisions-version", data=0),
-        dcc.Download(id="download-pitch-report"),
-        dcc.Download(id="boardroom-download"),
-        # Either the login screen or the full app shell (navbar + sidebar +
-        # chat + pitch drawer), chosen by `render_app_root` off `user-store`.
-        html.Div(id="app-root"),
-    ]
-)
+app.layout = root_layout()
 
-from ui.callbacks import *
+# Chat + boardroom + decisions register themselves through Dash's global `@callback`
+# registry, which is drained when the server is set up — so the import order here does
+# not matter, only that every module is imported before `run`.
+from ui import callbacks as chat_callbacks  # noqa: F401,E402  (registers callbacks)
+from ui.shell.router import register_router  # noqa: E402
+from studio.authoring.data import register_data  # noqa: E402
+from studio.authoring.editing import register_editing  # noqa: E402
+from studio.authoring.export import register_export  # noqa: E402
+from studio.authoring.navigation import register_navigation  # noqa: E402
+from studio.authoring.setup import register_setup  # noqa: E402
+
+register_router(app)       # move between the four workspaces
+register_navigation(app)   # Studio: modes, slides, tabs, library panels
+register_data(app)         # Studio: upload datasets, map columns, saved datasets
+register_setup(app)        # Studio: Generate the deck, live scope preview
+register_editing(app)      # Studio: edit fields, pages, widgets, colors on the canvas
+register_export(app)       # Studio: fill/assemble the template and download the .pptx
+
 
 if __name__ == "__main__":
-    # threaded=True so the poll callbacks keep being served while a streaming
-    # chat turn runs in its own daemon thread (see ui/jobs.py).
-    app.run(debug=True, port=8080, dev_tools_hot_reload=False, threaded=True)
+    import os
+
+    # Dual-stack bind (IPv6 + IPv4): on Windows "localhost" resolves to ::1 first, and
+    # an IPv4-only socket makes every callback pay for a failed ::1 attempt. threaded
+    # is on so the poll callbacks keep being served while a streaming chat turn runs in
+    # its own daemon thread (ui/jobs.py). Hot reload stays off — a reload mid-Generate
+    # used to reset the view to Setup so the finished deck never showed.
+    from studio.serve import run_app
+
+    run_app(
+        app,
+        port=int(os.environ.get("PORT", "8080")),
+        debug=True,
+        dev_tools_hot_reload=False,
+    )

@@ -27,12 +27,16 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple
 
+from core.analytics.library import get_latest_year
 from core.analytics.orchestrator import AnalyticsOrchestrator
+from core.analytics.sql import flow_spec
+from core.analytics.timeframe import names_a_timeframe
 from core.analytics.tools import (
     GroundedCall,
+    TurnScope,
     ValueMatcher,
     catalog_text,
     facts_digest,
@@ -41,7 +45,7 @@ from core.analytics.tools import (
     tool_schemas,
     turn_scope,
 )
-from core.analytics.types import AnalyticsFact
+from core.analytics.types import AnalyticsFact, PrimitiveArgs
 from core.observability import log_event
 from logger import get_logger
 
@@ -225,6 +229,10 @@ class AnalyticsTurn:
     scope: Mapping[str, Any] = field(default_factory=dict)
     rejected: Tuple[str, ...] = ()
     skipped: Tuple[str, ...] = ()
+    # Set when the turn named no period and the scope fell back to the latest year.
+    # The flows' timeframe skills require the answer to SAY which year it defaulted
+    # to, so this has to travel to the writer rather than stay a private decision.
+    defaulted_year: Optional[int] = None
 
     @property
     def covered(self) -> bool:
@@ -293,6 +301,13 @@ class AnalyticsToolRunner:
             timeframe=str(plan.get("timeframe") or ""),
             matcher=self._matcher,
         )
+        year_column = flow_spec(flow).date_columns.get("year")
+        before = scope.filters.get(year_column) if year_column else None
+        scope = _pin_latest_year(
+            flow, scope, user_query=user_query, engine=engine
+        )
+        after = scope.filters.get(year_column) if year_column else None
+        defaulted_year = after if before is None and after is not None else None
         if scope.blocked:
             # The turn named something we cannot find in the data. Computing a
             # wider answer would be confidently wrong — hand it to the SQL path.
@@ -344,7 +359,67 @@ class AnalyticsToolRunner:
             scope=scope.filters,
             rejected=rejected,
             skipped=tuple(evidence.skipped),
+            defaulted_year=defaulted_year,
         )
+
+
+def _plan_stating_timeframe(plan_json: str, year: int) -> str:
+    """The plan with its timeframe set to the year the scope actually used.
+
+    The writers read the plan as `query_plan`, and the timeframe skills require the
+    answer to say which year it defaulted to ("for 2025, the latest available year").
+    A default the reader cannot see is worse than no default, so the resolved year is
+    written back into the field the planner would itself have filled.
+
+    Only ever fills a blank or relative timeframe — an explicit one was not defaulted.
+    """
+    try:
+        plan = json.loads(plan_json or "{}")
+    except (TypeError, ValueError):
+        plan = {}
+    if not isinstance(plan, dict):
+        return plan_json
+    plan["timeframe"] = str(year)
+    return json.dumps(plan)
+
+
+def _pin_latest_year(
+    flow: str,
+    scope: TurnScope,
+    *,
+    user_query: str,
+    engine: Optional[Any] = None,
+) -> TurnScope:
+    """Default the scope to the latest year in the data when nothing named a period.
+
+    Without this a bare "what is Zurich's premium in Canada?" sums EVERY year in the
+    book into one number. The flows' timeframe skills have always stated the rule —
+    no time reference means the latest year, never an all-years aggregate — but the
+    tool path had no way to apply it: `turn_scope` reads a literal four-digit year out
+    of the plan, so a blank timeframe AND a relative one ("latest year", "most
+    recent") both left the scope unpinned.
+
+    The year is read from the data via `get_latest_year`, not from a hard-coded list,
+    so it stays correct as the warehouse loads forward. A turn that DOES name a
+    timeframe — an explicit year, a quarter, or a multi-period term like YoY or trend
+    — is left exactly as it was: those need more than one year, and pinning one would
+    break them.
+    """
+    spec = flow_spec(flow)
+    year_column = spec.date_columns.get("year")
+    if not year_column or year_column in scope.filters:
+        return scope
+    if names_a_timeframe(user_query):
+        return scope
+    facts = get_latest_year(
+        PrimitiveArgs(flow=flow, metric="", group_by=(), filters=dict(scope.filters)),
+        engine=engine,
+    )
+    if not facts:
+        return scope
+    year = int(facts[0].value)
+    logger.info("analytics scope defaulted to latest year %s (%s)", year, flow)
+    return replace(scope, filters={**scope.filters, year_column: year})
 
 
 def _parse_plan(plan_json: str) -> Dict[str, Any]:
@@ -474,7 +549,7 @@ def run_analytics_tools(
     if not turn.covered:
         return _uncovered(flow)
 
-    return {
+    update = {
         keys.result: turn.rows,
         keys.error: False,
         keys.overflow: turn.overflow,
@@ -485,6 +560,13 @@ def run_analytics_tools(
             "facts": facts_digest(turn.facts),
         },
     }
+    if turn.defaulted_year is not None:
+        # Safe on a covered turn: the SQL nodes that also read this key are the
+        # fallback path, which the router skips whenever the library answered.
+        update[keys.reasoning] = _plan_stating_timeframe(
+            state.get(keys.reasoning) or "", turn.defaulted_year
+        )
+    return update
 
 
 def analytics_covered(state: Mapping[str, Any], flow: str) -> bool:

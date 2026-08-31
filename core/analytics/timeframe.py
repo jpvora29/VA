@@ -62,22 +62,36 @@ def _latest_year(valid_year_quarter: Iterable) -> str:
     return str(max(years)) if years else ""
 
 
+def names_a_timeframe(query: str, *, timeframe_hint: str = "") -> bool:
+    """True when the turn already says WHICH periods it wants.
+
+    The guard behind the default-to-latest-year rule, shared by both paths that
+    apply it (the planner's backstop below, and the analytics-tool scope). It is
+    True when any of these hold, so an explicit, multi-period or relative timeframe
+    is never overridden by a single-year default:
+      - the context filler already resolved a relative term (`timeframe_hint` set);
+      - the query names an explicit year or quarter;
+      - the query carries a multi-period or relative time term (YoY, trend, TTM,
+        "last year", "across years", …).
+
+    Note "latest"/"most recent" are deliberately NOT time references here: they ask
+    for exactly the one year this rule would pick anyway.
+    """
+    if timeframe_hint and timeframe_hint.strip():
+        return True
+    text = query or ""
+    return bool(
+        _EXPLICIT_YEAR.search(text)
+        or _QUARTER.search(text)
+        or _TIME_REFERENCE.search(text)
+    )
+
+
 def resolve_default_timeframe(
     valid_year_quarter: Iterable, query: str, *, timeframe_hint: str = ""
 ) -> str:
-    """Return the latest year to default to, or "" to defer to the planner.
-
-    Returns "" (no auto-default) when ANY of these hold, so explicit / multi-period
-    / relative timeframes are never overridden:
-      - the context filler already resolved a relative term (`timeframe_hint` set);
-      - the query names an explicit year or quarter;
-      - the query carries a multi-period or relative time term.
-    Otherwise returns the latest available year (e.g. "2025").
-    """
-    if timeframe_hint and timeframe_hint.strip():
-        return ""
-    text = query or ""
-    if _EXPLICIT_YEAR.search(text) or _QUARTER.search(text) or _TIME_REFERENCE.search(text):
+    """Return the latest year to default to, or "" to defer to the planner."""
+    if names_a_timeframe(query, timeframe_hint=timeframe_hint):
         return ""
     return _latest_year(valid_year_quarter)
 

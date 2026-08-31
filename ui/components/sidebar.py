@@ -6,6 +6,23 @@ from typing import Any
 from dash import html, dcc
 import dash_bootstrap_components as dbc
 
+from ui.shell.rail import RAIL_CLASS, rail_frame, rail_section
+
+
+# What the chat rail adds on top of the shared rail class, open and collapsed.
+_OPEN = "app-sidebar"
+_COLLAPSED = "app-sidebar app-sidebar-collapsed"
+
+
+def sidebar_class(collapsed: bool) -> str:
+    """The chat rail's FULL className, shared class included.
+
+    The collapse toggle is a clientside callback that REPLACES this attribute, so it
+    has to rebuild the whole string. It and the initial render both derive it here,
+    so a rename of the shared rail class cannot break the toggle.
+    """
+    return f"{RAIL_CLASS} {_COLLAPSED if collapsed else _OPEN}"
+
 
 def login_screen() -> html.Div:
     """Centered username-only sign-in card (no passwords by design)."""
@@ -71,32 +88,28 @@ def app_sidebar(
     conversations: list[dict[str, Any]] | None,
     username: str,
     collapsed: bool = False,
-) -> html.Div:
-    """Left rail: New chat, conversation history, and the user footer."""
-    conversations = conversations or []
-    initial = (username or "?").strip()[:1].upper() or "?"
+) -> html.Aside:
+    """The Chatbot's left rail, in the shared ``va-rail`` frame.
 
-    return html.Div(
+    Same frame as Studio's mode rail so the left edge of the app does not change
+    identity when you switch tabs. The signed-in user is NOT here any more — it lives
+    once, in the navbar, because it is the same on every tab.
+    """
+    conversations = conversations or []
+    return rail_frame(
+        "Chatbot",
         [
             html.Div(
-                [
-                    dbc.Button(
-                        [html.I(className="bi bi-pencil-square"), html.Span("New chat")],
-                        id="new-chat-btn",
-                        n_clicks=0,
-                        className="new-chat-btn",
-                    ),
-                    dbc.Button(
-                        html.I(className="bi bi-layout-sidebar"),
-                        id="sidebar-collapse-btn",
-                        n_clicks=0,
-                        className="sidebar-collapse-btn",
-                        title="Collapse sidebar",
-                    ),
-                ],
+                dbc.Button(
+                    [html.I(className="bi bi-pencil-square"), html.Span("New chat")],
+                    id="new-chat-btn",
+                    n_clicks=0,
+                    className="new-chat-btn",
+                ),
                 className="sidebar-top",
             ),
-            html.Div(
+            rail_section(
+                None,
                 [
                     html.Button(
                         [html.I(className="bi bi-chat-left-text"), html.Span("Chats")],
@@ -111,9 +124,8 @@ def app_sidebar(
                         className="sidebar-nav-item",
                     ),
                 ],
-                className="sidebar-nav",
             ),
-            html.Div("Recent", className="sidebar-section-label"),
+            html.Div("Recent", className="va-rail-label"),
             html.Div(
                 (
                     [_conversation_item(c, None) for c in conversations]
@@ -123,23 +135,16 @@ def app_sidebar(
                 id="conversation-list",
                 className="conversation-list",
             ),
-            html.Div(
-                [
-                    html.Div(initial, className="user-avatar"),
-                    html.Span(username, className="user-name"),
-                    dbc.Button(
-                        html.I(className="bi bi-box-arrow-right"),
-                        id="logout-btn",
-                        n_clicks=0,
-                        className="logout-btn",
-                        title="Log out",
-                    ),
-                ],
-                className="sidebar-footer",
-            ),
         ],
+        action=dbc.Button(
+            html.I(className="bi bi-layout-sidebar"),
+            id="sidebar-collapse-btn",
+            n_clicks=0,
+            className="sidebar-collapse-btn",
+            title="Collapse sidebar",
+        ),
+        className=_COLLAPSED if collapsed else _OPEN,
         id="app-sidebar",
-        className="app-sidebar" + (" app-sidebar-collapsed" if collapsed else ""),
     )
 
 

@@ -16,7 +16,7 @@
     --v3-pop-shadow: 0 0 0 1px rgba(13, 27, 62, 0.06), 0 12px 32px -8px rgba(10, 22, 54, 0.18);
     --v3-rail-bg: #050a24;
     --v3-ease: 140ms cubic-bezier(.3, .1, .2, 1);
-    grid-template-columns: 88px minmax(0, 1fr);
+    grid-template-columns: var(--va-rail-w) minmax(0, 1fr);
     background:
         radial-gradient(1100px 420px at 78% -180px, rgba(11, 75, 255, 0.05), transparent 60%),
         var(--v3-canvas);
