@@ -500,6 +500,18 @@ body {
     width: var(--va-rail-w-collapsed);
 }
 
+/* Studio is the one workspace that is NOT a flex row: `.qs-root` is a grid whose
+   first track sizes the rail (assets/studio_authoring.css). Narrowing the rail
+   element alone left the track at full width, so Studio's content never reflowed
+   while every other tab did. The track is the thing to move. */
+.qs-root {
+    transition: grid-template-columns var(--va-transition-med);
+}
+
+.va-rails-collapsed .qs-root {
+    grid-template-columns: var(--va-rail-w-collapsed) minmax(0, 1fr);
+}
+
 .va-rails-collapsed .va-rail-title,
 .va-rails-collapsed .va-rail-label {
     display: none;
@@ -539,6 +551,13 @@ body {
 .va-rails-collapsed .qs-mode-rail .qs-mode-btn i,
 .va-rails-collapsed .conv-item-open .bi {
     font-size: 18px;
+}
+
+/* The step numeral sits OUTSIDE its tile (top/right -5px). At the 2px row gap the
+   stepper uses when expanded, each badge landed on the tile above it — so the
+   collapsed column opens the gap enough to clear the badge on both sides. */
+.va-rails-collapsed .qs-mode-rail .qs-mode-list {
+    gap: 10px;
 }
 
 .va-rails-collapsed .va-rail-step-num {

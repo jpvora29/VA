@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import collections
 import json
+import pathlib
 
 import pytest
 from dash.development.base_component import Component
@@ -164,6 +165,39 @@ def test_the_shell_stylesheet_still_loads_last():
 
     sheets = sorted(f for f in os.listdir("assets") if f.endswith(".css"))
     assert sheets[-1] == "va_shell.css", sheets
+
+
+def test_collapsing_moves_studios_grid_track_not_just_its_rail():
+    """Every other workspace is a flex row, so narrowing the rail element reflows the
+    content for free. Studio is a GRID whose first track sizes the rail — narrowing
+    only the rail left the track at full width and Studio's content never moved."""
+    import re
+
+    css = pathlib.Path("assets/va_shell.css").read_text(encoding="utf-8")
+    rule = re.search(
+        r"\.va-rails-collapsed\s+\.qs-root\s*\{([^}]*)\}", css
+    )
+    assert rule, "no collapsed rule for Studio's grid"
+    assert "grid-template-columns" in rule.group(1)
+    assert "--va-rail-w-collapsed" in rule.group(1)
+
+
+def test_the_collapsed_stepper_clears_its_step_numerals():
+    """Studio's step numeral is positioned OUTSIDE its tile, so the collapsed column
+    needs a row gap wider than that overhang or the badges sit on the tile above."""
+    import re
+
+    css = pathlib.Path("assets/va_shell.css").read_text(encoding="utf-8")
+    overhang = int(
+        re.search(r"\.qs-mode-rail \.qs-step-num \{[^}]*top:\s*-(\d+)px", css).group(1)
+    )
+    gap = int(
+        re.search(
+            r"\.va-rails-collapsed \.qs-mode-rail \.qs-mode-list \{[^}]*gap:\s*(\d+)px",
+            css,
+        ).group(1)
+    )
+    assert gap >= overhang * 2, f"{gap}px gap does not clear a {overhang}px badge each side"
 
 
 def test_a_placeholder_workspace_renders_without_a_backend():
