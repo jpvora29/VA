@@ -8,7 +8,7 @@ The wiring is all this file does:
 
     stores + shell   ui.shell.layout.root_layout
     chat callbacks   ui.callbacks           (registered by import, via @callback)
-    shell callbacks  ui.shell.register_router
+    shell callbacks  ui.shell.router + ui.shell.collapse
     studio callbacks studio.authoring.register_*(app)
 
 Everything else lives in the package that owns it.
@@ -47,6 +47,7 @@ app.layout = root_layout()
 # registry, which is drained when the server is set up — so the import order here does
 # not matter, only that every module is imported before `run`.
 from ui import callbacks as chat_callbacks  # noqa: F401,E402  (registers callbacks)
+from ui.shell.collapse import register_collapse  # noqa: E402
 from ui.shell.router import register_router  # noqa: E402
 from studio.authoring.data import register_data  # noqa: E402
 from studio.authoring.editing import register_editing  # noqa: E402
@@ -55,6 +56,7 @@ from studio.authoring.navigation import register_navigation  # noqa: E402
 from studio.authoring.setup import register_setup  # noqa: E402
 
 register_router(app)       # move between the four workspaces
+register_collapse(app)     # one collapse toggle width for every left rail
 register_navigation(app)   # Studio: modes, slides, tabs, library panels
 register_data(app)         # Studio: upload datasets, map columns, saved datasets
 register_setup(app)        # Studio: Generate the deck, live scope preview

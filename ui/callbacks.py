@@ -56,11 +56,7 @@ from ui.boardroom import callbacks as boardroom_callbacks  # noqa: F401  (regist
 from ui.decisions import callbacks as decision_callbacks  # noqa: F401  (registers callbacks)
 from ui.shell.layout import app_shell
 from ui.shell.tabs import resolve_tab
-from ui.components.sidebar import (
-    login_screen,
-    conversation_list_children,
-    sidebar_class,
-)
+from ui.components.sidebar import login_screen, conversation_list_children
 from ui.draft_text import draft_text
 from core.store.users import get_or_create_user
 from core.store.conversations import (
@@ -1013,9 +1009,12 @@ def _current_user(user_store: dict[str, Any] | None) -> tuple[Optional[int], str
     Output("app-root", "children"),
     Input("user-store", "data"),
     State("active-tab", "data"),
+    State("rail-collapsed", "data"),
 )
 def render_app_root(
-    user_store: dict[str, Any] | None, active_tab: str | None
+    user_store: dict[str, Any] | None,
+    active_tab: str | None,
+    rails_collapsed: Any,
 ) -> Component:
     """Login gate: one sign-in covers all four workspaces.
 
@@ -1025,7 +1024,9 @@ def render_app_root(
     user_id, username = _current_user(user_store)
     if user_id is None:
         return login_screen()
-    return app_shell(user_id, username, resolve_tab(active_tab))
+    return app_shell(
+        user_id, username, resolve_tab(active_tab), bool(rails_collapsed)
+    )
 
 
 @callback(
@@ -1161,32 +1162,8 @@ def delete_conversation_cb(
     return items, no_update, no_update, no_update
 
 
-# 2. -------------------------- SIDEBAR COLLAPSE (clientside) ---------------------------------------
-# Split into two callbacks so the *store* is the single source of truth:
-#   (a) the button click only flips the persisted collapsed flag;
-#   (b) the flag is then reflected onto the sidebar class — on first load *and*
-#       on every toggle. This keeps the rendered width and the class in lock-step
-#       (the old single-callback version desynced: the server always rendered the
-#       rail expanded while the persisted flag said collapsed, so the first click
-#       looked dead and the fixed composer slid under a still-wide sidebar).
-
-clientside_callback(
-    "function(n_clicks, collapsed) { return !collapsed; }",
-    Output("sidebar-collapsed", "data"),
-    Input("sidebar-collapse-btn", "n_clicks"),
-    State("sidebar-collapsed", "data"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    f"""
-    function(collapsed) {{
-        return collapsed ? '{sidebar_class(True)}' : '{sidebar_class(False)}';
-    }}
-    """,
-    Output("app-sidebar", "className"),
-    Input("sidebar-collapsed", "data"),
-)
+# Rail collapse used to live here, chat-only and clientside. It is app-wide now —
+# every workspace's rail shares one width — so it moved to ``ui.shell.collapse``.
 
 
 # 2. -------------------------- TRIGGER WOKFLOW + CHAT-STORE UPDATION ---------------------------------------

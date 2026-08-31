@@ -1,27 +1,15 @@
-"""Login screen and the left, collapsible Claude-style chat sidebar."""
+"""Login screen and the Chatbot's left rail.
+
+The rail is the shared ``va-rail`` frame (``ui.shell.rail``); collapsing is app-wide
+and owned by ``ui.shell.collapse``, so nothing here knows the rail's width."""
 from __future__ import annotations
 
 from typing import Any
 
-from dash import html, dcc
+from dash import html
 import dash_bootstrap_components as dbc
 
-from ui.shell.rail import RAIL_CLASS, rail_frame, rail_section
-
-
-# What the chat rail adds on top of the shared rail class, open and collapsed.
-_OPEN = "app-sidebar"
-_COLLAPSED = "app-sidebar app-sidebar-collapsed"
-
-
-def sidebar_class(collapsed: bool) -> str:
-    """The chat rail's FULL className, shared class included.
-
-    The collapse toggle is a clientside callback that REPLACES this attribute, so it
-    has to rebuild the whole string. It and the initial render both derive it here,
-    so a rename of the shared rail class cannot break the toggle.
-    """
-    return f"{RAIL_CLASS} {_COLLAPSED if collapsed else _OPEN}"
+from ui.shell.rail import rail_frame, rail_section
 
 
 def login_screen() -> html.Div:
@@ -71,6 +59,7 @@ def _conversation_item(conv: dict[str, Any], active_id: str | None) -> html.Div:
                 id={"type": "conv-item", "id": conv_id},
                 n_clicks=0,
                 className="conv-item-open",
+                title=conv["title"],
             ),
             html.Button(
                 html.I(className="bi bi-trash"),
@@ -84,16 +73,12 @@ def _conversation_item(conv: dict[str, Any], active_id: str | None) -> html.Div:
     )
 
 
-def app_sidebar(
-    conversations: list[dict[str, Any]] | None,
-    username: str,
-    collapsed: bool = False,
-) -> html.Aside:
+def app_sidebar(conversations: list[dict[str, Any]] | None, username: str) -> html.Aside:
     """The Chatbot's left rail, in the shared ``va-rail`` frame.
 
-    Same frame as Studio's mode rail so the left edge of the app does not change
-    identity when you switch tabs. The signed-in user is NOT here any more — it lives
-    once, in the navbar, because it is the same on every tab.
+    Same frame as Studio's mode rail, and the same collapse toggle — the width is one
+    app-wide state (``ui.shell.rail``), so this builder does not need to know it. The
+    signed-in user is NOT here any more: it lives once, in the navbar.
     """
     conversations = conversations or []
     return rail_frame(
@@ -105,6 +90,7 @@ def app_sidebar(
                     id="new-chat-btn",
                     n_clicks=0,
                     className="new-chat-btn",
+                    title="New chat",
                 ),
                 className="sidebar-top",
             ),
@@ -116,12 +102,14 @@ def app_sidebar(
                         id="nav-chat-view",
                         n_clicks=0,
                         className="sidebar-nav-item",
+                        title="Chats",
                     ),
                     html.Button(
                         [html.I(className="bi bi-pin-angle"), html.Span("Decision Board")],
                         id="nav-decision-board",
                         n_clicks=0,
                         className="sidebar-nav-item",
+                        title="Decision Board",
                     ),
                 ],
             ),
@@ -136,15 +124,8 @@ def app_sidebar(
                 className="conversation-list",
             ),
         ],
-        action=dbc.Button(
-            html.I(className="bi bi-layout-sidebar"),
-            id="sidebar-collapse-btn",
-            n_clicks=0,
-            className="sidebar-collapse-btn",
-            title="Collapse sidebar",
-        ),
-        className=_COLLAPSED if collapsed else _OPEN,
-        id="app-sidebar",
+        rail_id="chat",
+        className="app-sidebar",
     )
 
 

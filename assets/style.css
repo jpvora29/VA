@@ -2727,10 +2727,6 @@ body {
     transition: width var(--transition-med), flex-basis var(--transition-med);
 }
 
-.app-sidebar-collapsed {
-    flex-basis: 60px;
-    width: 60px;
-}
 
 .sidebar-top {
     display: flex;
@@ -2758,7 +2754,7 @@ body {
     background: var(--surface-2) !important;
 }
 
-.sidebar-collapse-btn {
+.va-rail-toggle {
     flex: 0 0 auto;
     background: transparent !important;
     color: var(--ink-500) !important;
@@ -2767,20 +2763,20 @@ body {
     padding: 8px 10px !important;
 }
 
-.sidebar-collapse-btn:hover {
+.va-rail-toggle:hover {
     background: var(--surface-1) !important;
     color: var(--ink-900) !important;
 }
 
-.app-sidebar-collapsed .new-chat-btn span,
-.app-sidebar-collapsed .sidebar-section-label,
-.app-sidebar-collapsed .conversation-list,
-.app-sidebar-collapsed .user-name,
-.app-sidebar-collapsed .logout-btn {
+.va-rails-collapsed .new-chat-btn span,
+.va-rails-collapsed .sidebar-section-label,
+.va-rails-collapsed .conversation-list,
+.va-rails-collapsed .user-name,
+.va-rails-collapsed .logout-btn {
     display: none;
 }
 
-.app-sidebar-collapsed .sidebar-top {
+.va-rails-collapsed .sidebar-top {
     flex-direction: column;
 }
 
@@ -3490,8 +3486,8 @@ body {
     border-radius: 0 3px 3px 0;
     background: var(--marsh-blue);
 }
-.app-sidebar-collapsed .sidebar-nav-item span { display: none; }
-.app-sidebar-collapsed .sidebar-nav { padding: 4px; }
+.va-rails-collapsed .sidebar-nav-item span { display: none; }
+.va-rails-collapsed .sidebar-nav { padding: 4px; }
 
 /* ── View-router panes ──────────────────────────────────────────────────── */
 .view-pane { height: 100%; }
@@ -4399,33 +4395,33 @@ html, body,
     background: linear-gradient(180deg, #ffffff 0%, #f7f9fd 100%);
     box-shadow: inset -1px 0 0 var(--border-soft);
 }
-.sidebar-collapse-btn {
+.va-rail-toggle {
     transition: background var(--transition-fast), color var(--transition-fast),
         transform var(--transition-fast);
 }
-.sidebar-collapse-btn:hover { transform: scale(1.06); }
+.va-rail-toggle:hover { transform: scale(1.06); }
 
 /* Collapsed rail: center the controls, show icons only, keep a usable toggle. */
-.app-sidebar-collapsed { align-items: stretch; }
-.app-sidebar-collapsed .sidebar-top { gap: 10px; padding: 14px 8px; }
-.app-sidebar-collapsed .new-chat-btn {
+.va-rails-collapsed .va-rail { align-items: stretch; }
+.va-rails-collapsed .sidebar-top { gap: 10px; padding: 14px 8px; }
+.va-rails-collapsed .new-chat-btn {
     justify-content: center;
     padding: 9px 0 !important;
 }
-.app-sidebar-collapsed .sidebar-collapse-btn { width: 100%; }
-.app-sidebar-collapsed .sidebar-nav { padding: 4px 6px; }
-.app-sidebar-collapsed .sidebar-nav-item { justify-content: center; padding: 9px 0; }
-.app-sidebar-collapsed .sidebar-footer { justify-content: center; padding: 12px 6px; }
-.app-sidebar-collapsed .user-avatar { margin: 0 auto; }
+.va-rails-collapsed .va-rail-toggle { width: 100%; }
+.va-rails-collapsed .sidebar-nav { padding: 4px 6px; }
+.va-rails-collapsed .sidebar-nav-item { justify-content: center; padding: 9px 0; }
+.va-rails-collapsed .sidebar-footer { justify-content: center; padding: 12px 6px; }
+.va-rails-collapsed .user-avatar { margin: 0 auto; }
 /* The collapse glyph flips to signal it will expand the rail again. */
-.app-sidebar-collapsed .sidebar-collapse-btn .bi { transform: scaleX(-1); }
+.va-rails-collapsed .va-rail-toggle .bi { transform: scaleX(-1); }
 
 /* Uniform icon buttons in the collapsed rail — the New-chat (edit) glyph used to
    render smaller than the nav icons; normalise every glyph to one size and give
    each control the same square footprint so they read as a tidy icon column. */
-.app-sidebar-collapsed .new-chat-btn,
-.app-sidebar-collapsed .sidebar-collapse-btn,
-.app-sidebar-collapsed .sidebar-nav-item {
+.va-rails-collapsed .new-chat-btn,
+.va-rails-collapsed .va-rail-toggle,
+.va-rails-collapsed .sidebar-nav-item {
     width: 42px !important;
     height: 42px !important;
     margin: 0 auto !important;
@@ -4435,9 +4431,9 @@ html, body,
     justify-content: center;
     border-radius: 12px !important;
 }
-.app-sidebar-collapsed .new-chat-btn .bi,
-.app-sidebar-collapsed .sidebar-collapse-btn .bi,
-.app-sidebar-collapsed .sidebar-nav-item .bi {
+.va-rails-collapsed .new-chat-btn .bi,
+.va-rails-collapsed .va-rail-toggle .bi,
+.va-rails-collapsed .sidebar-nav-item .bi {
     font-size: 18px !important;
     line-height: 1;
 }
@@ -4457,7 +4453,7 @@ html, body,
         height: 100%;
         flex-basis: 248px;
     }
-    .app-sidebar-collapsed { flex-basis: 0; width: 0; border: none; }
+    .va-rails-collapsed .va-rail { flex-basis: 0; width: 0; border: none; }
     .chat-bot-text-area { padding-left: 14px; padding-right: 14px; }
     .message { max-width: 96%; }
     .user-message, .gpt-message { max-width: 92%; }

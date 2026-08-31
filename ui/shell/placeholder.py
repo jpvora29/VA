@@ -14,7 +14,7 @@ from dash import html
 from ui.shell.rail import rail_frame, rail_section
 
 
-def placeholder_rail(title: str, steps: Sequence[str]) -> html.Aside:
+def placeholder_rail(rail_id: str, title: str, steps: Sequence[str]) -> html.Aside:
     """A rail that names the workspace and previews the steps it will have."""
     items = [
         html.Div(
@@ -23,12 +23,14 @@ def placeholder_rail(title: str, steps: Sequence[str]) -> html.Aside:
                 html.Span(step, className="va-rail-step-label"),
             ],
             className="va-rail-step",
+            title=step,          # collapsed, the numeral is all that shows
         )
         for i, step in enumerate(steps, 1)
     ]
     return rail_frame(
         title,
         [rail_section("Planned steps", items)],
+        rail_id=rail_id,
         className="va-rail-placeholder",
     )
 

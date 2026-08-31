@@ -43,7 +43,7 @@ def _chat_pane(user_id: int, username: str) -> Any:
     starters = generate_starter_questions(user_id)
     return html.Div(
         [
-            app_sidebar(conversations, username, collapsed=False),
+            app_sidebar(conversations, username),
             html.Div(
                 html.Div(
                     [

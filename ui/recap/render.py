@@ -9,7 +9,7 @@ STEPS = ("Choose period", "Pick sources", "Draft recap", "Review & send")
 
 
 def recap_rail() -> html.Aside:
-    return placeholder_rail("Recap", STEPS)
+    return placeholder_rail("recap", "Recap", STEPS)
 
 
 def recap_body() -> html.Div:

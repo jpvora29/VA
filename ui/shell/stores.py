@@ -18,8 +18,20 @@ from ui.shell.tabs import DEFAULT_TAB
 
 
 def shell_stores() -> List[Any]:
-    """Which workspace is on screen. Session storage, so a new tab lands on Studio."""
-    return [dcc.Store(id="active-tab", data=DEFAULT_TAB, storage_type="session")]
+    """Which workspace is on screen, and how wide the left rail is."""
+    return [
+        # Session storage, so a new browser tab lands on Studio.
+        dcc.Store(id="active-tab", data=DEFAULT_TAB, storage_type="session"),
+        # ONE rail width for all four workspaces (see ``ui.shell.rail``), collapsed by
+        # default so the app opens as an icon column and the content gets the room.
+        # Local storage: once you widen it, it stays wide on your next visit.
+        dcc.Store(id="rail-collapsed", data=True, storage_type="local"),
+        # Clicks seen on the rail toggles. A pattern-matching Input fires when the set
+        # of matching components changes too, and Studio rebuilds its rail on every
+        # mode change — this is how ``ui.shell.collapse`` tells a press from a remount.
+        # Memory storage: a reload resets every ``n_clicks`` anyway.
+        dcc.Store(id="rail-toggle-clicks", data=0, storage_type="memory"),
+    ]
 
 
 def chat_stores() -> List[Any]:
@@ -30,7 +42,6 @@ def chat_stores() -> List[Any]:
         # fresh launch lands on the login page instead of silently auto-signing-in.
         dcc.Store(id="user-store", storage_type="session"),
         dcc.Store(id="active-conversation", storage_type="local"),
-        dcc.Store(id="sidebar-collapsed", storage_type="local", data=False),
         dcc.Store(id="filter-store", storage_type="session"),
         dcc.Store(id="pitch-builder-open", data=False),
         dcc.Store(id="pitch-builder-store", data={}),

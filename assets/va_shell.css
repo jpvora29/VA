@@ -489,19 +489,85 @@ body {
     min-height: 0;
 }
 
-.va-rail.app-sidebar-collapsed {
+/* ── the collapsed rail — the app's default state ──────────────────────────
+   ONE class on the pane container narrows every workspace's rail at once, which
+   is why these are all descendant rules (see ui/shell/rail.py). Collapsed, a rail
+   is an icon column: every row keeps its glyph and loses its words, and carries a
+   `title` so the words are a hover away. */
+
+.va-rails-collapsed .va-rail {
     flex-basis: var(--va-rail-w-collapsed);
     width: var(--va-rail-w-collapsed);
 }
 
-.va-rail.app-sidebar-collapsed .va-rail-title,
-.va-rail.app-sidebar-collapsed .va-rail-label {
+.va-rails-collapsed .va-rail-title,
+.va-rails-collapsed .va-rail-label {
     display: none;
 }
 
-.va-rail.app-sidebar-collapsed .va-rail-head {
+.va-rails-collapsed .va-rail-head {
     justify-content: center;
     padding: 13px 8px 9px;
+}
+
+.va-rails-collapsed .va-rail-group {
+    padding: 0 6px 8px;
+    align-items: center;
+}
+
+/* One icon footprint for every collapsed row, whichever rail it is in. The Chatbot's
+   controls were already 42px squares (assets/style.css); Studio's stepper tiles and the
+   placeholder numerals match them here so the icon column is the same column on all
+   four tabs. */
+.va-rails-collapsed .qs-mode-rail .qs-mode-btn,
+.va-rails-collapsed .va-rail-step,
+.va-rails-collapsed .conv-item-open {
+    width: 42px;
+    height: 42px;
+    padding: 0;
+    margin: 0 auto;
+    justify-content: center;
+}
+
+.va-rails-collapsed .qs-mode-rail .qs-mode-tile,
+.va-rails-collapsed .va-rail-step-num {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+}
+
+.va-rails-collapsed .qs-mode-rail .qs-mode-btn i,
+.va-rails-collapsed .conv-item-open .bi {
+    font-size: 18px;
+}
+
+.va-rails-collapsed .va-rail-step-num {
+    font-size: 14px;
+}
+
+.va-rails-collapsed .qs-mode-rail .qs-mode-text {
+    display: none;
+}
+
+/* The page count keeps the numeral and drops the word. */
+.va-rails-collapsed .qs-mode-rail .qs-rail-count {
+    justify-content: center;
+    padding: 12px 4px;
+}
+
+.va-rails-collapsed .qs-mode-rail .qs-rail-count-lbl {
+    display: none;
+}
+
+.va-rails-collapsed .va-rail-step-label {
+    display: none;
+}
+
+/* No titles in the chat list, and no delete affordance narrow enough to mis-hit. */
+.va-rails-collapsed .conv-item-title,
+.va-rails-collapsed .conv-item-del,
+.va-rails-collapsed .sidebar-empty {
+    display: none;
 }
 
 /* One active row, one look. The Chatbot's rail used a grey pill plus a navy

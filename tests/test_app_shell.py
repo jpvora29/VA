@@ -22,7 +22,7 @@ from dash.development.base_component import Component
 
 from ui.shell.navbar import build_navbar, tab_class
 from ui.shell.placeholder import placeholder_body, placeholder_rail
-from ui.shell.rail import RAIL_CLASS, rail_frame, rail_section
+from ui.shell.rail import RAIL_CLASS, rail_frame, rail_section, rails_class
 from ui.shell.tabs import DEFAULT_TAB, TABS, pane_class, pane_id, resolve_tab
 
 
@@ -107,17 +107,43 @@ def test_the_navbar_carries_the_one_sign_out_control():
     assert _ids(build_navbar("studio", "Jash")).count("logout-btn") == 1
 
 
-def test_every_rail_wears_the_shared_frame():
-    """Studio's rail, the Chatbot's rail and the placeholders are one component."""
+def _rails():
     from studio.page.authoring.chrome import mode_rail
 
-    rails = [
-        mode_rail("setup", {"total": 12}),
-        placeholder_rail("Recap", ("One", "Two")),
-        rail_frame("Anything", [rail_section("Group", [])]),
-    ]
-    for rail in rails:
+    return {
+        "studio": mode_rail("setup", {"total": 12}),
+        "recap": placeholder_rail("recap", "Recap", ("One", "Two")),
+        "other": rail_frame("Anything", [rail_section("Group", [])], rail_id="other"),
+    }
+
+
+def test_every_rail_wears_the_shared_frame():
+    """Studio's rail, the Chatbot's rail and the placeholders are one component."""
+    for rail in _rails().values():
         assert rail.className.split()[0] == RAIL_CLASS
+
+
+def test_every_rail_carries_its_own_collapse_toggle():
+    """The Chatbot's toggle used to be the only one; every workspace has it now."""
+    for rail_id, rail in _rails().items():
+        toggles = [
+            c.id for c in _walk(rail)
+            if isinstance(getattr(c, "id", None), dict)
+            and c.id.get("type") == "va-rail-toggle"
+        ]
+        assert toggles == [{"type": "va-rail-toggle", "rail": rail_id}]
+
+
+def test_the_rails_collapse_together_and_start_collapsed():
+    """Collapsing is app-wide: one class on the pane container, not per rail — so
+    Studio rebuilding its own rail cannot lose the state, and the left edge does not
+    change width when you switch tabs."""
+    from ui.shell.stores import shell_stores
+
+    assert rails_class(True) == "va-body va-rails-collapsed"
+    assert rails_class(False) == "va-body"
+    store = next(s for s in shell_stores() if s.id == "rail-collapsed")
+    assert store.data is True, "the app opens as an icon column"
 
 
 def test_the_studio_rail_keeps_its_pattern_ids_after_the_restyle():
@@ -237,14 +263,37 @@ def test_no_callback_points_at_a_component_the_app_can_never_render(merged_app, 
     # Chat and boardroom bodies are rendered into `chat-box` by their own callbacks,
     # so restrict the assertion to the ids this integration is responsible for.
     shell_owned = {
-        "active-tab", "app-root", "app-sidebar", "logout-btn", "qs-app",
-        "new-chat-btn", "sidebar-collapse-btn", "nav-chat-view", "nav-decision-board",
+        "active-tab", "rail-collapsed", "va-body", "app-root", "logout-btn", "qs-app",
+        "new-chat-btn", "nav-chat-view", "nav-decision-board",
         "conversation-list", "login-submit", "login-username",
     }
     for key, callback in merged_app.callback_map.items():
         for dep in list(callback["inputs"]) + list(callback["state"]):
             if isinstance(dep["id"], str) and dep["id"] in shell_owned:
                 assert dep["id"] in known, f"{key} -> {dep['id']}"
+
+
+def test_the_collapse_toggle_is_wired_to_the_one_shared_state(merged_app, shells):
+    """Any rail's toggle writes ``rail-collapsed``; that repaints ``va-body`` once."""
+    keys = " ".join(merged_app.callback_map)
+    assert "rail-collapsed.data" in keys
+    assert "va-body.className" in keys
+
+    collapsed = next(
+        c for c in _walk(shells["chat"]) if getattr(c, "id", None) == "va-body"
+    )
+    assert "va-rails-collapsed" in collapsed.className
+
+    expanded = next(
+        c for c in _walk(app_shell_expanded()) if getattr(c, "id", None) == "va-body"
+    )
+    assert "va-rails-collapsed" not in expanded.className
+
+
+def app_shell_expanded():
+    from ui.shell.layout import app_shell
+
+    return app_shell(1, "Tester", "chat", False)
 
 
 def test_the_generate_spinner_cannot_cover_another_workspace(merged_app, shells):

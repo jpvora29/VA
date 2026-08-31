@@ -54,6 +54,7 @@ def mode_rail(active: str, counts: Mapping[str, int]) -> html.Aside:
                 className="qs-rail-count",
             ),
         ],
+        rail_id="studio",
         className="qs-mode-rail",
     )
 

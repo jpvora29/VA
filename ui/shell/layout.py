@@ -14,6 +14,7 @@ from ui.components.chatbot import custom_peers_modal, pitch_builder_drawer
 from ui.decisions.render import decision_modals
 from ui.shell.navbar import build_navbar
 from ui.shell.panes import PANE_BUILDERS, build_panes
+from ui.shell.rail import rails_class
 from ui.shell.stores import global_stores
 from ui.shell.tabs import TABS
 
@@ -22,12 +23,20 @@ from ui.shell.tabs import TABS
 assert {t.id for t in TABS} == set(PANE_BUILDERS), "every tab needs a pane builder"
 
 
-def app_shell(user_id: int, username: str, active_tab: str) -> html.Div:
+def app_shell(
+    user_id: int, username: str, active_tab: str, rails_collapsed: bool = True
+) -> html.Div:
     """Signed-in layout: navbar, the four workspaces, and the app-wide overlays."""
     return html.Div(
         [
             build_navbar(active_tab, username),
-            html.Div(build_panes(user_id, username, active_tab), className="va-body"),
+            # `va-body` also carries the rail width, because collapsing is app-wide
+            # rather than per-tab (see ``ui.shell.rail``).
+            html.Div(
+                build_panes(user_id, username, active_tab),
+                id="va-body",
+                className=rails_class(rails_collapsed),
+            ),
             # Overlays live outside the panes: they are positioned against the
             # viewport, and a pane that is display:none would take them with it.
             pitch_builder_drawer(),

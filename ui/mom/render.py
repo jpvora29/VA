@@ -9,7 +9,7 @@ STEPS = ("Add transcript", "Extract decisions", "Draft minutes", "Circulate")
 
 
 def mom_rail() -> html.Aside:
-    return placeholder_rail("MoM", STEPS)
+    return placeholder_rail("mom", "MoM", STEPS)
 
 
 def mom_body() -> html.Div:
