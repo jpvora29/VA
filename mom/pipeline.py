@@ -45,7 +45,9 @@ class MoMResult:
 
     docx_path: Path
     summary_json_path: Path
-    run_log_path: Path
+    # None when the token log could not be written — see ``save_run_log``. The run
+    # still succeeded; only its accounting is missing.
+    run_log_path: Optional[Path]
     client: str
     priority_pairs: List[dict]
     llm_calls: int
@@ -135,6 +137,21 @@ def tag_and_score(
     )
 
 
+def save_run_log(summary, path: Path) -> Optional[Path]:
+    """Write the token log, or warn and carry on.
+
+    This is the LAST thing a run does, long after the minutes are on disk. Letting it
+    raise would report a finished run as failed and leave the user staring at an error
+    for a document that exists — which is exactly what an illegal character in a slide
+    title used to do here. The accounting is worth having; it is not worth the run.
+    """
+    try:
+        return write_run_log(summary, path)
+    except Exception as exc:  # noqa: BLE001 - the document is already written
+        log.warning("MoM: could not write the run log to %s: %s", path.name, exc)
+        return None
+
+
 def minutes_filename(deck_path: Path) -> str:
     """The document is named after the deck it summarises."""
     return f"{Path(deck_path).stem}_Meeting_Notes.docx"
@@ -216,7 +233,7 @@ def run_mom_pipeline(
     return MoMResult(
         docx_path=docx_path,
         summary_json_path=request.paths.summary_json,
-        run_log_path=write_run_log(summary, request.paths.run_log),
+        run_log_path=save_run_log(summary, request.paths.run_log),
         client=client,
         priority_pairs=tagging.top_pairs,
         llm_calls=summary.total_llm_calls,

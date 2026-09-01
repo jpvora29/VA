@@ -65,10 +65,22 @@ def _is_title_shape(shape) -> bool:
     return False
 
 
+def _flatten(text: str) -> str:
+    """A shape's text as one line.
+
+    A soft line break (Shift+Enter) inside a text frame comes back from python-pptx as
+    a vertical tab, so a two-line title reads as one word joined by an invisible
+    control character. That character is illegal in both a worksheet and a Word
+    document, and it travels a long way from here — into the slide JSON, the tagging
+    prompt and the run log — before anything complains about it.
+    """
+    return re.sub(r"\s+", " ", (text or "").replace("\x0b", " ")).strip()
+
+
 def _get_slide_title(slide) -> str | None:
     for shape in slide.shapes:
         if _is_title_shape(shape) and shape.has_text_frame:
-            text = shape.text_frame.text.strip()
+            text = _flatten(shape.text_frame.text)
             if text:
                 return text
     return None

@@ -765,6 +765,119 @@ def test_the_run_log_workbook_is_written(tmp_path):
     assert workbook["Call Log"].cell(2, 3).value == "tag"
 
 
+# ── soft line breaks in a slide title ────────────────────────────────────────
+#
+# A title typed over two lines with Shift+Enter comes back from python-pptx as a
+# vertical tab (0x0b). It renders as nothing, so "Europe:<VT>France Q2 Update" reads
+# as ordinary text right up until openpyxl refuses to put it in a cell — which it did,
+# at the very end of a run, for a document that was already written.
+
+
+SOFT_BREAK_TITLE = "Europe:\x0bFrance Q2 Update"
+
+
+def test_a_soft_line_break_is_flattened_out_of_a_slide_title(tmp_path):
+    """Fixed at the source: the control character never enters the pipeline."""
+    from mom import deck as deck_module
+
+    presentation = Presentation()
+    _add_text_slide(presentation, SOFT_BREAK_TITLE)
+    path = tmp_path / "soft.pptx"
+    presentation.save(str(path))
+
+    title = deck_module._get_slide_title(Presentation(str(path)).slides[0])
+    assert title == "Europe: France Q2 Update"
+    assert "\x0b" not in title
+
+
+def test_the_worksheet_scrubber_matches_openpyxls_own_rejection_set():
+    """If the two ever diverge, the guard stops catching what openpyxl throws on."""
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+
+    from mom.run_log_excel import ILLEGAL_IN_WORKSHEET, worksheet_safe
+
+    assert ILLEGAL_IN_WORKSHEET.pattern == ILLEGAL_CHARACTERS_RE.pattern
+    assert worksheet_safe(SOFT_BREAK_TITLE) == "Europe: France Q2 Update"
+    # Non-strings pass through untouched — the sheet holds ints and floats too.
+    for value in (42, 1.5, None):
+        assert worksheet_safe(value) is value
+
+
+def test_a_run_log_label_with_a_control_character_still_writes(tmp_path):
+    """Fixed at the boundary too: whatever reaches a cell, the workbook is written."""
+    from mom.run_log import RunLog
+    from mom.run_log_excel import write_run_log
+
+    log = RunLog("repro")
+    log.record_call(call_index=1, label=f"tag_slide:{SOFT_BREAK_TITLE}", phase="tagging",
+                    input_tokens=10, output_tokens=5, reasoning_tokens=0, duration_s=0.4)
+
+    path = write_run_log(log.summary(), tmp_path / "run_log.xlsx")
+
+    import openpyxl
+
+    written = openpyxl.load_workbook(path)["Call Log"].cell(2, 3).value
+    assert written == "tag_slide:Europe: France Q2 Update"
+
+
+def test_a_deck_with_a_soft_break_title_runs_end_to_end(tmp_path, note_docx, model):
+    """The whole workflow over the shape of deck that used to fail at the last step."""
+    presentation = Presentation()
+    cover = _add_text_slide(presentation, "Zurich - Marsh ICG QBR")
+    cover.shapes.add_textbox(Inches(0.5), Inches(3.0), Inches(9), Inches(0.6)) \
+        .text_frame.text = "March 2026, London"
+    _add_text_slide(presentation, "Agenda")
+    _add_divider(presentation, "Performance")
+    _add_text_slide(presentation, SOFT_BREAK_TITLE, [
+        "Global GWP with Marsh reached $2.0bn, up 4.2% year on year.",
+        "Share of wallet 2.7%, ranked 8th globally.",
+    ])
+    _add_divider(presentation, "Marsh Update")
+    _add_text_slide(presentation, "Placement priorities", [
+        "Broker Workbench rollout continues.",
+        "A dedicated London team services wholesale business.",
+    ])
+    deck = tmp_path / "Soft Break QBR.pptx"
+    presentation.save(str(deck))
+
+    paths = config.RunPaths(tmp_path / "run").create()
+    result = run_mom_pipeline(
+        MoMRequest(note_path=note_docx, deck_path=deck, mode=AI_SUMMARY, paths=paths),
+        call_json=model,
+    )
+
+    assert result.docx_path.is_file()
+    assert result.run_log_path is not None and result.run_log_path.is_file()
+    # The control character reached neither the slide JSON nor the tagging labels.
+    for slide_json in paths.raw_data.glob("slide_*.json"):
+        assert "\x0b" not in slide_json.read_text(encoding="utf-8")
+    assert not [label for label in model.labels if "\x0b" in label]
+
+
+def test_a_run_log_that_cannot_be_written_does_not_lose_the_document(
+    deck_path, note_docx, run_paths, model, monkeypatch
+):
+    """The log is the last step, long after the minutes are on disk. Reporting a
+    finished run as failed because its accounting could not be saved is the worse
+    outcome — that is what the user saw."""
+    from mom import pipeline as pipeline_module
+
+    def refuse(summary, path):
+        raise ValueError("something cannot be used in worksheets.")
+
+    monkeypatch.setattr(pipeline_module, "write_run_log", refuse)
+
+    result = run_mom_pipeline(
+        MoMRequest(note_path=note_docx, deck_path=deck_path, mode=AI_SUMMARY,
+                   paths=run_paths),
+        call_json=model,
+    )
+
+    assert result.docx_path.is_file(), "the minutes were lost to a failed token log"
+    assert result.run_log_path is None
+    assert result.summary_json_path.is_file()
+
+
 # ── the job the workspace polls ──────────────────────────────────────────────
 
 

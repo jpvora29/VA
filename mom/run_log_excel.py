@@ -5,12 +5,28 @@ Sheet 2 — Call Log:    one row per LLM call.
 
 Pure output: it reads a summary and writes a file, and knows nothing about the
 pipeline that produced it. Falls back to JSON when openpyxl is unavailable.
+
+Every string is scrubbed on its way into a cell. Call labels are built from slide
+and section titles, and PowerPoint stores a soft line break inside a text frame as
+a vertical tab (0x0b) -- which openpyxl refuses to write, and which has no visible
+form to warn you with.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from mom.run_log import RunSummary
+
+# openpyxl's own rejection set (openpyxl.cell.cell.ILLEGAL_CHARACTERS_RE), inlined so
+# this module does not depend on a private import path that may move between releases.
+ILLEGAL_IN_WORKSHEET = re.compile(r"[\000-\010]|[\013-\014]|[\016-\037]")
+
+
+def worksheet_safe(value):
+    """A value openpyxl will accept: control characters out of strings, others as-is."""
+    return ILLEGAL_IN_WORKSHEET.sub(" ", value) if isinstance(value, str) else value
+
 
 NAVY = "002C77"
 WHITE = "FFFFFF"
@@ -62,7 +78,7 @@ def _styles():
 
 def _header(cell, text: str) -> None:
     s = _styles()
-    cell.value = text
+    cell.value = worksheet_safe(text)
     cell.font = s["header_font"]
     cell.fill = s["header_fill"]
     cell.alignment = s["header_align"]
@@ -71,7 +87,7 @@ def _header(cell, text: str) -> None:
 
 def _cell(cell, value, *, bold=False, align="left", num_fmt=None, shade=False) -> None:
     s = _styles()
-    cell.value = value
+    cell.value = worksheet_safe(value)
     cell.font = s["Font"](name="Arial", size=10, bold=bold)
     cell.alignment = s["Alignment"](horizontal=align)
     cell.border = s["border"]
@@ -85,7 +101,7 @@ def _total_row(sheet, row: int, values: dict, columns: int) -> None:
     s = _styles()
     for col in range(1, columns + 1):
         cell = sheet.cell(row, col)
-        cell.value = values.get(col)
+        cell.value = worksheet_safe(values.get(col))
         cell.font = s["Font"](name="Arial", size=10, bold=True)
         cell.fill = s["total_fill"]
         cell.border = s["border"]
