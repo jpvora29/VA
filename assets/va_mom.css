@@ -1,0 +1,385 @@
+/* ============================================================================
+   The Minutes-of-Meeting workspace.
+
+   Every colour here is a `--va-*` token from assets/theme_tokens.css — the
+   standalone MoM app carried its own navy/teal/ice hex values, and keeping them
+   would have put a fifth palette on a page that already agreed on one.
+
+   Sorts before va_shell.css, which must stay last (tests/test_app_shell.py).
+   ========================================================================== */
+
+/* ── the page ─────────────────────────────────────────────────────────────── */
+
+.mom-host {
+    flex: 1 1 auto;
+    width: 100%;
+    height: 100%;
+    overflow-y: auto;
+    background: var(--va-surface-1);
+}
+
+.mom-page {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 40px 28px 72px;
+    font-family: var(--va-font);
+    color: var(--va-ink-700);
+}
+
+.mom-header {
+    margin-bottom: 26px;
+}
+
+.mom-title {
+    margin: 0 0 8px;
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--va-navy);
+}
+
+.mom-blurb {
+    margin: 0;
+    max-width: 58ch;
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--va-ink-500);
+}
+
+/* ── cards ────────────────────────────────────────────────────────────────── */
+
+.mom-card {
+    margin-bottom: 16px;
+    padding: 22px 24px;
+    border-radius: var(--va-radius-md);
+    background: var(--va-surface-0);
+    box-shadow: 0 0 0 1px var(--va-border-soft), var(--va-shadow-sm);
+}
+
+.mom-card-label {
+    margin: 0 0 14px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--va-ink-400);
+}
+
+.mom-card-note {
+    margin: 12px 0 0;
+    font-size: 12px;
+    color: var(--va-ink-400);
+}
+
+/* ── document type ────────────────────────────────────────────────────────── */
+
+.mom-mode-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+}
+
+.mom-mode {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 13px 15px;
+    text-align: left;
+    border: 0;
+    border-radius: var(--va-radius-sm);
+    background: var(--va-surface-0);
+    box-shadow: inset 0 0 0 1.5px var(--va-border-mid);
+    cursor: pointer;
+    transition: box-shadow var(--va-transition-fast), background var(--va-transition-fast);
+}
+
+.mom-mode:hover {
+    box-shadow: inset 0 0 0 1.5px var(--va-ink-300);
+}
+
+.mom-mode:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 1.5px var(--va-blue), var(--va-focus-ring);
+}
+
+.mom-mode.is-active {
+    background: var(--va-blue-soft);
+    box-shadow: inset 0 0 0 1.5px var(--va-blue);
+}
+
+.mom-mode-label {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--va-navy);
+}
+
+.mom-mode-hint {
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--va-ink-500);
+}
+
+/* ── uploads ──────────────────────────────────────────────────────────────── */
+
+.mom-drop-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+}
+
+.mom-drop {
+    border-radius: var(--va-radius-sm);
+    border: 1.5px dashed var(--va-border-mid);
+    background: var(--va-surface-1);
+    cursor: pointer;
+    transition: border-color var(--va-transition-fast), background var(--va-transition-fast);
+}
+
+.mom-drop:hover {
+    border-color: var(--va-blue);
+    background: var(--va-blue-soft);
+}
+
+.mom-drop-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 20px 14px;
+    text-align: center;
+}
+
+.mom-drop-inner .bi {
+    font-size: 19px;
+    color: var(--va-ink-400);
+}
+
+.mom-drop-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 7px;
+}
+
+.mom-drop-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--va-navy);
+}
+
+.mom-drop-formats {
+    font-size: 11px;
+    color: var(--va-ink-400);
+}
+
+.mom-drop-hint {
+    font-size: 11.5px;
+    color: var(--va-ink-500);
+}
+
+.mom-file-status {
+    min-height: 18px;
+    margin-top: 7px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* Status is never colour-only: each state carries its own icon and its filename. */
+.mom-file-status .is-good {
+    color: var(--va-good);
+}
+
+.mom-file-status .is-bad {
+    color: var(--va-danger);
+}
+
+.mom-file-status .bi {
+    margin-right: 6px;
+}
+
+/* ── generate ─────────────────────────────────────────────────────────────── */
+
+.mom-card-action {
+    padding: 20px 24px 22px;
+}
+
+.mom-generate {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    width: 100%;
+    padding: 12px 0;
+    border: 0;
+    border-radius: var(--va-radius-sm);
+    background: var(--va-grad-cta);
+    color: var(--va-surface-0);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity var(--va-transition-fast), filter var(--va-transition-fast);
+}
+
+.mom-generate:hover:not(:disabled) {
+    filter: brightness(1.08);
+}
+
+.mom-generate:focus-visible {
+    outline: none;
+    box-shadow: var(--va-focus-ring);
+}
+
+.mom-generate:disabled {
+    background: var(--va-surface-2);
+    color: var(--va-ink-400);
+    cursor: not-allowed;
+}
+
+.mom-hint:not(:empty) {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--va-ink-500);
+}
+
+/* ── progress ─────────────────────────────────────────────────────────────── */
+
+.mom-progress {
+    margin-top: 18px;
+}
+
+.mom-progress-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.mom-progress-step {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--va-ink-700);
+}
+
+.mom-progress-pct {
+    font-size: 12.5px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--va-blue);
+}
+
+.mom-progress-track {
+    height: 7px;
+    border-radius: var(--va-radius-pill);
+    background: var(--va-surface-2);
+    overflow: hidden;
+}
+
+.mom-progress-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: var(--va-blue);
+    transition: width var(--va-transition-med);
+}
+
+.mom-progress-fill.is-failed {
+    background: var(--va-danger);
+}
+
+.mom-progress-msg:not(:empty) {
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: var(--va-ink-500);
+}
+
+/* ── result ───────────────────────────────────────────────────────────────── */
+
+.mom-result {
+    margin-top: 16px;
+    padding: 15px 17px;
+    border-radius: var(--va-radius-sm);
+}
+
+.mom-result.is-good {
+    background: var(--va-blue-soft);
+    box-shadow: inset 0 0 0 1px var(--va-border-mid);
+}
+
+.mom-result.is-bad {
+    background: #fdf2f2;
+    box-shadow: inset 0 0 0 1px rgba(197, 53, 50, 0.28);
+}
+
+.mom-result-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--va-navy);
+}
+
+.mom-result.is-bad .mom-result-head {
+    color: var(--va-danger);
+}
+
+.mom-result-file {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--va-ink-500);
+}
+
+.mom-result-topics {
+    margin: 10px 0 0;
+    padding-left: 18px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--va-ink-600);
+}
+
+.mom-download {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+    padding: 9px 18px;
+    border: 0;
+    border-radius: var(--va-radius-sm);
+    background: var(--va-navy);
+    color: var(--va-surface-0);
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.mom-download:hover {
+    background: var(--va-navy-2);
+}
+
+.mom-download:focus-visible {
+    outline: none;
+    box-shadow: var(--va-focus-ring);
+}
+
+/* ── the rail's live steps ────────────────────────────────────────────────────
+   `.va-rail-step` (assets/va_shell.css) already sizes these and handles the
+   collapsed icon column; these rules only add the run's state on top. */
+
+.va-mom-rail .va-rail-step.is-running {
+    color: var(--va-navy);
+    background: var(--va-blue-soft);
+}
+
+.va-mom-rail .va-rail-step.is-running .va-rail-step-num {
+    color: var(--va-surface-0);
+    background: var(--va-blue);
+    box-shadow: none;
+}
+
+.va-mom-rail .va-rail-step.is-done {
+    color: var(--va-ink-600);
+}
+
+.va-mom-rail .va-rail-step.is-done .va-rail-step-num {
+    color: var(--va-good);
+    box-shadow: inset 0 0 0 1px var(--va-good);
+}

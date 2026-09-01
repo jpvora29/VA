@@ -76,6 +76,8 @@ def _recap_pane(user_id: int, username: str) -> Any:
 
 
 def _mom_pane(user_id: int, username: str) -> Any:
+    """The MoM rail and page. Built once and never re-rendered as a whole — the upload
+    zones hold the user's chosen files, and a re-render would empty them."""
     return html.Div([mom_rail(), html.Div(mom_body(), className="main-container")],
                     className="va-pane-split")
 

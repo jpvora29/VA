@@ -10,6 +10,7 @@ The wiring is all this file does:
     chat callbacks   ui.callbacks           (registered by import, via @callback)
     shell callbacks  ui.shell.router + ui.shell.collapse
     studio callbacks studio.authoring.register_*(app)
+    mom callbacks    ui.mom.callbacks.register_mom
 
 Everything else lives in the package that owns it.
 
@@ -47,6 +48,7 @@ app.layout = root_layout()
 # registry, which is drained when the server is set up — so the import order here does
 # not matter, only that every module is imported before `run`.
 from ui import callbacks as chat_callbacks  # noqa: F401,E402  (registers callbacks)
+from ui.mom.callbacks import register_mom  # noqa: E402
 from ui.shell.collapse import register_collapse  # noqa: E402
 from ui.shell.router import register_router  # noqa: E402
 from studio.authoring.data import register_data  # noqa: E402
@@ -62,6 +64,7 @@ register_data(app)         # Studio: upload datasets, map columns, saved dataset
 register_setup(app)        # Studio: Generate the deck, live scope preview
 register_editing(app)      # Studio: edit fields, pages, widgets, colors on the canvas
 register_export(app)       # Studio: fill/assemble the template and download the .pptx
+register_mom(app)          # MoM: upload a note + deck, run the pipeline, download the .docx
 
 
 if __name__ == "__main__":

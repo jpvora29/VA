@@ -34,3 +34,7 @@ assets/studio_template_previews/
 
 # Studio uploaded-dataset store (user data; never committed)
 studio/dataset/_store/
+
+# MoM run directories (uploaded meeting notes + decks, and the minutes written from
+# them). Client documents; generated per run by mom/config.py.
+outputs/mom/
