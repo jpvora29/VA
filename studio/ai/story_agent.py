@@ -49,7 +49,22 @@ def _tone_for(text: str) -> str:
     return "neutral"
 
 
+def _option_name(option: Any) -> str:
+    """One carrier name out of a filter option.
+
+    ``cached_filter_options`` returns Dash option dicts (``{"label": …, "value": …}``), not
+    bare strings — its signature says ``List[Dict[str, Any]]``. Reading them as strings
+    raised ``'dict' object has no attribute 'lower'`` on the very first carrier, which took
+    the whole of :func:`enhance_deck` down with it: the AI story pass never ran, and the
+    confidentiality list it exists to enforce was never applied.
+    """
+    if isinstance(option, dict):
+        return str(option.get("value") or option.get("label") or "").strip()
+    return str(option or "").strip()
+
+
 def _forbidden_names(result: Any, subject: Optional[str]) -> List[str]:
+    """Every carrier but the subject and Marsh — the names AI prose may not print."""
     try:
         from studio.data import cached_filter_options
 
@@ -57,7 +72,8 @@ def _forbidden_names(result: Any, subject: Optional[str]) -> List[str]:
     except Exception:  # noqa: BLE001 — confidentiality list is best-effort
         carriers = []
     subj = (subject or "").strip().lower()
-    return [c for c in carriers if c and c.lower() not in {subj, "marsh"}]
+    names = (_option_name(c) for c in carriers)
+    return [n for n in names if n and n.lower() not in {subj, "marsh"}]
 
 
 def _slide_sources(s: SlideSpec) -> str:

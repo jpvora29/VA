@@ -144,6 +144,99 @@ _TOPIC_BRIEF: Dict[str, str] = {
         "THIS COLUMN: what could go wrong that is not already going wrong. Name the source. ",
 }
 
+# The questions each column must ANSWER. Never rendered — they never reach a slide — but
+# they are what turns a brief into a specification. ``_TOPIC_BRIEF`` says what a column is
+# FOR; a model given only that still chooses which of the facts in front of it to use, and
+# reaches for the headline every time because the headline is the easiest thing to write
+# about. Naming the questions makes the industry evidence the expected answer rather than
+# optional colour.
+#
+# They are also the contract the deterministic composers order their claims by, so the
+# draft the model is shown already answers them in the same sequence.
+_TOPIC_QUESTIONS: Dict[str, Tuple[str, ...]] = {
+    "working": (
+        "What grew, and was it won on share or carried by the pool?",
+        "Which industry or client segment does this book place BEST in, and how far above "
+        "the average it achieves where it writes?",
+        "What did the growth actually buy — rank, share, or neither?",
+    ),
+    "challenges": (
+        "Where did the book lose share, and was the pool behind it growing or shrinking?",
+        "Which named industry or client segment is the ground being given in, and what is "
+        "that worth?",
+        "How much of the book rests on its largest few segments, and which of those is "
+        "moving the wrong way?",
+        "Where did Marsh demand grow hardest and this book take least of it?",
+    ),
+    "growth": (
+        "Which industries does Marsh place materially in that this book writes NOTHING of, "
+        "and how much premium is that?",
+        "Which does it write BELOW the average it achieves where it writes, and what would "
+        "parity be worth?",
+        "Which does it write below the top-5 peer average, and what is that worth?",
+        "Which industry proves the line CAN be placed better, and at what share?",
+    ),
+    "key_messages": (
+        "What must happen next, in which named industry, product or client segment?",
+        "What premium is at stake, and measured against which benchmark?",
+        "What is worth defending, and what says it is at risk?",
+    ),
+    "priorities": (
+        "Which named industry, product or segment carries the most premium at stake?",
+        "What has to move there, and what is it worth?",
+        "What is still unconfirmed before the ask becomes a commitment?",
+    ),
+    "thesis": (
+        "Where does this account STAND, in one claim a leadership team can push back on?",
+        "What is the tension inside that position?",
+    ),
+    "performance": (
+        "What moved, and which industry, segment or line drove it?",
+        "Did the pool move with it or against it?",
+    ),
+    "reflections": (
+        "What did the account get right, and what did it misjudge?",
+        "Which named segment does that judgement rest on?",
+    ),
+}
+
+
+def _questions_rule(topic: str) -> str:
+    """The column's hidden question set as a prompt block. Never rendered on a slide."""
+    questions = _TOPIC_QUESTIONS.get(topic, ())
+    if not questions:
+        return ""
+    listed = " ".join(f"({i}) {q}" for i, q in enumerate(questions, 1))
+    return ("ANSWER THESE QUESTIONS in this order, and only where the evidence supports an "
+            f"answer — never print a question, and never number your lines: {listed} ")
+
+
+# Which columns diagnose and which may instruct. The deck used to close every page on
+# "the call is to defend Cyber, scale Financial Lines, fix Casualty" — six products, no
+# figures, and true of any carrier with six lines. Diagnosis is what the feedback columns
+# are for; the instruction belongs where a team is expected to act on it, and only when it
+# says where and how much.
+_IMPERATIVE_TOPICS = frozenset({"key_messages", "priorities"})
+
+_DIAGNOSTIC_RULE = (
+    "VOICE FOR THIS COLUMN: diagnose, do not instruct. State the position, the mechanism "
+    "behind it and what is at stake, and let the reader draw the conclusion. Do not tell "
+    "the carrier what to do and do not open a line with an instruction. "
+)
+
+_IMPERATIVE_RULE = (
+    "VOICE FOR THIS COLUMN: you may say what must happen — but ONLY tied to a named "
+    "industry, product or client segment AND a premium figure from the evidence. Never "
+    "write an instruction against a bare product name: 'defend Cyber', 'scale Financial "
+    "Lines', 'fix Casualty', 'selectively pursue Property' are all refused. An instruction "
+    "with no named segment and no figure behind it is a slogan, not a message. "
+)
+
+
+def _voice_rule(topic: str) -> str:
+    return _IMPERATIVE_RULE if topic in _IMPERATIVE_TOPICS else _DIAGNOSTIC_RULE
+
+
 # Who is writing. Insurer Consulting Group partners write for carrier boards: plain,
 # declarative, unhedged, and always answerable to the figure on the page.
 _VOICE = (
@@ -166,7 +259,8 @@ _CRAFT = (
     "carrier. Never write the words 'indicating', 'showcasing', 'underscoring', "
     "'demonstrating', 'reflecting a', 'positioning the carrier', 'solid foothold', 'robust', "
     "'strategic', 'leverage', 'key driver', 'landscape', 'moving forward', 'it is worth "
-    "noting', or 'overall,'. "
+    "noting', 'overall,', 'untapped', 'low-hanging', 'ripe for', 'significant "
+    "opportunity', 'huge potential', 'a natural fit', or 'penetrate the market'. "
 )
 
 _FAITHFULNESS = (
@@ -180,6 +274,7 @@ def _style_system(style: Optional[str], *, topic: str = "", wanted: int = 1,
     """The system prompt for one column: voice, craft, faithfulness, shape, and its brief."""
     return (_VOICE + _CRAFT + _FAITHFULNESS + _openings_rule(subject)
             + _bullet_rules(wanted) + _TOPIC_BRIEF.get(topic, "")
+            + _voice_rule(topic) + _questions_rule(topic)
             + _STYLE_DIRECTIVE.get((style or "balanced").lower(),
                                    _STYLE_DIRECTIVE["balanced"]))
 

@@ -8,7 +8,14 @@ requires: [GPR]
 The GPR table IS Marsh's book of business, so the total premium across all
 carriers for a slice is the best available proxy for "the market".
 
-**SQL shape**
+**Preferred: compute it, do not query it**
+- Market premium = `compute_metric(name='compute_market_presence')` (drops the
+  carrier filter for you).
+- Carrier's share of that market = `compute_metric(name='compute_share_of_wallet')`.
+- Market growth = `compute_metric(name='compute_yoy_to_date')` with no carrier
+  filter — safe on a partial latest year, where a whole-year YoY reads as a crash.
+
+**SQL shape (fallback only, for what the above does not cover)**
 - Market premium = `SUM(Premium)` over the same filters as the user's query
   (Country / Product_Line / Year / etc.) but **without** the `Carrier_Group`
   filter, so all carriers in Marsh's book are included.

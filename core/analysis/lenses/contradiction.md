@@ -15,7 +15,16 @@ This lens looks for them across the premium and perception views.
 - Strong **rank** but weak growth (defending, not gaining).
 - Growth concentrated in a product where perception is weakest.
 
-**SQL shape**
+**Preferred: compute both legs, do not query them**
+- Financial leg = `compute_metric(flow='gpr', name='compute_yoy_to_date')` (or
+  `compute_share_of_wallet` / `compute_rank` for the positioning form).
+- Perception leg = `compute_metric(flow='survey', name='compute_attribute_breakdown')`
+  (or `compute_nps` / `find_service_gaps`).
+- Both legs must cover the same carrier + slice + periods; comparing computed
+  legs is what makes the tension real rather than an artefact of two hand-written
+  queries that scoped slightly differently.
+
+**SQL shape (fallback only, for what the above does not cover)**
 - Pull the financial trend (premium / share / YoY from GPR) and the perception
   trend (Score / section / attribute movement from the survey tables) for the
   same carrier + slice + periods, then compare directions.

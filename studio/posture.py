@@ -92,7 +92,10 @@ def _barely_written(x: PostureInput) -> Optional[str]:
         return None
     if x.premium > x.pool * UNWRITTEN_SHARE:
         return None
-    return "the carrier writes effectively none of the Marsh premium placed here"
+    from studio.template_fill.render import _money
+
+    return (f"the carrier writes effectively none of the {_money(x.pool)} of Marsh premium "
+            f"placed here")
 
 
 def _losing_ground(x: PostureInput) -> Optional[str]:
@@ -121,6 +124,9 @@ def _holds_a_lead(x: PostureInput) -> Optional[str]:
         return None
     if leads_on_rank:
         return f"the book ranks #{int(x.rank)} in the Marsh book"
+    if x.share is not None and x.peer_share is not None:
+        return (f"the book holds {x.share:.1f}% of the wallet against a top-5 peer average "
+                f"of {x.peer_share:.1f}%")
     return "the book writes more than the top-5 peer average"
 
 

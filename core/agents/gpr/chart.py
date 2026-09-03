@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from core.agents.common.chart_spec import (
     ChartTypeSelectSignature,
-    generate_chart_two_phase,
+    generate_chart_spec,
     stamp_intent,
 )
 from core.llm import Predictor
@@ -40,15 +40,16 @@ class GPRChartNode:
         self.detail_provider = detail_provider or get_skill_loader().chart_detail
 
     def __call__(self, user_query: str, sql_output: List[Dict[str, Any]]):
-        # Two phases: pick the chart_type from the selection tree, then build the
-        # spec with only that type's detail appended (see chart_spec).
-        spec = generate_chart_two_phase(
+        # Chartwright designs the chart from per-type tool schemas; the older
+        # two-phase predictors stay wired as its fallback (see chart_spec).
+        spec = generate_chart_spec(
             base_rules=self.chart_creation_rules,
             user_query=user_query,
             sql_output=sql_output,
             type_predictor=self.type_predictor,
             spec_predictor=self.predictor,
             detail_provider=self.detail_provider,
+            node="gpr_chart",
         )
         logger.debug("GPR chart spec: %s", spec)
         return stamp_intent(spec, user_query)

@@ -8,11 +8,18 @@ in try/except.
 
 The client comes from the shared tier factory (`core.llm.clients`) rather than
 `core.initialization`, so importing the Studio app never builds the chatbot's database
-engine and session factory just to write a sentence.
+engine and session factory just to write a sentence. That factory reads `.env` itself, so
+a Studio-only entry point — `studio/serve.py`, the authoring app, a script — is configured
+exactly like the chatbot without importing it.
 
-The client is still built **lazily, only after** `llm_available()` confirms a key, so
-importing this module — and the whole Studio app and its tests — never depends on an LLM
-being configured.
+Availability is the same factory's answer (`core.llm.clients.available`), not a second
+opinion about which environment variables a client needs. **There is no Studio-specific
+opt-in: a configured LLM is the switch.** `STUDIO_AI=off` remains as a kill switch, for a
+test or an operator that wants the deck pinned to its deterministic composers whatever the
+environment carries.
+
+The client is still built **lazily**, so importing this module — and the whole Studio app
+and its tests — never depends on an LLM being configured.
 """
 from __future__ import annotations
 
@@ -25,15 +32,39 @@ logger = get_logger(__name__)
 T = TypeVar("T")
 
 
-def llm_available() -> bool:
-    """True only when Azure credentials are present and Studio AI isn't disabled.
+# The values that turn Studio AI OFF. There is deliberately no value that turns it ON:
+# a configured LLM is the switch, and a second one to remember is a way to ship a
+# deterministic deck by accident.
+_OFF = {"off", "0", "false", "no"}
 
-    `STUDIO_AI=off` force-disables; otherwise availability follows the same
-    `API_KEY` + `ENDPOINT` env the rest of the app uses.
+_DEFAULT_TIER = "balanced"
+
+
+def disabled() -> bool:
+    """True when this run has explicitly asked for deterministic output.
+
+    ``STUDIO_AI=off`` is a kill switch, not a feature flag: it is how a test, a CI run or
+    an operator pins the deck to its rule composers regardless of what credentials the
+    environment happens to carry.
     """
-    if os.getenv("STUDIO_AI", "auto").strip().lower() in {"off", "0", "false", "no"}:
+    return os.getenv("STUDIO_AI", "auto").strip().lower() in _OFF
+
+
+def llm_available() -> bool:
+    """True when this run may call a model — no Studio-specific opt-in required.
+
+    Studio used to answer this itself, by checking ``API_KEY`` and ``ENDPOINT``. That was a
+    guess at another module's requirements kept in a second place: ``core.llm.clients``
+    also needs a version and a deployment, so an environment carrying only those two was
+    told AI was available and then failed on every call, and one configured through
+    ``OPENAI_API_VERSION`` was told the opposite. Asking core whether it can build a client
+    is the same question the call itself will ask, so the answer cannot drift from it.
+    """
+    if disabled():
         return False
-    return bool(os.getenv("API_KEY") and os.getenv("ENDPOINT"))
+    from core.llm.clients import available
+
+    return available(_DEFAULT_TIER)
 
 
 def _tier_client(tier: str):

@@ -286,8 +286,14 @@ class LangGraph:
             config = {**config, "callbacks": callbacks}
         with turn_context(thread_id=tid):
             log_event(logger, "workflow_stream_start", node="main_workflow")
-            for mode, chunk in self._compiled_app.stream(
-                input_obj, config=config, stream_mode=["updates", "debug"]
+            # `subgraphs=True` so the work INSIDE a subgraph reports itself. The
+            # slow, visible steps of a turn — building the chart, fixing a query —
+            # are all subgraph nodes, and without this the status line sits on
+            # "Querying premium data" for the whole run. It changes the yielded
+            # tuple to (namespace, mode, chunk); the namespace is discarded because
+            # the node name alone is what the label map keys on.
+            for _namespace, mode, chunk in self._compiled_app.stream(
+                input_obj, config=config, stream_mode=["updates", "debug"], subgraphs=True
             ):
                 if cancel is not None and cancel.is_set():
                     return

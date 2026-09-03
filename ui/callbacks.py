@@ -81,6 +81,7 @@ from core.backend import (
 )
 from ui.chart_functions import generate_chart
 from core.agents.common.chart_spec import normalize_chart_spec
+from core.charts.agent import AGENT_NAME as CHART_AGENT_NAME
 from sqlalchemy import inspect, text
 from document_builder.report_generator import (
     get_theme,
@@ -1465,6 +1466,38 @@ NODE_LABELS = {
     "followup_node": "Suggesting follow-ups",
     "boardroom_node": "Building the boardroom view",
     "conversation_node": "Reviewing the conversation",
+    # Subgraph nodes. These surface because `stream_workflow` streams with
+    # subgraphs=True; without a label here they would fall through to the
+    # "Running gpr convert to sql" default, which reads like an internal.
+    # Pass-throughs on most turns, so their labels stay neutral for the same
+    # reason clarify_gate's does — a gate that usually does nothing must not
+    # announce itself as if it did.
+    "intent_classifier": "Analyzing your question",
+    "custom_peer_gate": "Analyzing your question",
+    "gpr_normalizer_agent": "Interpreting the question",
+    "survey_normalizer_agent": "Interpreting the question",
+    "gpr_end_max_iterations": "Wrapping up",
+    "survey_end_max_iterations": "Wrapping up",
+    "gimmi_end_max_iterations": "Wrapping up",
+    "gpr_planner_node": "Planning the premium analysis",
+    "survey_planner": "Planning the survey analysis",
+    "gpr_analytics_tools": "Computing the numbers",
+    "survey_analytics_tools": "Computing the numbers",
+    "gpr_convert_to_sql": "Writing the query",
+    "survey_convert_to_sql": "Writing the query",
+    "gpr_execute_sql": "Running the query",
+    "survey_execute_sql": "Running the query",
+    "gpr_sql_fixer_agent": "Refining the query",
+    "survey_sql_fixer_agent": "Refining the query",
+    "premium_chart_data_creation": f"{CHART_AGENT_NAME} is designing the chart",
+    "survey_chart_data_creation": f"{CHART_AGENT_NAME} is designing the chart",
+    "chart_picker_node": f"{CHART_AGENT_NAME} is designing the charts",
+    "schema_identifier_node": "Grounding the question in the data",
+    "planner_node": "Planning the analysis",
+    "peer_solver_node": "Benchmarking against peers",
+    "generic_solver_node": "Gathering the evidence",
+    "join_node": "Assembling the evidence",
+    "writer_node": "Writing the insight",
 }
 
 

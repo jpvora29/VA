@@ -24,6 +24,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from logger import get_logger
 from studio import compute as C
+from studio import segments as SEG
 from studio.template_fill import roles as R
 from studio.template_fill.analyze import Shape, Template
 from studio.template_fill import units as U
@@ -35,6 +36,7 @@ logger = get_logger(__name__)
 _CARRIER_COL = "Carrier_Group"
 _COUNTRY_COL = "Country"
 _PRODUCT_COL = "Product_Line"
+_INDUSTRY_COL = "SIC_Major_Class"
 _YEAR_COL = "Year"
 
 _COUNTRY_TOKEN = re.compile(r"(?:Country\s*/\s*)?(?:Country|Region)\s*\(\s*(\d+)\s*\)", re.I)
@@ -298,14 +300,99 @@ def _driver_dim(filters: Dict[str, Any]) -> str:
     A product sub-deck is already one line of business, so its drivers are countries;
     every other scope decomposes by line of business, which is how the deck reads
     everywhere else.
+
+    A product page's COUNTRY ROW has both axes pinned, and used to decompose by country
+    anyway — one value, so ``_named_moves`` and ``_capture_gap`` both returned nothing and
+    the cell fell through to the generic headroom line. Its drivers are industries.
     """
+    if _is_pinned(filters, _PRODUCT_COL) and _is_pinned(filters, _COUNTRY_COL):
+        return _INDUSTRY_COL
     return _COUNTRY_COL if _is_pinned(filters, _PRODUCT_COL) else _PRODUCT_COL
 
 
+_SEGMENT_COL = "Client_Segment"
+
+
+def _segment_dims(filters: Dict[str, Any]) -> Tuple[str, ...]:
+    """The decompositions that can carry a finding IN THIS SCOPE.
+
+    Never a dimension the scope has already pinned: a page filtered to one industry that
+    decomposed by industry could only report itself back.
+    """
+    from studio import segments as SEG
+
+    return tuple(d for d in SEG.configured_dims() if not _is_pinned(filters, d))
+
+
+def _segment_facts(result, filters: Dict[str, Any]) -> Dict[str, Any]:
+    """This scope decomposed by industry and by client segment.
+
+    The one fact family that says WHERE inside the scope the book sits. Everything else in
+    ``_facts`` describes the scope as a single number, which is why every page argued from
+    the same six figures however differently its column was briefed.
+    """
+    from studio import segments as SEG
+
+    dims = _segment_dims(filters)
+    if not dims:
+        return {}
+    year = C._current_year(filters)
+    found = _safe(SEG.find_all, flow=result.flow, filters=filters, engine=result.engine,
+                  subject=result.subject, dims=dims, year=year) or {}
+    above = _parent_filters(filters)
+    if not found or above is None:
+        return found
+    parent = _safe(SEG.find_all, flow=result.flow, filters=above, engine=result.engine,
+                   subject=result.subject, dims=dims, year=year) or {}
+    narrowed, tracks = SEG.narrow(found, parent)
+    _SEGMENT_TRACKS[_scope_key(result, filters)] = tracks
+    return narrowed
+
+
+def _tracks_its_parent(result, filters: Dict[str, Any]) -> bool:
+    """True when this scope had findings and none of them survived narrowing.
+
+    Computed alongside the decomposition rather than inside it, so the segments map stays
+    a map of dimensions and nothing has to know to skip a sentinel key.
+    """
+    return bool(_SEGMENT_TRACKS.get(_scope_key(result, filters)))
+
+
+def _scope_key(result, filters: Dict[str, Any]) -> Tuple[Any, ...]:
+    return (result.flow, str(result.subject), _filters_signature(filters))
+
+
+def _filters_signature(filters: Dict[str, Any]) -> Tuple[Tuple[str, Any], ...]:
+    out = []
+    for col, val in sorted((filters or {}).items()):
+        out.append((col, tuple(sorted(map(str, val)))
+                    if isinstance(val, (list, tuple, set)) else val))
+    return tuple(out)
+
+
+# Set by ``_segment_facts`` for the scope it just narrowed, read by ``_tracks_its_parent``
+# on the next line of the same ``_facts`` call. Small and short-lived rather than a second
+# pair of queries to answer a question the narrowing already answered.
+_SEGMENT_TRACKS: Dict[Tuple[Any, ...], bool] = {}
+
+
+def _parent_filters(filters: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The scope one level up: this cut without its narrowest entity pin.
+
+    A product page's country row sits under that product across every market; a country
+    page sits under the whole portfolio. Comparing a scope with its own parent is what
+    decides whether a finding belongs to this page or to the one above it.
+    """
+    for col in (_COUNTRY_COL, _PRODUCT_COL):
+        if _is_pinned(filters, col):
+            return {k: v for k, v in filters.items() if k != col}
+    return None
+
+
 def _facts(result, filters: Dict[str, Any]) -> Dict[str, Any]:
-    """Carrier/Marsh totals + YoY, rank, SoW movement, the peer benchmark, and the
+    """Carrier/Marsh totals + YoY, rank, SoW movement, the peer benchmark, the
     per-dimension decomposition of both books — the carrier's own movers and the Marsh
-    pool they were won from, which is what turns a headline percentage into an argument."""
+    pool they were won from — and where inside the scope the book actually sits."""
     subject = result.subject
     base = {k: v for k, v in filters.items() if k != _CARRIER_COL}
     dim = _driver_dim(filters)
@@ -317,7 +404,9 @@ def _facts(result, filters: Dict[str, Any]) -> Dict[str, Any]:
     movers = _safe(C.movement_by_dim, result.flow, dim, filters, result.engine, top=8) or []
     pool = _safe(C.movement_by_dim, result.flow, dim, base, result.engine, top=8) or []
     return {"subject": str(subject or ""), "carrier": carrier, "marsh": marsh, "rank": rank,
-            "sow": sow, "peer": peer, "movers": movers, "pool": pool}
+            "sow": sow, "peer": peer, "movers": movers, "pool": pool,
+            "segments": _segment_facts(result, filters),
+            "segments_track": _tracks_its_parent(result, filters)}
 
 
 # ── deterministic text composition (every claim carries its figure) ──────────
@@ -527,6 +616,12 @@ def _working_points(f: Dict[str, Any]) -> List[str]:
             line += (f", which leaves the book {U.points(s['current'] - peer_sow)} {side} "
                      f"the top-5 peer average of {peer_sow:.1f}%")
         parts.append(line + ".")
+    # Where the book places above its own standard. A scope-level growth figure says the
+    # book grew; this says which part of it the rest could be measured against.
+    from studio.template_fill import segment_prose as P
+
+    parts += P.points(_segments(f), SEG.Placement.STRONG, subject=_subject(f), limit=2)
+
     if not parts and c.get("current"):
         parts.append(f"{_subject(f, opening=True)} held its book with Marsh at "
                      f"{_money(c['current'])}.")
@@ -564,6 +659,19 @@ def _challenges_points(f: Dict[str, Any]) -> List[str]:
         # as a softener rather than a finding.
         tail = ", which offset the gains elsewhere" if (c.get("pct") or 0) > 0 else ""
         parts.append(f"Premium was given back on {fallers}{tail}.")
+    # Where the ground was actually given, named. A decline stated at scope level is a
+    # number; the same decline located in an industry or a client segment is a mechanism,
+    # which is what this column is for.
+    from studio.template_fill import segment_prose as P
+
+    parts += P.points(_segments(f), SEG.Placement.LOSING, subject=_subject(f), limit=2)
+
+    conc = _concentration_point(f)
+    if conc:
+        parts.append(conc)
+
+    # Last, and only when nothing above located the problem: the scope-level peer gap is
+    # the same observation without a place attached to it.
     gap = _peer_share_gap(f)
     point = _point_of_share(f)
     if gap is not None:
@@ -575,15 +683,86 @@ def _challenges_points(f: Dict[str, Any]) -> List[str]:
     return parts
 
 
+# Below this the book is spread, not concentrated, and saying so is not a finding.
+_CONCENTRATED_TOP3 = 60.0
+
+
+def _concentration_point(f: Dict[str, Any]) -> Optional[str]:
+    """How much of the book rests on its largest few segments.
+
+    ``terms.yaml`` forbids calling a concentrated book risky without naming what would have
+    to happen for it to hurt, so the sentence states the shape and points at the one of
+    those segments that is moving the wrong way -- which is the thing that would hurt.
+    """
+    for findings in _segments(f).values():
+        top3 = findings.top3_share
+        if top3 is None or top3 < _CONCENTRATED_TOP3:
+            continue
+        slipping = next((r for r in findings.written[:3] if (r.sow_delta or 0) < 0), None)
+        tail = f", and share slipped in {slipping.name}" if slipping else ""
+        return (f"The book's three largest {findings.label} groups carry {top3:.0f}% "
+                f"of everything it writes here{tail}.")
+    return None
+
+
+def _segments(f: Dict[str, Any]) -> Dict[str, Any]:
+    """This scope's DISTINGUISHING decomposition, or nothing. Every consumer reads it
+    through here so a fact set built before segments existed still composes exactly as it
+    did."""
+    return f.get("segments") or {}
+
+
+def _tracks_parent(f: Dict[str, Any]) -> bool:
+    """True when this scope has findings but none its parent does not already make."""
+    return bool(f.get("segments_track"))
+
+
 def _growth_points(f: Dict[str, Any]) -> List[str]:
-    """Opportunities: the headroom, what closing it is worth, and where to go for it."""
-    c, m, s = f["carrier"], f.get("marsh") or {}, f["sow"]
-    parts: List[str] = []
+    """Opportunities: where the premium the book does not have actually sits.
+
+    Ordered by what a carrier's leadership can act on, which is not the order the figures
+    arrive in. Absence first - business Marsh already places that this book writes none of
+    - then the segments it writes below its own standard, then those below the benchmark,
+    then the one it places best as evidence the rest can be moved.
+
+    The scope-level lines that used to lead this column now trail it. "Every point of share
+    is worth about $4M" and "closing the gap to the peer average would add roughly $349K"
+    are arithmetic on the headline, and on a line whose real story was $69M of untouched
+    industries they were what the column said instead. They stay as the tail, so a scope
+    with no segment findings still fills its cell.
+    """
+    from studio.template_fill import segment_prose as P
+
+    c, m, s_ = f["carrier"], f.get("marsh") or {}, f["sow"]
+    found = _segments(f)
+    subject = _subject(f)
+    parts: List[str] = P.points(found, *SEG.OPPORTUNITY_KINDS, subject=subject, limit=3)
+
+    summary = P.absence_summary(found, subject)
+    if summary and len(parts) < 2:
+        parts.append(summary)
+    # Nothing here differs from the wider book. Saying so is a finding; repeating the
+    # portfolio's own story on every page, as this column used to, is not.
+    if not parts and _tracks_parent(f):
+        parts.append(P.tracking_note(share=(f.get("sow") or {}).get("current")))
+
+    # The proof point is the only STRONG line this column carries, so it leads its class.
+    proof = next((p for p in (P.sentence(r, subject, lead=True)
+                              for fs in found.values()
+                              for r in fs.of(SEG.Placement.STRONG)[:1])
+                  if p), None)
+    if proof and parts:
+        parts.append(proof)
+
+    capture = _capture_gap(f)
+    if capture:
+        parts.append(capture)
+
     if c.get("current") is not None and m.get("current"):
         headroom = m["current"] - c["current"]
         if headroom > 0:
-            share = (f", leaving {_subject(f)} on {s['current']:.1f}% of the wallet"
-                     if s.get("current") is not None else "")
+            share = (f", leaving {subject} on {s_['current']:.1f}% of the wallet"
+                     if s_.get("current") is not None else "")
             point = _point_of_share(f)
             worth = (f", where every point of share is worth about {_money(point)}"
                      if point else "")
@@ -593,12 +772,10 @@ def _growth_points(f: Dict[str, Any]) -> List[str]:
     if gap is not None and point:
         parts.append(f"Closing the {U.points(gap)} gap to the top-5 peer average would add "
                      f"roughly {_money(gap * point)} of GWP at today's market size.")
-    capture = _capture_gap(f)
-    if capture:
-        parts.append(capture)
     if (m.get("pct") or 0) > 0 and (c.get("pct") is not None) and m["pct"] > c["pct"]:
-        parts.append(f"Marsh demand grew {_mag(m['pct'])} year on year, so holding share flat "
-                     f"would still leave premium on the table, and capture rate is the lever.")
+        parts.append(f"Marsh demand grew {_mag(m['pct'])} year on year, so holding share "
+                     f"flat would still leave premium on the table, and capture rate is "
+                     f"the lever.")
     return parts
 
 
@@ -653,7 +830,7 @@ def _key_messages_points(f: Dict[str, Any]) -> List[str]:
     if s.get("current") is not None:
         moved = (f", {'up' if s['delta'] >= 0 else 'down'} {U.points_of_share(s['delta'])}"
                  if s.get("delta") is not None else "")
-        # The peer average benchmarks the SHARE, so it hangs off the share clause — never
+        # The peer average benchmarks the SHARE, so it hangs off the share clause â€” never
         # off a rank, which it says nothing about.
         against = (f", against a top-5 peer average of {peer['sow']:.1f}%"
                    if peer.get("sow") is not None else "")
@@ -674,7 +851,7 @@ def _key_messages_points(f: Dict[str, Any]) -> List[str]:
 def _thesis_points(f: Dict[str, Any]) -> List[str]:
     """The portfolio thesis: the one tension the rest of the deck exists to discuss.
 
-    Every other column reports a part of the book. The summary page's job is different — it
+    Every other column reports a part of the book. The summary page's job is different â€” it
     states where the account STANDS, as a single claim a leadership team can agree or argue
     with, and the tension in it is what the following pages then evidence. So this is a
     synthesis of two facts that are usually reported apart: how the book is growing against
@@ -698,31 +875,31 @@ def _thesis_points(f: Dict[str, Any]) -> List[str]:
         # The common shape, and the one worth arguing about: winning the year, still
         # under-represented on the book that matters.
         return [f"{lead}, but at {share:.1f}% of the wallet it is still "
-                f"{U.points(behind)} behind the top-5 peer average of {peer_share:.1f}% — "
+                f"{U.points(behind)} behind the top-5 peer average of {peer_share:.1f}% â€” "
                 f"the growth is real and the relevance is not yet."]
     if outgrowing:
         return [f"{lead}, and at {share:.1f}% of the wallet it already writes above the "
-                f"top-5 peer average of {peer_share:.1f}% — the question is holding that, "
+                f"top-5 peer average of {peer_share:.1f}% â€” the question is holding that, "
                 f"not winning it."]
     if behind > 0:
         return [f"{lead}, and at {share:.1f}% of the wallet it sits {U.points(behind)} "
-                f"behind the top-5 peer average of {peer_share:.1f}% — the book is losing "
+                f"behind the top-5 peer average of {peer_share:.1f}% â€” the book is losing "
                 f"ground from a position already behind its peers."]
     return [f"{lead}, though at {share:.1f}% of the wallet it still writes above the "
-            f"top-5 peer average of {peer_share:.1f}% — a strong position growing slower "
+            f"top-5 peer average of {peer_share:.1f}% â€” a strong position growing slower "
             f"than the book around it."]
 
 
 def _highlights_points(f: Dict[str, Any]) -> List[str]:
-    """The one-cell "Key Highlights:" table — its heading line, then one point per theme."""
+    """The one-cell "Key Highlights:" table â€” its heading line, then one point per theme."""
     themes = (points("working", f), points("challenges", f), points("growth", f))
     leads = [t[0] for t in themes if t]
     return ["Key Highlights:"] + leads if leads else []
 
 
-# ── fallbacks: a commentary cell must never ship blank ───────────────────────
+# â”€â”€ fallbacks: a commentary cell must never ship blank â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Each composer answers its question only from the figures that support it, so a book with
-# nothing negative to report leaves "What's not" empty — and a blank column on a carrier's
+# nothing negative to report leaves "What's not" empty â€” and a blank column on a carrier's
 # page reads as an oversight rather than as an absence of bad news. A fallback answers the
 # SAME question from the position the book actually holds. None of them invents a negative
 # or softens one: every fallback still carries the figure it is built on, and a book with a
@@ -733,8 +910,8 @@ def _recent_gain(f: Dict[str, Any]) -> Optional[str]:
     """A share position won inside one year is new rather than established.
 
     The distinct thing to say about a book with no bad news: how much of its standing is
-    one year old. Both figures are the share facts already on the page, but the claim —
-    that the position is young — is one no other column makes.
+    one year old. Both figures are the share facts already on the page, but the claim â€”
+    that the position is young â€” is one no other column makes.
     """
     s = f.get("sow") or {}
     cur, delta = s.get("current"), s.get("delta")
@@ -767,6 +944,26 @@ def _unplaced_headroom(f: Dict[str, Any]) -> Optional[str]:
             f"with other carriers.")
 
 
+def _absent_segments(f: Dict[str, Any]) -> Optional[str]:
+    """Where the book writes nothing at all - a better answer than undirected headroom."""
+    from studio.template_fill import segment_prose as P
+
+    return P.absence_summary(_segments(f), _subject(f))
+
+
+def _tracking_note(f: Dict[str, Any]) -> Optional[str]:
+    """A scope shaped like its parent says so, instead of restating the parent's findings.
+
+    Worth a line on its own: knowing there is no local anomaly to chase is a finding a
+    leadership team can use, and it is honest in a way that inventing a local difference
+    to fill the column is not.
+    """
+    from studio.template_fill import segment_prose as P
+
+    return (P.tracking_note(share=(f.get("sow") or {}).get("current"))
+            if _tracks_parent(f) else None)
+
+
 def _marsh_demand(f: Dict[str, Any]) -> Optional[str]:
     """Where the pool itself is growing, the pool is the opportunity."""
     m = f.get("marsh") or {}
@@ -784,11 +981,12 @@ def _book_held(f: Dict[str, Any]) -> Optional[str]:
     return f"{_subject(f, opening=True)} holds {_money(c['current'])} of Marsh premium here."
 
 
-# Kind → the fallbacks to try, in order, when its composer produced nothing.
+# Kind â†’ the fallbacks to try, in order, when its composer produced nothing.
 _FALLBACKS: Dict[str, Tuple[Callable[[Dict[str, Any]], Optional[str]], ...]] = {
     "working": (_book_held,),
     "challenges": (_recent_gain, _defending_lead, _unplaced_headroom, _book_held),
-    "growth": (_unplaced_headroom, _marsh_demand, _book_held),
+    "growth": (_absent_segments, _tracking_note, _unplaced_headroom,
+               _marsh_demand, _book_held),
     "key_messages": (_book_held,),
     "thesis": (_book_held,),
     "highlights": (),

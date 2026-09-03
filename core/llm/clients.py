@@ -27,6 +27,20 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from dotenv import load_dotenv
+
+from logger import get_logger
+
+logger = get_logger(__name__)
+
+# Read ``.env`` here rather than only in ``core.initialization``. Credentials are a
+# property of the process, not of the chatbot: a Studio run, a script or a notebook that
+# imports this module gets the same configuration the chatbot does, without constructing
+# the engine and session factory it does not need. ``load_dotenv`` never overrides a real
+# environment variable, so an explicitly exported value still wins, and calling it twice
+# is a no-op.
+load_dotenv()
+
 DEFAULT_EFFORT = {"reason": "high", "balanced": "medium", "fast": "minimal"}
 
 # "creative" is not a deployment tier — it is the base deployment run warm, for the
@@ -122,6 +136,27 @@ def make_client(tier: str):
 
         _CLIENTS[config] = AzureChatOpenAI(**_client_kwargs(config))
     return _CLIENTS[config]
+
+
+def available(tier: str = "balanced") -> bool:
+    """True when a client for ``tier`` can actually be built from this environment.
+
+    The honest form of the question, and the reason it lives here: every caller that asked
+    it for itself was really asking "does ``make_client`` have what it needs", and answered
+    with its own guess at the answer — Studio checked ``API_KEY`` and ``ENDPOINT`` and
+    nothing else, so a process with those two set but no ``VERSION`` was told AI was on and
+    then failed on every call. Building the client is the only check that cannot drift from
+    what the client requires, and it is cheap: ``AzureChatOpenAI(...)`` validates its
+    configuration and opens no connection.
+
+    Never raises — an unconfigured environment is the normal case for a deterministic run,
+    not an error.
+    """
+    try:
+        return make_client(tier) is not None
+    except Exception as exc:  # noqa: BLE001 — "cannot build" IS the answer
+        logger.debug("core.llm: no client for tier %r (%s)", tier, exc)
+        return False
 
 
 def reset_clients() -> None:

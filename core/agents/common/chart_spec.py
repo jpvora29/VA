@@ -171,3 +171,49 @@ def generate_chart_two_phase(
     if spec and decided:
         spec["chart_type"] = decided
     return spec
+
+
+def generate_chart_spec(
+    *,
+    base_rules: str,
+    user_query: str,
+    sql_output: List[Dict[str, Any]],
+    type_predictor: Callable[..., Any],
+    spec_predictor: Callable[..., Any],
+    detail_provider: Callable[[str], Optional[str]],
+    node: str = "chart",
+) -> Dict[str, Any]:
+    """The chart spec for this result: Chartwright first, two-phase as fallback.
+
+    One branch, shared by both chart nodes, so the GPR and Survey paths can never
+    drift on which chart engine they use.
+
+    Chartwright (`core.charts.agent`) is the primary path: per-type tool schemas
+    whose column enums come from the result set, so a hallucinated column or a
+    categorical measure is not expressible. Three outcomes:
+
+    * **drawn** — use its spec.
+    * **declined** — it read the data and there is no chart in it. That is an
+      ANSWER, not a failure, so we return `{}` rather than asking the older path
+      to find a chart the specialist already ruled out.
+    * **rejected** — something went wrong (no model, a call that would not
+      ground). Fall through to the two-phase path, which is exactly the
+      behaviour before Chartwright existed.
+    """
+    from core.charts.agent import chart_agent_enabled, design_chart
+
+    if chart_agent_enabled():
+        turn = design_chart(user_query=user_query, rows=sql_output, node=node)
+        if turn.drawn:
+            return dict(turn.spec)
+        if turn.declined:
+            return {}
+
+    return generate_chart_two_phase(
+        base_rules=base_rules,
+        user_query=user_query,
+        sql_output=sql_output,
+        type_predictor=type_predictor,
+        spec_predictor=spec_predictor,
+        detail_provider=detail_provider,
+    )

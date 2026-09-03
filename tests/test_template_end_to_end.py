@@ -231,3 +231,50 @@ def test_pinned_products_narrow_the_overall_summary_and_the_ranking_page():
               for panel in narrow.values["lc_ranking"].values()
               for point in panel["points"]}
     assert ranked and ranked <= set(picked)
+
+
+# ── the decomposition reaches the page a reader opens ───────────────────────
+
+
+def test_the_deck_argues_from_named_industries_or_segments(assembled):
+    """The change this suite exists to prove.
+
+    Before, every commentary column was written from the same six scope-level figures, so
+    a product page could only restate its own headline. A deck that never names an industry
+    or a client segment has fallen back to that.
+    """
+    _, text = assembled
+    named = [v for v in ("Renewable Energy", "Pharmaceuticals", "Technology & Telecom",
+                         "Healthcare & Life Sciences", "Manufacturing", "Financial Services",
+                         "Commercial", "Corporate", "Risk Management")
+             if v in text]
+    assert named, "no industry or client segment reached the deck's commentary"
+
+
+def test_a_portfolio_wide_finding_is_not_printed_on_every_page(assembled):
+    """The same industries are unwritten in every market, so the finding belongs to the
+    page above. Said on each one it is the same sentence with a different figure, which the
+    claim ledger cannot dedup because the string differs every time."""
+    _, text = assembled
+    absences = [line for line in text.split("\n") if "wrote none of it" in line]
+    assert len(absences) <= 2, f"the same absence is argued {len(absences)} times:\n" + \
+                               "\n".join(absences)
+
+
+def test_no_column_closes_on_a_bare_product_instruction(assembled):
+    """"Across the book the call is to defend Cyber, scale Financial Lines, fix Casualty"
+    named six products, carried no figure, and was true of any carrier with six lines."""
+    _, text = assembled
+    low = text.lower()
+    for slogan in ("across the book the call is to", "defend cyber", "scale financial lines",
+                   "fix casualty", "selectively pursue property"):
+        assert slogan not in low, slogan
+
+
+def test_every_opportunity_bullet_carries_a_figure(assembled):
+    """An opportunity with nothing at stake behind it is a heading, not a finding."""
+    _, text = assembled
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if "wrote none of it" in stripped or "of premium is on the table" in stripped:
+            assert "$" in stripped, stripped

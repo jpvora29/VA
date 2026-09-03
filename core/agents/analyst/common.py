@@ -21,7 +21,10 @@ from core.context.bundle import schema_outline
 from core.context.engine import engine_enabled
 from core.initialization import Initialization
 from core.agents.analyst.analytics_tool import build_compute_tool
-from core.agents.common.analytics_tools import analytics_tools_enabled
+from core.agents.common.analytics_tools import (
+    analytics_tools_enabled,
+    compute_first_directive,
+)
 from core.agents.common.peers import custom_peer_directive, pinned_peers
 from core.analysis import get_lens_library
 from core.mcp.tools import (
@@ -103,9 +106,11 @@ def build_tools(
 ):
     """Read-only LangChain tools for a solver; `evidence` collects executed rows.
 
-    `peer_only` trims the toolset to the two tools the peer-comparison path
-    actually needs (run_sql + resolve_value), so that specialist's context isn't
-    cluttered with list/show-values tools it never calls.
+    `peer_only` trims the toolset to what the peer-comparison path actually needs
+    (compute_metric + run_sql + resolve_value + consult_skill), so that
+    specialist's context isn't cluttered with list/show-values tools it never
+    calls. `compute_metric` is the one it should reach for first: the peer-average
+    definition is the one this path most often gets wrong by hand.
 
     `flow` + `peers` scope the `compute_metric` tool: `peers` is the session's
     pinned custom peer set, so a computed peer average benchmarks exactly the group
@@ -373,6 +378,11 @@ def _solver_prompt(
             f"{_schema_repr('survey')}\n"
         )
 
+    # The named calculations, rendered where the solver picks its approach.
+    # Empty when the library is off, which restores the prompt's pure-SQL form.
+    directive = compute_first_directive(flow, route)
+    compute_block = f"{directive}\n\n" if directive else ""
+
     prior_block = (
         f"\n[RESULTS FROM EARLIER STEPS — build on these]\n{prior_digest}\n"
         if prior_digest
@@ -395,10 +405,12 @@ gathered rows into prose later.
 [SUB-QUESTION — answer only this]
 {sub_question}
 
-[LENS TO APPLY — follow this SQL shape and interpretation]
+{compute_block}[LENS TO APPLY — follow this shape and interpretation. Where a named
+calculation above covers a step, call it; the lens's SQL shape is the
+fallback for the parts no calculation covers.]
 {lens_body}
 
-[PRIMARY FLOW] {flow}  (route="{route}"). Use run_sql with this flow. The GPR
+[PRIMARY FLOW] {flow}  (route="{route}"). Query this flow. The GPR
 table IS Marsh's book of business (the market proxy).
 
 [GROUNDED SCHEMA SLICE — the schema-identifier already resolved this for you]
@@ -409,20 +421,27 @@ table IS Marsh's book of business (the market proxy).
 {secondary_block}
 [DOMAIN RULES — the same business + SQL-construction rules the deterministic
 path uses: Carrier_Group handling, peer averages via the Peers table,
-Share-of-Wallet / appetite math, Marsh premium, rolling-12M, ranking, etc.]
+Share-of-Wallet / appetite math, Marsh premium, rolling-12M, ranking, etc.
+These describe how to BUILD such a query by hand. When a named calculation
+covers the step, it already encodes these rules — call it instead.]
 {rules}
 
 {catalog}
 {custom_peers_block}{prior_block}
 [RULES]
-- Use run_sql for ALL data. Never invent a number you did not retrieve.
+- Get every number from a tool; never invent one you did not retrieve.
+- Reach for compute_metric FIRST: if a calculation in [CALCULATIONS AVAILABLE
+  BY NAME] answers the sub-question, call it rather than writing the query
+  yourself. Fall back to run_sql only for what it does not cover.
 - Prefer the pre-resolved filter values above; only call resolve_value for a
   dimension value not already resolved for you.
 - run_sql auto-repairs and re-runs a failing query up to 3 times on its own; if
   it still returns an ERROR, the SQL was wrong — try a DIFFERENT query shape,
   never give up after one failure.
-- "No data" is ONLY valid when run_sql SUCCEEDS with row_count 0. Never report
-  missing data on the basis of an ERROR.
+- "No data" is ONLY valid when a tool SUCCEEDS with row_count 0. Never report
+  missing data on the basis of an ERROR. An empty compute_metric result usually
+  means the filters missed, not that the data is absent — check them, or fall
+  back to run_sql, before concluding anything.
 - Stay tightly focused on the sub-question; do not wander into other analyses.
 
 {_CONFIDENTIALITY}"""

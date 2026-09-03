@@ -141,68 +141,109 @@ def _fact_ids(pack: EvidencePack, measure: str, *, total_only: bool = False) -> 
     ]
 
 
-def build_report_plan(
-    pack: EvidencePack, graph: EvidenceGraph, selection: StudioSelection
-) -> ReportPlan:
-    """Deterministic argument construction: findings with claims citing fact ids."""
-    findings: List[Finding] = []
+class ReportPlanBuilder:
+    """Builds the business argument, one finding at a time.
 
-    totals = _fact_ids(pack, "premium_total")
-    move_pct = _fact_ids(pack, "premium_movement_pct", total_only=True)
-    move_abs = _fact_ids(pack, "premium_movement", total_only=True)
-    if totals:
-        pct_item = pack.items[move_pct[0]] if move_pct else None
+    Deterministic throughout: a finding is only added when the evidence pack
+    actually holds the facts it would cite, and every claim carries the fact ids it
+    was derived from. No LLM has a say here — this is what the deck ARGUES, and the
+    model only gets to phrase it later.
+    """
+
+    def __init__(self, pack: EvidencePack, graph: EvidenceGraph, selection: StudioSelection):
+        self._pack = pack
+        # Held, not yet read: the findings below are single-measure, so none of them
+        # needs the fact-to-fact edges. A finding that argues from one fact BECAUSE
+        # of another (a driver that explains a total) is what the graph is for.
+        self._graph = graph
+        self._selection = selection
+        self._findings: List[Finding] = []
+
+    def add_performance_finding(self) -> "ReportPlanBuilder":
+        """How the book moved overall — the headline observation."""
+        totals = _fact_ids(self._pack, "premium_total")
+        if not totals:
+            return self
+        move_pct = _fact_ids(self._pack, "premium_movement_pct", total_only=True)
+        move_abs = _fact_ids(self._pack, "premium_movement", total_only=True)
+        pct_item = self._pack.items[move_pct[0]] if move_pct else None
         severity = min(1.0, abs(pct_item.value) / 100.0) if pct_item else 0.2
-        imp = Importance(financial_materiality=0.9, change_severity=severity,
-                         strategic_relevance=0.6, actionability=0.4)
-        obs = Claim(
-            text=f"{pack.subject} premium moved "
-                 f"{pct_item.rendered if pct_item else 'vs prior period'} in {pack.period}.",
+        importance = Importance(financial_materiality=0.9, change_severity=severity,
+                                strategic_relevance=0.6, actionability=0.4)
+        claim = Claim(
+            text=f"{self._pack.subject} premium moved "
+                 f"{pct_item.rendered if pct_item else 'vs prior period'} "
+                 f"in {self._pack.period}.",
             claim_type="observation",
             fact_ids=tuple(totals + move_pct + move_abs),
         )
-        findings.append(Finding(section="performance", claims=(obs,), importance=imp,
-                                placement=decide_placement(imp)))
+        return self._add("performance", claim, importance)
 
-    dim_moves = [
-        fid for fid in _fact_ids(pack, "premium_movement")
-        if pack.items[fid].dims.get("scope") != "total"
-    ]
-    if dim_moves and move_abs:
-        top = max(dim_moves, key=lambda f: abs(pack.items[f].value))
-        imp = Importance(financial_materiality=0.7, change_severity=0.6,
-                         strategic_relevance=0.5, actionability=0.5)
-        drv = Claim(
+    def add_movement_driver_finding(self) -> "ReportPlanBuilder":
+        """What drove that move — the largest single contribution below the total."""
+        move_abs = _fact_ids(self._pack, "premium_movement", total_only=True)
+        dim_moves = [
+            fid for fid in _fact_ids(self._pack, "premium_movement")
+            if self._pack.items[fid].dims.get("scope") != "total"
+        ]
+        if not (dim_moves and move_abs):
+            return self
+        top = max(dim_moves, key=lambda f: abs(self._pack.items[f].value))
+        importance = Importance(financial_materiality=0.7, change_severity=0.6,
+                                strategic_relevance=0.5, actionability=0.5)
+        claim = Claim(
             text="The movement decomposes across product lines; the largest "
-                 f"contribution is {pack.items[top].rendered}.",
+                 f"contribution is {self._pack.items[top].rendered}.",
             claim_type="driver",
             fact_ids=(top,) + tuple(move_abs),
         )
-        findings.append(Finding(section="premium_movement", claims=(drv,), importance=imp,
-                                placement=decide_placement(imp)))
+        return self._add("premium_movement", claim, importance)
 
-    whitespace = _fact_ids(pack, "whitespace_market")
-    if whitespace:
-        imp = Importance(financial_materiality=0.5, change_severity=0.1,
-                         strategic_relevance=0.8, actionability=0.9)
-        rec = Claim(
+    def add_whitespace_finding(self) -> "ReportPlanBuilder":
+        """Where the carrier could write and does not — the recommendation."""
+        whitespace = _fact_ids(self._pack, "whitespace_market")
+        if not whitespace:
+            return self
+        importance = Importance(financial_materiality=0.5, change_severity=0.1,
+                                strategic_relevance=0.8, actionability=0.9)
+        claim = Claim(
             text="Material whitespace exists in industries the market writes "
                  "but the carrier does not.",
             claim_type="recommendation",
             fact_ids=tuple(whitespace[:3]),
         )
-        findings.append(Finding(section="whitespace", claims=(rec,), importance=imp,
-                                placement=decide_placement(imp)))
+        return self._add("whitespace", claim, importance)
 
-    return ReportPlan(
-        report_type=selection.report_type,
-        audience=selection.audience,
-        subject=pack.subject,
-        country=pack.country,
-        period=pack.period,
-        comparison_period=pack.comparison_period,
-        findings=tuple(findings),
-        data_gaps=tuple(DataGap(c.section, c.reason) for c in pack.gaps()),
+    def build(self) -> ReportPlan:
+        """The findings, plus every gap the pack knows it could not fill."""
+        return ReportPlan(
+            report_type=self._selection.report_type,
+            audience=self._selection.audience,
+            subject=self._pack.subject,
+            country=self._pack.country,
+            period=self._pack.period,
+            comparison_period=self._pack.comparison_period,
+            findings=tuple(self._findings),
+            data_gaps=tuple(DataGap(g.section, g.reason) for g in self._pack.gaps()),
+        )
+
+    def _add(self, section: str, claim: Claim, importance: Importance) -> "ReportPlanBuilder":
+        """One finding, placed by how important it scored."""
+        self._findings.append(Finding(section=section, claims=(claim,), importance=importance,
+                                      placement=decide_placement(importance)))
+        return self
+
+
+def build_report_plan(
+    pack: EvidencePack, graph: EvidenceGraph, selection: StudioSelection
+) -> ReportPlan:
+    """Deterministic argument construction: findings with claims citing fact ids."""
+    return (
+        ReportPlanBuilder(pack, graph, selection)
+        .add_performance_finding()
+        .add_movement_driver_finding()
+        .add_whitespace_finding()
+        .build()
     )
 
 

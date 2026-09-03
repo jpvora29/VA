@@ -9,7 +9,14 @@ Opportunity is the softer sibling of whitespace: the carrier **is** present in a
 slice but is **under-indexed** relative to a market (Marsh book) that is large
 and/or growing — so there is headroom to grow share.
 
-**SQL shape**
+**Preferred: compute it, do not query it**
+- Carrier share of the market per slice = `compute_metric(name='compute_share_of_wallet',
+  group_by=['<dimension>'])`; the carrier's own mix = `compute_share_of_portfolio`.
+- Market size per slice = `compute_metric(name='compute_market_presence', group_by=[...])`;
+  market growth = `compute_yoy_to_date` with no carrier filter.
+- Then rank the under-indexed slices yourself from those computed rows.
+
+**SQL shape (fallback only, for what the above does not cover)**
 - For the relevant dimension members (product / industry / segment), compute:
   - carrier premium and carrier YoY,
   - market premium (Marsh book) and market YoY,

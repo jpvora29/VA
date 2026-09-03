@@ -216,6 +216,45 @@ def make_tool_selector(
     return ChainedToolSelector(PlanToolSelector(), LLMToolSelector(llm=llm))
 
 
+def compute_first_directive(flow: str, route: str) -> str:
+    """The calculations available BY NAME, plus the rule preferring them over SQL.
+
+    `compute_metric` already carries this menu in its own tool description, but a
+    tool description is read when a tool is called — not when the solver decides
+    HOW to answer. By then the prompt has already said "use run_sql", the lens has
+    handed over a SQL shape, and the domain rules have described the query to
+    write, so a signed-off calculation loses to a hand-derived query it should
+    always beat. Naming the covered calculations here, at the point of choice, is
+    what makes the tested primitive the default instead of the exception.
+
+    Returns "" when the analytics library is switched off, so the prompt falls
+    back to its pure-SQL form byte-identically.
+    """
+    if not analytics_tools_enabled():
+        return ""
+    flows = ["gpr", "survey"] if route == "both" else [flow]
+    menus = "\n\n".join(
+        f"{name.upper()}:\n{catalog_text(name)}"
+        for name in flows
+        if catalog_text(name)
+    )
+    if not menus:
+        return ""
+    return f"""[CALCULATIONS AVAILABLE BY NAME — PREFER THESE OVER run_sql]
+Each calculation below is a definition the business has signed off, computed by a
+tested function. Call it by name:
+
+    compute_metric(flow=..., name=..., metric=..., group_by=[...], filters={{...}})
+
+It resolves the peer set for you, matches filter values to the exact stored
+values, and returns the same number every time. Writing the SQL for one of these
+by hand re-derives a known recipe under time pressure and can silently disagree
+with the rest of the product — so reach for the named calculation FIRST, and use
+run_sql only for what no calculation below covers.
+
+{menus}"""
+
+
 # ── running the selected calls ───────────────────────────────────────────────
 
 

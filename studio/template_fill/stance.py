@@ -57,12 +57,46 @@ def _input_from_facts(facts: Dict[str, Any], name: str) -> PostureInput:
 
 
 def book_posture_point(facts: Dict[str, Any], name: str = "") -> Optional[str]:
-    """The stance line for the book a page is about, or ``None`` when unsupported."""
+    """The stance line for the book a page is about, or ``None`` when unsupported.
+
+    "The call here is to scale this book, because share of wallet rose 1.2 percentage
+    points" named nothing a team could act on: every carrier's book is somewhere, and an
+    instruction that does not say where is advice true of anyone. Where the scope has been
+    decomposed, the call is anchored to the segment carrying the most premium behind it.
+    """
     label = name or str(facts.get("subject") or "").strip() or "the book"
     call = posture_for(_input_from_facts(facts, label))
     if call is None:
         return None
-    return f"The call here is to {call_phrase(call.posture)}, because {call.because}."
+    # The reason and the place are both load-bearing, and an earlier draft of this traded
+    # the reason away for the place. A stance with no "because" is an assertion; one with
+    # no "where" is advice true of any carrier. The line carries both.
+    stance = f"The call here is to {call_phrase(call.posture)}, because {call.because}."
+    where = _stance_anchor(facts)
+    return f"{stance} {where}" if where else stance
+
+
+def _stance_anchor(facts: Dict[str, Any]) -> Optional[str]:
+    """The named segment with the most premium at stake, as a clause for the stance line."""
+    from studio.segments import OPPORTUNITY_KINDS
+    from studio.template_fill.render import _money
+
+    rows = [r for found in (facts.get("segments") or {}).values()
+            for r in found.of(*OPPORTUNITY_KINDS)]
+    top = max(rows, key=lambda r: r.stake) if rows else None
+    if top is not None and top.stake:
+        return (f"{top.name} is where the most premium sits behind it, "
+                f"{_money(top.stake)} of it.")
+    # A scope shaped like its parent has no segment of its own to name, but it still has a
+    # biggest mover -- and an instruction that names nowhere is the advice this deck was
+    # rewritten to stop giving.
+    movers = [m for m in (facts.get("movers") or [])
+              if isinstance(m.get("delta"), (int, float)) and m["delta"] > 0]
+    if not movers:
+        return None
+    lead = max(movers, key=lambda m: m["delta"])
+    return (f"{lead['name']} is what moved it, {_money(lead['delta'])} of the year's "
+            f"growth.")
 
 
 # ── the portfolio line ───────────────────────────────────────────────────────
@@ -104,6 +138,11 @@ def _product_inputs(result) -> List[PostureInput]:
     return out
 
 
+# A management line that names six products is a list, not a call. Two is what a room can
+# hold, and it forces the ranking to mean something.
+_MAX_PORTFOLIO_CALLS = 2
+
+
 def portfolio_posture_point(result) -> Optional[str]:
     """Every product grouped by the stance its figures earn, as one management line.
 
@@ -112,16 +151,30 @@ def portfolio_posture_point(result) -> Optional[str]:
     worth a line, never a broken deck.
     """
     try:
-        calls: Dict[Posture, List[str]] = defaultdict(list)
+        calls: Dict[Posture, List[Tuple[str, Optional[float]]]] = defaultdict(list)
         for x in _product_inputs(result):
             call = posture_for(x)
             if call is not None:
-                calls[call.posture].append(x.name)
+                calls[call.posture].append((x.name, x.premium))
         if not calls:
             return None
-        parts = [f"{posture.value.lower()} {_and(calls[posture])}"
-                 for posture in _AGENDA if calls.get(posture)]
-        return "Across the book the call is to " + _and(parts) + "."
+        # "Across the book the call is to defend Cyber, scale Financial Lines, fix Casualty
+        # and selectively pursue Property, Marine and Energy" named six products, carried
+        # no figure, and would have been true of any carrier with six lines. An instruction
+        # earns its place by naming what is at stake, so this takes the TWO stances the
+        # most premium sits behind and says how much.
+        ranked = sorted(((posture, name, premium) for posture, rows in calls.items()
+                         for name, premium in rows),
+                        key=lambda x: (_AGENDA.index(x[0]), -(x[2] or 0.0)))
+        picked = [x for x in ranked[:_MAX_PORTFOLIO_CALLS] if x[2]]
+        if not picked:
+            return None
+        grouped: Dict[Posture, List[str]] = defaultdict(list)
+        for posture, name, premium in picked:
+            grouped[posture].append(f"{name} ({_money(premium)})")
+        parts = [f"{posture.value.lower()} {_and(names)}"
+                 for posture, names in grouped.items()]
+        return "The book's first calls are to " + _and(parts) + "."
     except Exception as exc:  # noqa: BLE001 — the stance never breaks the deck
         logger.warning("stance: no portfolio posture (%s)", exc)
         return None

@@ -7,7 +7,16 @@ requires: []
 
 Turn a point-in-time figure into a trajectory.
 
-**SQL shape**
+**Preferred: compute it, do not query it**
+- Check the reach of the data first: `compute_metric(name='get_latest_quarter')`
+  reports whether the latest year is complete.
+- Growth = `compute_metric(name='compute_yoy_to_date')`. It truncates BOTH years
+  to the same quarter, so a part-loaded latest year is not read as a collapse; on
+  a complete year it agrees with `compute_yoy`, making it always the safe choice.
+- A monthly/quarterly series = `compute_metric(name='compute_period_series')`;
+  period-over-period movement = `compute_period_change`; rolling 12M = `compute_ttm`.
+
+**SQL shape (fallback only, for what the above does not cover)**
 - Compute the same metric for the current period and the prior period(s) using
   `Year` (premium/GPR) or `Survey_Year` (survey), and report the absolute change
   and % change.

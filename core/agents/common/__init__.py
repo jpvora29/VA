@@ -9,6 +9,7 @@ from core.agents.common.analytics_tools import (
     AnalyticsToolRunner,
     analytics_covered,
     analytics_tools_enabled,
+    compute_first_directive,
     make_tool_selector,
     run_analytics_tools,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "AnalyticsToolRunner",
     "analytics_covered",
     "analytics_tools_enabled",
+    "compute_first_directive",
     "make_tool_selector",
     "run_analytics_tools",
     "BasePlannerNode",

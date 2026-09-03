@@ -61,35 +61,98 @@ def _template_year(template) -> Optional[int]:
     return years.most_common(1)[0][0] if years else None
 
 
-def new_template_doc(result, *, template_path: Optional[str] = None, use_ai: bool = False) -> Dict[str, Any]:
-    """Seed a TemplateDoc from an ``OverallResult`` against the active template."""
+# ── seeding a TemplateDoc, one contributor at a time ─────────────────────────
+
+
+def _value_contributors():
+    """The modules that fill roles, in the order they get to write.
+
+    Each is a ``provider(template, result) -> {role: value}``. Later entries win a
+    clash, which is why they are a list rather than a set: the order IS the
+    precedence rule. Imported inside the function because each provider imports
+    back into this module for its own field materialisation.
+    """
     from studio.template_fill import commentary, grids
     from studio.template_fill.survey import kpi as survey_kpi
 
-    path = template_path or active_template_path()
-    template, bindings = derive_manifest(path, use_ai=use_ai)
-    values = resolve_roles(result)
-    values.update(grids.grid_values(template, result))
-    values.update(commentary.values(template, result))
-    # The overall survey-score tile is gated on the run's data basis, so it fills (or comes
-    # off) here for the same reason it does in the assembled deck.
-    values.update(survey_kpi.values(template, result))
-    tyear = _template_year(template)
-    if tyear is not None:
-        values["template_year"] = tyear
-    return {
-        "template_path": path,
-        "width_emu": template.width_emu,
-        "height_emu": template.height_emu,
-        "n_slides": len(template.slides),
-        "manifest": R.manifest_to_dicts(bindings),
-        "values": values,
-        "overrides": {},            # slot_key -> user text
-        "map_overrides": {},        # slot_key -> role (remap)
-        "added": {},                # slide_idx(str) -> [ {x,y,w,h,text} ]
-        "hidden": _hidden_blocks(template, result),
-        "order": list(range(len(template.slides))),
-    }
+    return (
+        grids.grid_values,
+        commentary.values,
+        # The overall survey-score tile is gated on the run's data basis, so it fills
+        # (or comes off) here for the same reason it does in the assembled deck.
+        survey_kpi.values,
+    )
+
+
+class TemplateDocBuilder:
+    """Builds the TemplateDoc for one result against one template.
+
+    A TemplateDoc is a JSON-able snapshot — the derived manifest, the resolved
+    values, and empty overlays for the author to edit into. Each ``add_*`` puts one
+    of those layers in, so :func:`new_template_doc` reads as the layers stack.
+    """
+
+    def __init__(self, result, *, template_path: Optional[str] = None,
+                 use_ai: bool = False) -> None:
+        self._result = result
+        self._path = template_path or active_template_path()
+        self._template, self._bindings = derive_manifest(self._path, use_ai=use_ai)
+        self._values: Dict[str, Any] = {}
+
+    def add_role_values(self) -> "TemplateDocBuilder":
+        """The scalar roles the bindings layer resolves straight off the result."""
+        self._values.update(resolve_roles(self._result))
+        return self
+
+    def add_provider_values(self) -> "TemplateDocBuilder":
+        """Grid rows, prose commentary and the survey tile, in contributor order.
+
+        Deliberately NOT best-effort, unlike the same providers under
+        :mod:`studio.template_fill.assemble`: this document is the one the author
+        edits on screen, so a provider that cannot run is a bug to see, not a
+        silently thinner page.
+        """
+        for provider in _value_contributors():
+            self._values.update(provider(self._template, self._result))
+        return self
+
+    def add_template_year(self) -> "TemplateDocBuilder":
+        """The year the template itself is authored around, when it states one."""
+        year = _template_year(self._template)
+        if year is not None:
+            self._values["template_year"] = year
+        return self
+
+    def build(self) -> Dict[str, Any]:
+        """The document: geometry, manifest, values, and empty author overlays."""
+        return {
+            "template_path": self._path,
+            "width_emu": self._template.width_emu,
+            "height_emu": self._template.height_emu,
+            "n_slides": len(self._template.slides),
+            "manifest": R.manifest_to_dicts(self._bindings),
+            "values": self._values,
+            "overrides": {},            # slot_key -> user text
+            "map_overrides": {},        # slot_key -> role (remap)
+            "added": {},                # slide_idx(str) -> [ {x,y,w,h,text} ]
+            "hidden": _hidden_blocks(self._template, self._result),
+            "order": list(range(len(self._template.slides))),
+        }
+
+
+def new_template_doc(result, *, template_path: Optional[str] = None,
+                     use_ai: bool = False) -> Dict[str, Any]:
+    """Seed a TemplateDoc from an ``OverallResult`` against the active template."""
+    return (
+        TemplateDocBuilder(result, template_path=template_path, use_ai=use_ai)
+        .add_role_values()
+        .add_provider_values()
+        .add_template_year()
+        .build()
+    )
+
+
+# ── folding it flat for the preview and the fill engine ──────────────────────
 
 
 def _effective_role(doc, slot_key: str, role: Optional[str]) -> Optional[str]:

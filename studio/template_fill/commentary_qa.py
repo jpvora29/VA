@@ -73,9 +73,15 @@ _UNBENCHMARKED = re.compile(r"\b(strong|healthy|robust|solid|excellent|impressiv
 _BENCHMARK = re.compile(r"\b(than|versus|vs\.?|against|above|below|ahead of|behind|"
                         r"peer|average|compared)\b", re.I)
 
-# A page of commentary is read aloud. Past three sentences it stops being a takeaway.
-_MAX_SENTENCES = 3
-_MAX_WORDS = 70
+# A page of commentary is read aloud. Past two sentences a BULLET stops being a takeaway.
+#
+# Measured per bullet, not per cell. A cell holds up to four bullets, so a whole-cell limit
+# of three sentences was tripped by 62 of 64 cells on a normal deck — every cell that was
+# doing its job. A rule that fires on almost everything reports nothing, and it buried the
+# findings beside it. The per-bullet budget is the one ``rules.yaml`` already states
+# (``commentary.max_sentences_per_bullet``), so the two no longer disagree.
+_MAX_SENTENCES = 2
+_MAX_WORDS = 60
 
 
 def _overstates_the_market(text: str) -> Optional[str]:
@@ -100,10 +106,12 @@ def _unbenchmarked_adjective(text: str) -> Optional[str]:
 
 
 def _runs_long(text: str) -> Optional[str]:
-    said = sentences(text)
-    words = len((text or "").split())
-    if len(said) > _MAX_SENTENCES or words > _MAX_WORDS:
-        return f"{len(said)} sentences / {words} words on one cell"
+    """The longest BULLET in the cell, against the per-bullet budget."""
+    for bullet in (line.strip() for line in (text or "").split("\n") if line.strip()):
+        said = sentences(bullet)
+        words = len(bullet.split())
+        if len(said) > _MAX_SENTENCES or words > _MAX_WORDS:
+            return f"{len(said)} sentences / {words} words on one bullet"
     return None
 
 

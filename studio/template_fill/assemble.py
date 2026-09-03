@@ -21,7 +21,7 @@ from __future__ import annotations
 import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from logger import get_logger
 from studio.compute import DATA_BASIS_PREMIUM, DATA_BASIS_WITH_SURVEY
@@ -165,40 +165,182 @@ def _merge_values(base: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]
     return merged
 
 
+# ── building one sub-deck ────────────────────────────────────────────────────
+
+
+def _enrich_values(template_name: str, template, scoped_result, values: Dict[str, Any],
+                   providers) -> Dict[str, Any]:
+    """``values`` with every provider's contribution folded in, in order.
+
+    One provider failing must not sink the rest: a deck missing one page's grid
+    beats no deck at all.
+    """
+    for provider in providers:
+        try:
+            extra = provider(template, scoped_result)
+        except Exception as exc:  # noqa: BLE001 — one provider must not sink the rest
+            logger.warning("assemble: %s failed for %s: %s",
+                           getattr(provider, "__module__", provider), template_name, exc)
+            continue
+        if extra:
+            values = _merge_values(values, extra)
+    return values
+
+
+def _stamp_template_year(template, values: Dict[str, Any]) -> Dict[str, Any]:
+    """The template's own hard-coded reporting year, unless a provider set one."""
+    year = _template_year(template)
+    if year is not None:
+        values.setdefault("template_year", year)
+    return values
+
+
+def _report_quality(values: Dict[str, Any], scoped_result, label: str) -> None:
+    """Score the prose this sub-deck ships. Report-only, deliberately.
+
+    The prose is already written and already faithful, and a judgement rule must
+    never be allowed to delete a sentence — that is how a cell ends up blank. So
+    the checks log, and the metrics put a NUMBER on how the text reads, rather
+    than either of them editing it.
+    """
+    commentary_qa.log_issues(commentary_qa.check(values), label=label)
+    commentary_metrics.log_score(
+        values, subject=str(getattr(scoped_result, "subject", "") or ""), label=label)
+
+
 def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], label: str,
                    *, providers=_PREMIUM_PROVIDERS) -> SubDeck:
-    """Finish a sub-deck: fold in grid rows, table commentary/KPIs and prose commentary,
-    then drop surplus country pages.
+    """Finish a sub-deck: enrich its values, score its prose, prune its surplus pages.
 
-    The template is analysed once here (reused for all). Any failure is swallowed — no
-    enrichment may break assembly (a full deck beats a broken one).
+    The template is analysed once here. Any failure is swallowed — no enrichment
+    may break assembly (a full deck beats a broken one).
     """
     hidden: Tuple[int, ...] = ()
     try:
         template = analyze(get_binding_map(template_name).path)
-        for provider in providers:
-            try:
-                extra = provider(template, scoped_result)
-            except Exception as exc:  # noqa: BLE001 — one provider must not sink the rest
-                logger.warning("assemble: %s failed for %s: %s",
-                               getattr(provider, "__module__", provider), template_name, exc)
-                extra = None
-            if extra:
-                values = _merge_values(values, extra)
-        tyear = _template_year(template)
-        if tyear is not None:
-            values.setdefault("template_year", tyear)
-        # Report-only: the prose is already written and already faithful, and a judgement
-        # rule must never be allowed to delete a sentence (that is how a cell ends blank).
-        commentary_qa.log_issues(commentary_qa.check(values), label=label)
-        # …and the same text scored on how it READS, so a commentary change is judged on a
-        # number rather than on a feeling (studio.template_fill.commentary_metrics).
-        commentary_metrics.log_score(
-            values, subject=str(getattr(scoped_result, "subject", "") or ""), label=label)
+        values = _enrich_values(template_name, template, scoped_result, values, providers)
+        values = _stamp_template_year(template, values)
+        _report_quality(values, scoped_result, label)
         hidden = tuple(prune.hidden_country_pages(template, _country_count(values)))
     except Exception as exc:  # noqa: BLE001 — grid/pruning must never break assembly
         logger.warning("assemble: grid/prune failed for %s: %s", template_name, exc)
     return SubDeck(template_name, values, label=label, hidden=hidden)
+
+
+# ── planning the whole deck, one axis at a time ──────────────────────────────
+
+
+class SubDeckPlanBuilder:
+    """Builds the ordered list of sub-decks, one axis per call.
+
+    Each ``add_*`` is the whole answer for its axis — whether the axis is in scope,
+    which entities it covers, and what each of those sub-decks is filled from — so
+    the plan reads as the deck does:
+
+        overall → one per product → one per country (+ its survey page) → back cover
+
+    An axis the Setup scope excludes, or whose template is not registered and on
+    disk, simply adds nothing: the deck comes out shorter rather than failing.
+    """
+
+    def __init__(self, result, *, scope: Optional[str] = None,
+                 data_basis: Optional[str] = None) -> None:
+        self._axes = _axes_for(scope)
+        self._names = _buildable()
+        basis = str(data_basis or DATA_BASIS_PREMIUM)
+
+        # The entities each axis covers: the user's selection when they pin any, ELSE
+        # every product/country the carrier writes in (so an unfiltered run produces the
+        # carrier's full book, one block each).
+        self._vocab = product_vocab(result) if PRODUCT in self._names else ()
+        self._products = (selected_products(result) or self._vocab) if self._wants(PRODUCT) else ()
+        self._countries = (
+            (selected_countries(result) or carrier_countries(result))
+            if self._wants(COUNTRY) else ())
+        self._wants_survey = (
+            basis == DATA_BASIS_WITH_SURVEY and SURVEY in self._names and self._wants(COUNTRY))
+
+        # Every sub-deck sees the run's whole country and product set, so a page can tell a
+        # single-country run from a multi-country one — and a portfolio page can widen a
+        # sub-deck's one-product pin back to the SELECTION — after its own filters are
+        # narrowed. The data basis rides along too: a page sourced from the survey book
+        # asks the result.
+        self._result = replace(result,
+                               scope_countries=tuple(str(c) for c in self._countries),
+                               scope_products=tuple(str(p) for p in selected_products(result)),
+                               data_basis=basis)
+        self._carriers = carrier_vocab(self._result)
+
+        # One ledger for the whole deck, so it spans every sub-deck: the pages that repeated
+        # each other sit in DIFFERENT sub-decks (the overall block's highlights, trading
+        # summary and ranking pages all describe the same book), so a per-sub-deck memory
+        # would not have caught them. The narratives are collected across every sub-deck and
+        # checked ONCE in ``build``: "two slides doing the same job" is a whole-deck question.
+        self._narratives: List[Any] = []
+        self._providers = _premium_providers(ClaimLedger(), self._narratives)
+        self._decks: List[SubDeck] = []
+
+    # ── one call per axis, in deck order ──
+
+    def add_overall(self) -> "SubDeckPlanBuilder":
+        """The subject-level block, reporting on the SETUP SELECTION, filters and all.
+
+        A run pinned to Aviation and Marine summarises Aviation + Marine premium, SoW
+        and rank, not the carrier's whole book. The pinned products additionally decide
+        how many product pages follow it.
+        """
+        if self._wants(OVERALL):
+            self._add(OVERALL, self._result,
+                      self._with_context(resolve_roles(self._result)), "overall")
+        return self
+
+    def add_products(self) -> "SubDeckPlanBuilder":
+        """One block per product in scope, each carrying the product vocabulary."""
+        for product in self._products:
+            values = self._with_context(resolve_roles_for_product(self._result, product))
+            values["product_vocab"] = self._vocab
+            self._add(PRODUCT, scope_to_product(self._result, product), values, str(product))
+        return self
+
+    def add_countries(self) -> "SubDeckPlanBuilder":
+        """One block per country, each followed by its Carrier Survey page when in scope."""
+        for country in self._countries:
+            scoped = scope_to_country(self._result, country)
+            self._add(COUNTRY, scoped,
+                      self._with_context(resolve_roles_for_country(self._result, country)),
+                      str(country))
+            if self._wants_survey and survey_facts.has_survey_data(self._result, country):
+                # The page needs no premium roles — only its own country label, which the
+                # fill engine's "Country (1)" substitution reads.
+                self._add(SURVEY, scoped, {"country_name[0]": str(country)},
+                          f"{country} survey", providers=_SURVEY_PROVIDERS)
+        return self
+
+    def add_end(self) -> "SubDeckPlanBuilder":
+        """The closing back cover — nothing to fill, so no provider runs over it."""
+        if self._wants(END):
+            self._decks.append(SubDeck(END, {}, label="end"))
+        return self
+
+    def build(self) -> List[SubDeck]:
+        """The finished plan, with the whole-deck repetition check reported once."""
+        commentary_qa.log_issues(commentary_qa.check_narratives(self._narratives), label="deck")
+        return list(self._decks)
+
+    # ── internals ──
+
+    def _wants(self, axis: str) -> bool:
+        """In the chosen scope AND registered with its ``.pptx`` on disk."""
+        return axis in self._axes and axis in self._names
+
+    def _with_context(self, values: Dict[str, Any]) -> Dict[str, Any]:
+        """Fold in the vocabulary the fill engine rewrites authored example names from."""
+        return {**values, "carrier_vocab": self._carriers}
+
+    def _add(self, template: str, scoped_result, values: Dict[str, Any], label: str,
+             *, providers=None) -> None:
+        self._decks.append(_build_subdeck(template, scoped_result, values, label,
+                                          providers=providers or self._providers))
 
 
 def plan_subdecks(result, *, scope: Optional[str] = None,
@@ -206,84 +348,22 @@ def plan_subdecks(result, *, scope: Optional[str] = None,
     """The ordered sub-decks for ``result``: overall, then per product, then per country.
 
     ``scope`` (from the Setup "scope" control) selects which axes to build — the full deck
-    ("all"), or just the overall / product / country pages. Every axis is also gated on its
-    template being registered AND present on disk. The product/country entities are the user's
-    selection when they pin any, ELSE every product/country the carrier writes in (so an
-    unfiltered run produces the carrier's full book, one block each).
+    ("all"), or just the overall / product / country pages. ``data_basis`` (the Setup form's
+    DATA BASIS control) decides whether the run draws on the survey book at all: only
+    ``"premium_survey"`` follows each country block with its Carrier Survey page, and keeps
+    the summary page's overall survey-score tile.
 
-    ``data_basis`` (the Setup form's DATA BASIS control) decides whether the run draws on the
-    survey book at all. Only ``"premium_survey"`` follows each country block with its Carrier
-    Survey page (and only for a country that actually has one) and keeps the summary page's
-    overall survey-score tile; a premium-basis run gets today's five-slide blocks and a
-    summary page with that tile removed. It is put on the result so every page reads the one
-    answer rather than being handed it separately.
-
-    The OVERALL block reports on the SETUP SELECTION, filters and all: a run pinned to
-    Aviation and Marine summarises Aviation + Marine premium, SoW and rank, not the
-    carrier's whole book. The pinned products additionally decide how many product pages
-    follow it. Each deck's values carry the entity roles, breakdown-grid rows, and (for
-    products) the product vocabulary the fill engine rewrites; surplus per-country pages
-    are pruned to the country count.
+    :class:`SubDeckPlanBuilder` holds the rules for each axis; this is the order they
+    assemble in.
     """
-    axes = _axes_for(scope)
-    names = _buildable()
-    basis = str(data_basis or DATA_BASIS_PREMIUM)
-    vocab = product_vocab(result) if PRODUCT in names else ()
-    want_products = PRODUCT in axes and PRODUCT in names
-    want_countries = COUNTRY in axes and COUNTRY in names
-    products = (selected_products(result) or vocab) if want_products else ()
-    countries = (selected_countries(result) or carrier_countries(result)) if want_countries else ()
-    want_survey = basis == DATA_BASIS_WITH_SURVEY and SURVEY in names and want_countries
-
-    # Every sub-deck sees the run's whole country and product set, so a page can tell a
-    # single-country run from a multi-country one — and a portfolio page can widen a
-    # sub-deck's one-product pin back to the SELECTION — after its own filters are narrowed.
-    # The data basis rides along too: a page sourced from the survey book asks the result.
-    result = replace(result,
-                     scope_countries=tuple(str(c) for c in countries),
-                     scope_products=tuple(str(p) for p in selected_products(result)),
-                     data_basis=basis)
-    carriers = carrier_vocab(result)
-
-    def with_context(values: Dict[str, Any]) -> Dict[str, Any]:
-        """Fold in the vocabulary the fill engine rewrites authored example names from."""
-        return {**values, "carrier_vocab": carriers}
-
-    # One ledger for the whole deck, built here so it spans every sub-deck: the pages that
-    # repeated each other sit in DIFFERENT sub-decks (the overall block's highlights,
-    # trading summary and ranking pages all describe the same book), so a per-sub-deck
-    # memory would not have caught them.
-    # The narratives are collected across every sub-deck and checked ONCE at the end:
-    # "two slides doing the same job" is a whole-deck question, and the overall block's
-    # pages and a country block's pages can collide on it.
-    narratives: List[Any] = []
-    providers = _premium_providers(ClaimLedger(), narratives)
-
-    decks: List[SubDeck] = []
-    if OVERALL in axes and OVERALL in names:
-        decks.append(_build_subdeck(OVERALL, result,
-                                    with_context(resolve_roles(result)), "overall",
-                                    providers=providers))
-    for product in products:
-        values = with_context(resolve_roles_for_product(result, product))
-        values["product_vocab"] = vocab
-        decks.append(_build_subdeck(PRODUCT, scope_to_product(result, product), values,
-                                    str(product), providers=providers))
-    for country in countries:
-        decks.append(_build_subdeck(COUNTRY, scope_to_country(result, country),
-                                    with_context(resolve_roles_for_country(result, country)),
-                                    str(country), providers=providers))
-        if want_survey and survey_facts.has_survey_data(result, country):
-            decks.append(_build_subdeck(
-                SURVEY, scope_to_country(result, country),
-                # The page needs no premium roles — only its own country label, which the
-                # fill engine's "Country (1)" substitution reads.
-                {"country_name[0]": str(country)}, f"{country} survey",
-                providers=_SURVEY_PROVIDERS))
-    if END in axes and END in names:
-        decks.append(SubDeck(END, {}, label="end"))
-    commentary_qa.log_issues(commentary_qa.check_narratives(narratives), label="deck")
-    return decks
+    return (
+        SubDeckPlanBuilder(result, scope=scope, data_basis=data_basis)
+        .add_overall()
+        .add_products()
+        .add_countries()
+        .add_end()
+        .build()
+    )
 
 
 _manifest_cache: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
@@ -328,25 +408,33 @@ def _doc_from_map(bmap: BindingMap, sub: SubDeck) -> Dict[str, Any]:
 
 
 def _fill_subdeck(sub: SubDeck, work_dir: str, idx: int) -> str:
+    """One sub-deck filled to its own numbered ``.pptx`` in the working directory."""
     bmap = get_binding_map(sub.template)
     safe_label = "".join(c if c.isalnum() else "_" for c in sub.label)[:24]
     out = str(Path(work_dir) / f"{idx:02d}_{sub.template}_{safe_label}.pptx")
     return fill_template(_doc_from_map(bmap, sub), out_path=out)
 
 
+def _fill_subdecks(decks: Sequence[SubDeck], work_dir: str) -> List[str]:
+    """Every sub-deck filled, in plan order — the order they will be merged in."""
+    Path(work_dir).mkdir(parents=True, exist_ok=True)
+    return [_fill_subdeck(sub, work_dir, i) for i, sub in enumerate(decks)]
+
+
 def assemble_deck(result, *, out_path: Optional[str] = None, work_dir: Optional[str] = None,
                   scope: Optional[str] = None, data_basis: Optional[str] = None) -> str:
     """Fill every sub-deck for ``result`` and merge them, in order, into ``out_path``.
+
+        plan the sub-decks  ->  fill each one  ->  merge them into one file
 
     ``scope`` picks which axes to assemble (see :func:`plan_subdecks`); ``work_dir`` holds
     the intermediate filled sub-decks (a temp dir by default).
     """
     decks = plan_subdecks(result, scope=scope, data_basis=data_basis)
-    tmp = work_dir or tempfile.mkdtemp(prefix="qbr_assemble_")
-    Path(tmp).mkdir(parents=True, exist_ok=True)
-    filled = [_fill_subdeck(sub, tmp, i) for i, sub in enumerate(decks)]
+    filled = _fill_subdecks(decks, work_dir or tempfile.mkdtemp(prefix="qbr_assemble_"))
     out = out_path or str(Path.cwd() / "qbr_assembled.pptx")
     merge_to_file(filled, out)
+
     logger.info("assemble_deck: %d sub-deck(s) [%s] -> %s",
                 len(decks), ", ".join(d.label for d in decks), out)
     return out

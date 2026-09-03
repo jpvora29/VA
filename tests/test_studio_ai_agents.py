@@ -80,3 +80,47 @@ def test_verifier_keeps_supported_bullets():
     assert "Cyber grew +58.4%" in clean
     assert all("Retention" not in c for c in clean)
     assert issues
+
+
+# ── the confidentiality list, and the shape it is built from ────────────────
+
+
+def test_the_peer_blocklist_is_built_from_dash_option_dicts():
+    """``cached_filter_options`` returns ``{"label": …, "value": …}`` dicts, not strings.
+
+    Read as strings, the first carrier raised ``'dict' object has no attribute 'lower'``
+    and took the whole of ``enhance_deck`` down with it — so the AI story pass never ran
+    and the peer blocklist it exists to enforce was never applied. The failure was silent:
+    the caller logs a warning and returns the un-enhanced deck, which looks exactly like
+    "no LLM configured".
+    """
+    class _Result:
+        flow = "gpr"
+
+    names = story_agent._forbidden_names(_Result(), "Zurich")
+
+    assert names, "the confidentiality list came back empty"
+    assert all(isinstance(n, str) for n in names)
+    assert "AIG" in names                      # a peer IS forbidden
+    assert "Zurich" not in names               # ...the subject is not
+    assert not any("marsh" == n.lower() for n in names)
+
+
+def test_a_carrier_option_is_read_whatever_shape_it_arrives_in():
+    assert story_agent._option_name({"label": "AIG", "value": "AIG"}) == "AIG"
+    assert story_agent._option_name({"label": "AIG"}) == "AIG"      # value missing
+    assert story_agent._option_name("Chubb") == "Chubb"             # already a string
+    assert story_agent._option_name(None) == ""
+
+
+def test_an_unavailable_options_cache_leaves_the_list_empty_rather_than_raising(monkeypatch):
+    """Confidentiality is best-effort here; the verifier is the gate that must not fail."""
+    import studio.data as D
+
+    monkeypatch.setattr(D, "cached_filter_options",
+                        lambda flow: (_ for _ in ()).throw(RuntimeError("no cache")))
+
+    class _Result:
+        flow = "gpr"
+
+    assert story_agent._forbidden_names(_Result(), "Zurich") == []

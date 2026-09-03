@@ -141,6 +141,55 @@ whitespace:
     appetite, capacity or validation evidence to cite alongside it.
   unit: currency
 
+reporting_year:
+  label: Reporting year
+  aliases: [reporting year, the year, current year, prior year]
+  definition: >-
+    The year the figures on this page cover, and the year they are compared with. Every
+    premium, share and rank in the commentary belongs to one of the two.
+  formula: the latest year in the selected scope, and the year before it
+  say: >-
+    Say "in 2025" or "up 57.1% on the year". Date the figure once so the reader knows which
+    book is being described.
+  never: >-
+    Never present a year the warehouse has only loaded part of as a full one, and never
+    compare a part year against a complete one without saying which months each covers.
+
+placed_average:
+  label: Placed average
+  aliases: [placed average, its own average, house average, average where it writes]
+  definition: >-
+    The carrier's share of wallet measured ONLY across the segments it actually writes,
+    excluding the ones it is absent from. The benchmark for asking whether a segment is
+    written thinly, because it is the standard the carrier has already shown it can reach.
+  formula: >-
+    carrier premium in segments where it writes, divided by Marsh premium in those same
+    segments
+  say: >-
+    Say "the book holds 9.6% there against the 12.9% it averages where it writes". Name
+    both numbers; the gap alone says nothing.
+  never: >-
+    Never present it as the carrier's share of wallet for the scope, and never compare the
+    two as though they measured the same thing. They differ by exactly the business the
+    carrier does not write, which is a finding of its own, not a discrepancy.
+  unit: percent
+
+concentration:
+  label: Concentration
+  aliases: [book concentration, lead share, top-three share]
+  definition: >-
+    How much of the carrier's Marsh-placed book sits in its largest few segments or lines.
+    A description of shape, computed from premium alone.
+  formula: the largest slice's share of the book, and the top three slices' share together
+  say: >-
+    Say "the top two lines carry 61% of everything written". State the shape and let the
+    reader draw the conclusion.
+  never: >-
+    Never call a concentrated book risky, fragile or exposed without naming what would have
+    to happen for it to hurt, and never read diversification appetite from it. The figure
+    shows where premium sits, not whether that is a problem.
+  unit: percent
+
 appetite:
   label: Appetite
   aliases: [risk appetite, underwriting appetite, willingness to write]

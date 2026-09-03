@@ -14,7 +14,12 @@ member of a dimension (often a prerequisite for whitespace/opportunity steps).
 - `Client_Segment`
 - `Region` / `Country`
 
-**SQL shape**
+**Preferred: compute it, do not query it**
+- The split = `compute_metric(name='compute_breakdown', group_by=['<dimension>'])`.
+- Where the carrier stands per member = `compute_metric(name='compute_rank', ...)`.
+- YoY per member = `compute_metric(name='compute_yoy_to_date', group_by=[...])`.
+
+**SQL shape (fallback only, for what the above does not cover)**
 - `GROUP BY` the chosen dimension with `SUM(Premium)` (and YoY per member where
   trend matters), ordered descending, for the carrier slice.
 - To find the "top product"/"top industry" for a downstream step, return the

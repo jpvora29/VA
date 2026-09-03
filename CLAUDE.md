@@ -33,6 +33,9 @@ Avoid:
 
 One function should do one job.
 
+Multi-step work uses a **builder** (see Builder Pattern) or a **step pipeline**
+(see Step Pipelines). The entry point lists the steps; the steps do the work.
+
 Bad:
 
 ```python
@@ -201,6 +204,162 @@ async def draft_and_verify_commentary(
     return verify_commentary(draft, facts)
 ```
 
+## Builder Pattern — the default shape for anything multi-step
+
+This is the pattern we reach for most. Any flow that assembles a result out of
+several optional or ordered parts is a **builder**: one `add_*` per part, a
+`build()` that returns the finished value, and a short public function that reads
+as the list of parts.
+
+The point is that the top-level function becomes the specification. You should be
+able to read what a deck contains, or what a page computes, without opening a
+single step.
+
+```python
+class OverallResultBuilder:
+    """Builds an OverallResult one section at a time."""
+
+    def __init__(self, request: ComputeRequest) -> None:
+        self._request = request
+        self._result = OverallResult(...)
+
+    def add_kpis(self) -> "OverallResultBuilder":
+        ...
+        return self
+
+    def add_breakdowns(self) -> "OverallResultBuilder":
+        ...
+        return self
+
+    def build(self) -> OverallResult:
+        return self._result
+
+
+def compute_overall(**form_answers) -> OverallResult:
+    request = build_compute_request(**form_answers)
+    return (
+        OverallResultBuilder(request)
+        .add_kpis()
+        .add_breakdowns()
+        .add_whitespace()
+        .build()
+    )
+```
+
+Rules:
+
+- Take a **frozen request dataclass**, not a long keyword-argument list. Resolve
+  form values into real columns/handles once, in a `build_*_request` factory
+  function, so no step re-reads a raw form value.
+- One `add_*` per part of the result, named for the part it adds.
+- An `add_*` owns the whole answer for its part, including "this part is not in
+  scope" — it returns `self` unchanged rather than making the caller check.
+- `add_*` returns `self` **only** so the call sequence reads as a list. Never hide
+  branching in the chain.
+- `build()` returns the value and does nothing else worth debugging.
+- Keep the original public function name and signature. The builder is how it is
+  implemented, not a new API callers have to learn.
+
+Live examples: `studio/compute.py` (`OverallResultBuilder`),
+`studio/template_fill/assemble.py` (`SubDeckPlanBuilder`),
+`studio/template_fill/model.py` (`TemplateDocBuilder`),
+`studio/pipeline/qbr_pipeline.py` (`ReportPlanBuilder`).
+
+## Step Pipelines — for ordered work over one context
+
+When the steps **mutate one shared thing** in a fixed order (a `Presentation`, a
+run directory) rather than accumulating a value, use `studio/steps.py` instead of
+a builder:
+
+```python
+FILL_PIPELINE = (
+    PipelineBuilder("fill_template")
+    .step("write_values", write_values)
+    .step("fill_charts", fill_charts)
+    .optional("crop_pictures", crop_pictures)   # logged on failure, run continues
+    .step("save_deck", save_deck)
+    .build()
+)
+
+
+def fill_template(doc, *, out_path=None) -> str:
+    ctx = build_fill_context(doc, out_path or default_out_path())
+    FILL_PIPELINE.run(ctx)
+    return ctx.out_path
+```
+
+What you get for free, and why it is worth the small indirection:
+
+- Every step is **named**, so a failure says which step failed before you open a
+  stack trace (`StepFailed`), and the run's `trace` times every step.
+- `optional(...)` replaces the `try/except … logger.warning` that otherwise gets
+  copy-pasted around every best-effort call. Critical vs. optional becomes a
+  property of the step, declared once, next to its name.
+- Because the order lives in one list, reordering is a diff you can read.
+
+Rules:
+
+- A step takes the context and returns `None`. It works on the context.
+- **A step never calls another step.** Ordering lives in the pipeline and nowhere
+  else — that is the whole reason the pipeline exists.
+- A step is a plain module-level function, so it is callable on its own in a test.
+- Build the context in one `build_*_context` function up front. A step must not
+  discover its inputs.
+
+Live example: `studio/template_fill/fill.py` (`FILL_PIPELINE`).
+
+Async flows keep the same shape with `await` between steps —
+`studio/pipeline/qbr_pipeline.py::build_qbr_deck_pipeline` is the reference.
+
+## Flat Call Chains — no deep nesting
+
+Nested call chains are the main thing that makes this codebase hard to debug. A
+function that calls a function that calls a function means a breakpoint on the
+top-level flow tells you nothing, and a stack trace is the only way to find out
+what actually ran.
+
+Keep the depth shallow and the sequence visible:
+
+```text
+entry point  ->  step / add_*  ->  small helper
+                                   (and no further)
+```
+
+Do:
+
+- Put the sequence in ONE place — the pipeline list or the builder chain.
+- Let steps be siblings, not a chain. Step 3 must not call step 4.
+- Pass what a helper needs as arguments. If a helper reaches back for context, it
+  wants to be a step.
+- Extract a helper to name a piece of logic, not to continue the flow.
+
+Avoid:
+
+- A "step" whose real job is to call the next step.
+- Helper → helper → helper chains three deep or more.
+- Closures defined inside an orchestrator that capture its locals. Make them
+  methods or module functions with explicit arguments; a closure is invisible to
+  a debugger's frame list and untestable on its own.
+- Passing a half-built result down a chain for each level to add to. Accumulate
+  it in the builder instead.
+
+Bad:
+
+```python
+def build_page(result):
+    return _finish(_enrich(_seed(result)))       # what ran? in what order?
+```
+
+Good:
+
+```python
+def build_page(result):
+    page = seed_page(result)
+    enrich_page(page)
+    finish_page(page)
+    return page
+```
+
 ## Recommended Python Design Patterns
 
 Use patterns only when they make code simpler.
@@ -294,6 +453,9 @@ Before finishing a change, check:
 
 - Does each changed function do one clear task?
 - Can the main flow be read from top to bottom?
+- Is multi-step work a builder chain or a named step pipeline, not a call chain?
+- Is every call chain at most entry point -> step -> helper deep?
+- Is each step callable on its own, with its inputs passed in?
 - Are LLM calls isolated behind small adapters?
 - Are facts and commentary connected by IDs?
 - Are validation rules deterministic?

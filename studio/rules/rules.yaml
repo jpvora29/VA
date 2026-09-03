@@ -19,7 +19,8 @@ yoy:
   suppress_if_current_premium_below: 1000000  # never narrate YoY on a book smaller than this
 
 materiality:
-  min_premium_for_industry_commentary: 5000000   # industry commentary needs >= this premium  (NEEDS-SIGNOFF: $5M)
+  min_premium_for_industry_commentary: 5000000   # a segment needs >= this MARKET premium before
+                                                 # it is worth a commentary line  (NEEDS-SIGNOFF: $5M)
   min_premium_for_practice_commentary: 5000000   # practice/product commentary floor  (NEEDS-SIGNOFF: $5M)
   min_share_of_portfolio_pct: 3.0                # ...or >= this share of the portfolio
 
@@ -45,6 +46,24 @@ whitespace:
 
 peer:
   aggregate_only: true   # confidentiality: peer comparisons are AVERAGES only, never named peers
+
+# How one scope is decomposed into industries / client segments, and what makes a
+# decomposed row worth a sentence. Read by studio/segments.py. The ABSENT class
+# reuses the `whitespace:` block above (same rule, same thresholds) and the
+# market-premium floor is `materiality.min_premium_for_industry_commentary`.
+segments:
+  dims: [SIC_Major_Class, Client_Segment]  # the decompositions commentary may use.
+                                           # NOT SIC_Minor_Class (all "— General" suffixes in
+                                           # the seed, no signal); NOT Business_Line/Cover_Line.
+  min_carriers: 3          # fewer carriers placed here and a "top-5 average" identifies one
+                           # of them — a confidentiality floor, not a statistical one
+  thin_share_margin: 2.0   # share this far below the carrier's OWN placed average is THIN
+  behind_peer_margin: 1.0  # ...and this far below the top-5 peer average is BEHIND
+  strong_share_margin: 2.0 # this far ABOVE its own placed average is the proof point
+  losing_share_move: 1.0   # share given back, percentage points, to count as LOSING
+  deviation_pp: 1.5        # a child scope departs from its parent by at least this before
+                           # the finding belongs to the child rather than the parent
+  max_findings_per_column: 2   # how many segment lines one commentary column may carry
 
 opportunity:
   top_n: 5               # keep the N biggest whitespace candidates as opportunity bubbles

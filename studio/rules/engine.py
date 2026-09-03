@@ -83,6 +83,26 @@ class WhitespaceRules:
 
 
 @dataclass(frozen=True)
+class SegmentRules:
+    """What makes one industry / client-segment row worth a commentary sentence.
+
+    ``dims`` is the decomposition allowlist, so adding a dimension is a config change
+    rather than a code change. ``min_carriers`` is a CONFIDENTIALITY floor, not a
+    statistical one: with two carriers in a segment a "top-5 peer average" is one peer's
+    number, which ``peer.aggregate_only`` forbids.
+    """
+
+    dims: Tuple[str, ...] = ("SIC_Major_Class", "Client_Segment")
+    min_carriers: int = 3
+    thin_share_margin: float = 2.0
+    behind_peer_margin: float = 1.0
+    strong_share_margin: float = 2.0
+    losing_share_move: float = 1.0
+    deviation_pp: float = 1.5
+    max_findings_per_column: int = 2
+
+
+@dataclass(frozen=True)
 class OpportunityRules:
     top_n: int = 5
 
@@ -101,6 +121,7 @@ class RulesConfig:
     rank: RankRules = field(default_factory=RankRules)
     whitespace: WhitespaceRules = field(default_factory=WhitespaceRules)
     opportunity: OpportunityRules = field(default_factory=OpportunityRules)
+    segments: SegmentRules = field(default_factory=SegmentRules)
     temporal: TemporalRules = field(default_factory=TemporalRules)
     materiality: MaterialityRules = field(default_factory=MaterialityRules)
     drivers: DriverRules = field(default_factory=DriverRules)
@@ -130,6 +151,16 @@ def _int(d: Dict[str, Any], key: str, default: int) -> int:
         return default
 
 
+def _strs(d: Dict[str, Any], key: str, default: Tuple[str, ...]) -> Tuple[str, ...]:
+    """A list-of-strings setting. A malformed or empty list falls back to the default —
+    an empty decomposition allowlist would silently turn every segment finding off."""
+    val = d.get(key)
+    if not isinstance(val, (list, tuple)):
+        return default
+    out = tuple(str(v).strip() for v in val if str(v).strip())
+    return out or default
+
+
 def _load() -> RulesConfig:
     if yaml is None:
         return RulesConfig()
@@ -143,6 +174,7 @@ def _load() -> RulesConfig:
     rank = _section(meta, "rank")
     ws = _section(meta, "whitespace")
     opp = _section(meta, "opportunity")
+    seg = _section(meta, "segments")
     temporal = _section(meta, "temporal")
     mat = _section(meta, "materiality")
     drv = _section(meta, "drivers")
@@ -170,6 +202,16 @@ def _load() -> RulesConfig:
             top_n=_int(ws, "top_n", 5),
         ),
         opportunity=OpportunityRules(top_n=_int(opp, "top_n", 5)),
+        segments=SegmentRules(
+            dims=_strs(seg, "dims", ("SIC_Major_Class", "Client_Segment")),
+            min_carriers=_int(seg, "min_carriers", 3),
+            thin_share_margin=_num(seg, "thin_share_margin", 2.0),
+            behind_peer_margin=_num(seg, "behind_peer_margin", 1.0),
+            strong_share_margin=_num(seg, "strong_share_margin", 2.0),
+            losing_share_move=_num(seg, "losing_share_move", 1.0),
+            deviation_pp=_num(seg, "deviation_pp", 1.5),
+            max_findings_per_column=_int(seg, "max_findings_per_column", 2),
+        ),
         temporal=TemporalRules(
             ttm_min_months=_int(temporal, "ttm_min_months", 12),
             mom_significant_pct=_num(temporal, "mom_significant_pct", 5.0),

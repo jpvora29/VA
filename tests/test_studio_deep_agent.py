@@ -23,6 +23,25 @@ from studio.qa import QAIssue, QAReport, explain_qa_report, summarize_qa_counts 
 from studio.qa.report import CRITICAL, INFO, WARNING  # noqa: E402
 
 
+def _open_gate(monkeypatch):
+    """Credentials good enough for a client to be BUILT — which is what the gate asks.
+
+    Availability is "can ``core.llm.clients.make_client`` produce a client here", so a
+    half-set environment (a key and an endpoint, no version) is correctly unavailable.
+    These tests want the gate open, so they set a complete configuration; nothing here
+    ever reaches Azure.
+    """
+    monkeypatch.setenv("STUDIO_AI", "auto")
+    monkeypatch.setenv("API_KEY", "k")
+    monkeypatch.setenv("ENDPOINT", "https://example.invalid")
+    monkeypatch.setenv("VERSION", "2024-10-01")
+    monkeypatch.setenv("DEPLOYMENT", "base-deployment")
+
+    from core.llm.clients import reset_clients
+
+    reset_clients()
+
+
 # ── gating ────────────────────────────────────────────────────────────────────
 
 
@@ -33,17 +52,13 @@ def test_unavailable_when_studio_ai_off(monkeypatch):
 
 
 def test_deep_agent_has_its_own_off_switch(monkeypatch):
-    monkeypatch.setenv("STUDIO_AI", "auto")
-    monkeypatch.setenv("API_KEY", "k")
-    monkeypatch.setenv("ENDPOINT", "e")
+    _open_gate(monkeypatch)
     monkeypatch.setenv("STUDIO_DEEP_AGENT", "off")
     assert deep_agent_available() is False
 
 
 def test_available_when_gate_open(monkeypatch):
-    monkeypatch.setenv("STUDIO_AI", "auto")
-    monkeypatch.setenv("API_KEY", "k")
-    monkeypatch.setenv("ENDPOINT", "e")
+    _open_gate(monkeypatch)
     monkeypatch.delenv("STUDIO_DEEP_AGENT", raising=False)
     assert deep_agent_available() is True
 
@@ -90,9 +105,7 @@ def test_harness_builds_and_injects_skills(monkeypatch):
     import studio.ai.client as client
 
     monkeypatch.setattr(client, "_tier_client", lambda tier: fake)
-    monkeypatch.setenv("STUDIO_AI", "auto")
-    monkeypatch.setenv("API_KEY", "k")
-    monkeypatch.setenv("ENDPOINT", "e")
+    _open_gate(monkeypatch)
 
     text = run_deep_agent("hello", system_prompt="You label slides.",
                           tier="fast", node="test")
@@ -110,9 +123,7 @@ def test_run_returns_none_when_agent_errors(monkeypatch):
         raise RuntimeError("no client")
 
     monkeypatch.setattr(client, "_tier_client", boom)
-    monkeypatch.setenv("STUDIO_AI", "auto")
-    monkeypatch.setenv("API_KEY", "k")
-    monkeypatch.setenv("ENDPOINT", "e")
+    _open_gate(monkeypatch)
     assert run_deep_agent("hi", system_prompt="x") is None
 
 
@@ -139,9 +150,7 @@ def test_explain_falls_back_to_counts_with_ai_off(monkeypatch):
 
 
 def test_explain_discards_prose_naming_banned_peer(monkeypatch):
-    monkeypatch.setenv("STUDIO_AI", "auto")
-    monkeypatch.setenv("API_KEY", "k")
-    monkeypatch.setenv("ENDPOINT", "e")
+    _open_gate(monkeypatch)
     import studio.qa.explain as explain
     import studio.ai.deep_agent as deep
 
@@ -184,9 +193,7 @@ def _draft():
 
 
 def test_commentary_redraft_prefers_deep_agent(monkeypatch):
-    monkeypatch.setenv("STUDIO_AI", "auto")
-    monkeypatch.setenv("API_KEY", "k")
-    monkeypatch.setenv("ENDPOINT", "e")
+    _open_gate(monkeypatch)
     import studio.ai.client as client
     import studio.ai.deep_agent as deep
     from studio.commentary.agent import _redraft_with_ai
@@ -205,9 +212,7 @@ def test_commentary_redraft_prefers_deep_agent(monkeypatch):
 
 
 def test_commentary_redraft_falls_back_to_one_shot(monkeypatch):
-    monkeypatch.setenv("STUDIO_AI", "auto")
-    monkeypatch.setenv("API_KEY", "k")
-    monkeypatch.setenv("ENDPOINT", "e")
+    _open_gate(monkeypatch)
     import studio.ai.client as client
     import studio.ai.deep_agent as deep
     from studio.commentary.agent import _redraft_with_ai

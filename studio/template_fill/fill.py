@@ -13,15 +13,21 @@ Correctness rules (a corrupt deck is worse than an unfilled one):
     ``xyz`` from the selection;
   * hidden / reordered slides are applied last by editing the slide-id list — so an
     unselected second country/product block is dropped cleanly.
+
+The order those rules run in is :data:`FILL_PIPELINE` at the bottom of this module:
+one named stage per pass over the deck, declared in a list. Everything above it is
+a primitive that knows how to write one paragraph, one chart or one picture.
 """
 from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from logger import get_logger
+from studio.steps import Pipeline, PipelineBuilder
 from studio.template_fill.model import materialize_fields
 
 logger = get_logger(__name__)
@@ -1629,70 +1635,184 @@ def _apply_order(prs, order: List[int], hidden: List[int]) -> None:
             lst.append(ids[i])
 
 
+# ── the fill pipeline ────────────────────────────────────────────────────────
+#
+# Everything above is a *primitive*: it knows how to write one paragraph, one
+# chart, one picture. Everything below is the ORDER those primitives run in.
+# Each stage takes the whole context and works on it; no stage calls another.
+
+
+@dataclass
+class FillContext:
+    """Everything one fill run works on, resolved once up front.
+
+    The stages below read this and mutate ``prs``; nothing else is shared between
+    them, so any stage can be called on its own in a test.
+    """
+
+    prs: Any                                        # pptx.Presentation
+    doc: Dict[str, Any]
+    values: Dict[str, Any]
+    fields_by_slide: Dict[int, List[Dict[str, Any]]]
+    subs: List[Any]
+    width_emu: int
+    height_emu: int
+    out_path: str
+
+    def added_elements(self, slide_idx: int) -> List[Dict[str, Any]]:
+        """The free elements the author dropped onto ``slide_idx``."""
+        return self.doc.get("added", {}).get(str(slide_idx), [])
+
+
+def build_fill_context(doc: Dict[str, Any], out_path: str) -> FillContext:
+    """Open the template and resolve the doc into what the stages need."""
+    from pptx import Presentation
+
+    prs = Presentation(doc["template_path"])
+    by_slide: Dict[int, List[Dict[str, Any]]] = {}
+    for fld in materialize_fields(doc).values():
+        if fld["filled"]:
+            by_slide.setdefault(fld["slide_idx"], []).append(fld)
+    values = doc.get("values", {})
+    return FillContext(
+        prs=prs,
+        doc=doc,
+        values=values,
+        fields_by_slide=by_slide,
+        subs=_label_subs(values),
+        width_emu=int(getattr(prs, "slide_width", 0) or 0),
+        height_emu=int(getattr(prs, "slide_height", 0) or 0),
+        out_path=out_path,
+    )
+
+
+# ── stage 1: the text every slot resolved to ─────────────────────────────────
+
+
+def _commentary_ink(index: Dict[int, Any], fields: List[Dict[str, Any]]):
+    """The colour the author painted this slide's commentary in, if any."""
+    frames = (
+        _commentary_frame(index.get(int(fld["shape_id"])), fld["where"])
+        for fld in fields
+        if _is_commentary_role(str(fld.get("role") or ""))
+    )
+    return _authored_ink(frame for frame in frames if frame is not None)
+
+
+def _write_field(shape, fld: Dict[str, Any], ink) -> None:
+    """One resolved slot written into its shape, by where it lives and what it is."""
+    where, text = fld["where"], str(fld["text"])
+    role = str(fld.get("role") or "")
+    # Commentary owns its whole box/cell: it lays its points out as bulleted
+    # paragraphs, so it replaces the single-paragraph write rather than following it.
+    if _is_commentary_role(role):
+        _write_commentary(shape, where, text, ink)
+        return
+    if where and where[0] == "para":
+        _write_text_shape(shape, where, text)
+    elif where and where[0] == "cell":
+        _write_table(shape, where, text)
+    if role.endswith(_SIGNED_ROLE_SUFFIXES) and text.strip():
+        _recolor_by_sign(shape, where, text)
+
+
+def _write_slide(slide, fields: List[Dict[str, Any]]) -> None:
+    """Every filled slot on one slide."""
+    index = _index_by_id(slide)
+    ink = _commentary_ink(index, fields)
+    for fld in fields:
+        shape = index.get(int(fld["shape_id"]))
+        if shape is not None:
+            _write_field(shape, fld, ink)
+
+
+def write_values(ctx: FillContext) -> None:
+    """Labels, then slot values, then any free elements — slide by slide.
+
+    Labels FIRST, values second: a slot's own write is already fully resolved, so the
+    literal substitutions must not run over it afterwards (a written "TTM April 2025"
+    would otherwise be shifted again by the template-year rule).
+    """
+    for sidx, slide in enumerate(ctx.prs.slides):
+        _apply_subs(slide, ctx.subs)
+        _write_slide(slide, ctx.fields_by_slide.get(sidx, []))
+        _add_elements(slide, ctx.added_elements(sidx), ctx.width_emu, ctx.height_emu)
+
+
+# ── stages 2–5: the visuals a run rewrites ───────────────────────────────────
+
+
+def fill_charts(ctx: FillContext) -> None:
+    _fill_charts(ctx.prs, ctx.values)
+
+
+def paint_cell_backgrounds(ctx: FillContext) -> None:
+    _fill_cell_backgrounds(ctx.prs, ctx.values)
+
+
+def replace_pictures(ctx: FillContext) -> None:
+    _replace_pictures(ctx.prs, ctx.values)
+
+
+def crop_pictures(ctx: FillContext) -> None:
+    _crop_pictures(ctx.prs, ctx.values)
+
+
+# ── stages 6–8: the geometry a run edits, once every write is done ───────────
+#
+# These address cells and shapes by the SAME indices every write above used, so
+# they must not run until nothing is left to write.
+
+
+def drop_table_lines(ctx: FillContext) -> None:
+    _drop_table_lines(ctx.prs, ctx.values)
+
+
+def resize_shapes(ctx: FillContext) -> None:
+    _resize_shapes(ctx.prs, ctx.values)
+
+
+def drop_shapes(ctx: FillContext) -> None:
+    _drop_shapes(ctx.prs, ctx.values)
+
+
+# ── stage 9: which slides ship, and in what order ────────────────────────────
+
+
+def apply_slide_order(ctx: FillContext) -> None:
+    n = len(ctx.prs.slides)
+    _apply_order(ctx.prs, ctx.doc.get("order", list(range(n))), ctx.doc.get("hidden", []))
+
+
+def save_deck(ctx: FillContext) -> None:
+    Path(ctx.out_path).parent.mkdir(parents=True, exist_ok=True)
+    ctx.prs.save(ctx.out_path)
+    logger.info("template_fill: exported -> %s", ctx.out_path)
+
+
+#: The fill, in the order it happens. Read this to know what a filled deck went
+#: through; read the stage to know what one step does.
+FILL_PIPELINE: Pipeline[FillContext] = (
+    PipelineBuilder("fill_template")
+    .step("write_values", write_values)
+    .step("fill_charts", fill_charts)
+    .step("paint_cell_backgrounds", paint_cell_backgrounds)
+    .step("replace_pictures", replace_pictures)
+    .step("crop_pictures", crop_pictures)
+    .step("drop_table_lines", drop_table_lines)
+    .step("resize_shapes", resize_shapes)
+    .step("drop_shapes", drop_shapes)
+    .step("apply_slide_order", apply_slide_order)
+    .step("save_deck", save_deck)
+    .build()
+)
+
+
 # ── entry point ──────────────────────────────────────────────────────────────
 
 
 def fill_template(doc: Dict[str, Any], *, out_path: Optional[str] = None) -> str:
     """Write the filled template to ``out_path`` (default: cwd) and return the path."""
-    from pptx import Presentation
-
-    prs = Presentation(doc["template_path"])
-    fields = materialize_fields(doc)
-    values = doc.get("values", {})
-    width_emu = int(getattr(prs, "slide_width", 0) or 0)
-    height_emu = int(getattr(prs, "slide_height", 0) or 0)
-    subs = _label_subs(values)
-
-    by_slide: Dict[int, List[Dict[str, Any]]] = {}
-    for fld in fields.values():
-        if fld["filled"]:
-            by_slide.setdefault(fld["slide_idx"], []).append(fld)
-
-    for sidx, slide in enumerate(prs.slides):
-        # Labels first, values second: a slot's own write is already fully resolved, so the
-        # literal substitutions must not run over it afterwards (a written "TTM April 2025"
-        # would otherwise be shifted again by the template-year rule).
-        _apply_subs(slide, subs)
-        index = _index_by_id(slide)
-        fields = by_slide.get(sidx, [])
-        ink = _authored_ink(
-            frame for fld in fields if _is_commentary_role(str(fld.get("role") or ""))
-            for frame in [_commentary_frame(index.get(int(fld["shape_id"])), fld["where"])]
-            if frame is not None)
-        for fld in fields:
-            shape = index.get(int(fld["shape_id"]))
-            if shape is None:
-                continue
-            where, text = fld["where"], str(fld["text"])
-            role = str(fld.get("role") or "")
-            # Commentary owns its whole box/cell: it lays its points out as bulleted
-            # paragraphs, so it replaces the single-paragraph write rather than following it.
-            if _is_commentary_role(role):
-                _write_commentary(shape, where, text, ink)
-                continue
-            if where and where[0] == "para":
-                _write_text_shape(shape, where, text)
-            elif where and where[0] == "cell":
-                _write_table(shape, where, text)
-            if role.endswith(_SIGNED_ROLE_SUFFIXES) and text.strip():
-                _recolor_by_sign(shape, where, text)
-        _add_elements(slide, doc.get("added", {}).get(str(sidx), []), width_emu, height_emu)
-
-    _fill_charts(prs, values)
-    _fill_cell_backgrounds(prs, values)
-    _replace_pictures(prs, values)
-    _crop_pictures(prs, values)
-    # Last, and in this order: both address cells and shapes by the indices every write
-    # above used, so nothing may shift until every write is done.
-    _drop_table_lines(prs, values)
-    _resize_shapes(prs, values)
-    _drop_shapes(prs, values)
-
-    n = len(prs.slides)
-    _apply_order(prs, doc.get("order", list(range(n))), doc.get("hidden", []))
-
-    if not out_path:
-        out_path = str(Path.cwd() / "qbr_filled.pptx")
-    prs.save(out_path)
-    logger.info("template_fill: exported -> %s", out_path)
-    return out_path
+    ctx = build_fill_context(doc, out_path or str(Path.cwd() / "qbr_filled.pptx"))
+    FILL_PIPELINE.run(ctx)
+    return ctx.out_path

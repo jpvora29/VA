@@ -15,6 +15,7 @@ No API key is needed anywhere here — the client is a fake, and tier resolution
 from __future__ import annotations
 
 import subprocess
+import os
 import sys
 
 import pytest
@@ -214,3 +215,78 @@ def test_an_unavailable_llm_short_circuits_before_any_client_is_built(monkeypatc
                         lambda tier: pytest.fail("a client was built with AI off"))
     assert client.generate("s", "u") is None
     assert client.structured(object, "s", "u") is None
+
+
+# ── availability: one question, asked where the answer lives ────────────────
+
+
+def test_availability_is_whether_a_client_can_actually_be_built(azure_env):
+    """The gate every caller wants: can ``make_client`` produce a client here."""
+    assert llm.available("balanced") is True
+    assert llm.available("reason") is True
+
+
+def test_a_half_configured_environment_reports_unavailable(monkeypatch, azure_env):
+    """The bug this replaced: Studio checked ``API_KEY`` and ``ENDPOINT`` and nothing
+    else, so an environment with those two and no version was told AI was on and then
+    failed on every single call. Building the client is the check that cannot drift."""
+    monkeypatch.delenv("VERSION", raising=False)
+    monkeypatch.delenv("OPENAI_API_VERSION", raising=False)
+    llm.reset_clients()
+
+    assert bool(os.getenv("API_KEY") and os.getenv("ENDPOINT"))   # the old gate said yes
+    assert llm.available("balanced") is False                      # the client says no
+
+
+def test_a_deployment_is_not_required_to_be_available(monkeypatch, azure_env):
+    """A working setup must not be switched off: the deployment can live in the endpoint."""
+    monkeypatch.delenv("DEPLOYMENT", raising=False)
+    llm.reset_clients()
+    assert llm.available("balanced") is True
+
+
+def test_no_credentials_at_all_is_a_quiet_no(monkeypatch):
+    for var in ("API_KEY", "ENDPOINT", "VERSION", "OPENAI_API_VERSION", "DEPLOYMENT"):
+        monkeypatch.delenv(var, raising=False)
+    llm.reset_clients()
+    assert llm.available("balanced") is False     # returns, never raises
+
+
+# ── Studio inherits it, and needs no opt-in of its own ──────────────────────
+
+
+def test_studio_needs_no_flag_of_its_own_to_use_a_configured_model(monkeypatch, azure_env):
+    """The whole point: a configured LLM is the switch. There is no ``STUDIO_AI=on``."""
+    from studio.ai import client as studio_client
+
+    monkeypatch.delenv("STUDIO_AI", raising=False)          # nothing set at all
+    llm.reset_clients()
+    assert studio_client.llm_available() is True
+
+    monkeypatch.setenv("STUDIO_AI", "auto")                 # the documented default
+    assert studio_client.llm_available() is True
+
+
+def test_studio_ai_off_still_pins_the_deck_to_its_rule_composers(monkeypatch, azure_env):
+    """The kill switch stays: it is how a test or an operator forces deterministic output
+    however the environment is credentialed."""
+    from studio.ai import client as studio_client
+    from studio.template_fill.commentary_writer import compose_from_rules, make_writer
+
+    for value in ("off", "0", "false", "no"):
+        monkeypatch.setenv("STUDIO_AI", value)
+        assert studio_client.disabled() is True
+        assert studio_client.llm_available() is False
+        assert make_writer() is compose_from_rules
+
+
+def test_studio_follows_core_rather_than_guessing_at_its_requirements(monkeypatch, azure_env):
+    """Studio must not keep its own copy of what a client needs."""
+    from studio.ai import client as studio_client
+
+    monkeypatch.setattr(llm, "available", lambda tier="balanced": False)
+    monkeypatch.delenv("STUDIO_AI", raising=False)
+    assert studio_client.llm_available() is False
+
+    monkeypatch.setattr(llm, "available", lambda tier="balanced": True)
+    assert studio_client.llm_available() is True

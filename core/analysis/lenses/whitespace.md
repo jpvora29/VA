@@ -15,7 +15,12 @@ for a slice while the **market (Marsh book) has meaningful premium** for that
 same slice. Use the exact term **"whitespace"** — never "untapped",
 "underpenetrated", "uncaptured", or similar synonyms.
 
-**SQL shape (typically depends on a prior breakdown step)**
+**Preferred: compute it, do not query it**
+- `compute_metric(name='find_whitespace', group_by=['SIC_Major_Class'])` applies
+  the thin-carrier / present-market rule below and returns the flagged slices.
+- Market size for context = `compute_metric(name='compute_market_presence', group_by=[...])`.
+
+**SQL shape (fallback only; typically depends on a prior breakdown step)**
 1. If targeting "the top product", first take the top `Product_Line` from a
    `dimensional_breakdown` step.
 2. For that product, compute per-industry (`SIC_Major_Class`) totals:

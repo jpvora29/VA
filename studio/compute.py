@@ -9,6 +9,7 @@ sits behind it; here we drive the breakdown-by-dimension Overall page.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -718,6 +719,139 @@ def _by_country(pinned: Optional[Mapping[str, Sequence[str]]]) -> Optional[Dict[
     return {c: p for c, p in out.items() if p} or None
 
 
+# ── the Overall page, built one section at a time ────────────────────────────
+
+
+DEFAULT_BREAKDOWNS: Tuple[str, ...] = ("Product_Line", _INDUSTRY_COL)
+
+
+@dataclass(frozen=True)
+class ComputeRequest:
+    """What one Overall run was asked for, resolved and ready to compute.
+
+    Everything the Setup form chose, already mapped onto real GPR columns and real
+    engine handles, so no step below has to re-read a form value. Frozen: a step
+    computes FROM the request, never edits it.
+    """
+
+    engine: Any
+    flow: str = "gpr"
+    filters: Dict[str, Any] = field(default_factory=dict)     # resolved column → value
+    breakdowns: Tuple[str, ...] = DEFAULT_BREAKDOWNS
+    peers: Optional[Tuple[str, ...]] = None
+    peers_by_country: Optional[Dict[str, Tuple[str, ...]]] = None
+    style: str = "balanced"
+    survey_carrier: Optional[str] = None
+    survey_peers: Optional[Tuple[str, ...]] = None
+    survey_peers_by_country: Optional[Dict[str, Tuple[str, ...]]] = None
+
+    @property
+    def subject(self) -> Optional[str]:
+        """The carrier the run is about — the one filter every section keys off."""
+        return self.filters.get(_CARRIER_COL)
+
+
+def build_compute_request(
+    *,
+    flow: str = "gpr",
+    filters: Optional[Mapping[str, Any]] = None,
+    breakdowns: Optional[Sequence[str]] = None,
+    engine: Any = None,
+    peers: Optional[Sequence[str]] = None,
+    peers_by_country: Optional[Mapping[str, Sequence[str]]] = None,
+    style: str = "balanced",
+    survey_carrier: Optional[str] = None,
+    survey_peers: Optional[Sequence[str]] = None,
+    survey_peers_by_country: Optional[Mapping[str, Sequence[str]]] = None,
+) -> ComputeRequest:
+    """The Setup form's answers as one resolved request (the engine defaults to the live one)."""
+    from studio.data import get_engine
+
+    return ComputeRequest(
+        engine=engine or get_engine(),
+        flow=flow,
+        filters=_resolve_filters(filters or {}),
+        breakdowns=tuple(breakdowns) if breakdowns else DEFAULT_BREAKDOWNS,
+        peers=tuple(peers) if peers else None,
+        peers_by_country=_by_country(peers_by_country),
+        style=style or "balanced",
+        survey_carrier=survey_carrier or None,
+        survey_peers=tuple(survey_peers) if survey_peers else None,
+        survey_peers_by_country=_by_country(survey_peers_by_country),
+    )
+
+
+@contextmanager
+def _skipped_on_failure(section: str):
+    """A section that fails is logged and left out.
+
+    Best-effort is the deliberate policy here: the Overall page is a read of live
+    data, and one metric the warehouse cannot answer today must not cost the author
+    the other six. Every section is optional; none is allowed to be fatal.
+    """
+    try:
+        yield
+    except Exception as exc:  # noqa: BLE001 — a metric must never sink the page
+        logger.warning("studio %s failed: %s", section, exc)
+
+
+class OverallResultBuilder:
+    """Builds an :class:`OverallResult` one section at a time.
+
+    Each ``add_*`` is one section of the page and one call into ``core/analytics``,
+    landing its facts in the shared :class:`FactStore` as it goes. Read the calls in
+    :func:`compute_overall` to know what the page contains; read one method to know
+    how that section is computed.
+    """
+
+    def __init__(self, request: ComputeRequest) -> None:
+        self._request = request
+        self._store = FactStore()
+        self._result = OverallResult(
+            store=self._store,
+            subject=request.subject,
+            flow=request.flow,
+            resolved_filters=dict(request.filters),
+            engine=request.engine,
+            peers=request.peers,
+            peers_by_country=request.peers_by_country,
+            style=request.style,
+            survey_carrier=request.survey_carrier,
+            survey_peers=request.survey_peers,
+            survey_peers_by_country=request.survey_peers_by_country,
+        )
+
+    def add_kpis(self) -> "OverallResultBuilder":
+        """The headline tiles: premium, SoW, rank, YoY."""
+        req = self._request
+        with _skipped_on_failure("kpis"):
+            self._result.kpis = _kpis(
+                req.flow, req.filters, req.engine, self._store, req.subject)
+        return self
+
+    def add_breakdowns(self) -> "OverallResultBuilder":
+        """One section per requested dimension, in the order they were requested."""
+        req = self._request
+        for dim in req.breakdowns:
+            with _skipped_on_failure(f"breakdown {dim}"):
+                self._result.breakdowns.append(
+                    _breakdown_section(req.flow, dim, req.filters, req.engine, self._store))
+        return self
+
+    def add_whitespace(self) -> "OverallResultBuilder":
+        """Industries the market writes and the subject does not. Needs a subject."""
+        req = self._request
+        if not req.subject:
+            return self
+        with _skipped_on_failure("whitespace"):
+            self._result.whitespace = _whitespace(
+                req.flow, req.filters, req.engine, self._store)
+        return self
+
+    def build(self) -> OverallResult:
+        return self._result
+
+
 def compute_overall(
     *,
     flow: str = "gpr",
@@ -731,39 +865,23 @@ def compute_overall(
     survey_peers: Optional[Sequence[str]] = None,
     survey_peers_by_country: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> OverallResult:
-    """Compute the Overall page from the live DB. Best-effort: a failing metric is
-    logged and skipped, never fatal."""
-    from studio.data import get_engine
+    """Compute the Overall page from the live DB.
 
-    engine = engine or get_engine()
-    resolved = _resolve_filters(filters or {})
-    subject = resolved.get(_CARRIER_COL)
-    dims = breakdowns or ["Product_Line", _INDUSTRY_COL]
-    store = FactStore()
-    result = OverallResult(
-        store=store, subject=subject, flow=flow, resolved_filters=dict(resolved),
-        engine=engine, peers=tuple(peers) if peers else None, style=style or "balanced",
-        peers_by_country=_by_country(peers_by_country),
-        survey_carrier=survey_carrier or None,
-        survey_peers=tuple(survey_peers) if survey_peers else None,
-        survey_peers_by_country=_by_country(survey_peers_by_country),
+        resolve the request  ->  KPIs  ->  breakdowns  ->  whitespace
+
+    Best-effort by design: a section whose metric fails is logged and skipped, never
+    fatal (see :func:`_skipped_on_failure`).
+    """
+    request = build_compute_request(
+        flow=flow, filters=filters, breakdowns=breakdowns, engine=engine,
+        peers=peers, peers_by_country=peers_by_country, style=style,
+        survey_carrier=survey_carrier, survey_peers=survey_peers,
+        survey_peers_by_country=survey_peers_by_country,
     )
-
-    try:
-        result.kpis = _kpis(flow, resolved, engine, store, subject)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("studio kpis failed: %s", exc)
-
-    for dim in dims:
-        try:
-            result.breakdowns.append(_breakdown_section(flow, dim, resolved, engine, store))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("studio breakdown %s failed: %s", dim, exc)
-
-    if subject:
-        try:
-            result.whitespace = _whitespace(flow, resolved, engine, store)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("studio whitespace failed: %s", exc)
-
-    return result
+    return (
+        OverallResultBuilder(request)
+        .add_kpis()
+        .add_breakdowns()
+        .add_whitespace()
+        .build()
+    )

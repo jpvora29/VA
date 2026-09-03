@@ -146,11 +146,16 @@ def test_compare_lines_the_two_runs_up():
     assert rows["implication_rate"] == (0.0, 1.0)
 
 
-def test_every_assembled_sub_deck_reports_its_score():
+def test_every_assembled_sub_deck_reports_its_score(monkeypatch):
     """A rubric nobody runs is a rubric nobody reads — it goes out with the QA log."""
-    import inspect
-
+    from studio.compute import OverallResult
     from studio.template_fill import assemble
 
-    src = inspect.getsource(assemble._build_subdeck)
-    assert "commentary_metrics.log_score(" in src
+    scored = []
+    monkeypatch.setattr(assemble.commentary_metrics, "log_score",
+                        lambda values, **kw: scored.append(kw.get("label")))
+
+    assemble._build_subdeck("overall", OverallResult(subject="Zurich"), {}, "overall",
+                            providers=())
+
+    assert scored == ["overall"]

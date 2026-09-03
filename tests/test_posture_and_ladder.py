@@ -164,12 +164,18 @@ def test_the_deck_states_a_portfolio_call_and_a_book_call(tmp_path):
     text = "\n".join(sh.text_frame.text for s in Presentation(out).slides
                      for sh in s.shapes if sh.has_text_frame)
 
-    assert "Across the book the call is to" in text, "no portfolio stance on the deck"
+    assert "The book's first calls are to" in text, "no portfolio stance on the deck"
     assert "The call here is to" in text, "no book-level stance on the deck"
     # The stance vocabulary is closed: every call uses one of the five verbs.
-    portfolio = next(l for l in text.split("\n") if "Across the book the call is to" in l)
+    portfolio = next(l for l in text.split("\n") if "The book's first calls are to" in l)
     assert any(v in portfolio for v in
                ("defend", "scale", "fix", "selectively pursue", "validate"))
+    # ...and an instruction now names what is at stake. "Across the book the call is to
+    # defend Cyber, scale Financial Lines, fix Casualty and selectively pursue Property,
+    # Marine and Energy" listed six products, carried no figure, and would have been true
+    # of any carrier with six lines.
+    assert "Across the book the call is to" not in text
+    assert "$" in portfolio, f"a call with nothing at stake behind it: {portfolio}"
 
 
 def test_the_deck_never_calls_placed_premium_an_addressable_market(tmp_path):

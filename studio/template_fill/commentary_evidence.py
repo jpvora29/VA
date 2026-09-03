@@ -20,6 +20,7 @@ Pure: a dict in, a frozen pack out. No IO, no LLM, no formatting policy beyond t
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
@@ -80,6 +81,15 @@ def _carrier_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
     c = f.get("carrier") or {}
     year = c.get("current_year")
     when = f" in {int(year)}" if year else ""
+    # The year is a NUMBER to the verifier, and almost every column names it ("Zurich wrote
+    # $44M with Marsh in 2025"). Carried only in labels it was never an allowed value, so
+    # any model sentence dating its own figure was dropped as unsupported — the same class
+    # of silent failure as the "top-5" token below.
+    if year:
+        _add(out, "period.year", "The reporting year these figures cover",
+             str(int(year)), "reporting_year")
+        _add(out, "period.prior_year", "The year they are compared with",
+             str(int(year) - 1), "reporting_year")
     if _num(c, "current") is not None:
         _add(out, "carrier.premium", f"Premium {subject} placed with Marsh{when}",
              _money(c["current"]), "premium")
@@ -126,12 +136,18 @@ def _standing_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
         way = "rose" if s["delta"] > 0 else "fell"
         _add(out, "sow.delta", f"Share of wallet {way} by",
              U.points(s["delta"]), "percentage_point")
+    # The rendered form carries the words "top-5" on purpose. ``verifier._TOKEN_RE`` reads
+    # the "-5" in "top-5 peer average" as a numeric token and ``_norm`` strips the sign, so
+    # a sentence saying "top-5" while citing only this fact was failing verification on an
+    # unsupported number "5" and being dropped — silently, and every time, because that is
+    # how the benchmark is named in English. Naming it inside the value makes the pack
+    # self-describing and the sentence verifiable.
     if _num(peer, "sow") is not None:
         _add(out, "peer.sow", "Top-5 peer average share of wallet",
-             f"{peer['sow']:.1f}%", "peer_average")
+             f"{peer['sow']:.1f}% (top-5 peer average)", "peer_average")
     if _num(peer, "current") is not None:
         _add(out, "peer.premium", "Top-5 peer average premium in this scope",
-             _money(peer["current"]), "peer_average")
+             f"{_money(peer['current'])} (top-5 peer average)", "peer_average")
     return out
 
 
@@ -160,7 +176,13 @@ def _gap_items(f: Mapping[str, Any]) -> List[Evidence]:
 
 # Named movers are worth a fact each: a decomposition is the only thing that lets a column
 # say WHY the headline moved, and a model with no line-level evidence can only restate it.
-_MAX_MOVERS = 4
+#
+# This must cover every row a composer can reach, not just the ones it usually picks.
+# ``feedback.movement_by_dim`` returns eight, ``_named_moves`` names any two of them and
+# ``_capture_gap`` picks whichever pool row the carrier captured least of — which is often
+# not in the top four by size. Capped below that, the composer names a mover the pack does
+# not carry and ``check_numbers`` drops an otherwise good sentence.
+_MAX_MOVERS = 8
 
 
 def _mover_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
@@ -182,6 +204,117 @@ def _mover_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
     return out
 
 
+# ── the decomposition: where inside the scope the book actually sits ────────
+#
+# Everything above describes the scope as one number. These describe its SHAPE, and they
+# are the facts that let a column name an industry instead of restating the headline.
+#
+# One Evidence per finding, whose ``rendered`` carries EVERY number its sentence may use.
+# ``commentary_verify.check_numbers`` scopes the allowed values to the ids a sentence
+# CITES, so splitting a finding into "the share", "the pool" and "the benchmark" would
+# force the model to cite three ids correctly or lose an otherwise good line. One compound
+# value is one citation, and the sentence either matches it or does not.
+
+_MAX_PER_KIND = 2       # how many of each kind reach the pack — see rules.segments
+
+
+def _slug(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", (name or "").lower()).strip("_")
+
+
+def _fact_id(dim_label: str, kind: str, name: str) -> str:
+    """``segment.industry.absent.renewable_energy`` — four parts, so it can never collide
+    with the two-part ``mover.<name>`` / ``pool.<name>`` ids built above."""
+    return f"segment.{_slug(dim_label)}.{kind}.{_slug(name)}"
+
+
+def _absent_value(row) -> str:
+    return (f"{_money(row.market)} placed by Marsh, {_money(row.carrier)} written"
+            f"{_peer_value(row)}")
+
+
+def _peer_value(row) -> str:
+    """The aggregate benchmark, when the row has one.
+
+    Carried on THIN and STRONG as well as BEHIND because the prose reaches for it on any
+    of them - "and ahead of the top-5 peer average of 12.0%" is a true and useful clause
+    on a strong position, and a figure the sentence may print has to be a figure the pack
+    carries or ``check_numbers`` drops the whole bullet.
+    """
+    return (f", top-5 peer average {row.peer_sow:.1f}%"
+            if row.peer_sow is not None else "")
+
+
+def _thin_value(row) -> str:
+    return (f"{row.sow:.1f}% of a {_money(row.market)} pool, against a "
+            f"{row.placed_sow:.1f}% placed average{_peer_value(row)}, "
+            f"{_money(row.stake)} at parity")
+
+
+def _behind_value(row) -> str:
+    # "top-5" spelled inside the value for the same reason peer.sow does it above.
+    return (f"{row.sow:.1f}% of a {_money(row.market)} pool, against a "
+            f"{row.peer_sow:.1f}% top-5 peer average, {_money(row.stake)} at parity")
+
+
+def _strong_value(row) -> str:
+    return (f"{row.sow:.1f}% of a {_money(row.market)} pool, against a "
+            f"{row.placed_sow:.1f}% placed average{_peer_value(row)}")
+
+
+def _losing_value(row) -> str:
+    moved = U.points(row.sow_delta)
+    pool = (f", on a pool that moved {abs(row.market_yoy):.1f}%"
+            if row.market_yoy is not None else "")
+    return (f"down {moved} to {row.sow:.1f}% of a {_money(row.market)} pool{pool}"
+            f"{_peer_value(row)}")
+
+
+# What each class is called in a label, and how its value renders. Dictionary dispatch so a
+# new class is a new entry, not a new branch.
+_SEGMENT_RENDER: Dict[str, Tuple[str, Any, str]] = {
+    "absent": ("Marsh premium in {name} that {subject} writes none of", _absent_value,
+               "whitespace"),
+    "thin": ("{name} — {subject}'s share against its own placed average", _thin_value,
+             "placed_average"),
+    "behind": ("{name} — {subject}'s share against the top-5 peer average", _behind_value,
+               "peer_average"),
+    "strong": ("{name} — where {subject} places above its own average", _strong_value,
+               "placed_average"),
+    "losing": ("{name} — share given back year on year", _losing_value, "share_of_wallet"),
+}
+
+
+def _segment_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
+    """The scope's industry / client-segment decomposition as citable facts."""
+    out: List[Evidence] = []
+    for found in (f.get("segments") or {}).values():
+        rows = getattr(found, "rows", ())
+        if not rows:
+            continue
+        label = getattr(found, "label", "segment")
+        if getattr(found, "placed_sow", None) is not None:
+            _add(out, f"segment.{_slug(label)}.placed_share",
+                 f"{subject}'s average share across the {label} values it writes",
+                 f"{found.placed_sow:.1f}%", "placed_average")
+        top3 = getattr(found, "top3_share", None)
+        if top3 is not None:
+            _add(out, f"segment.{_slug(label)}.concentration",
+                 f"Share of the book its three largest {label} groups carry",
+                 f"{top3:.0f}%", "concentration")
+        seen: Dict[str, int] = {}
+        for row in rows:
+            kind = row.placement.value
+            spec = _SEGMENT_RENDER.get(kind)
+            if spec is None or seen.get(kind, 0) >= _MAX_PER_KIND:
+                continue
+            seen[kind] = seen.get(kind, 0) + 1
+            template, render, term = spec
+            _add(out, _fact_id(label, kind, row.name),
+                 template.format(name=row.name, subject=subject), render(row), term)
+    return out
+
+
 # One builder per fact family, in the order a column reads them. A new family is a new
 # function in this tuple — the pack builder itself never changes.
 _BUILDERS = (
@@ -190,6 +323,7 @@ _BUILDERS = (
     lambda f, subject: _standing_items(f, subject),
     lambda f, subject: _gap_items(f),
     lambda f, subject: _mover_items(f, subject),
+    lambda f, subject: _segment_items(f, subject),
 )
 
 
