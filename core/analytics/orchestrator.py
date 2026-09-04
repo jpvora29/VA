@@ -19,7 +19,7 @@ from functools import lru_cache
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from core.analytics.library import LIBRARY
-from core.analytics.types import AnalyticsFact, PrimitiveArgs
+from core.analytics.types import AnalyticsFact, PrimitiveArgs, freeze_items
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -118,7 +118,9 @@ class AnalyticsOrchestrator:
             )
             options = _supported_options(primitive, _get(call, "options", {}) or {})
 
-            key = (name, args.cache_key(), tuple(sorted(options.items())))
+            # `freeze_items` on both halves: an option value can be a list too,
+            # and this lookup is outside the try/except below.
+            key = (name, args.cache_key(), freeze_items(options))
             result = cache.get(key)
             if result is None:
                 try:

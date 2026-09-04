@@ -22,6 +22,32 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 Number = Union[int, float]
 
 
+def freeze(value: Any) -> Any:
+    """A hashable stand-in for a filter/option value, preserving its identity.
+
+    Filter values are open — a single-select arrives as a scalar and a multi-select
+    as a *list* (see `library._peer_clauses`, which branches on exactly that). A
+    list inside a cache key makes the key unhashable, and the resulting
+    ``TypeError: unhashable type: 'list'`` was raised on the memo lookup itself, so
+    it sank the whole turn rather than one primitive.
+
+    Sequences keep their order (``["UK", "IE"]`` is the caller's order, and two
+    orders are two different queries); sets are sorted, having no order to keep.
+    """
+    if isinstance(value, (set, frozenset)):
+        return tuple(sorted(freeze(v) for v in value))
+    if isinstance(value, (list, tuple)):
+        return tuple(freeze(v) for v in value)
+    if isinstance(value, Mapping):
+        return tuple(sorted((str(k), freeze(v)) for k, v in value.items()))
+    return value
+
+
+def freeze_items(mapping: Mapping[str, Any]) -> Tuple[Tuple[str, Any], ...]:
+    """A mapping as a sorted, hashable tuple of pairs. Order-independent."""
+    return tuple(sorted((str(k), freeze(v)) for k, v in (mapping or {}).items()))
+
+
 @dataclass(frozen=True)
 class AnalyticsFact:
     """One computed scalar plus the provenance needed to ground and display it.
@@ -75,7 +101,7 @@ class PrimitiveArgs:
             self.flow,
             self.metric,
             tuple(self.group_by),
-            tuple(sorted(self.filters.items())),
+            freeze_items(self.filters),
             self.subject,
             tuple(self.peers) if self.peers else None,
         )

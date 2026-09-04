@@ -187,6 +187,16 @@ def test_the_model_label_is_the_deployment_not_a_hard_coded_string(azure_env, mo
     assert llm._client_kwargs(llm.resolve_tier("balanced"))["model"] == "whatever-is-deployed"
 
 
+def test_verbosity_is_a_first_class_kwarg_not_a_model_kwarg(azure_env, monkeypatch):
+    """`verbosity` is a real field on the LangChain client. Passed inside `model_kwargs` it
+    warns ("should be specified explicitly") and is moved onto the field regardless."""
+    monkeypatch.setenv("REASON_EFFORT", "high")
+    monkeypatch.setenv("REASON_VERBOSITY", "low")
+    kwargs = llm._client_kwargs(llm.resolve_tier("reason"))
+    assert kwargs["verbosity"] == "low"
+    assert "model_kwargs" not in kwargs
+
+
 def test_client_kwargs_carry_the_credentials_and_latency_guards(azure_env, monkeypatch):
     monkeypatch.setenv("LLM_TIMEOUT", "12")
     monkeypatch.setenv("LLM_MAX_RETRIES", "5")
@@ -281,11 +291,28 @@ def test_a_half_configured_environment_reports_unavailable(monkeypatch, azure_en
     assert llm.available("balanced") is False                      # the client says no
 
 
-def test_a_deployment_is_not_required_to_be_available(monkeypatch, azure_env):
-    """A working setup must not be switched off: the deployment can live in the endpoint."""
+def test_a_deployment_in_the_endpoint_is_enough(monkeypatch, azure_env):
+    """A working setup must not be switched off: the deployment can live in the endpoint.
+
+    An endpoint that already ends in ``/openai/deployments/<name>`` routes on its own, and
+    the openai SDK leaves such a path alone — so `DEPLOYMENT` is genuinely optional here,
+    and the label follows what the URL actually points at.
+    """
     monkeypatch.delenv("DEPLOYMENT", raising=False)
+    monkeypatch.setenv("ENDPOINT", "https://example.invalid/openai/deployments/live-one")
     llm.reset_clients()
     assert llm.available("balanced") is True
+    assert llm._client_kwargs(llm.resolve_tier("balanced"))["model"] == "live-one"
+
+
+def test_no_deployment_anywhere_reports_unavailable(monkeypatch, azure_env):
+    """The other half of the half-configured bug. The client builds happily without a
+    deployment and then routes every call at ``/deployments/None``, so "it constructed"
+    is not on its own the answer — availability has to include somewhere to send the call.
+    """
+    monkeypatch.delenv("DEPLOYMENT", raising=False)
+    llm.reset_clients()
+    assert llm.available("balanced") is False
 
 
 def test_no_credentials_at_all_is_a_quiet_no(monkeypatch):

@@ -17,6 +17,7 @@ from core.analytics import (
     compute_attribute_breakdown,
     compute_nps,
     compute_peer_average,
+    compute_peer_average_total,
     compute_share_of_wallet,
     find_service_gaps,
 )
@@ -102,6 +103,54 @@ def test_peer_average_gpr_is_scoped_by_country(engine):
     # nothing in the fixture — so the scoped lookup returns no peer rows at all.
     assert peers_for("Canada")
     assert peers_for("Mexico") == {}
+
+
+# ── compute_peer_average_total — the peer benchmark for an ADDITIVE measure ──
+#
+# The average of each peer's TOTAL, which is the like-for-like comparison for
+# premium. It must respect `group_by` like every other primitive: the bug it had
+# was silently dropping the cut, so one portfolio-wide number came back and the
+# answer showed the SAME peer premium against every product line.
+
+
+def test_peer_average_total_is_computed_per_cut(engine):
+    args = PrimitiveArgs(flow="gpr", metric="premium", group_by=("Product_Line",),
+                         filters={"Country": "Canada", "Carrier_Group": "Zurich", "Year": 2024})
+    facts = compute_peer_average_total(args, engine=engine)
+    # Peers are AIG and Chubb. Per product, the average of the peers' totals:
+    # Property AVG(AIG 100, Chubb 200)=150; Cyber AVG(AIG 300)=300; Marine AVG(AIG 200)=200.
+    assert {f.dims["Product_Line"]: f.value for f in facts} == {
+        "Property": 150.0, "Cyber": 300.0, "Marine": 200.0,
+    }
+    # The regression itself: three cuts must not share one number.
+    assert len({f.value for f in facts}) == 3
+
+
+def test_peer_average_total_counts_only_the_peers_present_in_the_cut(engine):
+    """`n` is per cut, not per portfolio — only AIG writes Cyber and Marine."""
+    args = PrimitiveArgs(flow="gpr", metric="premium", group_by=("Product_Line",),
+                         filters={"Country": "Canada", "Carrier_Group": "Zurich", "Year": 2024})
+    counts = {f.dims["Product_Line"]: f.dims["peers"] for f in compute_peer_average_total(args, engine=engine)}
+    assert counts == {"Property": 2, "Cyber": 1, "Marine": 1}
+
+
+def test_peer_average_total_never_names_a_peer(engine):
+    """The confidentiality contract: a cut dim and a COUNT, never a carrier."""
+    args = PrimitiveArgs(flow="gpr", metric="premium", group_by=("Product_Line",),
+                         filters={"Country": "Canada", "Carrier_Group": "Zurich", "Year": 2024})
+    for fact in compute_peer_average_total(args, engine=engine):
+        assert set(fact.dims) == {"Product_Line", "peers"}
+        assert "AIG" not in str(fact.dims) and "Chubb" not in str(fact.dims)
+
+
+def test_peer_average_total_ungrouped_is_unchanged(engine):
+    """Regression: with no cut it is still ONE portfolio-wide average of peer totals."""
+    args = PrimitiveArgs(flow="gpr", metric="premium",
+                         filters={"Country": "Canada", "Carrier_Group": "Zurich", "Year": 2024})
+    facts = compute_peer_average_total(args, engine=engine)
+    # AIG total 100+300+200 = 600; Chubb total 200. AVG = 400.
+    assert [f.value for f in facts] == [400.0]
+    assert facts[0].dims == {"peers": 2}
 
 
 def test_peer_average_survey_score(engine):

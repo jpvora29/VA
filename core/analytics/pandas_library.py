@@ -449,7 +449,12 @@ def compute_peer_average(source: FrameSource, args: PrimitiveArgs) -> List[Analy
 def compute_peer_average_total(source: FrameSource, args: PrimitiveArgs) -> List[AnalyticsFact]:
     """Average of each peer's TOTAL measure — the right benchmark for premium.
 
-    Confidential: one aggregate fact whose ``dims`` carry the peer COUNT, never a name.
+    Confidential: ``dims`` carry the peer COUNT, never a name.
+
+    Honours ``group_by``, matching the SQL twin: each peer's total is summed WITHIN
+    the cut, then averaged across the peers present in that cut. Ignoring the cut
+    produced one portfolio-wide number that then read as every product line's peer
+    average.
     """
     spec = flow_spec(args.flow)
     column, agg = resolve_measure(spec, args.metric)
@@ -457,16 +462,32 @@ def compute_peer_average_total(source: FrameSource, args: PrimitiveArgs) -> List
     frame = _peer_frame(source, spec, args)
     if frame is None or frame.empty or not _has(frame, column):
         return []
-    per_peer = _aggregate(frame, column, agg, [carrier])
+    cuts = _cuts(spec, frame, args.group_by)
+    if cuts is None:
+        return []
+    per_peer = _aggregate(frame, column, agg, [*cuts, carrier])
     if not per_peer:
         return []
-    value = round(sum(v for _, v in per_peer) / len(per_peer), 2)
-    return [
-        _fact("peer_average_total", value, column, f"{value:,.2f}",
-              {"peers": len(per_peer)},
-              f"AVG over peers of {agg}({column}) — average of peer totals",
-              {"value": value, "n": len(per_peer)})
+
+    # Group the per-peer totals back up by their cut — the same partition RANK()
+    # uses — and average within it. The carrier never reaches `dims`, so no peer
+    # is named.
+    facts = [
+        _average_of_peer_totals(dict(cut_key), [v for _dims, v in group], column, agg)
+        for cut_key, group in _by_cut(per_peer, carrier, cuts).items()
     ]
+    facts.sort(key=lambda fact: fact.value, reverse=True)
+    return facts
+
+
+def _average_of_peer_totals(dims: Dict[str, Any], totals: List[float],
+                            column: str, agg: str) -> AnalyticsFact:
+    """One cut's peer benchmark: the mean of its peers' totals, plus how many."""
+    value = round(sum(totals) / len(totals), 2)
+    return _fact("peer_average_total", value, column, f"{value:,.2f}",
+                 {**dims, "peers": len(totals)},
+                 f"AVG over peers of {agg}({column}) — average of peer totals",
+                 {"value": value, "n": len(totals)})
 
 
 # ── Tier 1 — atomic, temporal ────────────────────────────────────────────────

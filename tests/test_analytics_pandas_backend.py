@@ -107,6 +107,12 @@ CASES = [
      PrimitiveArgs(flow="gpr", metric="premium", group_by=("Product_Line",), filters=ZURICH), {}),
     ("peer average total", L.compute_peer_average_total,
      PrimitiveArgs(flow="gpr", metric="premium", filters=ZURICH, subject="Zurich"), {}),
+    # Grouped: both executors must sum each peer's total WITHIN the cut and then
+    # average across peers, giving one fact per product line rather than one
+    # portfolio-wide number repeated against every line.
+    ("peer average total by product", L.compute_peer_average_total,
+     PrimitiveArgs(flow="gpr", metric="premium", group_by=("Product_Line",),
+                   filters=ZURICH, subject="Zurich"), {}),
     ("peer average total pinned", L.compute_peer_average_total,
      PrimitiveArgs(flow="gpr", metric="premium", filters=ZURICH, subject="Zurich",
                    peers=("AIG",)), {}),

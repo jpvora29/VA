@@ -106,17 +106,41 @@ def resolve_tier(tier: str) -> TierConfig:
                       verbosity=_env(tier, "VERBOSITY").lower() or None)
 
 
+def endpoint_deployment(endpoint: Optional[str]) -> Optional[str]:
+    """The deployment an ``ENDPOINT`` already routes to, when it carries one.
+
+    An endpoint may be a bare resource URL, or a full one ending in
+    ``/openai/deployments/<name>``. In the second form the deployment is already in the
+    path, so ``DEPLOYMENT`` is not needed and the ``model`` field is never read.
+    """
+    _, _, tail = (endpoint or "").partition("/deployments/")
+    return tail.split("/", 1)[0].split("?", 1)[0] or None
+
+
 def _client_kwargs(config: TierConfig) -> Dict[str, Any]:
-    """The AzureChatOpenAI keyword arguments for a resolved tier."""
+    """The AzureChatOpenAI keyword arguments for a resolved tier.
+
+    Raises ``ValueError`` when nothing names a deployment, which is what makes
+    :func:`available` answer honestly — see there.
+    """
+    endpoint = os.getenv("ENDPOINT")
+    # The deployment IS the model here. It used to be a hard-coded string per client
+    # ("gpt-41-mini"), which is a label that goes stale the day the deployment behind it
+    # changes and tells every log a small lie in the meantime. It is more than a label:
+    # with no `azure_deployment`, the openai SDK routes on this field, appending
+    # `/deployments/{model}` to the path (openai/lib/azure.py).
+    deployment = config.deployment or endpoint_deployment(endpoint)
+    if not deployment:
+        raise ValueError(
+            "no deployment configured: set DEPLOYMENT (or <TIER>_DEPLOYMENT), or point "
+            "ENDPOINT at a .../openai/deployments/<name> URL"
+        )
     kwargs: Dict[str, Any] = dict(
         azure_deployment=config.deployment,
         api_key=os.getenv("API_KEY"),
-        azure_endpoint=os.getenv("ENDPOINT"),
+        azure_endpoint=endpoint,
         api_version=os.getenv("VERSION"),
-        # The deployment IS the model here. It used to be a hard-coded string per client
-        # ("gpt-41-mini"), which is a label that goes stale the day the deployment behind
-        # it changes and tells every log a small lie in the meantime.
-        model=config.deployment or "azure-openai",
+        model=deployment,
         timeout=float(os.getenv("LLM_TIMEOUT", "60")),
         max_retries=int(os.getenv("LLM_MAX_RETRIES", "2")),
     )
@@ -125,7 +149,9 @@ def _client_kwargs(config: TierConfig) -> Dict[str, Any]:
     if config.effort:
         kwargs["reasoning_effort"] = config.effort
         if config.verbosity:
-            kwargs["model_kwargs"] = {"verbosity": config.verbosity}
+            # A first-class field on the client. Routed through `model_kwargs` it earns a
+            # LangChain warning and is moved onto the field anyway.
+            kwargs["verbosity"] = config.verbosity
     else:
         kwargs["temperature"] = config.temperature
     return kwargs
@@ -159,6 +185,10 @@ def available(tier: str = DEFAULT_TIER) -> bool:
     then failed on every call. Building the client is the only check that cannot drift from
     what the client requires, and it is cheap: ``AzureChatOpenAI(...)`` validates its
     configuration and opens no connection.
+
+    ``AzureChatOpenAI`` itself is happy to be built with no deployment at all — it would
+    then route every call at ``/deployments/None`` — so :func:`_client_kwargs` refuses that
+    configuration rather than reporting it available and failing on first use.
 
     Never raises — an unconfigured environment is the normal case for a deterministic run,
     not an error.

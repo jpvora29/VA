@@ -99,6 +99,62 @@ def test_caching_computes_each_call_once(engine):
     assert calls_seen["n"] == 1
 
 
+# ── a multi-select filter is a LIST, and the memo key has to survive it ──────
+#
+# A multi-select country/product filter reaches a primitive as a list (see
+# `library._peer_clauses`, which branches on exactly that). The memo key used to be
+# `tuple(sorted(filters.items()))`, a tuple holding that list — unhashable. The
+# lookup that raised sits OUTSIDE the per-primitive try/except, so the whole turn
+# died with `TypeError: unhashable type: 'list'` instead of one call degrading.
+
+
+def test_a_list_valued_filter_does_not_sink_the_turn(engine):
+    calls = [{"name": "compute_breakdown", "metric": "premium", "group_by": ["Product_Line"]}]
+    ev = AnalyticsOrchestrator().run(
+        calls, flow="gpr",
+        shared_filters={"Country": ["Canada"], "Carrier_Group": "Zurich", "Year": 2024},
+        engine=engine,
+    )
+    assert {f.dims["Product_Line"]: f.value for f in ev.facts} == {"Property": 150.0, "Cyber": 50.0}
+    assert not ev.skipped
+
+
+def test_a_list_valued_filter_still_caches_by_identity(engine):
+    """Freezing the key must not flatten two different filters into one entry."""
+    seen = []
+
+    def capture(args: PrimitiveArgs, *, engine=None):
+        seen.append(dict(args.filters))
+        return []
+
+    orch = AnalyticsOrchestrator(library={"capture": capture})
+    orch.run(
+        [
+            {"name": "capture", "filters": {"Country": ["Canada", "Mexico"]}},
+            {"name": "capture", "filters": {"Country": ["Canada", "Mexico"]}},   # cache hit
+            {"name": "capture", "filters": {"Country": ["Mexico", "Canada"]}},   # a different query
+            {"name": "capture", "filters": {"Country": ["Canada"]}},             # and another
+        ],
+        flow="gpr", engine=engine,
+    )
+    assert [f["Country"] for f in seen] == [
+        ["Canada", "Mexico"], ["Mexico", "Canada"], ["Canada"],
+    ]
+
+
+def test_a_list_valued_option_does_not_sink_the_turn(engine):
+    """The other half of the key: an option value can be a list too."""
+    def capture(args: PrimitiveArgs, *, engine=None, cuts=None):
+        return []
+
+    orch = AnalyticsOrchestrator(library={"capture": capture})
+    ev = orch.run(
+        [{"name": "capture", "options": {"cuts": ["Product_Line", "Country"]}}],
+        flow="gpr", engine=engine,
+    )
+    assert not ev.skipped
+
+
 def test_shared_scope_merges_and_call_overrides(engine):
     captured = {}
 

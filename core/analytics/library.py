@@ -387,39 +387,52 @@ def compute_peer_average_total(args: PrimitiveArgs, *, engine: Optional[Any] = N
     The correct 'aggregate peer average' for additive measures like premium — a
     peer's contribution is its total in scope, so the subject's total compares
     like-for-like. (Contrast `compute_peer_average`, which averages per row and is
-    only meaningful for averaged metrics like scores.) Confidential: returns a single
-    aggregate fact; `dims['peers']` carries only the peer COUNT, never a name.
+    only meaningful for averaged metrics like scores.) Confidential: `dims['peers']`
+    carries only the peer COUNT, never a name.
+
+    Honours `group_by` like every other primitive: the peer total is summed WITHIN
+    each cut before averaging across peers, giving one fact per cut. Without that
+    the cut was silently dropped and a single portfolio-wide average came back — so
+    a "peer premium by product line" answer repeated the same number against every
+    product line.
     """
     spec = flow_spec(args.flow)
     eng = resolve_engine(engine)
     column, agg = resolve_measure(spec, args.metric)  # SUM for premium
+    cuts = _cut_columns(spec, args.group_by)
     params: Dict[str, Any] = {}
     parts = _peer_clauses(spec, args, params, eng)
     if parts is None:
         return []
     carrier_col, clauses = parts
 
+    # Inner: each peer's total WITHIN the cut. Outer: the average across peers of
+    # those totals, per cut — so `n` is the number of peers present in that cut,
+    # not in the portfolio.
+    cut_sel = ", ".join(f'"{c}"' for c in cuts)
+    inner_group = ", ".join([*(f'"{c}"' for c in cuts), f'"{carrier_col}"'])
     sql = (
-        f'SELECT AVG(carrier_total) AS value, COUNT(*) AS n FROM ('
-        f'  SELECT {agg}("{column}") AS carrier_total FROM "{spec.primary_table}" '
-        f'  WHERE {" AND ".join(clauses)} GROUP BY "{carrier_col}"'
+        f'SELECT {cut_sel + ", " if cut_sel else ""}AVG(carrier_total) AS value, '
+        f"COUNT(*) AS n FROM ("
+        f'  SELECT {cut_sel + ", " if cut_sel else ""}{agg}("{column}") AS carrier_total '
+        f'  FROM "{spec.primary_table}" '
+        f'  WHERE {" AND ".join(clauses)} GROUP BY {inner_group}'
         f")"
+        + (f" GROUP BY {cut_sel} ORDER BY value DESC" if cut_sel else "")
     )
     rows = run_rows(eng, sql, params)
-    if not rows or rows[0].get("value") is None:
-        return []
-    row = rows[0]
-    value = _num(row["value"])
     return [
         AnalyticsFact(
             name="peer_average_total",
-            value=round(value, 2),
+            value=round(_num(row["value"]), 2),
             unit=column,
-            rendered=f"{value:,.2f}",
-            dims={"peers": int(row.get("n") or 0)},
+            rendered=f'{_num(row["value"]):,.2f}',
+            dims={**{c: row[c] for c in cuts}, "peers": int(row.get("n") or 0)},
             support=[row],
             formula=f"AVG over peers of {agg}({column}) — average of peer totals",
         )
+        for row in rows
+        if row.get("value") is not None
     ]
 
 
