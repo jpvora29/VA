@@ -104,6 +104,7 @@ from studio.page.authoring.setup import (
     MIN_CUSTOM_PEERS,
     MIN_PEERS_MESSAGE,
     busy_overlay,
+    generate_progress,
     custom_peer_picker,
     info_tip,
     peer_min_note,
@@ -130,6 +131,7 @@ __all__ = [
     # setup
     "scope_preview_empty", "scope_preview_card", "template_sections_panel", "setup_body",
     "peer_set_body", "survey_note", "deck_axes", "scope_axes", "busy_overlay", "info_tip",
+    "generate_progress",
     "custom_peer_picker", "survey_peer_picker", "peer_min_note",
     "DATA_BASIS_DEFAULT", "DATA_BASIS_OPTIONS", "MIN_CUSTOM_PEERS", "MIN_PEERS_MESSAGE",
     "BUSY_FLAG_CLASS", "BUSY_FLAG_ON", "BUSY_FORM", "BUSY_PREVIEW", "BUSY_SECTIONS",

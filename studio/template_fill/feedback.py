@@ -25,6 +25,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from logger import get_logger
 from studio import compute as C
 from studio import segments as SEG
+from studio.template_fill import facts_mix, facts_trend
+from studio.template_fill import rewrites
 from studio.template_fill import roles as R
 from studio.template_fill.analyze import Shape, Template
 from studio.template_fill import units as U
@@ -392,7 +394,15 @@ def _parent_filters(filters: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 def _facts(result, filters: Dict[str, Any]) -> Dict[str, Any]:
     """Carrier/Marsh totals + YoY, rank, SoW movement, the peer benchmark, the
     per-dimension decomposition of both books — the carrier's own movers and the Marsh
-    pool they were won from — and where inside the scope the book actually sits."""
+    pool they were won from — and where inside the scope the book actually sits.
+
+    These eight lookups are independent and were an obvious candidate for running at
+    once. Measured, they are not: the engine is a local SQLite file and each primitive
+    spends most of its time in pandas afterwards, so a thread pool bought nothing outside
+    the noise and cost a layer of indirection. The concurrency that DID pay for itself is
+    over the model calls, where the wait is a network round trip
+    (:mod:`studio.template_fill.rewrites`).
+    """
     subject = result.subject
     base = {k: v for k, v in filters.items() if k != _CARRIER_COL}
     dim = _driver_dim(filters)
@@ -405,6 +415,11 @@ def _facts(result, filters: Dict[str, Any]) -> Dict[str, Any]:
     pool = _safe(C.movement_by_dim, result.flow, dim, base, result.engine, top=8) or []
     return {"subject": str(subject or ""), "carrier": carrier, "marsh": marsh, "rank": rank,
             "sow": sow, "peer": peer, "movers": movers, "pool": pool,
+            # The two families that are not another reading of the headline: HOW the book
+            # is distributed, and WHERE it is heading. Without them every column argued
+            # from the same six numbers, which is why every column read alike.
+            "mix": facts_mix.load(result, filters),
+            "trend": facts_trend.load(result, filters, annual_pct=carrier.get("pct")),
             "segments": _segment_facts(result, filters),
             "segments_track": _tracks_its_parent(result, filters)}
 
@@ -1012,6 +1027,17 @@ _COMPOSERS: Dict[str, Callable[[Dict[str, Any]], List[str]]] = {
 }
 
 
+# The fact families that say their own lines. Each owns its family end to end — how the
+# fact is loaded and how it is said — and each decides which panels its lines belong to, so
+# adding a family is a new module in this tuple rather than an edit to five composers.
+#
+# They are APPENDED to the composer's own points, never substituted: the composer answers
+# the panel's question, and these deepen the answer. That matters to the ledger, which
+# thins a page whose claims are already spoken for — a bigger pool is the fix, and a pool
+# bucketed per column is the only kind that measured better (see ``stance.PortfolioExtras``).
+_FACT_FAMILIES = (facts_mix, facts_trend)
+
+
 def points(kind: str, f: Dict[str, Any]) -> List[str]:
     """The sentences a panel of ``kind`` is built from — ``[]`` for a KPI callout.
 
@@ -1025,7 +1051,10 @@ def points(kind: str, f: Dict[str, Any]) -> List[str]:
     composer = _COMPOSERS.get(kind)
     if composer is None:
         return []
-    return list(composer(f)) or _fallback_points(kind, f)
+    said = list(composer(f))
+    for family in _FACT_FAMILIES:
+        said += [line for line in family.lines_for(kind, f) if line not in said]
+    return said or _fallback_points(kind, f)
 
 
 def facts_for(result) -> Dict[str, Any]:
@@ -1083,10 +1112,10 @@ def _polish(text: str, kind: str, style: Optional[str], subject: str = "",
     """
     if kind not in _COMPOSERS or kind == "highlights" or not text:
         return text
-    from studio.template_fill.commentary import _rewrite
+    from studio.template_fill.commentary import plan_rewrite
 
-    return _rewrite(text, node=f"feedback-{kind}", style=style, topic=kind,
-                    subject=subject, facts=facts)
+    return plan_rewrite(text, node=f"feedback-{kind}", style=style, topic=kind,
+                        subject=subject, facts=facts)
 
 
 def _extras(result):
@@ -1097,20 +1126,22 @@ def _extras(result):
     return portfolio_extras(result)
 
 
-def with_ledger(ledger, extras=None):
+def with_ledger(ledger, extras=None, *, defer_rewrites: bool = False):
     """This provider bound to a deck's :class:`~studio.template_fill.ledger.ClaimLedger`.
 
     The provider list is uniform ``(template, result)`` callables, so the per-deck ledger
     is injected here rather than threaded through every provider's signature.
     """
     def provider(template: Template, result) -> Dict[str, Any]:
-        return values(template, result, ledger=ledger, extras=extras)
+        return values(template, result, ledger=ledger, extras=extras,
+                      defer_rewrites=defer_rewrites)
 
     provider.__module__ = __name__
     return provider
 
 
-def values(template: Template, result, *, ledger=None, extras=None) -> Dict[str, Any]:
+def values(template: Template, result, *, ledger=None, extras=None,
+           defer_rewrites: bool = False) -> Dict[str, Any]:
     """``{fb-role: text}`` for every detected table cell, scoped per country row.
 
     Feedback-table rows are scoped to their ``Country (n)`` (within the sub-deck's own
@@ -1160,4 +1191,6 @@ def values(template: Template, result, *, ledger=None, extras=None) -> Dict[str,
         if text_cache[key] or t["kind"] not in _COMPOSERS:
             out[role] = text_cache[key]
     logger.info("feedback: resolved %d table cell value(s)", len(out))
-    return out
+    # Every cell above holds either a finished KPI string or a PendingRewrite. The deck
+    # writes them all together (``assemble``); a lone caller writes its own here.
+    return out if defer_rewrites else rewrites.write_now(out)

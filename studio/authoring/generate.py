@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import tempfile
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -20,10 +21,15 @@ from studio.deck import build_deck
 from studio.deck.model import DeckSpec
 from studio.page import document as D
 from studio.template_fill import new_template_doc
-from studio.template_fill.preview_assets import ensure_doc_backgrounds, ensure_rendered_slide_backgrounds
+from studio.template_fill.preview_assets import (
+    ensure_doc_backgrounds,
+    ensure_rendered_slide_backgrounds,
+    prune_cache,
+)
 
 from logger import get_logger
 from studio.authoring.config import BLANK, BREAKDOWNS, engine
+from studio.authoring.progress import Reporter, silent
 
 log = get_logger(__name__)
 
@@ -102,12 +108,18 @@ def usable_tdoc(tdoc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 # ── the on-screen deck (a generated deck, or the edited document) ─────────────
 
 
-@lru_cache(maxsize=64)
-def _deck_for(selection_json: str) -> Optional[DeckSpec]:
-    """Build the generated deck for a frozen selection (JSON key → hashable)."""
+@lru_cache(maxsize=8)
+def _result_for(selection_json: str):
+    """The analytics result a selection computes to — ONCE per selection.
+
+    The on-screen deck, the single-template document and the assembled deck are three
+    views of one answer, and each used to compute it for itself: a Generate ran the whole
+    analytics layer twice before it wrote a word. They all key on the same frozen
+    selection, so they can all read the same cached result.
+    """
     sel = json.loads(selection_json)
     filters = {k: v for k, v in (sel.get("filters") or {}).items() if v not in BLANK}
-    result = compute_overall(
+    return compute_overall(
         filters=filters,
         breakdowns=sel.get("breakdowns") or BREAKDOWNS,
         engine=_engine_for(sel),
@@ -118,6 +130,14 @@ def _deck_for(selection_json: str) -> Optional[DeckSpec]:
         survey_peers=sel.get("survey_peers") or None,
         survey_peers_by_country=sel.get("survey_peers_by_country") or None,
     )
+
+
+@lru_cache(maxsize=64)
+def _deck_for(selection_json: str) -> Optional[DeckSpec]:
+    """Build the generated deck for a frozen selection (JSON key → hashable)."""
+    sel = json.loads(selection_json)
+    filters = {k: v for k, v in (sel.get("filters") or {}).items() if v not in BLANK}
+    result = _result_for(selection_json)
     return build_deck(
         result,
         carrier=_one(filters.get("carrier")),
@@ -157,19 +177,8 @@ def _deck(doc) -> Optional[DeckSpec]:
 def _tdoc_for(selection_json: str) -> Optional[Dict[str, Any]]:
     """Seed a template doc (active template, filled from the same OverallResult)."""
     sel = json.loads(selection_json)
-    filters = {k: v for k, v in (sel.get("filters") or {}).items() if v not in BLANK}
-    result = compute_overall(
-        filters=filters,
-        breakdowns=sel.get("breakdowns") or BREAKDOWNS,
-        engine=_engine_for(sel),
-        peers=sel.get("peers") or None,
-        peers_by_country=sel.get("peers_by_country") or None,
-        style=sel.get("style") or "balanced",
-        survey_carrier=sel.get("survey_carrier") or None,
-        survey_peers=sel.get("survey_peers") or None,
-        survey_peers_by_country=sel.get("survey_peers_by_country") or None,
-    )
-    return new_template_doc(result, template_path=sel.get("template_path") or None,
+    return new_template_doc(_result_for(selection_json),
+                            template_path=sel.get("template_path") or None,
                             use_ai=bool(sel.get("ai")))
 
 
@@ -214,17 +223,7 @@ def _assembled_for(selection_json: str) -> Optional[str]:
         return None
     from studio.template_fill.assemble import assemble_deck
 
-    result = compute_overall(
-        filters=filters,
-        breakdowns=selection.get("breakdowns") or BREAKDOWNS,
-        engine=_engine_for(selection),
-        peers=selection.get("peers") or None,
-        peers_by_country=selection.get("peers_by_country") or None,
-        style=selection.get("style") or "balanced",
-        survey_carrier=selection.get("survey_carrier") or None,
-        survey_peers=selection.get("survey_peers") or None,
-        survey_peers_by_country=selection.get("survey_peers_by_country") or None,
-    )
+    result = _result_for(selection_json)
     subject = str(filters.get("carrier", "Carrier")).replace(" ", "_")
     tag = hashlib.sha1(selection_json.encode("utf-8")).hexdigest()[:8]
     out = Path(tempfile.gettempdir()) / f"{subject}_{tag}_QBR.pptx"
@@ -262,6 +261,13 @@ def _assembled_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
     except Exception as exc:  # noqa: BLE001
         log.warning("assembled preview render failed: %s", exc)
         background_urls = [None] * n
+    # Every deck ever generated left a full-resolution render of every slide behind in
+    # ``assets/``, and nothing removed them. Now that THIS deck's images exist, the ones
+    # belonging to decks nobody is looking at any more go.
+    try:
+        prune_cache([path])
+    except Exception as exc:  # noqa: BLE001 — housekeeping must never cost us the deck
+        log.warning("preview cache prune failed: %s", exc)
     return {
         "template_path": path,
         "values": {},
@@ -287,3 +293,47 @@ def _generated_assembled_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[D
     except Exception as exc:  # noqa: BLE001 — a bad assembly must not white-screen the app
         log.warning("assembled preview build failed: %s", exc)
         return None
+
+
+# ── the whole build, as one reportable pipeline ──────────────────────────────
+
+
+@dataclass(frozen=True)
+class DeckDocuments:
+    """What one Generate produces: the editable document, and the template preview."""
+
+    doc: Optional[Dict[str, Any]] = None
+    tdoc: Optional[Dict[str, Any]] = None
+
+    @property
+    def empty(self) -> bool:
+        return self.doc is None and self.tdoc is None
+
+
+def build_documents(selection: Optional[Dict[str, Any]],
+                    report: Reporter = silent) -> DeckDocuments:
+    """Everything Generate needs, built once, announcing each phase as it starts.
+
+        the book  ->  the on-screen deck  ->  the assembled deck  ->  its slide images
+
+    Every step reads the ONE analytics result for this selection (:func:`_result_for`),
+    so the four phases below are four views of one query pass rather than four of them.
+    ``report`` is how a caller follows a build that takes minutes — see
+    :mod:`studio.authoring.jobs`; scripts and tests pass nothing and get silence.
+    """
+    report("data", "Loading the book for this selection…")
+    key = json.dumps(selection or {}, sort_keys=True)
+    _result_for(key)
+
+    report("deck", "Laying out the deck…")
+    deck = _generated_deck(selection)
+    doc = D.new_document(deck) if deck else None
+
+    # The ASSEMBLED deck (overall + per product + per country) is the deliverable and
+    # what the canvas previews; the single filled template is the fallback for a template
+    # set that cannot assemble. Both phases are announced here rather than inside, because
+    # assembling is where a build spends its minutes and the author should see that.
+    report("assemble", "Writing the commentary and filling the templates…")
+    tdoc = _generated_assembled_tdoc(selection) or _generated_tdoc(selection)
+    report("render", "Rendering the slides…")
+    return DeckDocuments(doc=doc, tdoc=tdoc)

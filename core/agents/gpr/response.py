@@ -5,7 +5,10 @@ from typing import Any, Dict, List
 
 import logging
 
-from config.valid_values_config import *  # noqa: F401,F403 - preserves legacy globals (valid_year_quarter_gpr)
+try:
+    from config.valid_values_config import *  # noqa: F401,F403 - legacy valid_year_quarter_gpr
+except ModuleNotFoundError:
+    valid_year_quarter_gpr = []
 from core.agents.common.directives import prose_suppressed
 from core.llm import Predictor
 from core.observability import log_event

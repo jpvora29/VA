@@ -260,6 +260,41 @@ yoy:
     Never compare a part year against a full year without saying so.
   unit: percent
 
+trailing_twelve_months:
+  label: Trailing twelve months
+  aliases: [ttm, rolling twelve months, last twelve months]
+  definition: >-
+    Premium over the twelve months ending at the latest period in the data, against the
+    twelve before it. It answers the question a full-year comparison cannot — whether the
+    year's movement was still running when the year closed.
+  formula: sum of the latest 12 periods, against the 12 periods before them
+  say: >-
+    Say "the trailing twelve months ran 27.0% ahead of the twelve before". Name it as a
+    rolling window whenever it sits next to a year-on-year figure, because the two cover
+    different periods and a reader who mixes them up draws the wrong conclusion.
+  never: >-
+    Never present it as the year-on-year figure or compare the two as though they measured
+    the same thing, and never call a trailing window a forecast.
+  unit: percent
+
+momentum:
+  label: Momentum
+  aliases: [pace, trajectory, run rate, direction of travel]
+  definition: >-
+    How the latest quarter's movement compares with the pace of the year it closed. A book
+    up strongly on the year whose final quarter barely moved is slowing, whatever the
+    headline says.
+  formula: latest quarter's period-over-period percent, against the same scope's annual movement
+  say: >-
+    Say which way it is going and give both figures — "up 27.0% on the year, but the fourth
+    quarter moved 5.1%". The two numbers are the claim; the word is only the reading, and
+    they must be the year's movement and the quarter's, never a trailing-twelve figure
+    standing in for either.
+  never: >-
+    Never call a single quarter a trend on its own, never project it forward, and never
+    describe momentum without printing the two figures it is derived from.
+  unit: percent
+
 percentage_point:
   label: Percentage point
   aliases: [pp, ppt, points of share, basis points]

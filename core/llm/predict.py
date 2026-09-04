@@ -82,11 +82,11 @@ class Prediction(Mapping):
 def tier_client(tier: str):
     """The chat client a tier's calls go through, for the chatbot graph.
 
-    Deliberately reads the `Initialization` singletons rather than building a client
-    from :mod:`core.llm.clients` directly: with ``MODEL_TIERS`` off each tier aliases
-    a legacy client at access time, and tests patch those attributes to intercept a
-    node's calls. Studio, which must not construct the chatbot's engine, calls
-    `core.llm.clients.make_client` instead.
+    Deliberately reads the `Initialization` singletons rather than calling
+    :func:`core.llm.clients.make_client` directly. They are the same objects — every
+    one is built by that factory — but going through the singletons is the seam a test
+    patches to intercept a node's calls. Studio and MoM, which must not construct the
+    chatbot's database engine, call ``make_client`` instead.
 
     Imported lazily so this module stays credential-free at import.
     """

@@ -27,7 +27,7 @@ from logger import get_logger
 from studio.compute import DATA_BASIS_PREMIUM, DATA_BASIS_WITH_SURVEY
 from studio.template_fill import (
     commentary, commentary_metrics, commentary_qa, feedback, grids, gwp_page, kpi_band,
-    lc_page, prune,
+    lc_page, prune, rewrites,
 )
 from studio.template_fill import roles as R
 from studio.template_fill.survey import facts as survey_facts
@@ -108,6 +108,7 @@ class SubDeck:
     values: Dict[str, Any]
     label: str = ""                     # the product/country name, for filenames + logs
     hidden: Tuple[int, ...] = ()        # slide indices to drop (surplus country pages)
+    subject: str = ""                   # the carrier this block reports on, for QA scoring
 
 
 def _country_count(values: Dict[str, Any]) -> int:
@@ -130,10 +131,16 @@ def _premium_providers(ledger, narratives=None):
     The ledger is per-deck and threaded from :func:`assemble_deck` rather than kept in a
     module global: two decks generated in the same process must not share a memory of
     what has already been said.
+
+    Both prose providers also DEFER their model calls. Composing stays in this order —
+    the ledger's whole job is that it is — but the writing is a network wait per column,
+    and a deck has around a hundred of them; they are written together once the plan is
+    complete (:func:`_write_prose`).
     """
     return tuple(
-        {feedback.values: feedback.with_ledger(ledger),          # extras loaded per scope
-         commentary.values: commentary.with_ledger(ledger, narratives)}.get(provider, provider)
+        {feedback.values: feedback.with_ledger(ledger, defer_rewrites=True),
+         commentary.values: commentary.with_ledger(ledger, narratives,
+                                                   defer_rewrites=True)}.get(provider, provider)
         for provider in _PREMIUM_PROVIDERS
     )
 
@@ -195,36 +202,55 @@ def _stamp_template_year(template, values: Dict[str, Any]) -> Dict[str, Any]:
     return values
 
 
-def _report_quality(values: Dict[str, Any], scoped_result, label: str) -> None:
+def _report_quality(sub: SubDeck) -> None:
     """Score the prose this sub-deck ships. Report-only, deliberately.
 
     The prose is already written and already faithful, and a judgement rule must
     never be allowed to delete a sentence — that is how a cell ends up blank. So
     the checks log, and the metrics put a NUMBER on how the text reads, rather
     than either of them editing it.
+
+    Runs after :func:`_write_prose`, so it scores the sentences that will actually
+    be on the slide rather than the draft they were written from.
     """
-    commentary_qa.log_issues(commentary_qa.check(values), label=label)
-    commentary_metrics.log_score(
-        values, subject=str(getattr(scoped_result, "subject", "") or ""), label=label)
+    try:
+        commentary_qa.log_issues(commentary_qa.check(sub.values), label=sub.label)
+        commentary_metrics.log_score(sub.values, subject=sub.subject, label=sub.label)
+    except Exception as exc:  # noqa: BLE001 — a scorecard must never cost us the deck
+        logger.warning("assemble: quality report failed for %s: %s", sub.label, exc)
 
 
 def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], label: str,
                    *, providers=_PREMIUM_PROVIDERS) -> SubDeck:
-    """Finish a sub-deck: enrich its values, score its prose, prune its surplus pages.
+    """Plan a sub-deck: enrich its values and prune its surplus pages.
 
     The template is analysed once here. Any failure is swallowed — no enrichment
-    may break assembly (a full deck beats a broken one).
+    may break assembly (a full deck beats a broken one). The prose columns come back
+    as :class:`~studio.template_fill.rewrites.PendingRewrite`, already carrying their
+    deterministic draft; :func:`_write_prose` turns the whole deck's into text at once.
     """
     hidden: Tuple[int, ...] = ()
     try:
         template = analyze(get_binding_map(template_name).path)
         values = _enrich_values(template_name, template, scoped_result, values, providers)
         values = _stamp_template_year(template, values)
-        _report_quality(values, scoped_result, label)
         hidden = tuple(prune.hidden_country_pages(template, _country_count(values)))
     except Exception as exc:  # noqa: BLE001 — grid/pruning must never break assembly
         logger.warning("assemble: grid/prune failed for %s: %s", template_name, exc)
-    return SubDeck(template_name, values, label=label, hidden=hidden)
+    return SubDeck(template_name, values, label=label, hidden=hidden,
+                   subject=str(getattr(scoped_result, "subject", "") or ""))
+
+
+def _write_prose(decks: Sequence[SubDeck]) -> List[SubDeck]:
+    """Every deferred commentary column in the deck, written in one concurrent batch.
+
+    This is the step the deferral exists for. One sub-deck has a handful of columns and
+    a whole deck has around a hundred; batching at the deck means the wait is set by the
+    slowest column rather than by their sum. Each column is written back to the role it
+    was composed for, so the deck is identical to one written a page at a time.
+    """
+    written = rewrites.write_all([sub.values for sub in decks])
+    return [replace(sub, values=values) for sub, values in zip(decks, written)]
 
 
 # ── planning the whole deck, one axis at a time ──────────────────────────────
@@ -323,7 +349,13 @@ class SubDeckPlanBuilder:
         return self
 
     def build(self) -> List[SubDeck]:
-        """The finished plan, with the whole-deck repetition check reported once."""
+        """The planned sub-decks, with the whole-deck repetition check reported once.
+
+        Their prose is still :class:`~studio.template_fill.rewrites.PendingRewrite` here —
+        composing is what this builder does, and writing is the step after it
+        (:func:`plan_subdecks`). The repetition check reads the narratives, which are
+        built from the facts rather than from the sentences, so it belongs with the plan.
+        """
         commentary_qa.log_issues(commentary_qa.check_narratives(self._narratives), label="deck")
         return list(self._decks)
 
@@ -354,9 +386,11 @@ def plan_subdecks(result, *, scope: Optional[str] = None,
     the summary page's overall survey-score tile.
 
     :class:`SubDeckPlanBuilder` holds the rules for each axis; this is the order they
-    assemble in.
+    assemble in. Three steps, because prose is composed per page but written per deck:
+
+        plan the sub-decks  ->  write every column at once  ->  score what they ship
     """
-    return (
+    planned = (
         SubDeckPlanBuilder(result, scope=scope, data_basis=data_basis)
         .add_overall()
         .add_products()
@@ -364,6 +398,10 @@ def plan_subdecks(result, *, scope: Optional[str] = None,
         .add_end()
         .build()
     )
+    decks = _write_prose(planned)
+    for sub in decks:
+        _report_quality(sub)
+    return decks
 
 
 _manifest_cache: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}

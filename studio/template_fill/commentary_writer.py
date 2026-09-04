@@ -39,6 +39,8 @@ class ColumnRequest:
     bullets: int = 4
     brief: str = ""                  # the column's own brief (commentary._TOPIC_BRIEF)
     voice: str = ""                  # voice + craft + shape rules shared by every column
+    tier: str = "reason"             # which model writes it (commentary._COMMENTARY_TIER)
+    focus: Tuple[str, ...] = ()      # fact-id prefixes to lead from (commentary._TOPIC_EVIDENCE)
 
 
 class ColumnWriter(Protocol):
@@ -56,7 +58,7 @@ def compose_from_rules(request: ColumnRequest) -> Tuple[str, ...]:
 def _writer_payload(request: ColumnRequest, glossary_brief: str) -> str:
     """What the model is shown: the evidence, the definitions, and the draft to beat."""
     blocks = [f"CARRIER: {request.subject}", "", "EVIDENCE — the only facts you may use:",
-              request.pack.as_brief()]
+              request.pack.as_brief(request.focus)]
     if glossary_brief:
         blocks += ["", "ICG DEFINITIONS — use these terms exactly as defined:", glossary_brief]
     if request.draft:
@@ -93,6 +95,7 @@ def compose_with_agent(request: ColumnRequest) -> Tuple[str, ...]:
     system = "\n".join(part for part in (request.voice, request.brief) if part)
     column = client.structured(CommentaryColumn, system,
                                _writer_payload(request, glossary_brief),
+                               tier=request.tier,
                                node=f"commentary-{request.topic}")
     if column is None or not column.bullets:
         return ()

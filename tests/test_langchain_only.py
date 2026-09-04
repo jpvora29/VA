@@ -34,9 +34,10 @@ def _clean_client_cache():
 @pytest.fixture
 def azure_env(monkeypatch):
     """Credentials present and Studio AI on, without any per-tier deployment set."""
-    for var in ("MODEL_TIERS", "REASON_DEPLOYMENT", "BALANCED_DEPLOYMENT",
-                "FAST_DEPLOYMENT", "REASON_EFFORT", "REASON_VERBOSITY"):
-        monkeypatch.delenv(var, raising=False)
+    for tier in ("REASON", "CREATIVE", "BALANCED", "FAST", "SUMMARY"):
+        for suffix in ("DEPLOYMENT", "EFFORT", "VERBOSITY"):
+            monkeypatch.delenv(f"{tier}_{suffix}", raising=False)
+    monkeypatch.delenv("MODEL_TIERS", raising=False)
     monkeypatch.setenv("STUDIO_AI", "auto")
     monkeypatch.setenv("API_KEY", "k")
     monkeypatch.setenv("ENDPOINT", "https://example.invalid")
@@ -107,31 +108,51 @@ def test_dspy_is_not_a_declared_dependency():
     assert "dspy" not in dependencies
 
 
-# ── tier resolution matches what core.initialization applied ─────────────────
+# ── tier resolution: two independent knobs, no mode to be in ─────────────────
+#
+# There used to be a ``MODEL_TIERS`` flag gating whether the per-tier variables were read,
+# with a separate config path either side of it — which made ``reason`` mean a warm client
+# with the flag off and a reasoning client with it on. These pin the contract that replaced
+# it: ``<TIER>_DEPLOYMENT`` says which model, ``<TIER>_EFFORT`` says whether it is a
+# reasoning one, and neither needs anything else switched on first.
 
 
-def test_tiers_off_gives_the_expressive_client_to_reason_only(azure_env):
-    assert llm.resolve_tier("reason") == llm.TierConfig("base-deployment", temperature=0.4)
+def test_nothing_configured_puts_every_tier_on_the_base_deployment(azure_env):
+    """The default posture, and what almost every environment is actually running."""
+    for tier in ("balanced", "fast", "summary"):
+        assert llm.resolve_tier(tier) == llm.TierConfig("base-deployment", temperature=0.0)
+
+
+def test_the_prose_tiers_run_warm_by_default(azure_env):
+    """`reason` and `creative` are the nodes whose output a person reads — a chat answer,
+    a QBR commentary column. Prose written at temperature 0 reads like it."""
+    warm = llm.TierConfig("base-deployment", temperature=0.4)
+    assert llm.resolve_tier("reason") == warm
+    assert llm.resolve_tier("creative") == warm
+
+
+def test_naming_one_tiers_deployment_moves_that_tier_and_nothing_else(azure_env, monkeypatch):
+    """The headline of the simplification: per-tier config is additive, and needs no flag
+    turned on first. This is how the commentary gets a bigger model while the mechanical
+    nodes stay cheap."""
+    monkeypatch.setenv("REASON_DEPLOYMENT", "gpt-5")
+    assert llm.resolve_tier("reason") == llm.TierConfig("gpt-5", temperature=0.4)
     assert llm.resolve_tier("balanced") == llm.TierConfig("base-deployment", temperature=0.0)
     assert llm.resolve_tier("fast") == llm.TierConfig("base-deployment", temperature=0.0)
 
 
+def test_the_summary_tier_reads_its_own_deployment(azure_env, monkeypatch):
+    """Throwaway context compression, which is why it points somewhere cheaper."""
+    monkeypatch.setenv("SUMMARY_DEPLOYMENT", "gpt-4o-mini")
+    assert llm.resolve_tier("summary") == llm.TierConfig("gpt-4o-mini", temperature=0.0)
+
+
 def test_an_unknown_tier_reads_as_balanced(azure_env):
+    """A typo is a boring default, never a silent third configuration."""
     assert llm.resolve_tier("nonsense") == llm.resolve_tier("balanced")
 
 
-def test_the_creative_tier_stays_warm_whether_or_not_tiers_are_on(azure_env, monkeypatch):
-    """The prose nodes' client is the base deployment run warm — never a reasoning
-    model, so turning tiers on must not quietly re-point or cool it."""
-    warm = llm.TierConfig("base-deployment", temperature=0.4)
-    assert llm.resolve_tier("creative") == warm
-    monkeypatch.setenv("MODEL_TIERS", "on")
-    monkeypatch.setenv("REASON_DEPLOYMENT", "gpt-5-mini")
-    assert llm.resolve_tier("creative") == warm
-
-
-def test_a_tier_with_its_own_deployment_gets_reasoning_params(azure_env, monkeypatch):
-    monkeypatch.setenv("MODEL_TIERS", "on")
+def test_an_effort_makes_a_tier_a_reasoning_call(azure_env, monkeypatch):
     monkeypatch.setenv("REASON_DEPLOYMENT", "gpt-5-mini")
     monkeypatch.setenv("REASON_EFFORT", "high")
     monkeypatch.setenv("REASON_VERBOSITY", "low")
@@ -140,18 +161,30 @@ def test_a_tier_with_its_own_deployment_gets_reasoning_params(azure_env, monkeyp
     assert config.temperature is None          # reasoning models reject one
 
 
-def test_a_tier_falling_back_to_the_base_deployment_sends_no_effort(azure_env, monkeypatch):
-    """The base deployment is a classic model; ``reasoning_effort`` would 400 it."""
-    monkeypatch.setenv("MODEL_TIERS", "on")
-    config = llm.resolve_tier("fast")
-    assert config == llm.TierConfig("base-deployment", temperature=0.0)
+def test_effort_is_never_sent_unless_it_was_asked_for(azure_env, monkeypatch):
+    """A classic deployment 400s on ``reasoning_effort``, so it is opt-in per tier —
+    naming a deployment must not be enough to start sending it."""
+    monkeypatch.setenv("REASON_DEPLOYMENT", "some-classic-model")
+    config = llm.resolve_tier("reason")
+    assert config.effort is None
+    assert "reasoning_effort" not in llm._client_kwargs(config)
 
 
-def test_effort_can_be_switched_off_on_a_tiered_deployment(azure_env, monkeypatch):
-    monkeypatch.setenv("MODEL_TIERS", "on")
+def test_switching_effort_off_leaves_the_tier_at_its_own_temperature(azure_env, monkeypatch):
+    """`none` returns a tier to a classic call WITHOUT also cooling it: reason is the
+    prose tier whether or not it is running on a reasoning model."""
     monkeypatch.setenv("REASON_DEPLOYMENT", "gpt-5-mini")
     monkeypatch.setenv("REASON_EFFORT", "none")
-    assert llm.resolve_tier("reason") == llm.TierConfig("gpt-5-mini", temperature=0.0)
+    assert llm.resolve_tier("reason") == llm.TierConfig("gpt-5-mini", temperature=0.4)
+    monkeypatch.setenv("FAST_EFFORT", "off")
+    assert llm.resolve_tier("fast") == llm.TierConfig("base-deployment", temperature=0.0)
+
+
+def test_the_model_label_is_the_deployment_not_a_hard_coded_string(azure_env, monkeypatch):
+    """Each client used to carry a literal "gpt-41-mini" — a label that goes stale the day
+    the deployment behind it changes, and lies to every log until someone notices."""
+    monkeypatch.setenv("BALANCED_DEPLOYMENT", "whatever-is-deployed")
+    assert llm._client_kwargs(llm.resolve_tier("balanced"))["model"] == "whatever-is-deployed"
 
 
 def test_client_kwargs_carry_the_credentials_and_latency_guards(azure_env, monkeypatch):
@@ -167,8 +200,18 @@ def test_client_kwargs_carry_the_credentials_and_latency_guards(azure_env, monke
 
 
 def test_the_same_config_is_only_built_once(azure_env):
+    """Cached on the RESOLVED config, so tiers configured alike share one client."""
     assert llm.make_client("balanced") is llm.make_client("fast")
     assert llm.make_client("reason") is not llm.make_client("balanced")
+
+
+def test_the_model_tiers_flag_is_gone(azure_env, monkeypatch):
+    """Regression: setting it must do nothing at all, in either direction."""
+    monkeypatch.setenv("MODEL_TIERS", "on")
+    on = llm.resolve_tier("reason")
+    monkeypatch.setenv("MODEL_TIERS", "off")
+    assert llm.resolve_tier("reason") == on
+    assert not hasattr(llm, "tiers_enabled")
 
 
 # ── the wrapper still routes through the tier client ─────────────────────────

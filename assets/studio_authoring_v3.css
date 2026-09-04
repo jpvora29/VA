@@ -340,6 +340,43 @@
     background: rgba(185, 129, 10, 0.08); box-shadow: inset 0 0 0 1px rgba(185, 129, 10, 0.28);
 }
 
+/* The build in flight — a floating card, because a build outlives the screen it was
+   started from (studio.authoring.layout.generate_progress_host). It is mounted OUTSIDE
+   `.qs-root`, so it styles from the app-wide --va-* tokens rather than the --v3-* ones,
+   which are declared on `.qs-root` and would not resolve here. */
+.qs-gen-host:empty { display: none; }
+.qs-gen-host {
+    position: fixed; right: 20px; bottom: 20px; z-index: 1300;
+    width: 296px; max-width: calc(100vw - 40px);
+}
+.qs-gen-progress {
+    padding: 13px 15px; border-radius: var(--va-radius-md);
+    background: var(--va-surface-0); color: var(--va-ink-800);
+    box-shadow: var(--va-shadow-lg), 0 0 0 1px var(--va-border-soft);
+}
+.qs-gen-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.qs-gen-step { font-weight: 650; font-size: 13px; color: var(--va-ink-900); }
+.qs-gen-elapsed { font-size: 12px; color: var(--va-ink-400); font-variant-numeric: tabular-nums; }
+.qs-gen-track {
+    margin-top: 8px; height: 5px; border-radius: var(--va-radius-pill); overflow: hidden;
+    background: var(--va-surface-2);
+}
+.qs-gen-fill {
+    height: 100%; border-radius: var(--va-radius-pill); background: var(--va-blue);
+    transition: width var(--va-transition-med);
+}
+.qs-gen-msg { margin: 7px 0 0; font-size: 12px; line-height: 1.45; color: var(--va-ink-500); }
+.qs-gen-progress.is-failed {
+    display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; line-height: 1.45;
+    color: var(--va-ink-800);
+    box-shadow: var(--va-shadow-lg), inset 0 0 0 1px var(--va-danger);
+}
+.qs-gen-progress.is-failed .bi { color: var(--va-danger); }
+
+@media (prefers-reduced-motion: reduce) {
+    .qs-gen-fill { transition: none; }
+}
+
 /* source status on Setup */
 .qs-source-status { padding: 7px 11px; border-radius: 10px; background: var(--v3-field); box-shadow: inset 0 0 0 1px rgba(13, 27, 62, 0.06); }
 .qs-source-status.ok { background: rgba(31, 157, 85, 0.08); box-shadow: inset 0 0 0 1px rgba(31, 157, 85, 0.22); }

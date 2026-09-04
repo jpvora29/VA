@@ -1,8 +1,16 @@
-"""Setup callbacks: turn the form into a selection, then snapshot a deck.
+"""Setup callbacks: turn the form into a selection, then build a deck from it.
 
-``generate`` reads every Setup control, builds a selection, snapshots the
-deterministic deck into a fresh document, and jumps to the canvas.
-``scope_preview`` shows cheap headline figures as the filters change.
+Generating is TWO callbacks, because a build takes minutes and a Dash callback must
+return in milliseconds:
+
+    ``start_generate``  reads every Setup control, refuses what it must, and hands the
+                        selection to a background build (``studio.authoring.jobs``);
+    ``poll_generate``   follows that build and, when it lands, writes the document, the
+                        template preview and the jump to the canvas.
+
+Held in ONE callback, as it used to be, a long build simply lost its answer — the browser
+gave up on the request, no store was ever written, and Canvas still held the deck before
+this one. ``scope_preview`` shows cheap headline figures as the filters change.
 """
 from __future__ import annotations
 
@@ -15,15 +23,10 @@ from logger import get_logger
 from studio.compute import FILTER_COLUMN
 from studio.data import cascade_options, peer_members
 from studio.page import authoring as A
-from studio.page import document as D
 from studio.template_fill import registry
 
+from studio.authoring import jobs
 from studio.authoring.config import BLANK, BREAKDOWNS, engine
-from studio.authoring.generate import (
-    _generated_assembled_tdoc,
-    _generated_deck,
-    _generated_tdoc,
-)
 
 log = get_logger(__name__)
 
@@ -617,15 +620,20 @@ def _register_busy_overlay(app):
     )
 
 
+# What ``start_generate`` returns when it will not start a build: no job, no poll, no
+# progress panel, no spinner — only the message, which each refusal fills in for itself.
+_REFUSED = (no_update, None, True, "", no_update, no_update)
+
+
 def register_setup(app):
     """Wire the Generate + scope-preview callbacks onto ``app``."""
     _register_busy_overlay(app)
 
     @app.callback(
         Output("qs-selection", "data"),
-        Output("qs-doc", "data", allow_duplicate=True),
-        Output("qs-tdoc", "data", allow_duplicate=True),
-        Output("qs-view", "data", allow_duplicate=True),
+        Output("qs-gen-job", "data"),
+        Output("qs-gen-poll", "disabled"),
+        Output("studio-gen-progress", "children"),
         Output("qs-generating", "data"),
         Output("studio-setup-msg", "children"),
         Input("studio-generate", "n_clicks"),
@@ -644,13 +652,26 @@ def register_setup(app):
         State({"type": "studio-survey-peer", "country": ALL}, "value"),
         State({"type": "studio-survey-peer", "country": ALL}, "id"),
         State("qs-dataset", "data"),
+        State("qs-gen-job", "data"),
         prevent_initial_call=True,
     )
-    def generate(n, fvals, fids, cut_vals, cut_ids, peer_mode, peer_vals, peer_ids,
-                 audience, style, template_scope, data_basis,
-                 survey_carrier, survey_peer_vals, survey_peer_ids, dataset_store):
+    def start_generate(n, fvals, fids, cut_vals, cut_ids, peer_mode, peer_vals, peer_ids,
+                       audience, style, template_scope, data_basis,
+                       survey_carrier, survey_peer_vals, survey_peer_ids, dataset_store,
+                       running_job):
+        """Read the form, refuse what we must, and start the build in its own thread.
+
+        Returns in milliseconds either way: what comes back is the job to follow, not the
+        deck. ``poll_generate`` below is what turns a finished build into a canvas.
+        """
         if not n:
-            return no_update, no_update, no_update, no_update, no_update, no_update
+            return _REFUSED
+        # A second click while a build is in flight must leave the FIRST one alone: the
+        # ordinary refusal clears the job id and stops the poll, which would orphan a
+        # thread that is minutes into the deck the author is waiting for.
+        in_flight = jobs.get_job(running_job)
+        if in_flight is not None and not in_flight.snapshot()["done"]:
+            return (no_update,) * 5 + ("A deck is already being built.",)
         from studio.dataset.source import dataset_in_use
 
         filters = {i["col"]: v for i, v in zip(fids or [], fvals or []) if v not in BLANK}
@@ -666,8 +687,7 @@ def register_setup(app):
         short = short_markets(by_country, countries=picker_markets(peer_ids)) \
             if peer_mode == "custom" else []
         if short:
-            return (no_update, no_update, no_update, no_update, no_update,
-                    _short_peer_warning(short))
+            return (*_REFUSED[:-1], _short_peer_warning(short))
         peers = flatten_peers(by_country) or None
         survey_by_country = peers_by_country(survey_peer_ids, survey_peer_vals)
         # A submitted custom dataset pins its id into the selection: every cached
@@ -675,7 +695,7 @@ def register_setup(app):
         record = dataset_in_use(dataset_store)
         blocked = _generation_blocked(dataset_store, record)
         if blocked:
-            return no_update, no_update, no_update, no_update, no_update, blocked
+            return (*_REFUSED[:-1], blocked)
         selection = {
             # Full QBR is the only deliverable, so the Setup form no longer asks.
             "report": "qbr",
@@ -713,12 +733,41 @@ def register_setup(app):
             # re-served the deck built from the mapping that was wrong.
             "dataset_rev": (dataset_store or {}).get("rev") if record else None,
         }
-        deck = _generated_deck(selection)
-        doc = D.new_document(deck) if deck else None
-        # Preview the ASSEMBLED deck (overall + per product + per country); fall back to the
-        # single-template doc only if assembly can't run.
-        tdoc = _generated_assembled_tdoc(selection) or _generated_tdoc(selection)
-        return selection, doc, tdoc, {"mode": "canvas", "idx": 0, "tab": "setup"}, n, ""
+        job = jobs.start_build(selection)
+        return selection, job.job_id, False, A.generate_progress(job.snapshot()), n, ""
+
+    @app.callback(
+        Output("qs-doc", "data", allow_duplicate=True),
+        Output("qs-tdoc", "data", allow_duplicate=True),
+        Output("qs-view", "data", allow_duplicate=True),
+        Output("qs-gen-poll", "disabled", allow_duplicate=True),
+        Output("studio-gen-progress", "children", allow_duplicate=True),
+        Input("qs-gen-poll", "n_intervals"),
+        State("qs-gen-job", "data"),
+        prevent_initial_call=True,
+    )
+    def poll_generate(_ticks, job_id):
+        """One tick of a running build: repaint its progress, and land it when it finishes.
+
+        Both document stores are written ONCE, on the tick the build completes, and
+        together with the jump to the canvas — so the canvas is never asked to render a
+        half-written deck, and the deck it renders is always this build's.
+        """
+        job = jobs.get_job(job_id)
+        if job is None:
+            return (no_update,) * 3 + (True, no_update)
+        state = job.snapshot()
+        if not state["done"]:
+            # Only the progress card moves while the build runs. Writing the poll's own
+            # switch, or a document store, on every tick would re-render the whole shell
+            # once a second for the length of a build.
+            return (no_update,) * 3 + (no_update, A.generate_progress(state))
+        docs = job.documents()
+        jobs.clear_job(job_id)
+        if state["error"] or docs is None or docs.empty:
+            return (no_update,) * 3 + (True, A.generate_progress(state))
+        return (docs.doc, docs.tdoc, {"mode": "canvas", "idx": 0, "tab": "setup"},
+                True, A.generate_progress(state))
 
     # A filter change used to fire THREE callbacks that each re-queried the warehouse. They
     # are now split by COST, not by panel:

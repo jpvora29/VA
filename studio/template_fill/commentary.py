@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from logger import get_logger
 from studio.template_fill import openings
+from studio.template_fill import rewrites
 from studio.template_fill import roles as R
 from studio.template_fill.analyze import Shape, Slide, Template
 from studio.template_fill.sections import Section, section_of
@@ -201,6 +202,58 @@ _TOPIC_QUESTIONS: Dict[str, Tuple[str, ...]] = {
 }
 
 
+# Which fact families each column LEADS from. Every column still sees the whole pack (see
+# ``EvidencePack.as_brief``) — this decides what goes at the top of it, under a heading
+# saying these are the facts the column exists to report.
+#
+# This is the other half of why the summary page read as five paraphrases of one paragraph.
+# The five columns were briefed differently and then handed an IDENTICAL forty-fact pack,
+# so each one reached for the headline premium and the rank, because those are the easiest
+# facts in any pack to write a sentence about. A brief that says "report the trajectory"
+# and a pack that opens on the trailing-twelve-month figures are the same instruction said
+# twice, and the second one is the one a model acts on.
+#
+# Prefixes, matched with ``str.startswith``, so a new fact inside a family joins its
+# column's lead automatically.
+_TOPIC_EVIDENCE: Dict[str, Tuple[str, ...]] = {
+    # Where the account STANDS: position against the market and against the peer set,
+    # and the shape of what it has won.
+    "thesis": ("rank.", "sow.", "peer.", "mix.", "share."),
+    # What the team must be able to SAY: the same standing facts, plus the one reading
+    # that is not in any chart on the page.
+    "key_messages": ("rank.", "sow.", "peer.", "trend.", "mix."),
+    # How the book PERFORMED and why it moved: the decomposition and the trajectory.
+    "performance": ("mover.", "pool.", "trend.", "carrier."),
+    # What is WORKING, and whether it was won or carried by the market — which is a
+    # comparison between the carrier's movers and the pool they came from.
+    "working": ("mover.", "pool.", "sow.", "segment."),
+    # What THREATENS the book: where it is losing share, where it trails the benchmark,
+    # and whether the year's growth was still running when the year closed.
+    "challenges": ("trend.", "peer.", "segment.", "pool."),
+    # The HEADROOM and what taking it is worth.
+    "growth": ("segment.", "headroom", "peer.gap", "share.point_value", "mix."),
+    # What happens NEXT: the gap, what closing it is worth, and where it sits.
+    "priorities": ("peer.gap", "share.point_value", "segment.", "mover."),
+    # An honest read on the YEAR just closed.
+    "reflections": ("trend.", "mover.", "rank.", "sow."),
+}
+
+
+# The SWOT quadrant asks the same four questions under older names, so it reads the same
+# four policies rather than a second copy of them that can drift.
+_EVIDENCE_ALIAS: Dict[str, str] = {
+    "strengths": "working",
+    "weaknesses": "challenges",
+    "opportunities": "growth",
+    "threats": "challenges",
+}
+
+
+def evidence_focus(topic: str) -> Tuple[str, ...]:
+    """The fact-id prefixes this column leads from, or ``()`` for the flat pack."""
+    return _TOPIC_EVIDENCE.get(_EVIDENCE_ALIAS.get(topic, topic), ())
+
+
 def _questions_rule(topic: str) -> str:
     """The column's hidden question set as a prompt block. Never rendered on a slide."""
     questions = _TOPIC_QUESTIONS.get(topic, ())
@@ -268,11 +321,67 @@ _FAITHFULNESS = (
     "never invent, recalculate or round a figure; never name a competitor carrier. "
 )
 
+# The habit that most separates the chat analyst's prose from this deck's. The chat writer
+# is told to connect its sections explicitly ("that decline is concentrated in…", "which is
+# why…"); a commentary column was told only to keep its bullets in priority order, so it
+# produced a LIST of true statements with nothing running between them. A column is an
+# argument, and the reader should be able to follow it from the first line to the last.
+_ARGUMENT = (
+    "SHAPE THE COLUMN AS ONE ARGUMENT, not a list of findings. Each line should follow "
+    "from the one before it — the second line answers the question the first raises, and "
+    "the last lands the sharpest, most specific point. Carry the thread in the words "
+    "themselves ('that growth sits almost entirely in…', 'which is why…', 'the same is not "
+    "true of…'), and open the column on the widest claim and narrow from there. Never write "
+    "two lines that could be swapped without changing the argument. "
+)
+
+# Principle 5 of the shared analyst principles, promoted to its own instruction because it
+# is the single most analyst-like move available and the evidence pack usually contains one:
+# premium and share move in opposite directions whenever the carrier grew slower than the
+# pool it grew in.
+_TENSION = (
+    "LOOK FOR THE TENSION. Where two figures in the evidence disagree — premium up while "
+    "share of wallet fell, rank improved while the book shrank, a segment growing where the "
+    "carrier is thin — say so plainly and say what it means. A disagreement between two "
+    "numbers is worth more to this room than either number restated. "
+)
+
+
+def _analyst_principles() -> str:
+    """The shared "reading the book" principles, as a prompt block.
+
+    The same file the chat analyst writes from (:mod:`core.analysis`), so a habit added
+    for one product reaches the other. Absent or unreadable, the column is written from
+    the voice and craft rules alone rather than not at all.
+    """
+    try:
+        from core.analysis import get_lens_library
+
+        body = get_lens_library().reading_principles()
+    except Exception as exc:  # noqa: BLE001 — principles sharpen prose, they do not gate it
+        logger.warning("commentary: analyst principles unavailable (%s)", exc)
+        return ""
+    if not body:
+        return ""
+    # Its own block, top and bottom: the rules around it are running prose, and a numbered
+    # list wedged onto the end of a sentence reads as part of that sentence.
+    return "\n\nHOW TO READ THIS BOOK:\n" + body + "\n\n"
+
 
 def _style_system(style: Optional[str], *, topic: str = "", wanted: int = 1,
                   subject: str = "") -> str:
-    """The system prompt for one column: voice, craft, faithfulness, shape, and its brief."""
-    return (_VOICE + _CRAFT + _FAITHFULNESS + _openings_rule(subject)
+    """The system prompt for one column, widest rule to narrowest.
+
+        who is writing -> how to read the book -> craft -> what may not change
+          -> how the column argues -> this column's own brief -> its length
+
+    The middle three are shared with the chat analyst
+    (:func:`_analyst_principles`, :data:`_ARGUMENT`, :data:`_TENSION`): the deck reads
+    as a worse writer than the chatbot largely because the chatbot was told how to read
+    the data and how to connect what it found, and the deck was told neither.
+    """
+    return (_VOICE + _analyst_principles() + _CRAFT + _FAITHFULNESS + _ARGUMENT + _TENSION
+            + _openings_rule(subject)
             + _bullet_rules(wanted) + _TOPIC_BRIEF.get(topic, "")
             + _voice_rule(topic) + _questions_rule(topic)
             + _STYLE_DIRECTIVE.get((style or "balanced").lower(),
@@ -489,38 +598,69 @@ def _accept(lines: List[str], *, wanted: int, node: str, subject: str = "") -> O
 # Commentary is the deliverable, not an inner loop. The `fast` tier is the one
 # ``core.initialization`` describes as "the mechanical inner-loop nodes" — minimal reasoning
 # effort — and asking it for a partner's judgement got a partner's vocabulary over a
-# clerk's argument. `balanced` is the cheapest tier that can actually make the editorial
-# calls the rules above now allow (merge these two claims, cut that one, lead with the
-# consequence).
-_COMMENTARY_TIER = "balanced"
+# clerk's argument. `balanced` could make the editorial calls the rules above allow (merge
+# these two claims, cut that one, lead with the consequence) but it runs at temperature 0,
+# and prose written at temperature 0 reads like prose written at temperature 0.
+#
+# `reason` is what the chat analyst writes its final answer on
+# (``core.agents.analyst.insight_writer``), and one of the two tiers that run WARM —
+# `core.llm.clients.TIERS` documents them as the ones whose output a person reads as
+# prose. A QBR column is exactly that. Faithfulness does not rest on the temperature:
+# both verifiers and ``_accept`` rule on what comes back, and the deterministic draft
+# stands if any of them refuses.
+#
+# This constant was previously declared and never passed, so every call took
+# ``client.structured``'s own default. Wiring it is half of the change.
+_COMMENTARY_TIER = "reason"
+
+# The two verifiers are JUDGEMENTS, not prose: they read a sentence against the evidence
+# and return a verdict. That wants determinism, not warmth, so they stay where they were.
+_VERIFIER_TIER = "balanced"
 
 
-def _rewrite(text: str, *, node: str, style: Optional[str] = None, topic: str = "",
-             subject: str = "", facts: Optional[Dict[str, Any]] = None) -> str:
+def plan_rewrite(text: str, *, node: str, style: Optional[str] = None, topic: str = "",
+                 subject: str = "", facts: Optional[Dict[str, Any]] = None):
+    """This column as a :class:`~studio.template_fill.rewrites.PendingRewrite`.
+
+    The deterministic draft plus the brief a model needs to better it. Composing a column
+    and writing it are separated so a whole deck's writes can go out together — see
+    :mod:`studio.template_fill.rewrites` — but the pending object already renders as the
+    draft, so a value holding one is never wrong, only not yet improved.
+
+    An empty column has nothing to write, so it comes back as the empty string it was.
+    """
+    if not text:
+        return text
+    return rewrites.PendingRewrite(draft=text, node=node, topic=topic, subject=subject,
+                                   style=style or "balanced", facts=facts or {})
+
+
+def write_column(pending) -> str:
     """The column as a model writes it from EVIDENCE, or the deterministic draft.
 
-    ``text`` is the rule composers' newline-separated bullet list. It is passed on as the
-    draft — the claims the composers selected and the order they put them in — but the
-    model is given the facts themselves (:mod:`studio.template_fill.commentary_evidence`)
-    and the ICG definitions of the terms in play (:mod:`core.definitions`), so what comes
-    back is written from the book rather than reworded from a sentence.
+    ``pending.draft`` is the rule composers' newline-separated bullet list. It is passed
+    on as the draft — the claims the composers selected and the order they put them in —
+    but the model is given the facts themselves
+    (:mod:`studio.template_fill.commentary_evidence`) and the ICG definitions of the terms
+    in play (:mod:`core.definitions`), so what comes back is written from the book rather
+    than reworded from a sentence.
 
     Everything the model returns has to survive both verifiers (numbers against cited
     facts, then claims and term use against the evidence and the glossary) and then
     :func:`_accept`, which rules on shape and reading. If any of that refuses it, the
     deterministic draft stands.
     """
-    if not text:
-        return text
     from studio.ai import client
     from studio.template_fill import commentary_evidence as E
     from studio.template_fill import commentary_writer as W
 
+    text = pending.draft
+    topic, subject, style, node = pending.topic, pending.subject, pending.style, pending.node
     draft = tuple(ln for ln in text.splitlines() if ln.strip())
     wanted = len(draft)
 
     def call() -> Optional[str]:
-        pack = E.build_pack(facts or {})
+        pack = E.build_pack(pending.facts or {})
         if not pack.items:                  # nothing to cite — the draft is all we have
             return None
         write = W.make_writer()
@@ -528,11 +668,21 @@ def _rewrite(text: str, *, node: str, style: Optional[str] = None, topic: str = 
             topic=topic, pack=pack, draft=draft, subject=subject, style=style or "balanced",
             bullets=wanted, brief=_TOPIC_BRIEF.get(topic, ""),
             voice=_style_system(style, topic=topic, wanted=wanted, subject=subject),
+            tier=_COMMENTARY_TIER, focus=evidence_focus(topic),
         )))
         return _accept([_LEADING_BULLET.sub("", ln).strip() for ln in lines],
                        wanted=wanted, node=node, subject=subject)
 
     return client.run_or_fallback(call, lambda: text)
+
+
+def _rewrite(text: str, *, node: str, style: Optional[str] = None, topic: str = "",
+             subject: str = "", facts: Optional[Dict[str, Any]] = None) -> str:
+    """Plan and write one column on the spot — the un-batched pair, for a lone caller."""
+    if not text:
+        return text
+    return write_column(plan_rewrite(text, node=node, style=style, topic=topic,
+                                     subject=subject, facts=facts))
 
 
 # What each prose column asks of the facts, as ``(composer, how many of its sentences)``.
@@ -627,16 +777,18 @@ def bullet_list(points: List[str]) -> str:
     return "\n".join(p.strip() for p in points if p and p.strip())
 
 
-def with_ledger(ledger, narratives: Optional[List[Any]] = None):
+def with_ledger(ledger, narratives: Optional[List[Any]] = None, *, defer_rewrites: bool = False):
     """This provider bound to a deck's claim ledger and narrative collector.
 
     The provider list is uniform ``(template, result)`` callables, so the per-deck ledger
-    (:class:`~studio.template_fill.ledger.ClaimLedger`) and the list each page's
-    :class:`~studio.narrative.SlideNarrative` is appended to are injected here rather than
-    threaded through every provider's signature.
+    (:class:`~studio.template_fill.ledger.ClaimLedger`), the list each page's
+    :class:`~studio.narrative.SlideNarrative` is appended to, and whether this deck writes
+    its columns later are injected here rather than threaded through every provider's
+    signature.
     """
     def provider(template: Template, result) -> Dict[str, Any]:
-        return values(template, result, ledger=ledger, narratives=narratives)
+        return values(template, result, ledger=ledger, narratives=narratives,
+                      defer_rewrites=defer_rewrites)
 
     provider.__module__ = __name__
     return provider
@@ -729,7 +881,8 @@ def _survey_pointer(template: Template, result) -> Tuple[Set[int], str]:
 
 
 def values(template: Template, result, *, ledger=None,
-           narratives: Optional[List[Any]] = None) -> Dict[str, Any]:
+           narratives: Optional[List[Any]] = None,
+           defer_rewrites: bool = False) -> Dict[str, Any]:
     """``{note-role: bullet list}`` for every commentary prose box in the deck.
 
     Each value is newline-separated — one bullet per line; the fill engine turns each line
@@ -777,9 +930,9 @@ def values(template: Template, result, *, ledger=None,
                 # chosen would introduce "the book" with no introduction in front of it.
                 said = openings.vary_openings(said, subject)
                 base = bullet_list(said)
-                cache[key] = _rewrite(base, node=f"commentary-{topic}", style=style,
-                                      topic=topic, subject=subject,
-                                      facts=facts) if base else ""
+                cache[key] = plan_rewrite(base, node=f"commentary-{topic}", style=style,
+                                          topic=topic, subject=subject,
+                                          facts=facts) if base else ""
             except Exception as exc:  # noqa: BLE001 — commentary must never break the doc
                 logger.warning("commentary: topic %s failed: %s", topic, exc)
                 cache[key] = ""
@@ -788,4 +941,6 @@ def values(template: Template, result, *, ledger=None,
     if narratives is not None:
         narratives.extend(_page_narratives(targets, result, facts))
     logger.info("commentary: filled %d prose box(es) across %d topic(s)", len(out), len(cache))
-    return out
+    # A caller that says nothing about deferral gets finished prose, as it always did.
+    # ``assemble`` says so, and then writes every column in the deck in one batch.
+    return out if defer_rewrites else rewrites.write_now(out)

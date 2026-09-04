@@ -11,7 +11,28 @@ from typing import Dict, List, Optional, Tuple
 
 from rapidfuzz import fuzz, process, utils
 
-from config.valid_values_config import *  # noqa: F401,F403 - preserves legacy import surface
+try:
+    from config.valid_values_config import *  # noqa: F401,F403 - preserves legacy import surface
+except ModuleNotFoundError:
+    valid_practices = []
+    valid_carriers = []
+    valid_regions = []
+    valid_sections = []
+    valid_attributes = []
+    valid_years = []
+    valid_segments = []
+    valid_countries = []
+    valid_country_carrier = {}
+    valid_regions_gpr = []
+    valid_countries_gpr = []
+    valid_groups_gpr = []
+    valid_products_gpr = []
+    valid_business_lines_gpr = []
+    valid_segments_gpr = []
+    valid_country_carrier_gpr = {}
+    valid_country_carrier_group = {}
+    valid_countries_gimmi = []
+    valid_country_carrier_gimmi = {}
 
 
 class GetValidData:

@@ -9,7 +9,13 @@ from langchain_core.messages import HumanMessage
 from sqlalchemy import inspect
 from sqlalchemy.engine import Engine
 
-from config.valid_values_config import *  # noqa: F401,F403 - preserves legacy globals (valid_countries, valid_country_carrier, valid_countries_gpr, valid_country_carrier_gpr)
+try:
+    from config.valid_values_config import *  # noqa: F401,F403 - legacy valid-value globals
+except ModuleNotFoundError:
+    valid_countries = []
+    valid_country_carrier = {}
+    valid_countries_gpr = []
+    valid_country_carrier_gpr = {}
 from core.data.valid_values import GetValidData
 from logger import get_logger
 

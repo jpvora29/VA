@@ -147,7 +147,12 @@ def test_compare_lines_the_two_runs_up():
 
 
 def test_every_assembled_sub_deck_reports_its_score(monkeypatch):
-    """A rubric nobody runs is a rubric nobody reads — it goes out with the QA log."""
+    """A rubric nobody runs is a rubric nobody reads — it goes out with the QA log.
+
+    Scored by ``plan_subdecks``, not by ``_build_subdeck``: the columns leave the builder
+    as pending rewrites and are written for the whole deck at once, so scoring where they
+    are composed would rate the draft rather than the sentences that reach the slide.
+    """
     from studio.compute import OverallResult
     from studio.template_fill import assemble
 
@@ -155,7 +160,25 @@ def test_every_assembled_sub_deck_reports_its_score(monkeypatch):
     monkeypatch.setattr(assemble.commentary_metrics, "log_score",
                         lambda values, **kw: scored.append(kw.get("label")))
 
-    assemble._build_subdeck("overall", OverallResult(subject="Zurich"), {}, "overall",
-                            providers=())
+    decks = assemble.plan_subdecks(OverallResult(subject="Zurich"), scope="overall")
 
-    assert scored == ["overall"]
+    assert scored == [sub.label for sub in decks]
+
+
+def test_a_sub_deck_is_scored_on_the_written_column_not_the_draft(monkeypatch):
+    """The reason the scoring moved: the draft is not what ships."""
+    from studio.compute import OverallResult
+    from studio.template_fill import assemble, rewrites
+
+    seen = []
+    monkeypatch.setattr(assemble.commentary_metrics, "log_score",
+                        lambda values, **kw: seen.append(values))
+    monkeypatch.setattr(
+        assemble, "_write_prose",
+        lambda decks: [__import__("dataclasses").replace(d, values={"note:0:1": "written"})
+                       for d in decks])
+
+    assemble.plan_subdecks(OverallResult(subject="Zurich"), scope="overall")
+
+    assert seen and all(v == {"note:0:1": "written"} for v in seen)
+    assert all(not rewrites.pending_items(v) for v in seen)

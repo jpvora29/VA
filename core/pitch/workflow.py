@@ -272,7 +272,7 @@ class PitchBuilderWorkflow:
 
             try:
                 # Fast tier: per-question evidence extraction is a focused,
-                # schema-bound pass. Aliases llm until MODEL_TIERS=on.
+                # schema-bound pass, so it runs on the deterministic tier.
                 structured_llm = Initialization.llm_fast.with_structured_output(
                     PitchExtractedInsight
                 )
@@ -745,7 +745,7 @@ class PitchBuilderWorkflow:
 
         try:
             # Reason tier: writing the executive report is the heaviest synthesis
-            # in the pitch flow. Aliases llm_creative until MODEL_TIERS=on.
+            # in the pitch flow, so it runs on the warm tier.
             response = Initialization.llm_reason.invoke(
                 [
                     SystemMessage(
@@ -880,7 +880,7 @@ class PitchBuilderWorkflow:
         top_kpis: dict[str, Any] = {}
         try:
             # Fast tier: headline KPI extraction is a constrained lookup over
-            # already-labelled metrics. Aliases llm until MODEL_TIERS=on.
+            # already-labelled metrics, so it runs on the deterministic tier.
             structured_llm = Initialization.llm_fast.with_structured_output(PitchTopKPIs)
             response = structured_llm.invoke(
                 [

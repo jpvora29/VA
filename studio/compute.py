@@ -369,6 +369,26 @@ def sow_movement(flow, filters, engine, subject) -> Optional[Dict[str, Any]]:
     return {"current": c, "prior": p, "delta": (c - p) if (p is not None) else None}
 
 
+def premium_by_dim(flow, dim, filters, engine) -> List[Dict[str, Any]]:
+    """Current premium per value of ``dim``, biggest first — ``[{name, premium}]``.
+
+    The cheap half of :func:`product_breakdown_rows`: one breakdown query, no per-row
+    share of wallet. That is all :func:`concentration` needs, and concentration is the
+    question "how much of this book sits in how few lines" — which no other primitive
+    answers and which a QBR page is always implicitly asking.
+    """
+    cur = _current_year(filters)
+    scope = {**filters, _YEAR_COL: cur} if cur is not None else dict(filters)
+    facts = compute_breakdown(
+        PrimitiveArgs(flow=flow, metric="premium", group_by=(dim,), filters=scope),
+        engine=engine,
+    )
+    rows = [{"name": str(f.dims.get(dim)), "premium": f.value}
+            for f in facts if f.dims.get(dim) is not None]
+    rows.sort(key=lambda r: r["premium"] or 0.0, reverse=True)
+    return rows
+
+
 def concentration(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Portfolio concentration: lead share, top-3 share, HHI (0-10000)."""
     vals = sorted((r["premium"] or 0.0 for r in rows), reverse=True)

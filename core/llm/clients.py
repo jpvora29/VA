@@ -1,21 +1,31 @@
 """Azure chat clients by tier — one tier name in, one LangChain client out.
 
-The single place a *tier* ("reason" / "balanced" / "fast") becomes an
-``AzureChatOpenAI``. Both callers share it: :mod:`core.initialization` builds the
-chatbot's per-tier singletons from :func:`resolve_tier`, and Studio calls
-:func:`make_client` directly, so the Studio app never constructs the chatbot's
-engine and session factory just to write a sentence.
+The single place a *tier* becomes an ``AzureChatOpenAI``. Every part of the app reads
+it: the chatbot through :mod:`core.initialization`'s singletons, and Studio and MoM
+through :func:`make_client` directly, so neither builds the chatbot's database engine
+and session factory just to write a sentence.
 
-Tier semantics:
+A tier is a class of work, and it answers two independent questions from the
+environment:
 
-* ``MODEL_TIERS`` off (the default) — ``reason`` is the expressive client
-  (temperature 0.4), ``balanced`` and ``fast`` are the deterministic one
-  (temperature 0).
-* ``MODEL_TIERS=on`` — each tier reads its own ``<TIER>_DEPLOYMENT`` /
-  ``<TIER>_EFFORT`` / ``<TIER>_VERBOSITY``. Reasoning params are attached only when
-  a tier has its OWN explicit deployment: a tier falling back to the base
-  ``DEPLOYMENT`` is assumed to point at a classic model, which would 400 on
-  ``reasoning_effort``.
+    <TIER>_DEPLOYMENT   which model  (falls back to DEPLOYMENT)
+    <TIER>_EFFORT       is it a reasoning model?  (unset -> a classic model at the
+                        tier's own temperature)
+
+Set nothing and every tier resolves to ``DEPLOYMENT`` at its default temperature.
+Set one variable and one tier moves; nothing else does. That is the whole model —
+per-tier configuration is purely additive, and there is no mode to be in.
+
+There used to be a ``MODEL_TIERS`` flag gating whether the per-tier variables were
+read at all, plus a separate config path for each side of it. It made ``reason`` mean
+two different things — warm temperature with the flag off, reasoning effort with it on
+— which is exactly the sort of thing you have to read the source to find out. The two
+questions above are independent, so the flag was answering a question nobody asked.
+
+``<TIER>_EFFORT`` must be set explicitly to get reasoning parameters. Defaulting it
+would send ``reasoning_effort`` to whatever ``<TIER>_DEPLOYMENT`` pointed at, and a
+classic deployment 400s on it. Suggested values if you do want them:
+``REASON_EFFORT=high``, ``BALANCED_EFFORT=medium``, ``FAST_EFFORT=minimal``.
 
 Environment is read on every call and clients are cached per resolved config, so a
 test that changes the env gets a new client rather than a stale one. Importing this
@@ -41,13 +51,29 @@ logger = get_logger(__name__)
 # is a no-op.
 load_dotenv()
 
-DEFAULT_EFFORT = {"reason": "high", "balanced": "medium", "fast": "minimal"}
+# Every tier, and the temperature it runs at when no reasoning effort is configured.
+# The values ARE the tier semantics, so the table is the documentation:
+#
+#   reason / creative  the nodes whose output a person reads as prose — a chat answer,
+#                      a QBR commentary column, the pitch narrative. Warm, because
+#                      prose written at temperature 0 reads like it.
+#   balanced           structured work that must not vary: SQL generation, extraction,
+#                      classifiers, the commentary verifiers.
+#   fast               mechanical inner-loop nodes.
+#   summary            throwaway context compression (LangChain SummarizationMiddleware),
+#                      which is why it usually points at a cheaper SUMMARY_DEPLOYMENT.
+TIERS: Dict[str, float] = {
+    "reason": 0.4,
+    "creative": 0.4,
+    "balanced": 0.0,
+    "fast": 0.0,
+    "summary": 0.0,
+}
 
-# "creative" is not a deployment tier — it is the base deployment run warm, for the
-# nodes whose output the user reads as prose. It never takes per-tier deployments or
-# reasoning effort, so `MODEL_TIERS` does not change it.
-CREATIVE = "creative"
-_CREATIVE_TEMPERATURE = 0.4
+DEFAULT_TIER = "balanced"
+
+# What turns a tier's reasoning parameters back off without unsetting the variable.
+_NO_EFFORT = {"", "none", "off"}
 
 
 @dataclass(frozen=True)
@@ -60,49 +86,24 @@ class TierConfig:
     verbosity: Optional[str] = None       # low | medium | high
 
 
-def tiers_enabled() -> bool:
-    """True when ``MODEL_TIERS`` opts into per-tier deployments."""
-    return os.getenv("MODEL_TIERS", "off").strip().lower() in {"on", "true", "1"}
-
-
-def _legacy_config(tier: str) -> TierConfig:
-    """The pre-tiers config: one deployment, expressive for ``reason`` only.
-
-    ``reason`` runs warm here because with tiers off it aliases the expressive
-    client — the behaviour a node on the reason tier has always had.
-    """
-    return TierConfig(
-        deployment=os.getenv("DEPLOYMENT"),
-        temperature=_CREATIVE_TEMPERATURE if tier == "reason" else 0.0,
-    )
-
-
-def _creative_config() -> TierConfig:
-    """The expressive client: base deployment, warm, never a reasoning model."""
-    return TierConfig(deployment=os.getenv("DEPLOYMENT"),
-                      temperature=_CREATIVE_TEMPERATURE)
-
-
-def _tiered_config(tier: str) -> TierConfig:
-    """The per-tier config, with reasoning params only on an explicit deployment."""
-    name = tier.upper()
-    explicit = os.getenv(f"{name}_DEPLOYMENT")
-    effort = (os.getenv(f"{name}_EFFORT", DEFAULT_EFFORT[tier]) or "").strip().lower()
-    if not explicit or effort in {"", "none", "off"}:
-        return TierConfig(deployment=explicit or os.getenv("DEPLOYMENT"), temperature=0.0)
-    return TierConfig(
-        deployment=explicit,
-        effort=effort,
-        verbosity=(os.getenv(f"{name}_VERBOSITY") or "").strip().lower() or None,
-    )
+def _env(tier: str, suffix: str) -> str:
+    return (os.getenv(f"{tier.upper()}_{suffix}") or "").strip()
 
 
 def resolve_tier(tier: str) -> TierConfig:
-    """Read one tier's settings from the environment. Unknown tiers read as balanced."""
-    if tier == CREATIVE:
-        return _creative_config()
-    tier = tier if tier in DEFAULT_EFFORT else "balanced"
-    return _tiered_config(tier) if tiers_enabled() else _legacy_config(tier)
+    """Read one tier's settings from the environment.
+
+    An unknown tier name reads as ``balanced`` rather than inventing a tier of its own,
+    so a typo is a boring default instead of a silent third configuration.
+    """
+    if tier not in TIERS:
+        tier = DEFAULT_TIER
+    deployment = _env(tier, "DEPLOYMENT") or os.getenv("DEPLOYMENT")
+    effort = _env(tier, "EFFORT").lower()
+    if effort in _NO_EFFORT:
+        return TierConfig(deployment, temperature=TIERS[tier])
+    return TierConfig(deployment, effort=effort,
+                      verbosity=_env(tier, "VERBOSITY").lower() or None)
 
 
 def _client_kwargs(config: TierConfig) -> Dict[str, Any]:
@@ -112,10 +113,15 @@ def _client_kwargs(config: TierConfig) -> Dict[str, Any]:
         api_key=os.getenv("API_KEY"),
         azure_endpoint=os.getenv("ENDPOINT"),
         api_version=os.getenv("VERSION"),
+        # The deployment IS the model here. It used to be a hard-coded string per client
+        # ("gpt-41-mini"), which is a label that goes stale the day the deployment behind
+        # it changes and tells every log a small lie in the meantime.
         model=config.deployment or "azure-openai",
         timeout=float(os.getenv("LLM_TIMEOUT", "60")),
         max_retries=int(os.getenv("LLM_MAX_RETRIES", "2")),
     )
+    # A reasoning model takes an effort and rejects a temperature; a classic one is the
+    # other way round. Never both.
     if config.effort:
         kwargs["reasoning_effort"] = config.effort
         if config.verbosity:
@@ -129,7 +135,12 @@ _CLIENTS: Dict[TierConfig, Any] = {}
 
 
 def make_client(tier: str):
-    """The LangChain chat client for a tier, built once per distinct resolved config."""
+    """The LangChain chat client for a tier, built once per distinct resolved config.
+
+    Cached on the resolved config rather than on the tier name, so two tiers that
+    resolve to the same settings share one client — which is the common case when
+    nothing is configured per-tier.
+    """
     config = resolve_tier(tier)
     if config not in _CLIENTS:
         from langchain_openai import AzureChatOpenAI
@@ -138,7 +149,7 @@ def make_client(tier: str):
     return _CLIENTS[config]
 
 
-def available(tier: str = "balanced") -> bool:
+def available(tier: str = DEFAULT_TIER) -> bool:
     """True when a client for ``tier`` can actually be built from this environment.
 
     The honest form of the question, and the reason it lives here: every caller that asked

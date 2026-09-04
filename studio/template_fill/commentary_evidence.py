@@ -55,9 +55,42 @@ class EvidencePack:
         """The glossary keys in play — what the writer needs defined."""
         return tuple(dict.fromkeys(e.term for e in self.items if e.term))
 
-    def as_brief(self) -> str:
-        """The pack as a prompt block, one citable line per fact."""
-        return "\n".join(e.as_line() for e in self.items)
+    def as_brief(self, focus: Tuple[str, ...] = ()) -> str:
+        """The pack as a prompt block, one citable line per fact.
+
+        ``focus`` is a tuple of fact-id prefixes this column should LEAD from. The pack is
+        SPLIT rather than filtered, and that is deliberate: every column on a page was
+        handed the same forty facts and, however differently briefed, kept reaching for
+        the same six. Filtering the rest away would fix that and break something worse —
+        the deterministic draft this column is shown cites whatever ITS composer selected,
+        and ``check_numbers`` drops a sentence whose figure is not in the pack, so a family
+        trimmed here would silently delete good lines. Leading with a column's own evidence
+        steers the writing; keeping the rest keeps it verifiable.
+
+        A focus that matches everything or nothing falls back to the flat list — two
+        headings around one block say less than no headings at all.
+        """
+        if not focus:
+            return "\n".join(e.as_line() for e in self.items)
+        # The lead block is ordered by the FOCUS, not by the pack: the first prefix a
+        # column names is the question it exists to answer, and a lead block that still
+        # opens on the headline premium has told the model nothing it did not already
+        # prefer. Ties keep pack order, which is why this sorts rather than groups.
+        def priority(item: Evidence) -> int:
+            return next((i for i, prefix in enumerate(focus)
+                         if item.fact_id.startswith(prefix)), len(focus))
+
+        lead = sorted((e for e in self.items if e.fact_id.startswith(focus)), key=priority)
+        rest = [e for e in self.items if not e.fact_id.startswith(focus)]
+        if not lead or not rest:
+            return "\n".join(e.as_line() for e in self.items)
+        return "\n".join([
+            "LEAD FROM THESE — the facts this column exists to report:",
+            *(e.as_line() for e in lead),
+            "",
+            "ALSO TRUE, for context or a closing line — do not build the column on them:",
+            *(e.as_line() for e in rest),
+        ])
 
     def rendered_values(self, fact_ids: Tuple[str, ...] = ()) -> Tuple[str, ...]:
         """The rendered forms of the cited facts (or all of them) — the verifier's source."""
@@ -204,6 +237,68 @@ def _mover_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
     return out
 
 
+# ── shape and direction: the two families that are not the headline again ──
+#
+# Every family above answers "how big" or "how much did it move on the year". These two
+# answer "how is it distributed" and "where is it heading", and they are the reason a
+# column can now say something the chart beside it does not already show.
+
+
+def _mix_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
+    """How concentrated the book is, as one citable finding.
+
+    One compound value, not three: ``check_numbers`` scopes a sentence's allowed figures
+    to the ids it CITES, so splitting the lead, the top-three share and the count into
+    three facts would make a good sentence depend on citing all three correctly.
+    """
+    mix = f.get("mix") or {}
+    lead, label = mix.get("lead"), mix.get("label", "lines")
+    if not lead or mix.get("top3") is None:
+        return []
+    out: List[Evidence] = []
+    _add(out, "mix.concentration",
+         f"How {subject}'s premium is spread across the {label} it writes",
+         f"{lead} is the largest at {mix['lead_share']:.1f}% of the book; the top three "
+         f"carry {mix['top3']:.0f}% of {int(mix['n'])} {label}",
+         "concentration")
+    return out
+
+
+def _trend_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
+    """Where the book is heading — the only facts in the pack with a time axis.
+
+    The pace fact deliberately carries BOTH figures it is derived from. The glossary
+    entry for ``momentum`` requires a sentence to print them, and a figure a sentence may
+    print has to be one the pack carries.
+    """
+    trend = f.get("trend") or {}
+    out: List[Evidence] = []
+    if trend.get("ttm") is not None and trend.get("ttm_pct") is not None:
+        _add(out, "trend.ttm",
+             f"{subject}'s premium over the trailing twelve months, against the twelve before",
+             f"{_money(trend['ttm'])}, up {abs(trend['ttm_pct']):.1f}% on the prior twelve "
+             f"months" if trend["ttm_pct"] >= 0 else
+             f"{_money(trend['ttm'])}, down {abs(trend['ttm_pct']):.1f}% on the prior twelve "
+             f"months",
+             "trailing_twelve_months")
+    quarter, pace = trend.get("quarter_pct"), trend.get("pace")
+    if quarter is None or not trend.get("quarter_label"):
+        return out
+    _add(out, "trend.quarter", f"How {subject}'s book moved in the latest closed quarter",
+         f"{abs(quarter):.1f}% in {trend['quarter_label']}", "momentum")
+    if pace and trend.get("annual_pct") is not None:
+        # The year's own movement and the quarter's — the two the reading rests on. NOT
+        # the trailing-twelve figure above, which covers a different window: a sentence
+        # that prints one while claiming the other is unevidenced in a way no verifier
+        # scoped to cited facts can catch.
+        _add(out, "trend.pace",
+             "The latest quarter read against the pace of the year it closed",
+             f"{abs(trend['annual_pct']):.1f}% across the year against "
+             f"{abs(quarter):.1f}% in {trend['quarter_label']} — {pace}",
+             "momentum")
+    return out
+
+
 # ── the decomposition: where inside the scope the book actually sits ────────
 #
 # Everything above describes the scope as one number. These describe its SHAPE, and they
@@ -323,6 +418,8 @@ _BUILDERS = (
     lambda f, subject: _standing_items(f, subject),
     lambda f, subject: _gap_items(f),
     lambda f, subject: _mover_items(f, subject),
+    lambda f, subject: _mix_items(f, subject),
+    lambda f, subject: _trend_items(f, subject),
     lambda f, subject: _segment_items(f, subject),
 )
 

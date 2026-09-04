@@ -139,13 +139,18 @@ def check_claims(judged: Sequence[Judged], pack, *, glossary_brief: str = "",
     """
     from studio.ai import client
     from studio.ai.models import CommentaryVerdicts
+    from studio.template_fill import commentary
 
     items = list(judged)
     if not items:
         return Verdict(())
+    # Pinned to the deterministic tier, deliberately NOT the warm one the column itself
+    # is written on: this call returns a verdict per sentence, and a judge that answers
+    # the same evidence differently on two runs is not a judge.
     report = client.structured(
         CommentaryVerdicts, _JUDGE_SYSTEM,
-        _judge_payload(items, pack, glossary_brief), node=f"{node}-verify")
+        _judge_payload(items, pack, glossary_brief),
+        tier=commentary._VERIFIER_TIER, node=f"{node}-verify")
     if report is None or len(report.verdicts) != len(items):
         if report is not None:
             logger.info("commentary_verify: %s judge returned %d verdict(s) for %d "

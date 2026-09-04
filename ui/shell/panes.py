@@ -14,7 +14,7 @@ from dash import html
 
 from core.memory.suggestions import generate_starter_questions
 from core.store.conversations import list_conversations
-from studio.authoring.layout import generating_loader
+from studio.authoring.layout import studio_chrome
 
 from ui.components.chatbot import chatbot_page
 from ui.components.sidebar import app_sidebar
@@ -28,11 +28,11 @@ def _studio_pane(user_id: int, username: str) -> Any:
     """Studio renders itself: ``studio.authoring.navigation`` fills ``qs-app``
     with the whole ``qs-root`` (its rail + top bar + canvas).
 
-    The Generate spinner is mounted here rather than at the root so it cannot cover
-    another workspace — see ``studio.authoring.layout.generating_loader``.
+    The Generate spinner and the build's progress card are mounted here rather than at
+    the root so they cannot cover another workspace — see ``studio.authoring.layout``.
     """
     return html.Div(
-        [generating_loader(), html.Div(id="qs-app", className="va-pane-full")],
+        [*studio_chrome(), html.Div(id="qs-app", className="va-pane-full")],
         className="va-pane-full",
     )
 

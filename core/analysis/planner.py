@@ -42,6 +42,26 @@ _LENSES_DIR = Path(__file__).parent / "lenses"
 _PRINCIPLES_FILE = Path(__file__).parent / "analyst_principles.md"
 
 
+def _section(markdown: str, heading: str) -> str:
+    """The body of one ``## heading`` section, without the heading line itself.
+
+    Empty when the heading is absent, so a re-worded principles file degrades to no
+    principles rather than to the wrong ones.
+    """
+    lines = markdown.splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines)
+                     if line.strip().lower() == f"## {heading}".lower())
+    except StopIteration:
+        return ""
+    body = []
+    for line in lines[start + 1:]:
+        if line.startswith("## "):
+            break
+        body.append(line)
+    return "\n".join(body).strip()
+
+
 @dataclass(frozen=True)
 class LensPrimitive:
     """A deterministic primitive a lens contributes to the evidence bundle.
@@ -118,6 +138,17 @@ class LensLibrary:
 
     def principles(self) -> str:
         return self._principles
+
+    def reading_principles(self) -> str:
+        """Just the "Reading the book" half — the principles that are not chat-specific.
+
+        The other half is about how much analysis a QUESTION deserves, which only makes
+        sense when there is a question. A QBR column's scope and depth come from the
+        template, so it takes this half and nothing else. Sharing the file rather than
+        copying the good sentences into a second prompt is what keeps the chat answer and
+        the deck page reading like the same analyst wrote them.
+        """
+        return _section(self._principles, "Reading the book")
 
     def body(self, name: str) -> str:
         lens = self._lenses.get(name)

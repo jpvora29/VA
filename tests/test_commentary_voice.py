@@ -234,8 +234,90 @@ def test_every_column_is_briefed_differently():
 
 def test_commentary_does_not_run_on_the_mechanical_tier():
     """`fast` is the tier core.initialization reserves for inner-loop nodes; the commentary
-    IS the deliverable."""
-    assert CM._COMMENTARY_TIER == "balanced"
+    IS the deliverable — and the deliverable is PROSE, so it runs on the warm tier the chat
+    analyst writes its own final answer on (``core.agents.analyst.insight_writer``)."""
+    assert CM._COMMENTARY_TIER == "reason"
+
+
+def test_the_column_tier_actually_reaches_the_model():
+    """Regression: ``_COMMENTARY_TIER`` was declared and never passed, so every column was
+    written on ``client.structured``'s own default and the constant documented nothing."""
+    from studio.template_fill import commentary_writer as W
+
+    from studio.template_fill import commentary_evidence as E
+
+    seen = {}
+
+    def fake_structured(model, system, user, *, tier="balanced", node="ai"):
+        seen["tier"] = tier
+        return None
+
+    import studio.ai.client as client
+    original = client.structured
+    client.structured = fake_structured
+    try:
+        W.compose_with_agent(W.ColumnRequest(topic="working", pack=E.build_pack(_facts()),
+                                             tier=CM._COMMENTARY_TIER))
+    finally:
+        client.structured = original
+    assert seen["tier"] == CM._COMMENTARY_TIER
+
+
+def test_the_verifiers_stay_deterministic_while_the_writer_runs_warm():
+    """A judge that answers the same evidence differently on two runs is not a judge."""
+    assert CM._VERIFIER_TIER == "balanced"
+    assert CM._COMMENTARY_TIER != CM._VERIFIER_TIER
+
+
+# ── the deck and the chat answer read from ONE set of analyst principles ─────
+
+
+def test_a_column_is_written_from_the_same_principles_as_a_chat_answer():
+    """The style lever: the chat analyst was told how to read this book and the deck was
+    not. Both now inject ``core/analysis/analyst_principles.md`` — one file, no drift."""
+    from core.analysis import get_lens_library
+
+    shared = get_lens_library().reading_principles()
+    prompt = CM._style_system("balanced", topic="performance", wanted=3, subject="Zurich")
+
+    assert shared and shared in prompt
+    # The half that only makes sense when a user asked a question must NOT come along.
+    assert "Answer the literal question first" not in prompt
+    assert "Be proportional" not in prompt
+
+
+def test_the_chat_analyst_still_gets_every_principle():
+    """Splitting the file for the deck must not quietly narrow the chatbot's own prompt."""
+    from core.analysis import get_lens_library
+
+    library = get_lens_library()
+    everything = library.principles()
+    assert "Answer the literal question first" in everything
+    assert "Surface tensions" in everything
+    assert library.reading_principles() != everything
+
+
+def test_missing_principles_do_not_stop_a_column_being_written(monkeypatch):
+    """They sharpen the prose; they are not allowed to gate it."""
+    monkeypatch.setattr(CM, "_analyst_principles", lambda: "")
+    prompt = CM._style_system("balanced", topic="working", wanted=2, subject="Zurich")
+    assert "Marsh's Insurer Consulting Group" in prompt
+
+
+def test_a_column_is_told_to_argue_rather_than_to_list():
+    """The chat writer connects its sections explicitly; a column was told only to keep
+    its bullets in priority order, so it produced a list of unrelated true statements."""
+    prompt = CM._style_system("balanced", topic="performance", wanted=3, subject="Zurich")
+    assert "ONE ARGUMENT" in prompt
+    assert "LOOK FOR THE TENSION" in prompt
+
+
+def test_every_topic_carries_the_shared_style_rules():
+    for topic in ("thesis", "key_messages", "challenges", "priorities", "performance",
+                  "reflections", "working", "growth"):
+        prompt = CM._style_system("balanced", topic=topic, wanted=3, subject="Zurich")
+        assert "HOW TO READ THIS BOOK" in prompt, topic
+        assert "ONE ARGUMENT" in prompt, topic
 
 
 # ── the model now writes from EVIDENCE, and both verifiers rule on it ────────

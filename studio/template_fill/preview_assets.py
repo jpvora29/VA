@@ -15,8 +15,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
+import stat
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from logger import get_logger
 
@@ -255,3 +257,106 @@ def ensure_doc_backgrounds(doc: dict, slide_count: int, *, width_px: int = 1600)
         logger.warning("template preview filled-background render failed for %s: %s", template_path, exc)
 
     return _background_urls(render_dir, slide_count)
+
+
+# ── cache lifecycle ──────────────────────────────────────────────────────────
+#
+# Every generated deck is a NEW file, so it hashes to a NEW directory of PNGs under
+# ``assets/``. Nothing ever removed them: one directory per deck ever generated, each
+# holding a full-resolution render of every slide. Left alone that grows without bound
+# (1,735 directories / 114 MB on the machine this was written for), and Dash walks the
+# whole assets tree to fingerprint it.
+#
+# So the cache is pruned to the decks that are still on screen. The SOURCE templates are
+# kept: there are six of them, they never change between runs, and re-rendering them is
+# the slow part of opening the canvas.
+
+
+def _keep_dirs(paths: Iterable[str]) -> set:
+    """The cache directory names for ``paths`` — skipping any file that is gone."""
+    keep = set()
+    for path in paths:
+        try:
+            keep.add(template_cache_dir(path).name)
+        except OSError:                 # the .pptx was deleted; nothing to keep for it
+            continue
+    return keep
+
+
+def source_template_paths() -> List[str]:
+    """The author-made templates the deck is assembled from — always worth caching."""
+    from studio.template_fill.binding_map import available, get_binding_map
+
+    paths = []
+    for name in available():
+        try:
+            path = get_binding_map(name).path
+        except KeyError:                # a registered axis with no map — nothing to keep
+            continue
+        if Path(path).exists():
+            paths.append(path)
+    return paths
+
+
+def _clear_readonly(func, path, _exc) -> None:
+    """Retry a delete that failed on Windows' read-only attribute.
+
+    Every file and directory under ``assets/`` here is marked read-only — OneDrive sets
+    it on the folders it syncs — and ``rmtree`` refuses those with ``Access is denied``
+    rather than with anything that names the cause. Clearing the bit and retrying is the
+    documented remedy, and it is scoped to the one path that failed.
+    """
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def _remove(path: Path) -> bool:
+    """Delete one cached directory. False — never an exception — if it will not go.
+
+    A directory a browser still has open cannot be removed on Windows, and a preview that
+    fails to be tidied away is not a reason to fail a generation.
+    """
+    try:
+        shutil.rmtree(path, onexc=_clear_readonly)
+        return True
+    except OSError as exc:
+        logger.debug("preview cache: could not remove %s (%s)", path, exc)
+        return False
+
+
+def _prune_doc_renders(template_dir: Path, keep: int = 1) -> int:
+    """Drop all but the ``keep`` newest filled-document renders under one template.
+
+    The source templates' own directories survive :func:`prune_cache` — they are six
+    files that never change and are slow to render — but each EDIT of a document adds
+    another full render inside one of them, keyed by the values it was rendered from. So
+    the kept directory is trimmed from the inside as well.
+    """
+    parent = template_dir / "doc-backgrounds"
+    if not parent.is_dir():
+        return 0
+    renders = sorted((d for d in parent.iterdir() if d.is_dir()),
+                     key=lambda d: d.stat().st_mtime, reverse=True)
+    return sum(1 for stale in renders[keep:] if _remove(stale))
+
+
+def prune_cache(keep_paths: Iterable[str] = ()) -> int:
+    """Delete every cached preview directory except the source templates' and ``keep_paths``'.
+
+    Returns how many directories were removed.
+    """
+    root = cache_root()
+    if not root.exists():
+        return 0
+    keep = _keep_dirs([*source_template_paths(), *keep_paths])
+    removed = 0
+    for child in root.iterdir():
+        if not child.is_dir():
+            continue
+        if child.name in keep:
+            removed += _prune_doc_renders(child)
+            continue
+        removed += int(_remove(child))
+    if removed:
+        logger.info("preview cache: removed %d stale preview director(ies)", removed)
+    return removed

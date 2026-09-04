@@ -13,6 +13,11 @@ from dash import dcc, html
 
 from studio.authoring.config import ASSETS
 
+# How often the Generate poll asks a running build how it is doing. A build is minutes
+# long, so a fast tick buys nothing but callback traffic; a slow one makes the finished
+# deck feel late.
+GEN_POLL_MS = 1500
+
 
 def create_app() -> dash.Dash:
     """A Studio-only Dash app — assets, theme, and callback-exception tolerance.
@@ -69,6 +74,13 @@ def studio_stores() -> list:
         # cost that grows with the vocabulary (see ``studio.authoring.setup``). Session
         # storage: it describes what is on screen, not the user's work.
         dcc.Store(id="qs-filter-sig", data=None, storage_type="memory"),
+        # The deck build in flight, and the tick that follows it. A build takes minutes,
+        # so Generate starts a ``studio.authoring.jobs.DeckJob`` and this poll collects
+        # the result — a callback that held the request open that long lost its answer
+        # and left the previous deck on screen. Memory storage: a reload has no thread
+        # left to resume, so remembering a job id would only lie to the user.
+        dcc.Store(id="qs-gen-job", data=None, storage_type="memory"),
+        dcc.Interval(id="qs-gen-poll", interval=GEN_POLL_MS, n_intervals=0, disabled=True),
         dcc.Download(id="studio-pptx-download"),
         # Hidden sink: the canvas JS writes select/move/resize actions here.
         dcc.Input(id="qs-cv-sink", style={"display": "none"}),
@@ -76,7 +88,13 @@ def studio_stores() -> list:
 
 
 def generating_loader() -> dcc.Loading:
-    """The full-screen spinner held up while Generate assembles the deck.
+    """The full-screen spinner held up while Generate STARTS a build.
+
+    It no longer covers the build itself: that runs in a background thread now
+    (``studio.authoring.jobs``) and is followed by the Setup progress panel, which can say
+    which phase a ten-minute assembly is in where a spinner could only say "something".
+    What is left for this to cover is the moment between the click and the first progress
+    paint — the form validation, the peer checks, the dataset gate.
 
     It belongs INSIDE the Studio pane, not with the stores at the root. The overlay is
     `position: fixed`, so from the root it would cover the Chatbot too — and a Generate
@@ -100,6 +118,23 @@ def generating_loader() -> dcc.Loading:
     )
 
 
+def generate_progress_host() -> html.Div:
+    """Where a running build reports itself — mounted for as long as Studio is.
+
+    Deliberately NOT inside the Setup form. A build takes minutes and the author may walk
+    the previous deck's canvas while it runs, and the poll that fills this writes into it
+    every tick: an output that only exists on one screen would break the poll the moment
+    they navigated away from that screen. Here it survives every mode switch, and floats
+    over whichever one is open.
+    """
+    return html.Div(id="studio-gen-progress", className="qs-gen-host")
+
+
+def studio_chrome() -> list:
+    """The pane-scoped overlays: the start spinner and the build's progress card."""
+    return [generating_loader(), generate_progress_host()]
+
+
 def build_layout() -> html.Div:
-    """The standalone page shell: the Studio stores, the spinner and the mount."""
-    return html.Div([*studio_stores(), generating_loader(), html.Div(id="qs-app")])
+    """The standalone page shell: the Studio stores, the overlays and the mount."""
+    return html.Div([*studio_stores(), *studio_chrome(), html.Div(id="qs-app")])

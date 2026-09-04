@@ -38,6 +38,10 @@ BUSY_FLAG_ON = f"{BUSY_FLAG_CLASS} is-busy"
 BUSY_FORM = "qs-busy-form"              # option cascade + peer panel
 BUSY_PREVIEW = "qs-busy-preview"        # the live scope figures
 BUSY_SECTIONS = "qs-busy-sections"      # the deck-section list
+# Generating has no flag here. It is a background build rather than a callback, so a
+# `running=` would come down milliseconds in; and a full-page overlay is the wrong cue for
+# something that takes minutes — it would lock the author out of the app while they wait.
+# The build reports itself instead, through ``generate_progress`` in the Studio pane.
 
 
 def form_token() -> dcc.Store:
@@ -63,6 +67,49 @@ def busy_overlay() -> html.Div:
                      id="qs-setup-busy"),
         ],
         className="qs-busy-host",
+    )
+
+
+def _elapsed(seconds: int) -> str:
+    """A running time an author can read at a glance — "40s", "3m 12s"."""
+    seconds = max(0, int(seconds))
+    return f"{seconds}s" if seconds < 60 else f"{seconds // 60}m {seconds % 60:02d}s"
+
+
+def generate_progress(state: Optional[Mapping[str, Any]]) -> Any:
+    """What the build in flight is doing: the phase, the bar, and how long it has run.
+
+    Rendered into a host that is mounted for as long as Studio is (see
+    ``studio.authoring.layout.generate_progress_host``), NOT into the Setup form: a build
+    takes minutes, and the author is free to walk the last deck's canvas while it runs.
+
+    Nothing at all before the first build and after a finished one — the deck itself is
+    the report then, and a "100%" bar left on screen only asks to be clicked again.
+    """
+    if not state or (state.get("done") and not state.get("error")):
+        return ""
+    if state.get("error"):
+        return html.Div(
+            [html.I(className="bi bi-exclamation-triangle"),
+             html.Span(f"The deck could not be built: {state['error']}")],
+            className="qs-gen-progress is-failed",
+        )
+    percent = int(state.get("percent") or 0)
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.Span(state.get("step") or "Working", className="qs-gen-step"),
+                    html.Span(_elapsed(int(state.get("elapsed") or 0)),
+                              className="qs-gen-elapsed"),
+                ],
+                className="qs-gen-head",
+            ),
+            html.Div(html.Div(className="qs-gen-fill", style={"width": f"{percent}%"}),
+                     className="qs-gen-track"),
+            html.P(state.get("message") or "", className="qs-gen-msg"),
+        ],
+        className="qs-gen-progress",
     )
 
 

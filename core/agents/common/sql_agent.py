@@ -257,7 +257,8 @@ class BaseSQLFixerNode:
         ]
 
         # Fast tier: the fixer is mechanical and runs inside the retry loop, so it
-        # wants minimal latency. Aliases llm until MODEL_TIERS=on.
+        # wants minimal latency. Point FAST_DEPLOYMENT at a cheaper model to split it
+        # from the deterministic tier; unset, both resolve to DEPLOYMENT.
         structured_llm = Initialization.llm_fast.with_structured_output(SQLFixerOutput)
         corrected = structured_llm.invoke(messages)
         Initialization.log_prompt_cache_usage(

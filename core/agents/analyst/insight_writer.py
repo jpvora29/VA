@@ -155,7 +155,7 @@ Synthesis focus: {focus}
         # that into a graceful empty answer while the UI keeps the partial it saw.
         parts: List[str] = []
         # Reason tier: the final synthesis is the turn's highest-value reasoning.
-        # Aliases llm_creative until MODEL_TIERS=on (zero change by default).
+        # The warm tier — this is prose a person reads, not structured output.
         for chunk in Initialization.llm_reason.with_config(
             tags=["final_answer"]
         ).stream(messages):

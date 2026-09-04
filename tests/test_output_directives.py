@@ -342,7 +342,7 @@ def test_write_insight_skips_prose_without_llm(monkeypatch, presentation):
         def with_config(**kwargs):
             raise AssertionError("insight_writer must not call the LLM when prose is suppressed")
 
-    monkeypatch.setattr(iw.Initialization, "llm_creative", _Boom)
+    monkeypatch.setattr(iw.Initialization, "llm_reason", _Boom)
     out = iw.write_insight(
         question="q", route="premium", synthesis_focus="",
         evidence=_EVIDENCE, presentation=presentation, depth="analyst",
@@ -355,7 +355,7 @@ def test_write_insight_direct_uses_compact_contract(monkeypatch):
 
     captured = {}
     monkeypatch.setattr(
-        iw.Initialization, "llm_creative",
+        iw.Initialization, "llm_reason",
         _streaming_llm(captured, "Premium fell **8%**, concentrated in Property."),
     )
 
