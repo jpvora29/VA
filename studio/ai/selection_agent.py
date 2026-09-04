@@ -23,7 +23,7 @@ executive meetings; keep the full set for a detailed review. Never invent ids.""
 
 
 def select_sections(
-    spec: Any, *, audience: str = "executive", meeting_length: str = "standard"
+    spec: Any, *, audience: str = "", meeting_length: str = "standard"
 ) -> Optional[List[str]]:
     """Ordered include-list of section ids, or None to keep the deterministic plan."""
     if not llm_available():

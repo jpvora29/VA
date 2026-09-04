@@ -2296,8 +2296,16 @@ body {
     margin: 0 0 10px 0;
 }
 
+/* The accent is the user's own name, and the gradient spans exactly its width —
+   so a four-letter name got the entire blue-to-red sweep in four characters and
+   "jash" rendered as a navy "j" beside a red "ash", reading as a broken word
+   rather than an accent. Widening the ramp past the text makes short names show
+   only its beginning (near-solid blue) and long ones travel further, so the
+   effect is subtle at every length instead of correct at exactly one. */
 .welcome-accent {
     background: linear-gradient(90deg, var(--marsh-blue) 0%, var(--marsh-red) 100%);
+    background-size: 320% 100%;
+    background-position: 0 0;
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;

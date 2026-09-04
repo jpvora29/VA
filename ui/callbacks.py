@@ -58,6 +58,7 @@ from ui.shell.layout import app_shell
 from ui.shell.tabs import resolve_tab
 from ui.components.sidebar import login_screen, conversation_list_children
 from ui.draft_text import draft_text
+from ui.progress import advance as advance_progress, label_of
 from core.store.users import get_or_create_user
 from core.store.conversations import (
     list_conversations,
@@ -81,7 +82,6 @@ from core.backend import (
 )
 from ui.chart_functions import generate_chart
 from core.agents.common.chart_spec import normalize_chart_spec
-from core.charts.agent import AGENT_NAME as CHART_AGENT_NAME
 from sqlalchemy import inspect, text
 from document_builder.report_generator import (
     get_theme,
@@ -1043,6 +1043,13 @@ def handle_login(
     n_clicks: int, n_submit: int, username: str | None
 ) -> tuple[Any, Any, Any]:
     """Create-or-fetch the user, seed semantic profile, and sign them in."""
+    # `prevent_initial_call` does not cover a component that ARRIVES with a
+    # callback's output: the login card is rendered into the shell, so Dash fires
+    # this once as it appears and the empty box answered with a validation error.
+    # The first thing a new user read was "Please enter a username." before they
+    # had a chance to. An error belongs after an attempt, so require one.
+    if not (n_clicks or n_submit):
+        return no_update, no_update, no_update
     username = (username or "").strip()
     if not username:
         return no_update, no_update, "Please enter a username."
@@ -1439,74 +1446,6 @@ def _update_chat_history(
     return chat_history
 
 
-# Friendly, human-readable labels for the live "Running X agent…" status line.
-# Keys are the main-graph node names (see core.graph.main.create_workflow).
-NODE_LABELS = {
-    "context_filler": "Understanding your question",
-    # clarify_decide / clarify_gate run on EVERY turn (they're pass-throughs when
-    # nothing is ambiguous), so their label must stay neutral — otherwise the
-    # status falsely reads "clarifying…" on turns that never ask anything. A real
-    # clarification surfaces as its own card, not via this status line.
-    "clarify_decide": "Analyzing your question",
-    "clarify_gate": "Analyzing your question",
-    "rephraser_agent": "Rephrasing the query",
-    "router": "Routing to the right data",
-    "survey_agent": "Querying broker-survey data",
-    "gpr_agent": "Querying premium data",
-    "combiner_agent": "Combining survey + premium",
-    "analyst_agent": "Running the analyst agent",
-    "fallback": "Composing a response",
-    "survey_data_overflow": "Preparing the data export",
-    "survey_insight": "Writing the insight",
-    "gpr_insight": "Writing the insight",
-    "gimmi_sqlagent_node": "Pulling GIMMI detail",
-    "gimmi_execute_sql": "Pulling GIMMI detail",
-    "gimmi_sql_fixer_agent": "Refining the query",
-    "gimmi_insight": "Writing the GIMMI insight",
-    "followup_node": "Suggesting follow-ups",
-    "boardroom_node": "Building the boardroom view",
-    "conversation_node": "Reviewing the conversation",
-    # Subgraph nodes. These surface because `stream_workflow` streams with
-    # subgraphs=True; without a label here they would fall through to the
-    # "Running gpr convert to sql" default, which reads like an internal.
-    # Pass-throughs on most turns, so their labels stay neutral for the same
-    # reason clarify_gate's does — a gate that usually does nothing must not
-    # announce itself as if it did.
-    "intent_classifier": "Analyzing your question",
-    "custom_peer_gate": "Analyzing your question",
-    "gpr_normalizer_agent": "Interpreting the question",
-    "survey_normalizer_agent": "Interpreting the question",
-    "gpr_end_max_iterations": "Wrapping up",
-    "survey_end_max_iterations": "Wrapping up",
-    "gimmi_end_max_iterations": "Wrapping up",
-    "gpr_planner_node": "Planning the premium analysis",
-    "survey_planner": "Planning the survey analysis",
-    "gpr_analytics_tools": "Computing the numbers",
-    "survey_analytics_tools": "Computing the numbers",
-    "gpr_convert_to_sql": "Writing the query",
-    "survey_convert_to_sql": "Writing the query",
-    "gpr_execute_sql": "Running the query",
-    "survey_execute_sql": "Running the query",
-    "gpr_sql_fixer_agent": "Refining the query",
-    "survey_sql_fixer_agent": "Refining the query",
-    "premium_chart_data_creation": f"{CHART_AGENT_NAME} is designing the chart",
-    "survey_chart_data_creation": f"{CHART_AGENT_NAME} is designing the chart",
-    "chart_picker_node": f"{CHART_AGENT_NAME} is designing the charts",
-    "schema_identifier_node": "Grounding the question in the data",
-    "planner_node": "Planning the analysis",
-    "peer_solver_node": "Benchmarking against peers",
-    "generic_solver_node": "Gathering the evidence",
-    "join_node": "Assembling the evidence",
-    "writer_node": "Writing the insight",
-}
-
-
-def _node_label(node: str | None) -> str:
-    if not node:
-        return "Thinking"
-    return NODE_LABELS.get(node, f"Running {node.replace('_', ' ')}")
-
-
 def _commit_turn(
     chat_history: dict[str, Any], state: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1542,7 +1481,7 @@ def _launch_job(thread_id: str, input_obj: Any) -> None:
                 if "interrupt" in ev:
                     job.interrupt = ev["interrupt"] or {}
                 elif "node" in ev:
-                    job.current_node = ev["node"]
+                    job.progress = advance_progress(job.progress, ev["node"])
         except JobCancelled:
             # Stop aborted a mid-flight call before the next node boundary.
             job.cancelled = True
@@ -1730,7 +1669,7 @@ def poll_job(
             no_update,
             no_update,
             no_update,
-            _node_label(job.current_node),
+            label_of(job.progress),
             elapsed,
             draft,
         )

@@ -145,3 +145,40 @@ golden_queries:
     category: lookup
     expected_route: fallback
     notes: Non-data query routes to fallback; no planner/SQL.
+
+  # ---- Regressions: the failures reported from real use --------------------
+  # Each of these is a bug someone hit, written down so it cannot come back
+  # quietly. They earn their place by having FAILED once, not by being tidy.
+
+  - id: peer_premium_benchmark
+    query: "How does Zurich's premium compare with its peers in Singapore in 2024?"
+    category: peer
+    expected_route: gpr
+    expected_depth: analytical
+    notes: >-
+      Reported: the answer showed a list of peer carrier names and no premium.
+      Guards three checks at once — no peer named in prose, table or chart
+      labels, and the reply actually states the premium figure.
+
+  - id: peer_premium_table_shape
+    query: "Show Zurich premium against the peer average by product in Singapore."
+    category: peer
+    expected_route: gpr
+    notes: >-
+      Reported: the table under the answer was whichever query finished first —
+      often the peer-membership lookup. The shown rows must be the premium.
+
+  - id: chart_explicit_request
+    query: "Give me a chart of Zurich's premium by product line in Singapore 2024."
+    category: chart
+    expected_route: gpr
+    notes: >-
+      Reported: charts arrive for some questions and not others. An explicit
+      request must produce one.
+
+  - id: peer_survey_score_benchmark
+    query: "How does Zurich's broker score compare with peers in Singapore?"
+    category: peer
+    expected_route: survey
+    expected_depth: analytical
+    notes: Confidentiality applies on the survey side too, not just premium.

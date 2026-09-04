@@ -14,6 +14,7 @@ from typing import List
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from core.agents.analyst.common import digest_evidence
+from core.agents.common.analysis_rules import analysis_directives
 from core.analysis import get_lens_library
 from core.initialization import Initialization
 from core.observability import log_event
@@ -65,9 +66,11 @@ STYLE: executive tone, no hedging, no filler, no data-dictionary phrasing; never
 repeat the same fact across sections.
 
 [CONFIDENTIALITY — non-negotiable]
-- Peers are ALWAYS aggregated. NEVER expose an individual peer/carrier name. Even
-  if a row carries an individual peer name, present peers only as a single
-  aggregate ("peer average", "the peer set"). It is fine to name Marsh."""
+- Peers are ALWAYS aggregated. NEVER expose an individual peer/carrier name.
+- The evidence is already de-identified: a label like "Peer 1" / "Peer 2" IS the
+  anonymised form, not a carrier you may name or describe individually. Roll such
+  rows up into one aggregate ("peer average", "the peer set") rather than quoting
+  them one by one. It is fine to name Marsh and the carrier the question is about."""
 
 
 _DIRECT_CONTRACT = """[OUTPUT CONTRACT — the user asked for a DIRECT, short answer.]
@@ -82,8 +85,9 @@ headline number and the direct conclusion. **Bold the critical number.**
   peer average.").
 
 [CONFIDENTIALITY — non-negotiable]
-- Peers are ALWAYS aggregated. NEVER name an individual peer/carrier (Marsh is
-  fine)."""
+- Peers are ALWAYS aggregated. NEVER name an individual peer/carrier (Marsh and
+  the carrier asked about are fine). A "Peer 1" label in the evidence is the
+  anonymised form — aggregate it, do not quote it as an entity."""
 
 
 def write_insight(
@@ -125,9 +129,18 @@ def write_insight(
     digest = digest_evidence(evidence)
 
     contract = _DIRECT_CONTRACT if depth == "direct" else _OUTPUT_CONTRACT
+    # The signed-off ICG decision tree (studio/rules/rules.yaml) plus the framing a
+    # threshold cannot express: Marsh is a broker whose book is the carrier's
+    # addressable opportunity, penetration happens by industry inside a product, a
+    # performance question wants premium AND perception, and a growth percentage is
+    # never reported without the money behind it. The deck has obeyed these since
+    # they were written; the chat answer did not, which is how "premium up 1,140%"
+    # off a book that wrote nothing last year became a headline.
     system_prompt = f"""You are a proactive insurance strategy analyst. Using ONLY
 the evidence gathered below, write the final answer — answering the user's
 question and proactively adding the context a good analyst would bring.
+
+{analysis_directives()}
 
 [ANALYST PRINCIPLES]
 {library.principles()}

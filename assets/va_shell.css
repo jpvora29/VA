@@ -541,14 +541,18 @@ body {
     justify-content: center;
 }
 
+/* The TILE is what grows to the 42px icon footprint when a rail collapses — it
+   used to be the numeral, which is now a small badge sitting on the tile. */
 .va-rails-collapsed .qs-mode-rail .qs-mode-tile,
-.va-rails-collapsed .va-rail-step-num {
+.va-rails-collapsed .va-rail-step-tile {
     width: 42px;
     height: 42px;
     border-radius: 12px;
+    font-size: 18px;
 }
 
 .va-rails-collapsed .qs-mode-rail .qs-mode-btn i,
+.va-rails-collapsed .va-rail-step-tile .bi,
 .va-rails-collapsed .conv-item-open .bi {
     font-size: 18px;
 }
@@ -562,8 +566,10 @@ body {
     padding-top: 14px;
 }
 
+/* Collapsed, the icon carries the step and the tooltip carries its name; the
+   numeral badge on a 42px tile is just noise at that size. */
 .va-rails-collapsed .va-rail-step-num {
-    font-size: 14px;
+    display: none;
 }
 
 .va-rails-collapsed .qs-mode-rail .qs-mode-text {
@@ -618,19 +624,40 @@ body {
     color: var(--va-ink-400);
 }
 
-.va-rail-step-num {
+/* The tile carries the phase icon with the step numeral as a badge on it — the
+   same shape Studio's mode rail uses, so the two rails speak one language. The
+   numeral alone told a collapsed rail's reader only that there were five of
+   something. */
+.va-rail-step-tile {
+    position: relative;
     flex: 0 0 auto;
     width: 30px;
     height: 30px;
     border-radius: 9px;
     display: grid;
     place-items: center;
-    font-size: 12px;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
+    font-size: 14px;
     color: var(--va-ink-400);
     background: var(--va-surface-0);
     box-shadow: inset 0 0 0 1px var(--va-border-soft);
+}
+
+.va-rail-step-num {
+    position: absolute;
+    right: -3px;
+    bottom: -3px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 7px;
+    display: grid;
+    place-items: center;
+    font-size: 9px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--va-ink-500);
+    background: var(--va-surface-1);
+    box-shadow: 0 0 0 1.5px var(--va-surface-0);
 }
 
 .va-rail-step-label {

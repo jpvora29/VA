@@ -38,3 +38,10 @@ studio/dataset/_store/
 # MoM run directories (uploaded meeting notes + decks, and the minutes written from
 # them). Client documents; generated per run by mom/config.py.
 outputs/mom/
+
+# Local-only application config. The package was removed from the repo in
+# afeeaf4 ("Delete config directory") but the code still imports it
+# unconditionally (core/graph/gpr_subgraph.py, document_builder), so it has to
+# exist on a machine that runs the app. Ignored rather than tracked so restoring
+# it locally cannot put the client vocabulary back into the repository.
+config/

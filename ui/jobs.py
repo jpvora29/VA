@@ -8,8 +8,9 @@ daemon thread inside the same process keeps the checkpointer + singletons shared
 while still giving us real cooperative cancellation and live per-node streaming.
 
 A `Job` is keyed by the chat `thread_id`. The worker thread streams the graph
-node-by-node, recording the current node so the UI can show "Running X agent…",
-and checks a `threading.Event` between nodes for cooperative cancellation
+node-by-node, recording the turn's progress (`ui.progress`) so the UI can show
+what stage the answer is at, and checks a `threading.Event` between nodes for
+cooperative cancellation
 (LangGraph cannot kill a node mid-flight, so a stop takes effect at the next node
 boundary). The Dash poll callback reads the job each tick and, on completion,
 commits the final state to the chat transcript.
@@ -21,6 +22,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
+from ui.progress import Step
+
 
 @dataclass
 class Job:
@@ -28,7 +31,9 @@ class Job:
 
     thread_id: str
     cancel: threading.Event = field(default_factory=threading.Event)
-    current_node: Optional[str] = None
+    # How far along the turn is, in the user's language. Advanced by the worker
+    # thread as named nodes are entered; read by the Dash poll callback.
+    progress: Optional[Step] = None
     started_at: float = field(default_factory=time.time)
     done: bool = False
     cancelled: bool = False

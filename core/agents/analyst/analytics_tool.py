@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from pydantic import BaseModel, Field
 
+from core.agents.common.peer_privacy import PeerRedactor
 from core.analytics.orchestrator import AnalyticsOrchestrator
 from core.analytics.tools import (
     ValueMatcher,
@@ -78,14 +79,19 @@ def build_compute_tool(
     orchestrator: Optional[AnalyticsOrchestrator] = None,
     matcher: Optional[ValueMatcher] = None,
     engine: Optional[Any] = None,
+    redactor: Optional[PeerRedactor] = None,
 ):
     """A LangChain tool that computes a named metric and records it as evidence.
 
     `evidence` is the solver's own list (the same one `run_sql` appends to), so a
     computed result reaches the insight writer and the chart picker through the
-    existing contract — no new plumbing downstream. `peers` pins the session's
-    custom peer set for the solver's own flow; a call against another flow resolves
-    peers from the `Peers` table as usual.
+    existing contract — no new plumbing downstream. `redactor` applies the same
+    peer-confidentiality boundary `run_sql` uses: the peer primitives return a
+    peer COUNT and no name, but a `group_by=['Carrier_Group']` call does name
+    carriers, and those rows must not reach the writer either.
+
+    `peers` pins the session's custom peer set for the solver's own flow; a call
+    against another flow resolves peers from the `Peers` table as usual.
     """
     from langchain_core.tools import StructuredTool
 
@@ -141,7 +147,14 @@ def build_compute_tool(
 
         rows = facts_to_rows(result.facts)
         provenance = f"-- computed: {grounded.describe()}"
-        evidence.append({"flow": flow, "sql": provenance, "rows": rows, "lens": lens})
+        evidence.append(
+            {
+                "flow": flow,
+                "sql": provenance,
+                "rows": redactor.rows(rows) if redactor else rows,
+                "lens": lens,
+            }
+        )
         log_event(
             logger,
             "compute_metric",

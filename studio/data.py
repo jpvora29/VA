@@ -29,21 +29,49 @@ _CACHE_DIR = Path(__file__).resolve().parent / "_cache"
 
 @lru_cache(maxsize=1)
 def get_engine():
-    """The Studio SQLite engine.
+    """The Studio SQLite engine, indexed for the queries a build actually runs.
 
     Order: ``STUDIO_DB_PATH`` → ``DB_PATH`` (the live app's DB) → a local seed DB
     built on first use. The seed path keeps dev/CI runnable without the production
     data while exercising the exact same primitives.
+
+    The analytics indexes are built here, once per database, because they are not
+    an optimisation a build can do without: unindexed, every one of the few
+    thousand reads a deck makes is a full table scan, which is the difference
+    between a build in minutes and a build in hours. Every later launch pays one
+    ``sqlite_master`` read to find nothing missing. ``STUDIO_AUTO_INDEX=off`` for a
+    warehouse we must not write to.
     """
     path = os.getenv("STUDIO_DB_PATH") or os.getenv("DB_PATH")
     if path:
         logger.info("studio: using DB at %s", path)
-        return create_engine(f"sqlite:///{path}")
-    from studio.seed import ensure_seed_db
+        engine = create_engine(f"sqlite:///{path}")
+    else:
+        from studio.seed import ensure_seed_db
 
-    seed = ensure_seed_db()
-    logger.info("studio: no DB_PATH set; using seed DB at %s", seed)
-    return create_engine(f"sqlite:///{seed}")
+        seed = ensure_seed_db()
+        logger.info("studio: no DB_PATH set; using seed DB at %s", seed)
+        engine = create_engine(f"sqlite:///{seed}")
+    _ensure_analytics_indexes(engine)
+    return engine
+
+
+def _ensure_analytics_indexes(engine) -> None:
+    """Build the analytics indexes for every flow this database holds.
+
+    Guarded end to end: opting out, a read-only file, or a flow whose table is not
+    in this database all mean a slower build, never a broken one.
+    """
+    from studio.indexes import auto_index_enabled, ensure_indexes
+
+    if not auto_index_enabled():
+        logger.info("studio: STUDIO_AUTO_INDEX=off — skipping analytics indexes")
+        return
+    for flow in ("gpr", "survey"):
+        try:
+            ensure_indexes(flow, engine)
+        except Exception as exc:  # noqa: BLE001 - indexing must never block startup
+            logger.warning("studio: analytics indexing for %s skipped: %s", flow, exc)
 
 
 _OPTION_CAP = 100_000  # effectively "all" for a dropdown, but bounds a pathological column

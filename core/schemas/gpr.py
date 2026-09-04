@@ -67,7 +67,10 @@ class GPRResponseSignature(Signature):
 
     DOMAIN GUARDRAILS:
     - SoW = Carrier Premium / Total Market Premium (same dimension). Appetite = Product Premium / Total Carrier Premium.
-    - Marsh = total market view (no carrier filter). Peers are ALWAYS aggregated — never expose individual peer names.
+    - Marsh is the BROKER, never a carrier and never a competitor. The premium here is business Marsh PLACED.
+      The Marsh book for a slice (no carrier filter) is the carrier's ADDRESSABLE OPPORTUNITY through Marsh —
+      what it could compete for. Never call it "the market", "total market premium" or "industry premium".
+    - Peers are ALWAYS aggregated — never expose individual peer names.
     - If premium is declining, flag retention / rate / appetite issue. If SoW is rising while market shrinks, flag relative strength.
 
     HARD OUTPUT CONTRACT — return a single Markdown string with these 5 sections in this exact order, using these exact headings:

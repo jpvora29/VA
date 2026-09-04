@@ -33,6 +33,10 @@ REPORT_TYPES = frozenset({"full_qbr", "exec_summary", "recap"})
 AUDIENCES = frozenset(
     {"carrier_leadership", "marsh_regional", "country", "product", "internal", "external_carrier"}
 )
+#: Who a deck is for when nobody said. The carrier's own team: this is a product an
+#: Insurer Consulting Group takes TO a carrier, so the client-facing read is the
+#: default and the internal regional view is the deliberate choice.
+DEFAULT_AUDIENCE = "carrier_leadership"
 CLAIM_TYPES = frozenset({"observation", "driver", "interpretation", "recommendation", "decision"})
 PLACEMENTS = frozenset({"main", "appendix", "gap"})
 

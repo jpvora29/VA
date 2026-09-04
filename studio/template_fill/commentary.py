@@ -27,7 +27,17 @@ produces the keyed text — both fold into the same doc the preview and fill con
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
+from dataclasses import dataclass
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+)
 
 from logger import get_logger
 from studio.template_fill import openings
@@ -37,6 +47,9 @@ from studio.template_fill.analyze import Shape, Slide, Template
 from studio.template_fill.sections import Section, section_of
 
 logger = get_logger(__name__)
+
+#: Bullets are newline-separated within one commentary cell.
+NEWLINE = "\n"
 
 _ELLIPSIS = re.compile(r"…|\.{3,}")
 # Sections whose prose we can ground in premium facts.
@@ -539,6 +552,23 @@ _AI_TELLS = re.compile(
     re.I,
 )
 
+# Sentence OPENERS that give a deck away as generated. Unlike the words above these
+# are only a tell at the start of a line — "the reason is" mid-sentence is ordinary
+# English — so they are matched anchored. Every one of these was a fixed template
+# somewhere in this package, which is why a ten-product deck opened ten pages the
+# same way; the templates are fixed too (see `stance._STANCE_FORMS`), and this stops
+# a model rewrite handing them back.
+#
+# A partner does not announce the shape of the sentence before writing it. They
+# state the finding and let the conclusion follow.
+_TEMPLATE_OPENERS = re.compile(
+    r"^\s*(?:the\s+(?:call(?:\s+here)?\s+is|book\s+wants|reason\s+is|takeaway\s+is|"
+    r"story\s+here\s+is|picture\s+here\s+is|question\s+is)"
+    r"|what\s+this\s+means\s+is"
+    r"|this\s+(?:suggests|indicates|means)\s+that)\b",
+    re.I,
+)
+
 
 def _is_whole_sentence(line: str) -> bool:
     """A finished sentence, not a label or a fragment: it ends in a full stop."""
@@ -550,49 +580,89 @@ def _is_whole_sentence(line: str) -> bool:
 _MAX_SUBJECT_OPENINGS = 1
 
 
-def _accept(lines: List[str], *, wanted: int, node: str, subject: str = "") -> Optional[str]:
-    """The rewritten bullets, or ``None`` when the rewrite is worse than the draft.
+@dataclass(frozen=True)
+class _LineRule:
+    """One reason a single line is not good enough to ship."""
 
-    A rewrite is refused when it changed the column's SHAPE beyond one merge or drop
-    (:func:`min_lines`), left a line as a fragment, reached for one of the phrases that make
-    commentary read as generated, named the carrier at the head of more than one line, or
-    left a bullet that is a measure and a value and nothing else
-    (:func:`studio.template_fill.commentary_metrics.is_restatement`).
+    name: str
+    rejects: Callable[[str], bool]
 
-    The last two are what make a page read as written rather than produced, and they are
-    enforced here rather than hoped for in the prompt for the same reason the AI tells are:
-    a model asked for a partner's voice will still reach for the roll-call unless the
-    roll-call is refused.
+
+def _line_rules() -> Tuple[_LineRule, ...]:
+    """The per-line quality bar, in the order a line is judged against it.
+
+    These are the habits that make a page read as produced rather than written: a
+    fragment instead of a sentence, one of the phrases a model reaches for when
+    asked to sound professional, and the roll-call line that states a measure and
+    its value and stops.
     """
     from studio.template_fill import commentary_metrics
 
+    return (
+        _LineRule("fragment", lambda ln: not _is_whole_sentence(ln)),
+        _LineRule("ai_tell", lambda ln: _AI_TELLS.search(ln) is not None),
+        _LineRule("template_opener", lambda ln: _TEMPLATE_OPENERS.match(ln) is not None),
+        _LineRule("metric_readout", commentary_metrics.is_restatement),
+    )
+
+
+def _keep_lines(lines: Sequence[str], subject: str) -> Tuple[List[str], Dict[str, int]]:
+    """The lines worth shipping, and a count of why the others were dropped.
+
+    Judged line by line, in order. The subject-opening cap is applied across the
+    column rather than per line — the rule is that the carrier is named ONCE, so
+    the first such line stays and later ones go.
+    """
+    rules = _line_rules()
+    kept: List[str] = []
+    dropped: Dict[str, int] = {}
+    named = 0
+    for line in lines:
+        broken = next((r.name for r in rules if r.rejects(line)), None)
+        if broken is None and subject and openings.subject_openings([line], subject):
+            named += 1
+            if named > _MAX_SUBJECT_OPENINGS:
+                broken = "subject_opening"
+        if broken is not None:
+            dropped[broken] = dropped.get(broken, 0) + 1
+            continue
+        kept.append(line)
+    return kept, dropped
+
+
+def _accept(lines: List[str], *, wanted: int, node: str, subject: str = "") -> Optional[str]:
+    """The rewritten bullets worth shipping, or ``None`` to keep the draft.
+
+    **Repairs rather than rejects.** This used to refuse the WHOLE column if any
+    one line was a fragment, reached for a generated-sounding phrase, opened on
+    the carrier once too often, or read out a measure and its value. With five
+    such gates over a deck's worth of columns the practical result was that no
+    column ever survived — a build logged ``0/27 column(s) written by the model``
+    and every page shipped the deterministic draft, which is exactly the generic,
+    list-like prose the voice rules exist to replace.
+
+    The bar itself has not moved: a bad line still never ships. It is applied per
+    LINE, so a column with one weak line loses that line instead of losing the
+    three good ones with it. Only when too few lines survive to make a column does
+    the draft stand.
+    """
     floor = min_lines(wanted)
-    if not floor <= len(lines) <= wanted:
-        logger.info("commentary: %s rewrite returned %d line(s) for %d bullet(s) (allowed "
-                    "%d-%d) — keeping the deterministic draft",
-                    node, len(lines), wanted, floor, wanted)
+    if len(lines) > wanted:
+        # Longer than asked for: keep the leading lines, which the prompt puts in
+        # priority order, rather than refusing a column for being generous.
+        logger.info("commentary: %s rewrite returned %d line(s) for %d bullet(s) — "
+                    "keeping the first %d", node, len(lines), wanted, wanted)
+        lines = lines[:wanted]
+
+    kept, dropped = _keep_lines(lines, subject)
+    if dropped:
+        logger.info("commentary: %s dropped %d line(s) (%s)", node, sum(dropped.values()),
+                    ", ".join(f"{k}={v}" for k, v in sorted(dropped.items())))
+    if len(kept) < floor:
+        logger.info("commentary: %s kept only %d of %d line(s), below the floor of %d — "
+                    "keeping the deterministic draft", node, len(kept), len(lines), floor)
         return None
-    fragment = next((ln for ln in lines if not _is_whole_sentence(ln)), None)
-    if fragment is not None:
-        logger.info("commentary: %s rewrite left a fragment (%.40r) — keeping the "
-                    "deterministic draft", node, fragment)
-        return None
-    tell = _AI_TELLS.search("\n".join(lines))
-    if tell is not None:
-        logger.info("commentary: %s rewrite reads as generated (%r) — keeping the "
-                    "deterministic draft", node, tell.group(0))
-        return None
-    named = openings.subject_openings(lines, subject) if subject else 0
-    if named > _MAX_SUBJECT_OPENINGS:
-        logger.info("commentary: %s rewrite opens %d line(s) on %r — keeping the "
-                    "deterministic draft", node, named, subject)
-        return None
-    readout = next((ln for ln in lines if commentary_metrics.is_restatement(ln)), None)
-    if readout is not None:
-        logger.info("commentary: %s rewrite left a metric read-out (%.40r) — keeping the "
-                    "deterministic draft", node, readout)
-        return None
-    return "\n".join(lines)
+    return NEWLINE.join(kept)
 
 
 # Commentary is the deliverable, not an inner loop. The `fast` tier is the one

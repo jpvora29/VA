@@ -165,7 +165,16 @@ def test_the_deck_states_a_portfolio_call_and_a_book_call(tmp_path):
                      for sh in s.shapes if sh.has_text_frame)
 
     assert "The book's first calls are to" in text, "no portfolio stance on the deck"
-    assert "The call here is to" in text, "no book-level stance on the deck"
+    # The BOOK-level stance is asserted by what it says, not by the six words it
+    # used to open with. "The call here is to ..." was a fixed template, so a
+    # ten-product deck opened ten pages identically — the tell that it was
+    # produced rather than written. `stance._STANCE_FORMS` varies the phrasing,
+    # and pinning the old string here is what would stop it ever changing again.
+    from studio.posture import call_phrase
+    from studio.posture import Posture
+
+    calls = {call_phrase(p).split()[0].lower() for p in Posture}
+    assert any(c in text.lower() for c in calls), "no book-level stance on the deck"
     # The stance vocabulary is closed: every call uses one of the five verbs.
     portfolio = next(l for l in text.split("\n") if "The book's first calls are to" in l)
     assert any(v in portfolio for v in

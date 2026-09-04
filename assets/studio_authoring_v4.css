@@ -460,3 +460,48 @@
     .qs-root .qs-setup-aside { position: static; }
     .qs-root .qs-prev-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
 }
+
+/* ── segmented controls: equal-width segments ─────────────────────────────────
+   The v3 track sizes each segment to its own text, so "All | Overall only |
+   Product only | Country only" came out as four different widths and the three
+   questions on the row did not line up with each other. `flex: 1` divides the
+   track evenly, `min-width: 0` lets a long label shrink instead of pushing the
+   track wider than its column, and centring keeps the text optically even.
+   Explicitly `display: flex` (not inline-flex) so the track fills its field. */
+.qs-root .studio-report-radio {
+    display: flex;
+    width: 100%;
+}
+.qs-root .studio-report-radio .dash-options-list-option {
+    flex: 1 1 0;
+    min-width: 0;
+    justify-content: center;
+    text-align: center;
+    white-space: nowrap;
+    /* Tighter than the v3 default (13px). Equal segments divide the track evenly,
+       so the widest label decides whether ANY of them fit — and the scope control
+       carries four ("All / Overall only / Product only / Country only") in a
+       column sized for three. At 13px they clipped to "Overall o". */
+    padding: 6px 8px !important;
+    letter-spacing: -0.005em;
+}
+/* Four segments in one field is the tight case; give it the whole row rather than
+   a third of it, so the labels read in full while each option stays equal-width. */
+.qs-root .studio-field:has(.studio-report-radio .dash-options-list-option:nth-child(4)) {
+    grid-column: 1 / -1;
+}
+/* The label text is what overflows on a narrow column, not the radio dot. */
+.qs-root .studio-report-radio .dash-options-list-option-text,
+.qs-root .studio-report-radio .studio-report-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* The three shape questions read as one block: the scope control needs the whole
+   row for its four labels, so the other two split the row beneath it evenly
+   rather than sitting in two of three auto-fit columns with a gap on the right.
+   Two explicit columns instead of `auto-fit`, which sized to a minimum and left
+   whatever was over. */
+.qs-root .qs-options-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}

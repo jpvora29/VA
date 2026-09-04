@@ -13,10 +13,10 @@ query + its rows, collected by the solvers and consumed by the writer.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from pydantic import BaseModel, Field
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 
 class ColumnTerm(BaseModel):
@@ -90,9 +90,18 @@ class SchemaSlice(BaseModel):
 
 
 class Evidence(TypedDict):
-    """One executed query and the rows it returned, gathered by a solver."""
+    """One executed query and the rows it returned, gathered by a solver.
+
+    `rows` are ALREADY peer-redacted (`core.agents.common.peer_privacy`): a
+    solver sees real peer names in its tool results because it needs them to
+    write the next query, but what is recorded here -- and so what reaches the
+    writer, the shown table and the charts -- names no individual peer.
+    `redacted_peers` is the vocabulary that was removed, so the final prose can
+    be scrubbed against exactly the names this turn actually touched.
+    """
 
     flow: str
     sql: str
     rows: List[Any]
     lens: str
+    redacted_peers: NotRequired[Tuple[str, ...]]

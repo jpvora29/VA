@@ -43,16 +43,36 @@ def step_class(index: int, phase: Optional[str], done: bool) -> str:
     return "va-rail-step"
 
 
+#: An icon per pipeline phase, so the collapsed rail says WHAT each step is.
+#: Collapsed, the tile is all that shows — and five bare numerals said only that
+#: there are five of something, while Studio's rail beside it showed icons. Same
+#: shape as `studio.page.authoring.chrome.mode_rail`: tile with the icon, the step
+#: numeral as a badge on it, label alongside.
+_PHASE_ICONS: dict = {
+    "notes": "bi-file-earmark-text",
+    "deck": "bi-easel",
+    "tagging": "bi-tags",
+    "verification": "bi-patch-check",
+    "summary": "bi-journal-richtext",
+}
+
+
 def rail_steps(phase: Optional[str] = None, done: bool = False) -> list[html.Div]:
     """The five pipeline phases, lit up to wherever the run has reached."""
     return [
         html.Div(
             [
-                html.Span(str(index + 1), className="va-rail-step-num"),
+                html.Span(
+                    [
+                        html.I(className=f"bi {_PHASE_ICONS.get(step.id, 'bi-circle')}"),
+                        html.Span(str(index + 1), className="va-rail-step-num"),
+                    ],
+                    className="va-rail-step-tile",
+                ),
                 html.Span(step.label, className="va-rail-step-label"),
             ],
             className=step_class(index, phase, done),
-            title=step.label,  # collapsed, the numeral is all that shows
+            title=step.label,  # collapsed, the tile is all that shows
         )
         for index, step in enumerate(PHASES)
     ]

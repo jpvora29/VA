@@ -9,6 +9,7 @@ try:
     from config.valid_values_config import *  # noqa: F401,F403 - legacy valid_year_quarter_gpr
 except ModuleNotFoundError:
     valid_year_quarter_gpr = []
+from core.agents.common.analysis_rules import with_analysis_rules
 from core.agents.common.directives import prose_suppressed
 from core.llm import Predictor
 from core.observability import log_event
@@ -30,7 +31,7 @@ class GPRResponseNode:
 
     def __init__(self, predictor: Predictor | None = None) -> None:
         self.predictor = predictor or Predictor(
-            GPRResponseSignature, tier="creative", reasoning=True,
+            with_analysis_rules(GPRResponseSignature), tier="creative", reasoning=True,
             label="gpr_insight", node="gpr",
         )
 

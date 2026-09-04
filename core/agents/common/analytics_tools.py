@@ -553,6 +553,7 @@ def run_analytics_tools(
         return _uncovered(flow)
 
     from core.agents.common.contract import resolved_filters_of
+    from core.agents.common.peer_privacy import redactor_for
     from core.agents.common.peers import pinned_peers
 
     question = state["messages"][-1].content
@@ -588,8 +589,19 @@ def run_analytics_tools(
     if not turn.covered:
         return _uncovered(flow)
 
+    # Peer confidentiality, at the same boundary the SQL nodes and the analyst
+    # solver use. This path bypasses `*_execute_sql` entirely — and since the
+    # library answers whenever it covers the question, it is the PRIMARY path for
+    # many turns, not an edge case. A `group_by` on a carrier column names
+    # carriers here exactly as a hand-written query would.
+    redactor = redactor_for(
+        flow,
+        resolved_filters_of(state.get("routing_context")),
+        state.get("custom_peers"),
+    )
+
     update = {
-        keys.result: turn.rows,
+        keys.result: redactor.rows(turn.rows),
         keys.error: False,
         keys.overflow: turn.overflow,
         keys.sql: turn.provenance(),

@@ -38,6 +38,14 @@ app = dash.Dash(
     ],
     suppress_callback_exceptions=True,
     title="ICG Virtual Analyst",
+    # Dash rewrites document.title to "Updating..." for the duration of EVERY
+    # callback and restores it after. This app fires callbacks constantly — a
+    # filter cascade, a poll tick, a chart re-render — so the browser tab flickered
+    # between the product name and "Updating..." several times a second, which is
+    # both distracting and a worse progress signal than the ones already on the
+    # page (the busy overlay, the generate progress bar, the chat status line).
+    # `None` leaves the title alone; nothing else about callbacks changes.
+    update_title=None,
 )
 
 from ui.shell.layout import root_layout  # noqa: E402  (after `app`, by Dash convention)
@@ -77,9 +85,14 @@ if __name__ == "__main__":
     # used to reset the view to Setup so the finished deck never showed.
     from studio.serve import run_app
 
+    # Debug OFF by default. `debug=True` mounts Dash's dev-tools bar, which floats
+    # over the bottom-right of every page — on Studio it sits on top of the filter
+    # grid — and it is not something anyone but a developer should ever see.
+    # `DASH_DEBUG=1` puts it back for a debugging session.
+    debug = os.environ.get("DASH_DEBUG", "").strip().lower() in {"1", "true", "on"}
     run_app(
         app,
         port=int(os.environ.get("PORT", "8080")),
-        debug=True,
+        debug=debug,
         dev_tools_hot_reload=False,
     )

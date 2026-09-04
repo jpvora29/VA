@@ -24,7 +24,9 @@ from core.agents.common import (
     record_recovered_sql_fix,
     run_analytics_tools,
 )
+from core.agents.common.contract import resolved_filters_of
 from core.agents.common.directives import charts_suppressed
+from core.agents.common.peer_privacy import redactor_for
 from core.agents.common.peers import custom_peer_directive
 from core.mcp.tools import execute_sql
 from core.agents.survey.chart import SurveyChartNode
@@ -317,6 +319,13 @@ class SurveySubGraph:
         query_result = GeneralFunctions.clean_sql_output(
             sql_output=result.rows, reasoning=json.loads(state["survey_reasoning"])
         )
+        # Peer confidentiality at the same boundary the analyst and the GPR rail
+        # use — after cleaning, so the redactor sees the columns the UI will.
+        query_result = redactor_for(
+            "survey",
+            resolved_filters_of(state.get("routing_context")),
+            state.get("custom_peers"),
+        ).rows(query_result)
 
         return {
             "survey_query_result": query_result,

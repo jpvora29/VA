@@ -122,3 +122,68 @@ def test_a_generated_deck_does_not_repeat_its_claims(tmp_path):
     assert extra <= 5, f"the deck repeats itself {extra} times: {repeated}"
     assert not any(len(slides) > 3 for slides in repeated.values()), \
         f"a claim reached four or more slides: {repeated}"
+
+
+# ── shape repetition across a wide deck ──────────────────────────────────────
+#
+# Reported: "Lot of repetition of pointers, even when 8-10 products are
+# included." Every claim WAS new — `signature` keeps the figures, so ten products
+# saying "grew X%" about their own books are ten different claims and all ten
+# shipped. What repeated was the sentence they were poured into.
+
+from studio.template_fill.ledger import MAX_SHAPE_USES, shape
+
+
+def _product_lines(product: str, i: int) -> list:
+    return [
+        f"The book grew {i + 4}% to ${i + 2}.1M, and that growth sits in {product}.",
+        f"Share of wallet in {product} rose to {i + 9}.1% from {i + 7}.4%.",
+        f"Marsh placed ${i * 7 + 20}M in {product} the carrier did not write.",
+    ]
+
+
+PRODUCTS = ["Property", "Casualty", "Cyber", "Marine",
+            "Energy", "Aviation", "Construction", "Financial Lines"]
+
+
+def test_two_products_pour_into_the_same_shape():
+    a = "The book grew 12% to $4.1M, and that growth sits in Property."
+    b = "The book grew 8% to $2.9M, and that growth sits in Casualty."
+    assert shape(a) == shape(b)
+    assert signature(a) != signature(b), "they are still two different claims"
+
+
+def test_the_entity_is_masked_but_the_sentence_is_not():
+    assert "@" in shape("Growth sits in Financial Lines.")
+    assert "#" in shape("The book grew 12%.")
+
+
+def test_a_wide_deck_does_not_repeat_one_shape_on_every_page():
+    """The regression: eight products, eight identical sentences."""
+    ledger = ClaimLedger()
+    chosen = [ledger.take(_product_lines(p, i), limit=1)[0]
+              for i, p in enumerate(PRODUCTS)]
+    assert len({shape(line) for line in chosen}) > 1, "one mould served every page"
+
+
+def test_a_shape_gets_its_allowance_then_gives_way():
+    ledger = ClaimLedger()
+    chosen = [ledger.take(_product_lines(p, i), limit=1)[0]
+              for i, p in enumerate(PRODUCTS[:MAX_SHAPE_USES + 1])]
+    shapes = [shape(line) for line in chosen]
+    assert shapes[0] == shapes[1], "a shape may be used more than once"
+    assert shapes[-1] != shapes[0], "but not indefinitely"
+
+
+def test_a_page_still_fills_its_column_when_every_shape_is_worn_out():
+    """Deduplication may never blank a cell."""
+    ledger = ClaimLedger()
+    for i, p in enumerate(PRODUCTS):
+        assert ledger.take(_product_lines(p, i), limit=1), f"{p} got nothing"
+
+
+def test_an_exact_repeat_is_still_dropped_outright():
+    ledger = ClaimLedger()
+    line = "The book grew 12% to $4.1M."
+    ledger.take([line, "Rank held at 4th."], limit=2)
+    assert not ledger.take([line, "Cyber remains thin."], limit=1)[0] == line

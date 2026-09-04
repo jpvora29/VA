@@ -44,6 +44,25 @@ def points_of_share(value: Optional[float], *, decimals: int = 1) -> str:
     return f"{magnitude:.{decimals}f} {noun}"
 
 
+def shift(current: Optional[float], delta: Optional[float], *, decimals: int = 1) -> str:
+    """A share movement as its two LEVELS: ``(9.1, 1.3)`` → ``"to 9.1% from 7.8%"``.
+
+    The form a partner actually writes, and the one this deck should prefer.
+    "Share of wallet rose 1.3 percentage points to 9.1%" is correct and reads like
+    a statistician; "share of wallet rose to 9.1% from 7.8%" says the same thing,
+    carries the % sign the reader expects, and never needs the words "percentage
+    points" or the abbreviation "pp" at all.
+
+    Use :func:`points` only where the prior level is genuinely unavailable — a
+    movement stated as a bare number with no unit is the ambiguity this module
+    exists to prevent (1.3 points of share is not 1.3% of share).
+    """
+    if current is None or delta is None:
+        return ""
+    now = float(current)
+    return f"to {now:.{decimals}f}% from {now - float(delta):.{decimals}f}%"
+
+
 def is_flat(value: Optional[float]) -> bool:
     """True when a share movement is too small to be worth a decimal."""
     return value is None or abs(float(value)) < _FLAT_BELOW

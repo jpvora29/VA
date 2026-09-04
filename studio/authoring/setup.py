@@ -27,6 +27,7 @@ from studio.template_fill import registry
 
 from studio.authoring import jobs
 from studio.authoring.config import BLANK, BREAKDOWNS, engine
+from studio.content.report_plan import DEFAULT_AUDIENCE
 
 log = get_logger(__name__)
 
@@ -625,6 +626,19 @@ def _register_busy_overlay(app):
 _REFUSED = (no_update, None, True, "", no_update, no_update)
 
 
+def _failed(state: dict) -> dict:
+    """The build's state, with an error the author can act on.
+
+    A build that raised already carries one. A build that finished cleanly but
+    produced no document has nothing to show and no message either, which is the
+    case that used to fail silently — so it gets one here.
+    """
+    if state.get("error"):
+        return state
+    return {**state, "error": "the build produced no slides — check the selection's "
+                              "carrier and filters, then try again"}
+
+
 def register_setup(app):
     """Wire the Generate + scope-preview callbacks onto ``app``."""
     _register_busy_overlay(app)
@@ -710,7 +724,7 @@ def register_setup(app):
             # (``studio.template_fill.bindings.scope_to_country``), because a peer group
             # chosen for Singapore says nothing about Japan.
             "peers_by_country": by_country or None,
-            "audience": audience or "executive",
+            "audience": audience or DEFAULT_AUDIENCE,
             "meeting_length": "standard",
             "style": style or "balanced",
             # AI assist is no longer a Setup control — the narrative IS the deck, and the
@@ -752,9 +766,19 @@ def register_setup(app):
         Both document stores are written ONCE, on the tick the build completes, and
         together with the jump to the canvas — so the canvas is never asked to render a
         half-written deck, and the deck it renders is always this build's.
+
+        **A finished build always replaces the canvas.** It used to return
+        ``no_update`` for the document stores when the build errored or produced
+        nothing, which left the PREVIOUS deck on screen looking like the new one —
+        the author saw a stale deck, clicked Generate again, and the second (now
+        cache-warm) run landed. A build that produced nothing now CLEARS the canvas
+        and says why, so "the old deck is still showing" cannot happen silently.
         """
         job = jobs.get_job(job_id)
         if job is None:
+            # No job behind this id — the poll has nothing left to collect. Stop it
+            # rather than tick forever, but leave the canvas alone: an id can go
+            # missing after a successful delivery, and blanking here would undo it.
             return (no_update,) * 3 + (True, no_update)
         state = job.snapshot()
         if not state["done"]:
@@ -762,10 +786,21 @@ def register_setup(app):
             # switch, or a document store, on every tick would re-render the whole shell
             # once a second for the length of a build.
             return (no_update,) * 3 + (no_update, A.generate_progress(state))
+
         docs = job.documents()
+        produced = docs is not None and not docs.empty
+        log.info(
+            "studio deck[%s] landing: error=%r doc=%s tdoc=%s",
+            state.get("job_id"), state.get("error"),
+            bool(docs and docs.doc), bool(docs and docs.tdoc),
+        )
         jobs.clear_job(job_id)
-        if state["error"] or docs is None or docs.empty:
-            return (no_update,) * 3 + (True, A.generate_progress(state))
+
+        if state["error"] or not produced:
+            # Clear both stores and go back to Setup. An empty canvas that explains
+            # itself beats a full one showing the wrong deck.
+            return (None, None, {"mode": "setup", "idx": 0, "tab": "setup"},
+                    True, A.generate_progress(_failed(state)))
         return (docs.doc, docs.tdoc, {"mode": "canvas", "idx": 0, "tab": "setup"},
                 True, A.generate_progress(state))
 

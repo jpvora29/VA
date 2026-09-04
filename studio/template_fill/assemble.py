@@ -52,6 +52,8 @@ from studio.template_fill.ledger import ClaimLedger
 from studio.template_fill.merge import merge_to_file
 from studio.template_fill.model import _template_year
 
+from studio.memo import build_memo
+
 logger = get_logger(__name__)
 
 OVERALL = "overall"
@@ -468,10 +470,16 @@ def assemble_deck(result, *, out_path: Optional[str] = None, work_dir: Optional[
     ``scope`` picks which axes to assemble (see :func:`plan_subdecks`); ``work_dir`` holds
     the intermediate filled sub-decks (a temp dir by default).
     """
-    decks = plan_subdecks(result, scope=scope, data_basis=data_basis)
-    filled = _fill_subdecks(decks, work_dir or tempfile.mkdtemp(prefix="qbr_assemble_"))
-    out = out_path or str(Path.cwd() / "qbr_assembled.pptx")
-    merge_to_file(filled, out)
+    # One memo for the whole assembly. Every sub-deck asks the warehouse the same
+    # questions about the same scopes — measured, 217 of 305 primitive calls in a
+    # single-country build were exact repeats. The memo spans planning AND filling
+    # because both read the same scopes, and it is discarded when this returns, so
+    # no answer outlives the build that computed it.
+    with build_memo(f"assemble:{result.subject or 'deck'}"):
+        decks = plan_subdecks(result, scope=scope, data_basis=data_basis)
+        filled = _fill_subdecks(decks, work_dir or tempfile.mkdtemp(prefix="qbr_assemble_"))
+        out = out_path or str(Path.cwd() / "qbr_assembled.pptx")
+        merge_to_file(filled, out)
 
     logger.info("assemble_deck: %d sub-deck(s) [%s] -> %s",
                 len(decks), ", ".join(d.label for d in decks), out)

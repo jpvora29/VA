@@ -109,6 +109,9 @@ app = dash.Dash(
     assets_folder=_ASSETS,
     external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.icons.BOOTSTRAP],
     suppress_callback_exceptions=True,
+    # Same reason as `app.py`: Dash swaps document.title to "Updating..." for the
+    # duration of every callback, which on a page this chatty reads as a flicker.
+    update_title=None,
 )
 app.layout = html.Div(
     [

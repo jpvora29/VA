@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Sequence, Set
+from typing import Dict, List, Sequence, Set
 
 # A claim's signature ignores what does not change the claim: casing, run of spaces, the
 # trailing full stop, and the connective a composer used to join its clauses.
@@ -37,6 +37,45 @@ _SPACE_RE = re.compile(r"\s+")
 def signature(line: str) -> str:
     """The identity of the claim ``line`` makes — its wording and its figures, normalised."""
     return _SPACE_RE.sub(" ", (line or "").strip().lower()).rstrip(".")
+
+
+#: Figures, so a sentence's SHAPE can be compared without them.
+_FIGURE_RE = re.compile(r"\d[\d,]*\.?\d*")
+
+#: Proper nouns AFTER the first word — the product, country or industry a page is
+#: about. Masked for the shape comparison and only there: "Property" and "Casualty"
+#: are what make two otherwise identical sentences look like two findings. The
+#: first word is left alone so an ordinary sentence-initial "The" is not treated
+#: as an entity.
+_ENTITY_RE = re.compile(r"(?<=\w[\s,;:—-])\b[A-Z][\w&'-]*(?:\s+[A-Z][\w&'-]*)*")
+
+#: How many times one sentence shape may be used across a deck before it gives way
+#: to a page's next-best point. Two, not one: a shape used twice in a ten-product
+#: deck is a house style, and the same shape on every page is a template.
+MAX_SHAPE_USES = 2
+
+
+def shape(line: str) -> str:
+    """The sentence PATTERN ``line`` follows, with its figures masked out.
+
+    ``signature`` keeps the numbers, deliberately — two products saying "grew X%"
+    about their own books are making two different claims, and suppressing the
+    second would delete a true finding. But it means a ten-product deck ships ten
+    sentences built from one mould, which is exactly what a reader means by "lots
+    of repetition even when 8-10 products are included": every claim is new and
+    every page reads the same.
+
+    So the ledger tracks both. A repeated claim is dropped outright; a repeated
+    SHAPE is allowed a couple of outings and then has to give way, which promotes
+    the page's next-best point rather than blanking the column.
+
+    Both the figures and the ENTITY are masked, because both are what a template
+    varies: "the book grew 12% and that growth sits in Property" and "...8% ... in
+    Casualty" are the same sentence twice, and masking only the numbers leaves the
+    product name to tell them apart.
+    """
+    masked = _ENTITY_RE.sub("@", (line or "").strip())
+    return _FIGURE_RE.sub("#", signature(masked))
 
 
 @dataclass
@@ -50,12 +89,23 @@ class ClaimLedger:
     """
 
     _seen: Set[str] = field(default_factory=set)
+    #: sentence shape -> how many pages have used it (see :func:`shape`).
+    _shapes: Dict[str, int] = field(default_factory=dict)
 
     def seen(self, line: str) -> bool:
         return signature(line) in self._seen
 
+    def overused(self, line: str) -> bool:
+        """True when this sentence's SHAPE has had its outings already."""
+        return self._shapes.get(shape(line), 0) >= MAX_SHAPE_USES
+
     def record(self, lines: Sequence[str]) -> None:
-        self._seen.update(signature(line) for line in lines if (line or "").strip())
+        for line in lines:
+            if not (line or "").strip():
+                continue
+            self._seen.add(signature(line))
+            key = shape(line)
+            self._shapes[key] = self._shapes.get(key, 0) + 1
 
     def take(self, lines: Sequence[str], *, limit: int, keep_at_least: int = 1) -> List[str]:
         """The first ``limit`` of ``lines`` making a claim the deck has not made yet.
@@ -71,8 +121,13 @@ class ClaimLedger:
         Only the lines that actually ship are recorded; a point trimmed off the end has not
         been said, and the page after this one may still say it.
         """
-        fresh = [line for line in lines if (line or "").strip() and not self.seen(line)]
-        kept = fresh if len(fresh) >= keep_at_least else list(lines)[:keep_at_least]
+        usable = [line for line in lines if (line or "").strip() and not self.seen(line)]
+        # Prefer the lines whose SHAPE the deck has not worn out, but keep the rest
+        # in order behind them rather than discarding: a page must still fill its
+        # column, and a repeated shape beats an empty one.
+        fresh = [line for line in usable if not self.overused(line)]
+        ranked = fresh + [line for line in usable if line not in fresh]
+        kept = ranked if len(ranked) >= keep_at_least else list(lines)[:keep_at_least]
         kept = kept[:limit]
         self.record(kept)
         return kept

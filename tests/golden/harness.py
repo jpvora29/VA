@@ -18,13 +18,15 @@ Design notes:
 from __future__ import annotations
 
 import logging
-import os
+import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 QUERIES_PATH = Path(__file__).parent / "queries.yaml"
 BASELINE_DIR = Path(__file__).parent / "baseline"
@@ -46,6 +48,14 @@ class GoldenTrace:
     token_by_agent: Dict[str, int] = field(default_factory=dict)
     chart_specs: List[Dict[str, Any]] = field(default_factory=list)
     error: Optional[str] = None
+    # ── what the USER got, which is what the quality checks judge ──────────
+    # The diff above compares two runs to each other; these let `checks.py` ask
+    # whether a single run was any good — did it name a peer, did it answer with
+    # the measure that was asked for, did its numbers come from the data.
+    answer: str = ""
+    table_rows: List[Dict[str, Any]] = field(default_factory=list)
+    evidence_rows: List[Dict[str, Any]] = field(default_factory=list)
+    duration_ms: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -64,8 +74,27 @@ def load_cases(path: Path = QUERIES_PATH) -> List[Dict[str, Any]]:
 
 
 def live_available() -> bool:
-    """True when a real graph run is possible (Azure creds present)."""
-    return bool(os.getenv("API_KEY") and os.getenv("ENDPOINT") and os.getenv("DEPLOYMENT"))
+    """True when a real graph run is possible — asked of the code that builds clients.
+
+    This used to guess: ``API_KEY and ENDPOINT and DEPLOYMENT``. That is the same
+    guess ``studio/ai/client.py`` was refactored away from, and it is wrong in both
+    directions. It misses ``VERSION``, which ``make_client`` also needs — so an
+    environment with the three named here would report "live" and then fail on
+    every call. And it demands ``DEPLOYMENT``, which is optional when ``ENDPOINT``
+    already ends in ``/openai/deployments/<name>`` — so a correctly configured
+    machine was told it could not run, and silently skipped the live suite.
+
+    Building the client is the only check that cannot drift from what the client
+    requires, and it is cheap: ``AzureChatOpenAI(...)`` validates its configuration
+    and opens no connection. Never raises — an unconfigured environment is the
+    normal case here, not an error.
+    """
+    try:
+        from core.llm.clients import available
+    except Exception as exc:  # noqa: BLE001 - no LLM layer at all means no live run
+        logger.debug("golden harness: no LLM layer available (%s)", exc)
+        return False
+    return available()
 
 
 # ── Capture helpers ──────────────────────────────────────────────────────────
@@ -117,6 +146,35 @@ def _extract_charts(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     return specs
 
 
+def _extract_answer(state: Dict[str, Any]) -> str:
+    """The prose the user read, whichever route produced it."""
+    for key in ("combined_response", "gpr_response", "survey_response",
+                "gimmi_response", "out_of_scope_answer"):
+        text = state.get(key)
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+    return ""
+
+
+def _extract_table(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The rows shown under the answer — the surface a prompt never guards."""
+    rows: List[Dict[str, Any]] = []
+    for key in ("gpr_query_result", "survey_query_result", "combined_result"):
+        value = state.get(key)
+        if isinstance(value, list):
+            rows.extend(r for r in value if isinstance(r, dict))
+    return rows
+
+
+def _extract_evidence(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Every row the turn actually retrieved — what its numbers must trace to."""
+    rows: List[Dict[str, Any]] = []
+    for item in state.get("analyst_evidence") or []:
+        if isinstance(item, dict):
+            rows.extend(r for r in (item.get("rows") or []) if isinstance(r, dict))
+    return rows or _extract_table(state)
+
+
 def _extract_entities(routing_context: Any) -> Dict[str, Any]:
     if routing_context is None:
         return {}
@@ -148,6 +206,7 @@ def capture_trace(case: Dict[str, Any], *, workflow: Any = None) -> GoldenTrace:
     from core.state.agent_state import AgentState
 
     trace = GoldenTrace(id=case["id"], query=case["query"])
+    started = time.time()
     lg = workflow or LangGraph()
     thread_id = f"golden-{case['id']}-{uuid.uuid4().hex[:8]}"
 
@@ -203,6 +262,10 @@ def capture_trace(case: Dict[str, Any], *, workflow: Any = None) -> GoldenTrace:
     trace.resolved_entities = _extract_entities(routing)
     trace.selected_skills = sorted(handler.matched)
     trace.chart_specs = _extract_charts(final)
+    trace.answer = _extract_answer(final)
+    trace.table_rows = _extract_table(final)
+    trace.evidence_rows = _extract_evidence(final)
+    trace.duration_ms = int((time.time() - started) * 1000)
 
     # Token totals come only from the LAST turn (the measured query); history
     # turns are setup. Each snapshot is {trace_id, fields, token}.

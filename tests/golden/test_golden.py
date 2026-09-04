@@ -165,3 +165,44 @@ def test_golden_set_matches_baseline():
     diffs = golden_diff.diff_sets(baseline, traces)
     changed = [d.summary() for d in diffs if d.has_behavior_change()]
     assert not changed, "behavior changed vs baseline:\n" + "\n".join(changed)
+
+
+# ── Live: the QUALITY bar (skipped without creds) ─────────────────────────────
+#
+# The baseline test above asks "did anything change?". These ask "is it any
+# good?" — two runs can agree perfectly and both be wrong, which is exactly what
+# a parity gate cannot see. The checks themselves are unit-tested without
+# credentials in `test_checks.py`; this is where they meet a real run.
+
+
+@requires_live
+def test_no_answer_names_an_individual_peer():
+    """Confidentiality is the one rule that is never worth a trade-off."""
+    from tests.golden import checks as C
+
+    traces = harness.run_golden_set()
+    leaks = [
+        f"{t.id}: {r.name} — {r.detail}"
+        for t, case in _paired(traces)
+        for r in C.run_checks(t, case)
+        if not r.passed and r.category == C.CONFIDENTIALITY
+    ]
+    assert not leaks, "peer names reached the user:\n" + "\n".join(leaks)
+
+
+@requires_live
+def test_quality_scorecard_holds():
+    """The whole bar, reported per category so a regression names itself."""
+    from tests.golden import report as R
+
+    traces = harness.run_golden_set()
+    card = R.score(traces, harness.load_cases())
+    print(R.render(card))
+    failures = [f"{cid}: {r.name} — {r.detail}" for cid, r in card.failures]
+    assert not failures, "quality checks failed:\n" + "\n".join(failures)
+
+
+def _paired(traces):
+    """(trace, case) pairs for every trace that has a case."""
+    by_id = {str(c.get("id")): c for c in harness.load_cases()}
+    return [(t, by_id[t.id]) for t in traces if t.id in by_id]

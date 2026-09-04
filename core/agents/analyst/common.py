@@ -25,6 +25,7 @@ from core.agents.common.analytics_tools import (
     analytics_tools_enabled,
     compute_first_directive,
 )
+from core.agents.common.peer_privacy import PeerRedactor, redactor_for
 from core.agents.common.peers import custom_peer_directive, pinned_peers
 from core.analysis import get_lens_library
 from core.mcp.tools import (
@@ -103,8 +104,15 @@ def build_tools(
     guard_zero_rows: bool = False,
     flow: str = "gpr",
     peers: Sequence[str] = (),
+    redactor: PeerRedactor | None = None,
 ):
     """Read-only LangChain tools for a solver; `evidence` collects executed rows.
+
+    `redactor` enforces peer confidentiality at the evidence boundary: the tool's
+    REPLY to the model keeps real peer names (it needs them to write the next
+    query), while the rows recorded in `evidence` -- the only thing the writer,
+    the shown table and the charts ever see -- name no individual peer. Omitting
+    it records rows unredacted, which is only ever right in a unit test.
 
     `peer_only` trims the toolset to what the peer-comparison path actually needs
     (compute_metric + run_sql + resolve_value + consult_skill), so that
@@ -183,8 +191,17 @@ def build_tools(
                             },
                             default=str,
                         )
+                # Confidentiality boundary: `evidence` feeds the writer, the
+                # shown table and the charts, so it is redacted here. The reply
+                # below is not -- the solver needs the real names to build the
+                # next query's IN (...) list.
                 evidence.append(
-                    {"flow": flow, "sql": attempt_sql, "rows": result.rows, "lens": lens}
+                    {
+                        "flow": flow,
+                        "sql": attempt_sql,
+                        "rows": redactor.rows(result.rows) if redactor else result.rows,
+                        "lens": lens,
+                    }
                 )
                 return json.dumps(
                     {
@@ -256,7 +273,11 @@ def build_tools(
     if analytics_tools_enabled():
         # `peers` carries a pinned custom peer set, so a computed peer average
         # benchmarks the same group the prompt directive pins for run_sql.
-        computed = [build_compute_tool(evidence, lens, flow=flow, peers=peers)]
+        computed = [
+            build_compute_tool(
+                evidence, lens, flow=flow, peers=peers, redactor=redactor
+            )
+        ]
 
     if peer_only:
         return [run_sql, *computed, resolve_value, consult_skill]
@@ -447,6 +468,23 @@ covers the step, it already encodes these rules — call it instead.]
 {_CONFIDENTIALITY}"""
 
 
+def stamp_redactions(
+    evidence: List[Evidence], redactor: PeerRedactor
+) -> List[Evidence]:
+    """Record on each evidence item which peer names were hidden from it.
+
+    Carried forward so the writer's prose can be scrubbed against exactly the
+    names this turn touched, rather than against a global list of every carrier
+    in the market. Returns the same list (the items are mutated in place).
+    """
+    hidden = redactor.redacted
+    if not hidden:
+        return evidence
+    for item in evidence:
+        item["redacted_peers"] = hidden
+    return evidence
+
+
 def run_solver(
     *,
     model,
@@ -471,6 +509,10 @@ def run_solver(
     executed rows matter.
     """
     evidence: List[Evidence] = []
+    # Who this turn may name: the carriers the schema-identifier resolved for the
+    # question, plus the pinned set's subject. Everyone else found in a carrier
+    # column is a peer, and is anonymised on the way into `evidence`.
+    redactor = redactor_for(flow, schema_slice.resolved_values, custom_peers)
     tools = build_tools(
         evidence,
         question,
@@ -479,6 +521,7 @@ def run_solver(
         guard_zero_rows=schema_slice.guard_zero_rows,
         flow=flow,
         peers=pinned_peers(custom_peers, flow, active=custom_peers_active),
+        redactor=redactor,
     )
     system_prompt = _solver_prompt(
         role=role,
@@ -527,7 +570,7 @@ def run_solver(
             flow=flow,
             error=str(exc),
         )
-    return evidence
+    return stamp_redactions(evidence, redactor)
 
 
 def digest_evidence(evidence: List[Evidence], *, limit: int = _TOOL_ROW_PREVIEW) -> str:

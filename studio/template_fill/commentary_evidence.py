@@ -169,6 +169,16 @@ def _standing_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
         way = "rose" if s["delta"] > 0 else "fell"
         _add(out, "sow.delta", f"Share of wallet {way} by",
              U.points(s["delta"]), "percentage_point")
+        # The PRIOR level, because that is the form the composers now use: "share
+        # of wallet rose to 9.1% from 7.8%" reads the way a partner writes it and
+        # never needs the words "percentage points". The figure is real — the
+        # current level less the movement — but until it was rendered as a fact of
+        # its own the verifier saw an unsupported "7.8" and dropped the sentence,
+        # silently and every time. Same reasoning as the "top-5" note below: if a
+        # sentence is going to say a number, the pack has to carry it.
+        if _num(s, "current") is not None:
+            _add(out, "sow.prior", f"{subject}'s share of the Marsh book a year earlier",
+                 f"{s['current'] - s['delta']:.1f}%", "share_of_wallet")
     # The rendered form carries the words "top-5" on purpose. ``verifier._TOKEN_RE`` reads
     # the "-5" in "top-5 peer average" as a numeric token and ``_norm`` strips the sign, so
     # a sentence saying "top-5" while citing only this fact was failing verification on an

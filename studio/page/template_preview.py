@@ -21,6 +21,10 @@ from studio.template_fill.fill import _label_subs
 from studio.template_fill.model import materialize_fields
 from studio.template_fill.preview_assets import cached_doc_backgrounds
 
+from logger import get_logger
+
+logger = get_logger(__name__)
+
 PREVIEW_W = 900  # px — the on-screen slide width; height derives from the aspect ratio
 
 
@@ -371,6 +375,28 @@ def _fields_panel(slide_fields: List[Dict[str, Any]]) -> html.Div:
 # ── slide + body ─────────────────────────────────────────────────────────────
 
 
+def _render_on_demand(tdoc: Mapping[str, Any], idx: int, slide_count: int,
+                      rendered_urls: list) -> list:
+    """Fill in the missing background for the slide being viewed, and its neighbours.
+
+    Returns the URL list with whatever was produced merged in; on any failure it
+    returns the list untouched, so navigation never breaks over a preview image.
+    """
+    from studio.template_fill.preview_assets import (
+        ensure_rendered_slide_backgrounds,
+        render_window,
+    )
+
+    try:
+        fresh = ensure_rendered_slide_backgrounds(
+            tdoc["template_path"], slide_count, only=render_window(idx, slide_count)
+        )
+    except Exception as exc:  # noqa: BLE001 - a preview image is never worth a crash
+        logger.warning("template preview: on-demand render failed for slide %d: %s", idx, exc)
+        return rendered_urls
+    return [rendered_urls[i] or fresh[i] for i in range(slide_count)]
+
+
 def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> html.Div:
     template, _ = registry.derive_manifest(tdoc["template_path"])
     fields = materialize_fields(dict(tdoc))
@@ -392,6 +418,14 @@ def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> h
     pos = pos if 0 <= pos < len(order) else 0
     idx = order[pos] if order else 0
     slide = template.slides[idx]
+
+    # A build renders only its opening slides, so this page may not have an image
+    # yet. Render its window now — a window and not one slide, because the export
+    # is quick and the PowerPoint startup before it is not. Best-effort: a failure
+    # leaves `rendered_urls[idx]` None and the slide draws from its geometry, which
+    # is what happened for every slide before any of this existed.
+    if tdoc.get("assembled") and not rendered_urls[idx]:
+        rendered_urls = _render_on_demand(tdoc, idx, len(template.slides), rendered_urls)
 
     scale = PREVIEW_W / float(template.width_emu or 12192000)
     height = template.height_emu * scale

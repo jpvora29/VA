@@ -19,6 +19,7 @@ so concurrent writes merge safely. Dependency-bound steps run serially in
 """
 from __future__ import annotations
 
+import logging
 from operator import add
 from typing import List, Optional
 
@@ -28,6 +29,12 @@ from typing_extensions import Annotated, TypedDict
 
 from core.agents.analyst.chart_picker import pick_charts
 from core.agents.common.contract import resolved_filters_of, unresolved_terms_of
+from core.agents.common.peer_privacy import (
+    build_policy,
+    redact_text,
+    redacted_names,
+    subjects_from_resolved,
+)
 from core.agents.common.directives import (
     charts_suppressed,
     presentation_mode,
@@ -64,6 +71,10 @@ class AnalystState(TypedDict):
     custom_peers: Optional[dict]
     custom_peers_active: bool
     plan: AnalysisPlan
+    # The lens of the planner's step 0 — the one that answers the user's literal
+    # question. Carried out of the subgraph so the caller can tell the answer's
+    # own result set apart from the supporting lenses' (see `answer_table`).
+    primary_lens: str
     schema_slice: SchemaSlice
     # add-reducer so parallel solver nodes merge their evidence instead of racing.
     evidence: Annotated[List[Evidence], add]
@@ -88,7 +99,7 @@ def planner_node(state: AnalystState) -> dict:
         lenses=[d.lens for d in plan.derived],
         derived_count=len(plan.derived),
     )
-    return {"plan": plan}
+    return {"plan": plan, "primary_lens": plan.derived[0].lens if plan.derived else ""}
 
 
 def schema_identifier_node(state: AnalystState) -> dict:
@@ -219,15 +230,49 @@ def writer_node(state: AnalystState) -> dict:
     """Synthesize the final Markdown answer from all gathered evidence."""
     plan: AnalysisPlan = state.get("plan") or AnalysisPlan()
     rc = state.get("routing_context")
+    evidence = list(state.get("evidence", []))
     answer = write_insight(
         question=state["question"],
         route=state["route"],
         synthesis_focus=plan.synthesis_focus,
-        evidence=list(state.get("evidence", [])),
+        evidence=evidence,
         presentation=presentation_mode(rc),
         depth=response_depth(rc),
     )
-    return {"answer": answer}
+    return {"answer": scrub_peer_names(answer, evidence, state)}
+
+
+def scrub_peer_names(answer: str, evidence: List[Evidence], state: AnalystState) -> str:
+    """Last line of defence over the written answer.
+
+    The evidence the writer saw is already redacted, so this should find nothing.
+    It covers the ways a peer name can reach the prose without passing through a
+    tool result -- quoted from the user's own question, or carried in a schema
+    note -- and it is cheap enough to run unconditionally. Unlike the row
+    redaction it has no per-peer labels to restore, so a leak becomes "a peer".
+    """
+    hidden = redacted_names(evidence)
+    if not hidden:
+        return answer
+    slice_ = state.get("schema_slice")
+    policy = build_policy(
+        state["flow"],
+        [
+            *subjects_from_resolved(getattr(slice_, "resolved_values", None), state["flow"]),
+            (state.get("custom_peers") or {}).get("carrier") or "",
+        ],
+    )
+    scrubbed = redact_text(answer, hidden, policy)
+    if scrubbed != answer:
+        log_event(
+            logger,
+            "peer_name_scrubbed_from_answer",
+            logging.WARNING,
+            node="insight_writer",
+            route=state["route"],
+            names=len(hidden),
+        )
+    return scrubbed
 
 
 def chart_picker_node(state: AnalystState) -> dict:

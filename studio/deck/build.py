@@ -26,7 +26,7 @@ def build_deck(
     report: str = "qbr",
     cuts=(),
     ai: bool = False,
-    audience: str = "executive",
+    audience: str = "",
     meeting_length: str = "standard",
 ) -> DeckSpec:
     """Build the QBR deck. With ``ai=True`` *and* an LLM configured, the AI agents

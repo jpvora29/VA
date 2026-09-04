@@ -23,6 +23,7 @@ from typing import Any, List
 
 from langgraph.errors import GraphInterrupt
 
+from core.agents.analyst.answer_table import select_answer_rows
 from core.graph.analyst_subgraph import AnalystSubGraph
 from core.observability import latency_timer, log_event
 from core.schemas.analyst_subgraph import Evidence
@@ -57,6 +58,7 @@ def analyst_agent_node(state: AgentState) -> AgentState:
     answer = ""
     evidence: List[Evidence] = []
     charts: List[Any] = []
+    primary_lens = ""
     with latency_timer() as timing:
         try:
             # HITL clarification happens upstream in the checkpointed main graph
@@ -66,6 +68,7 @@ def analyst_agent_node(state: AgentState) -> AgentState:
             answer = (result.get("answer") or "").strip()
             evidence = result.get("evidence") or []
             charts = result.get("charts") or []
+            primary_lens = result.get("primary_lens") or ""
         except GraphInterrupt:
             # A clarify MCQ is pending — let it bubble to the checkpointed main
             # graph so the UI can ask and resume. Never swallow this as an error.
@@ -88,6 +91,7 @@ def analyst_agent_node(state: AgentState) -> AgentState:
         tool_calls=len(evidence),
         answered=bool(answer),
         charts=len(charts),
+        primary_lens=primary_lens,
         duration_ms=timing.get("duration_ms"),
     )
 
@@ -99,10 +103,14 @@ def analyst_agent_node(state: AgentState) -> AgentState:
         )
 
     def _rows_for(target_flow: str) -> List[Any]:
-        for item in evidence:
-            if item["flow"] == target_flow and item["rows"]:
-                return item["rows"]
-        return []
+        """The result set to show as this flow's table.
+
+        Scored, not first-past-the-post: the solvers finish in a race, so taking
+        the first non-empty set showed whichever query happened to win — often a
+        peer-membership lookup rather than the premium the question asked for.
+        See `core.agents.analyst.answer_table`.
+        """
+        return select_answer_rows(evidence, target_flow, primary_lens=primary_lens)
 
     # The full evidence list (every lens's rows, not just the first per flow)
     # rides along for the boardroom digest, whose advanced widgets need the

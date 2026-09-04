@@ -18,7 +18,7 @@ import os
 import shutil
 import stat
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Sequence, Set
 
 from logger import get_logger
 
@@ -79,7 +79,8 @@ def _background_urls(out_dir: Path, slide_count: int) -> List[Optional[str]]:
     return urls
 
 
-def _render_with_aspose(pptx_path: str, out_dir: Path, slide_count: int, width_px: int) -> bool:
+def _render_with_aspose(pptx_path: str, out_dir: Path, slide_count: int, width_px: int,
+                        wanted: Optional[Set[int]] = None) -> bool:
     try:
         import aspose.pydrawing as draw  # type: ignore
         import aspose.slides as slides  # type: ignore
@@ -93,6 +94,8 @@ def _render_with_aspose(pptx_path: str, out_dir: Path, slide_count: int, width_p
             for idx, slide in enumerate(presentation.slides):
                 if idx >= slide_count:
                     break
+                if wanted is not None and idx not in wanted:
+                    continue
                 out = out_dir / f"slide-{idx:03d}.png"
                 if out.exists():
                     continue
@@ -104,7 +107,8 @@ def _render_with_aspose(pptx_path: str, out_dir: Path, slide_count: int, width_p
         return False
 
 
-def _render_with_powerpoint(pptx_path: str, out_dir: Path, slide_count: int, width_px: int) -> bool:
+def _render_with_powerpoint(pptx_path: str, out_dir: Path, slide_count: int, width_px: int,
+                            wanted: Optional[Set[int]] = None) -> bool:
     """Render slides with local Microsoft PowerPoint when available.
 
     This is intentionally isolated to Windows desktop environments. It gives the
@@ -129,6 +133,8 @@ def _render_with_powerpoint(pptx_path: str, out_dir: Path, slide_count: int, wid
         height_px = int(width_px * float(presentation.PageSetup.SlideHeight) / float(presentation.PageSetup.SlideWidth or 1))
         count = min(slide_count, int(presentation.Slides.Count))
         for idx in range(count):
+            if wanted is not None and idx not in wanted:
+                continue
             out = out_dir / f"slide-{idx:03d}.png"
             if out.exists():
                 continue
@@ -151,13 +157,21 @@ def _render_with_powerpoint(pptx_path: str, out_dir: Path, slide_count: int, wid
         pythoncom.CoUninitialize()
 
 
-def _render_slides(pptx_path: str, out_dir: Path, slide_count: int, width_px: int) -> None:
+def _render_slides(pptx_path: str, out_dir: Path, slide_count: int, width_px: int,
+                   wanted: Optional[Set[int]] = None) -> None:
+    """Render slides to PNG. `wanted` limits it to those indices (None = all).
+
+    One renderer session covers the whole subset, which is why callers ask for a
+    WINDOW of slides rather than one: the per-slide export is fast and the
+    PowerPoint startup that precedes it is not, so paying that startup once for
+    six slides beats paying it six times.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     if os.environ.get("STUDIO_TEMPLATE_RENDERER", "").lower() == "none":
         return
-    if _render_with_aspose(pptx_path, out_dir, slide_count, width_px):
+    if _render_with_aspose(pptx_path, out_dir, slide_count, width_px, wanted):
         return
-    _render_with_powerpoint(pptx_path, out_dir, slide_count, width_px)
+    _render_with_powerpoint(pptx_path, out_dir, slide_count, width_px, wanted)
 
 
 def ensure_slide_backgrounds(template_path: str, slide_count: int, *, width_px: int = 1600) -> List[Optional[str]]:
@@ -178,24 +192,71 @@ def ensure_slide_backgrounds(template_path: str, slide_count: int, *, width_px: 
     return _cached_backgrounds(template_path, slide_count)
 
 
-def ensure_rendered_slide_backgrounds(pptx_path: str, slide_count: int, *, width_px: int = 1600) -> List[Optional[str]]:
-    """Render a PPTX once, including PowerPoint fallback, and return cached URLs.
+#: How many slides a build renders before it hands the canvas over. The canvas
+#: shows ONE slide at a time, so rendering all of them up front made the author
+#: wait on ~0.5s of PowerPoint per slide for pages they had not asked to see —
+#: minutes on a full QBR. The rest are rendered on demand as they navigate.
+#: ``STUDIO_EAGER_SLIDES=0`` renders none up front; a negative value renders all.
+EAGER_SLIDES = 6
 
-    This is used at generation/export time, not while navigating slides. Keeping
-    PowerPoint startup out of the page render path makes next/previous instant
-    when a cached image exists and falls back to geometry when it does not.
+#: Slides rendered around the one being viewed, so a session's PowerPoint startup
+#: is amortised over a few pages instead of paid per page.
+RENDER_WINDOW = 4
+
+
+def eager_slide_limit() -> int:
+    """How many slides to render at build time (``STUDIO_EAGER_SLIDES``)."""
+    try:
+        return int(os.environ.get("STUDIO_EAGER_SLIDES", EAGER_SLIDES))
+    except ValueError:
+        return EAGER_SLIDES
+
+
+def render_window(centre: int, slide_count: int, *, span: int = RENDER_WINDOW) -> Set[int]:
+    """The slide indices to render for someone looking at `centre`.
+
+    A window rather than a single slide: the export itself is quick and the
+    PowerPoint startup before it is not, so one session covers the page they are
+    on and the next few they are likely to turn to.
+    """
+    if slide_count <= 0:
+        return set()
+    centre = max(0, min(int(centre), slide_count - 1))
+    return set(range(max(0, centre - 1), min(slide_count, centre + span + 1)))
+
+
+def ensure_rendered_slide_backgrounds(
+    pptx_path: str,
+    slide_count: int,
+    *,
+    width_px: int = 1600,
+    only: Optional[Sequence[int]] = None,
+) -> List[Optional[str]]:
+    """Render a PPTX's slides to PNG and return their cached URLs.
+
+    `only` limits the work to those slide indices; the returned list still spans
+    every slide, carrying ``None`` where nothing is rendered yet. That is exactly
+    what the canvas expects — it falls back to drawing the slide's geometry — so a
+    partially rendered deck is a complete, usable canvas rather than a broken one,
+    and the missing pages fill in as the author reaches them.
     """
     cached = _cached_backgrounds(pptx_path, slide_count)
-    if all(cached):
+    wanted = None if only is None else {i for i in only if 0 <= i < slide_count}
+    if wanted is not None and all(cached[i] for i in wanted):
         return cached
+    if wanted is None and all(cached):
+        return cached
+
     out_dir = template_cache_dir(pptx_path) / "backgrounds"
-    _render_slides(pptx_path, out_dir, slide_count, width_px)
+    _render_slides(pptx_path, out_dir, slide_count, width_px, wanted)
     cached = _cached_backgrounds(pptx_path, slide_count)
-    if not any(cached):
+
+    produced = [c for i, c in enumerate(cached) if wanted is None or i in wanted]
+    if not any(produced):
         # Nothing rendered at all — usually a transient COM failure. One retry
         # here beats a whole generation whose canvas falls back to raw geometry.
         logger.warning("template preview: no backgrounds rendered for %s — retrying once", pptx_path)
-        _render_slides(pptx_path, out_dir, slide_count, width_px)
+        _render_slides(pptx_path, out_dir, slide_count, width_px, wanted)
         cached = _cached_backgrounds(pptx_path, slide_count)
     return cached
 

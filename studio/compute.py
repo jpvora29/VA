@@ -29,6 +29,8 @@ from logger import get_logger
 from studio.facts.store import FactStore
 from studio.rules import load_rules, truncate
 
+from studio.memo import memoized
+
 logger = get_logger(__name__)
 
 # Form filter id → real GPR column.
@@ -297,6 +299,7 @@ def _current_year(filters: Mapping[str, Any]) -> Optional[int]:
         return None
 
 
+@memoized
 def period_totals(flow, filters, engine) -> Optional[Dict[str, Any]]:
     """Current vs prior-year total premium. None if no year filter is set."""
     cur = _current_year(filters)
@@ -309,6 +312,7 @@ def period_totals(flow, filters, engine) -> Optional[Dict[str, Any]]:
             "delta": c - p, "pct": ((c - p) / p * 100) if p else None}
 
 
+@memoized
 def movement_by_dim(flow, dim, filters, engine, *, top: int = 6) -> List[Dict[str, Any]]:
     """Per-dim current vs prior premium + delta — the driver decomposition of YoY."""
     cur = _current_year(filters)
@@ -330,6 +334,7 @@ def movement_by_dim(flow, dim, filters, engine, *, top: int = 6) -> List[Dict[st
     return rows[:top]
 
 
+@memoized
 def rank_movement(flow, filters, engine, subject) -> Optional[Dict[str, Any]]:
     cur = _current_year(filters)
     if cur is None or not subject:
@@ -353,6 +358,7 @@ def rank_movement(flow, filters, engine, subject) -> Optional[Dict[str, Any]]:
             "delta": (pr - cr) if (pr is not None) else None}  # +ve delta = improved (moved up)
 
 
+@memoized
 def sow_movement(flow, filters, engine, subject) -> Optional[Dict[str, Any]]:
     cur = _current_year(filters)
     if cur is None or not subject:
@@ -369,6 +375,7 @@ def sow_movement(flow, filters, engine, subject) -> Optional[Dict[str, Any]]:
     return {"current": c, "prior": p, "delta": (c - p) if (p is not None) else None}
 
 
+@memoized
 def premium_by_dim(flow, dim, filters, engine) -> List[Dict[str, Any]]:
     """Current premium per value of ``dim``, biggest first — ``[{name, premium}]``.
 
@@ -400,6 +407,7 @@ def concentration(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
             "hhi": round(sum(s * s for s in shares) * 10000), "n": len(vals)}
 
 
+@memoized
 def peer_gap(flow, filters, engine, peers=None) -> Optional[Dict[str, Any]]:
     """Subject's total premium vs the average peer's TOTAL premium (confidential).
 
@@ -424,6 +432,7 @@ def peer_gap(flow, filters, engine, peers=None) -> Optional[Dict[str, Any]]:
             "delta": own - peer_avg, "ratio": (own / peer_avg) if peer_avg else None}
 
 
+@memoized
 def product_breakdown_rows(
     flow, filters, engine, subject, *, dim: str = "Product_Line", top: int = 7
 ) -> List[Dict[str, Any]]:
@@ -505,6 +514,7 @@ def _top_average(values: List[float], *, top: int = _PEER_TOP_N) -> float:
     return (sum(head) / len(head)) if head else 0.0
 
 
+@memoized
 def peer_average_totals(flow, filters, engine, *, top: int = _PEER_TOP_N) -> Optional[Dict[str, Any]]:
     """The TOP-``top`` carriers' AVERAGE premium in scope, current vs prior year.
 
@@ -541,6 +551,7 @@ def peer_average_totals(flow, filters, engine, *, top: int = _PEER_TOP_N) -> Opt
     }
 
 
+@memoized
 def near_rank_gap(flow, filters, engine, subject, *, dim="Product_Line", top=8) -> Optional[Dict[str, Any]]:
     """Gap to the next rank up, decomposed by product line (the rank waterfall).
 
@@ -581,6 +592,7 @@ def _temporal_filters(filters: Mapping[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in filters.items() if k != _YEAR_COL}
 
 
+@memoized
 def period_series(flow, filters, engine, *, grain: str = "month") -> Dict[str, Any]:
     """Premium per month/quarter over the full available history (year filter dropped)."""
     facts = compute_period_series(
@@ -594,6 +606,7 @@ def period_series(flow, filters, engine, *, grain: str = "month") -> Dict[str, A
     }
 
 
+@memoized
 def period_change(flow, filters, engine, *, grain: str = "month") -> Dict[str, Any]:
     """Period-over-period %: ``grain='month'`` ⇒ MoM, ``grain='quarter'`` ⇒ QoQ."""
     facts = compute_period_change(
@@ -609,14 +622,17 @@ def period_change(flow, filters, engine, *, grain: str = "month") -> Dict[str, A
     }
 
 
+@memoized
 def mom(flow, filters, engine) -> Dict[str, Any]:
     return period_change(flow, filters, engine, grain="month")
 
 
+@memoized
 def qoq(flow, filters, engine) -> Dict[str, Any]:
     return period_change(flow, filters, engine, grain="quarter")
 
 
+@memoized
 def ttm(flow, filters, engine) -> Optional[Dict[str, Any]]:
     """Trailing-12-month rolling totals + the headline TTM-over-TTM %."""
     facts = compute_ttm(
@@ -639,6 +655,7 @@ def ttm(flow, filters, engine) -> Optional[Dict[str, Any]]:
 # ── deterministic data for the advanced widgets (premium / SoW / appetite) ───
 
 
+@memoized
 def opportunity_matrix(flow, filters, engine, whitespace, *, top_n: Optional[int] = None) -> List[Dict[str, Any]]:
     """Opportunity bubbles from the whitespace candidates — fully premium-derived.
 
@@ -677,6 +694,7 @@ def opportunity_matrix(flow, filters, engine, whitespace, *, top_n: Optional[int
     return points
 
 
+@memoized
 def product_country_heatmap(
     flow, filters, engine, *, max_products: int = 6, max_countries: int = 6
 ) -> Optional[Dict[str, Any]]:

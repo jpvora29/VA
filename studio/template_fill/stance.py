@@ -13,6 +13,8 @@ Two surfaces, because a QBR answers the question at two altitudes:
 """
 from __future__ import annotations
 
+import hashlib
+
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
@@ -71,9 +73,50 @@ def book_posture_point(facts: Dict[str, Any], name: str = "") -> Optional[str]:
     # The reason and the place are both load-bearing, and an earlier draft of this traded
     # the reason away for the place. A stance with no "because" is an assertion; one with
     # no "where" is advice true of any carrier. The line carries both.
-    stance = f"The call here is to {call_phrase(call.posture)}, because {call.because}."
+    stance = _stance_sentence(call_phrase(call.posture), call.because, label)
     where = _stance_anchor(facts)
     return f"{stance} {where}" if where else stance
+
+
+#: How a stance is said. Every page used ONE of these — "The call here is to X,
+#: because Y" — so a ten-product deck opened ten pages with the same six words,
+#: which is the single loudest tell that a deck was produced rather than written.
+#: A partner leads with the evidence and lets the call follow from it, so most of
+#: these put the reason first.
+#: Every form is ONE sentence and starts with a capital. Both are load-bearing: a
+#: stance line is followed by its anchor clause, so a two-sentence form made a
+#: three-sentence bullet — the run-on a reader means by "huge read" — and a form
+#: opening on the lowercase `because` produced a point that was not a sentence.
+_STANCE_FORMS: tuple = (
+    "{Because}, so {call}.",
+    "{Because} — {call}.",
+    "{Call} — {because}.",
+    "{Call}, given {because}.",
+)
+
+
+def _stance_sentence(call: str, because: str, label: str) -> str:
+    """One stance line, phrased differently from its neighbours but stable per page.
+
+    Chosen by a digest of the page's own content rather than at random: the same
+    book must produce the same deck twice, and a rotation counter would depend on
+    which page happened to render first. `hashlib`, not the builtin `hash` — that
+    one is salted per process, so it would have made a deck differ from itself
+    between two runs of the same build.
+    """
+    call_text = (call or "").strip().rstrip(".")
+    because_text = (because or "").strip().rstrip(".")
+    if not call_text or not because_text:
+        return f"{call_text or because_text}."
+    seed = f"{label}|{call_text}|{because_text}".encode("utf-8")
+    index = int(hashlib.sha1(seed).hexdigest()[:8], 16) % len(_STANCE_FORMS)
+    form = _STANCE_FORMS[index]
+    return form.format(
+        call=call_text,
+        Call=call_text[:1].upper() + call_text[1:],
+        because=because_text,
+        Because=because_text[:1].upper() + because_text[1:],
+    )
 
 
 def _stance_anchor(facts: Dict[str, Any]) -> Optional[str]:

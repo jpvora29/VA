@@ -574,3 +574,63 @@ def test_an_explicitly_dated_turn_leaves_the_plan_alone(engine):
         engine=engine,
     )
     assert "gpr_reasoning" not in update
+
+
+# ── peer confidentiality ────────────────────────────────────────────────────
+#
+# This node writes `gpr_query_result` WITHOUT going through `gpr_execute_sql`,
+# and the library answers whenever it covers the question — so for many turns
+# this, not the SQL path, is what fills the table and the chart the user sees.
+# It therefore has to close the same confidentiality boundary.
+
+
+def test_a_carrier_cut_names_no_individual_carrier(engine):
+    """A market-wide cut used to hand the UI a list of real carrier names."""
+    plan = json.dumps({"metric": "premium", "filters": {"Country": "Canada"},
+                       "timeframe": "2024"})
+    update = run_analytics_tools(
+        state(question="Premium by carrier in Canada in 2024.", gpr_reasoning=plan),
+        flow="gpr",
+        runner=runner_with(
+            [{"name": "compute_breakdown", "args": {"group_by": ["Carrier_Group"]}}]
+        ),
+        engine=engine,
+    )
+    shown = [row["Carrier_Group"] for row in update["gpr_query_result"]]
+    assert not ({"ZURICH GROUP", "AIG", "CHUBB"} & set(shown))
+    assert all(name.startswith("Peer ") for name in shown)
+
+
+def test_redaction_does_not_disturb_the_figures(engine):
+    """Anonymised, not aggregated — the premium column is untouched."""
+    plan = json.dumps({"metric": "premium", "filters": {"Country": "Canada"},
+                       "timeframe": "2024"})
+    kwargs = dict(
+        flow="gpr",
+        runner=runner_with(
+            [{"name": "compute_breakdown", "args": {"group_by": ["Carrier_Group"]}}]
+        ),
+        engine=engine,
+    )
+    update = run_analytics_tools(
+        state(question="Premium by carrier in Canada in 2024.", gpr_reasoning=plan),
+        **kwargs,
+    )
+    # Canada 2024: Zurich 150+50, AIG 200+80, Chubb 400.
+    assert sorted(r["Premium"] for r in update["gpr_query_result"]) == [200.0, 280.0, 400.0]
+
+
+def test_a_non_carrier_cut_is_untouched(engine):
+    """Redaction must not reach into an ordinary breakdown."""
+    update = run_analytics_tools(
+        state(),
+        flow="gpr",
+        runner=runner_with(
+            [{"name": "compute_breakdown", "args": {"group_by": ["Product_Line"]}}]
+        ),
+        engine=engine,
+    )
+    assert update["gpr_query_result"] == [
+        {"Product_Line": "Property", "Premium": 150.0},
+        {"Product_Line": "Cyber", "Premium": 50.0},
+    ]

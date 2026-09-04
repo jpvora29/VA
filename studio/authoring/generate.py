@@ -18,10 +18,12 @@ from typing import Any, Dict, Optional
 from studio.compute import FILTER_COLUMN, compute_overall
 from studio.data import cached_filter_options
 from studio.deck import build_deck
+from studio.memo import build_memo
 from studio.deck.model import DeckSpec
 from studio.page import document as D
 from studio.template_fill import new_template_doc
 from studio.template_fill.preview_assets import (
+    eager_slide_limit,
     ensure_doc_backgrounds,
     ensure_rendered_slide_backgrounds,
     prune_cache,
@@ -30,6 +32,7 @@ from studio.template_fill.preview_assets import (
 from logger import get_logger
 from studio.authoring.config import BLANK, BREAKDOWNS, engine
 from studio.authoring.progress import Reporter, silent
+from studio.content.report_plan import DEFAULT_AUDIENCE
 
 log = get_logger(__name__)
 
@@ -146,7 +149,7 @@ def _deck_for(selection_json: str) -> Optional[DeckSpec]:
         report=sel.get("report") or "qbr",
         cuts=tuple(sel.get("cuts") or ()),
         ai=bool(sel.get("ai")),
-        audience=sel.get("audience") or "executive",
+        audience=sel.get("audience") or DEFAULT_AUDIENCE,
         meeting_length=sel.get("meeting_length") or "standard",
     )
 
@@ -257,7 +260,14 @@ def _assembled_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
     template = analyze(path)
     n = len(template.slides)
     try:
-        background_urls = ensure_rendered_slide_backgrounds(path, n)
+        # Only the opening slides. The canvas shows ONE page at a time, so
+        # rendering all of them here made the author wait on ~0.5s of PowerPoint
+        # per slide for pages they had not asked to see — minutes on a full QBR.
+        # The rest render as they navigate (`template_preview_body`), and an
+        # unrendered page falls back to its geometry rather than to nothing.
+        background_urls = ensure_rendered_slide_backgrounds(
+            path, n, only=range(eager_slide_limit()) if eager_slide_limit() >= 0 else None
+        )
     except Exception as exc:  # noqa: BLE001
         log.warning("assembled preview render failed: %s", exc)
         background_urls = [None] * n
@@ -321,19 +331,28 @@ def build_documents(selection: Optional[Dict[str, Any]],
     ``report`` is how a caller follows a build that takes minutes — see
     :mod:`studio.authoring.jobs`; scripts and tests pass nothing and get silence.
     """
-    report("data", "Loading the book for this selection…")
     key = json.dumps(selection or {}, sort_keys=True)
-    _result_for(key)
 
-    report("deck", "Laying out the deck…")
-    deck = _generated_deck(selection)
-    doc = D.new_document(deck) if deck else None
+    # ONE memo for the whole build. The on-screen deck and the assembled deck ask the
+    # warehouse the same questions about the same scopes; measured, 217 of 305
+    # primitive calls in a single-country build were exact repeats. `assemble_deck`
+    # opens its own memo and `build_memo` is re-entrant, so that inner one shares this
+    # cache rather than starting a second. It is discarded when the build returns.
+    with build_memo(f"generate:{(selection or {}).get('filters', {}).get('carrier') or 'deck'}"):
+        report("data", "Loading the book for this selection…")
+        _result_for(key)
 
-    # The ASSEMBLED deck (overall + per product + per country) is the deliverable and
-    # what the canvas previews; the single filled template is the fallback for a template
-    # set that cannot assemble. Both phases are announced here rather than inside, because
-    # assembling is where a build spends its minutes and the author should see that.
-    report("assemble", "Writing the commentary and filling the templates…")
-    tdoc = _generated_assembled_tdoc(selection) or _generated_tdoc(selection)
+        report("deck", "Laying out the deck…")
+        deck = _generated_deck(selection)
+        doc = D.new_document(deck) if deck else None
+
+        # The ASSEMBLED deck (overall + per product + per country) is the deliverable
+        # and what the canvas previews; the single filled template is the fallback for a
+        # template set that cannot assemble. Both phases are announced here rather than
+        # inside, because assembling is where a build spends its minutes and the author
+        # should see that.
+        report("assemble", "Writing the commentary and filling the templates…")
+        tdoc = _generated_assembled_tdoc(selection) or _generated_tdoc(selection)
+
     report("render", "Rendering the slides…")
     return DeckDocuments(doc=doc, tdoc=tdoc)

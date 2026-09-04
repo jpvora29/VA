@@ -196,16 +196,21 @@ def _setup_options() -> html.Div:
     return html.Div(
         [
             _template_control(),
+            # The two audiences this deck is actually written for. "Executive /
+            # Deal team / Board" described a corporate-finance reader who does not
+            # exist here: a QBR is taken by a Marsh regional team to a carrier's
+            # own team. Both values are from `report_plan.AUDIENCES`, so the
+            # selection policy already understands them.
             _radio_field(
                 "Who is this deck for?", "studio-audience", [
-                    {"label": "Executive", "value": "executive"},
-                    {"label": "Deal team", "value": "deal_team"},
-                    {"label": "Board", "value": "board"},
-                ], "executive",
+                    {"label": "Regional", "value": "marsh_regional"},
+                    {"label": "Carrier team", "value": "carrier_leadership"},
+                ], "carrier_leadership",
                 tip_id="qs-tip-audience",
-                tip="The reader the commentary is pitched at. Executive keeps to the "
-                    "headline movements, Deal team goes down to product and client "
-                    "detail, Board stays at portfolio level.",
+                tip="The reader the commentary is pitched at. Carrier team is the "
+                    "client-facing read — the carrier's own underwriting and "
+                    "distribution leads. Regional is the internal Marsh view, which "
+                    "may weigh placement and pipeline the carrier would not see.",
             ),
             # Commentary voice — words, not meeting minutes. Passed to the deck when the
             # qualitative prose is written (studio.template_fill.commentary).
@@ -436,7 +441,10 @@ def _data_source_control(dataset_state: Optional[Mapping[str, Any]]) -> html.Div
 DATA_BASIS_DEFAULT = DATA_BASIS_PREMIUM
 DATA_BASIS_OPTIONS = (
     {"label": "GPR", "value": DATA_BASIS_PREMIUM},
-    {"label": "GPR + Carrier Survey", "value": DATA_BASIS_WITH_SURVEY},
+    # "GPR + Carrier Survey" clipped to "GPR + Carrier Surv" in an equal-width
+    # segmented control — the tooltip on the question already names the survey in
+    # full, so the chip does not have to.
+    {"label": "GPR + Survey", "value": DATA_BASIS_WITH_SURVEY},
 )
 
 
@@ -583,11 +591,14 @@ def _scope_preview() -> html.Div:
 # Assembly-scope choices (Setup "Scope" dropdown). Value = the axis set to assemble;
 # "all" is the full deck (overall + product + country). Only axes with a registered
 # template are offered.
+# Short enough to sit in a segmented control beside the other two questions. The
+# long form ("All — overall + product + country") was written for a dropdown, where
+# there is room for a subtitle; as a chip it wrapped and broke the row.
 _SCOPE_LABELS = {
-    "all": "All — overall + product + country",
+    "all": "All",
     "overall": "Overall only",
-    "product": "Product pages",
-    "country": "Country pages",
+    "product": "Product only",
+    "country": "Country only",
 }
 
 
@@ -620,12 +631,14 @@ def _template_control() -> html.Div:
                     "block, one block per product line and one per country; the single "
                     "choices build just that block.",
             ),
-            dcc.Dropdown(
-                id="studio-template",
-                options=options,
-                value="all",
-                clearable=False,
-                className="studio-dd",
+            # A radio, not a dropdown: this is one of the three questions that
+            # decide the shape of the deck, and the other two are segmented
+            # controls. Three answers behind a closed menu read as a different
+            # KIND of question than the three sitting in front of you.
+            dcc.RadioItems(
+                id="studio-template", options=options, value="all",
+                className="studio-report-radio", inputClassName="studio-report-input",
+                labelClassName="studio-report-label",
             ),
         ],
         className="studio-field",

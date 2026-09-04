@@ -481,11 +481,20 @@ def _kpi_cell(kind: str, f: Dict[str, Any]) -> str:
 # one per line, and the fill engine renders each line as its own bulleted paragraph.
 #
 # How many of those points survive depends on the surface. A quadrant panel is a whole
-# column of the slide and can carry the argument — the movement, what drove it, how it
-# reads against the peer benchmark, and what it is worth. A feedback-table cell is one row
-# of a table alongside five KPI callouts, so it keeps the headlines only.
-_PANEL_BULLETS = 4
-_CELL_BULLETS = 3
+# column of the slide and can carry the argument — the movement, what drove it, and what
+# it is worth. A feedback-table cell is one row of a table alongside five KPI callouts, so
+# it keeps the headlines only.
+#
+# Three, not four. A fourth point does not add a fourth idea — the composers rank their
+# claims, so the fourth is the weakest one they had, and a column padded to length is
+# exactly what makes a page read as generated. With `min_lines` allowing one merge or
+# drop, a column ships two or three points: as many as it has something to say.
+_PANEL_BULLETS = 3
+# Two, not three. A panel must carry MORE of the argument than a table cell does —
+# it is a whole column of the slide, the cell is one row beside five KPI callouts —
+# and making both three collapsed that distinction, which is a real loss of shape
+# even though it read as "fewer points everywhere".
+_CELL_BULLETS = 2
 # "Key Highlights" is a ONE-ROW table across the top of a page, not a column: its heading
 # plus two points is what fits before the text overflows the cell's own border.
 _HIGHLIGHT_BULLETS = 3
@@ -624,12 +633,11 @@ def _working_points(f: Dict[str, Any]) -> List[str]:
                      f"{_rank_of(r)}, and that came at competitors' expense rather than "
                      f"from a growing pool.")
     if (s.get("delta") or 0) > 0:
-        line = f"Share of wallet rose {U.points(s['delta'])} to {s['current']:.1f}%"
+        line = f"Share of wallet rose {U.shift(s['current'], s['delta'])}"
         peer_sow = (f.get("peer") or {}).get("sow")
         if peer_sow is not None:
             side = "above" if s["current"] >= peer_sow else "below"
-            line += (f", which leaves the book {U.points(s['current'] - peer_sow)} {side} "
-                     f"the top-5 peer average of {peer_sow:.1f}%")
+            line += (f", {side} the top-5 peer average of {peer_sow:.1f}%")
         parts.append(line + ".")
     # Where the book places above its own standard. A scope-level growth figure says the
     # book grew; this says which part of it the rest could be measured against.
@@ -662,7 +670,7 @@ def _challenges_points(f: Dict[str, Any]) -> List[str]:
         parts.append(f"Rank within the Marsh book slipped {_places(int(r['delta']))} to "
                      f"{_rank_of(r)}.")
     if (s.get("delta") or 0) < 0:
-        parts.append(f"Share of wallet fell {U.points(s['delta'])} to {s['current']:.1f}%.")
+        parts.append(f"Share of wallet fell {U.shift(s['current'], s['delta'])}.")
     if (c.get("pct") is not None) and (m.get("pct") is not None) and m["pct"] > c["pct"] \
             and (c.get("pct") or 0) >= 0:
         parts.append(f"Growth of {_mag(c['pct'])} trails a wider Marsh book that "

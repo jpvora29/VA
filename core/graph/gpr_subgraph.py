@@ -24,7 +24,9 @@ from core.agents.common import (
     record_recovered_sql_fix,
     run_analytics_tools,
 )
+from core.agents.common.contract import resolved_filters_of
 from core.agents.common.directives import charts_suppressed
+from core.agents.common.peer_privacy import redactor_for
 from core.agents.common.peers import custom_peer_directive
 from core.mcp.tools import execute_sql
 from core.agents.gpr.chart import GPRChartNode
@@ -321,7 +323,19 @@ class GPRSubGraph:
         record_recovered_sql_fix(state, route="premium", working_sql=sql_query)
 
         logger.debug("GPR query fetched %d row(s)", result.row_count)
-        return {"gpr_query_result": result.rows, "gpr_sql_error": False}
+        # Peer confidentiality at the same boundary the analyst uses: these rows
+        # ARE the insight node's input, the chart's input and the table the user
+        # sees, so an individual peer is anonymised once, here, rather than asked
+        # not to appear three times downstream.
+        redactor = redactor_for(
+            "gpr",
+            resolved_filters_of(state.get("routing_context")),
+            state.get("custom_peers"),
+        )
+        return {
+            "gpr_query_result": redactor.rows(result.rows),
+            "gpr_sql_error": False,
+        }
 
     def gpr_sql_join_rewriter(state: AgentState) -> AgentState:
         sql_query = state["gpr_sql_query"].strip()

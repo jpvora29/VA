@@ -19,7 +19,10 @@
 }
 
 .mom-page {
-    max-width: 760px;
+    /* A reading column on purpose — MoM is a short form, not a dense tool like
+       Studio — but 760px put the two upload cards shoulder to shoulder with no
+       room to breathe on a wide screen. */
+    max-width: 880px;
     margin: 0 auto;
     padding: 40px 28px 72px;
     font-family: var(--va-font);
@@ -369,7 +372,7 @@
     background: var(--va-blue-soft);
 }
 
-.va-mom-rail .va-rail-step.is-running .va-rail-step-num {
+.va-mom-rail .va-rail-step.is-running .va-rail-step-tile {
     color: var(--va-surface-0);
     background: var(--va-blue);
     box-shadow: none;
@@ -379,7 +382,7 @@
     color: var(--va-ink-600);
 }
 
-.va-mom-rail .va-rail-step.is-done .va-rail-step-num {
+.va-mom-rail .va-rail-step.is-done .va-rail-step-tile {
     color: var(--va-good);
     box-shadow: inset 0 0 0 1px var(--va-good);
 }
