@@ -50,6 +50,62 @@ _CARRIER_COL = "Carrier_Group"
 _YEAR_COL = "Year"
 _INDUSTRY_COL = "SIC_Major_Class"
 
+# ── the quarter ──────────────────────────────────────────────────────────────
+#
+# A QBR reports on a quarter, so Setup asks for one. The GPR book has no quarter column —
+# it records the month a premium was billed in — so a quarter is a set of three months, and
+# that is how the filter is expressed: ``Month_Name IN ('January','February','March')``.
+#
+# Deliberately NOT a member of ``FILTER_COLUMN``. That table is also what defines the filter
+# cube (:func:`studio.data.cube_columns`), and adding the month column to the cube would
+# multiply its distinct combinations by twelve to answer a cascade nobody asked for — a
+# quarter should not remove carriers or products from the other lists. So the quarter filters
+# the DATA and stays out of the cascade, and this is the one place that knows how.
+QUARTER_COLUMN = "Month_Name"
+
+QUARTER_MONTHS: Dict[str, Tuple[str, ...]] = {
+    "Q1": ("January", "February", "March"),
+    "Q2": ("April", "May", "June"),
+    "Q3": ("July", "August", "September"),
+    "Q4": ("October", "November", "December"),
+}
+
+QUARTERS: Tuple[str, ...] = tuple(QUARTER_MONTHS)
+
+
+def quarter_options() -> List[Dict[str, str]]:
+    """The Setup dropdown's choices — the calendar's four quarters.
+
+    A fixed vocabulary rather than a distinct scan: the four quarters exist whether or not
+    a given scope has premium in each, and a quarter missing from the list would read as
+    "this carrier has no Q3" when it means "this filter combination has none".
+    """
+    return [{"label": q, "value": q} for q in QUARTERS]
+
+
+def form_options(by_column: Mapping[str, Any]) -> Dict[str, Any]:
+    """``{form filter id: options}`` from ``{column: options}`` — the quarter included.
+
+    Every caller that offers the Setup filters has to answer for the quarter, because it is
+    the one filter with no column behind it. Naming the mapping here means a caller cannot
+    forget it: the standalone demo rail did, and shipped a Quarter dropdown with nothing in
+    it. Columns the source does not have come back empty rather than missing, which is what
+    a freshly rendered form wants.
+    """
+    return {**{fid: by_column.get(col, []) for fid, col in FILTER_COLUMN.items()},
+            "quarter": quarter_options()}
+
+
+def quarter_months(values: Any) -> Tuple[str, ...]:
+    """The month names ``values`` ("Q1", ["Q1","Q2"]) covers, in calendar order.
+
+    Unknown entries are skipped rather than raised on — a stale selection from an older
+    form must narrow to what it can, not fail a build.
+    """
+    wanted = values if isinstance(values, (list, tuple, set)) else (values,)
+    chosen = [str(v).strip().upper() for v in wanted if v not in _BLANK_VALS]
+    return tuple(month for q in QUARTERS if q in chosen for month in QUARTER_MONTHS[q])
+
 # The Setup form's DATA BASIS choice — which books a run draws on. It rides on the result
 # (``OverallResult.data_basis``) so any page can ask, and it lives here rather than in the
 # template layer because the result is what carries it from Setup to every consumer.
@@ -131,9 +187,20 @@ def _resolve_filters(filters: Mapping[str, Any]) -> Dict[str, Any]:
 
     Multi-select values (lists from the form) are kept as tuples so they stay
     hashable for ``PrimitiveArgs.cache_key`` and flow through ``where_clause`` as
-    an ``IN (...)`` constraint."""
+    an ``IN (...)`` constraint.
+
+    One filter is DERIVED rather than mapped: ``quarter`` becomes the month names it
+    covers (see :data:`QUARTER_MONTHS`), because the book records a billing month and not
+    a quarter. Doing it here means every caller — the deck, the scope preview, the peer
+    scoping — narrows to the quarter without any of them knowing that."""
     out: Dict[str, Any] = {}
     for key, val in (filters or {}).items():
+        if key == "quarter":
+            # The one derived filter: a quarter is three of the book's month names.
+            months = quarter_months(val)
+            if months:
+                out[QUARTER_COLUMN] = months
+            continue
         col = FILTER_COLUMN.get(key, key)
         if isinstance(val, (list, tuple, set)):
             vals = [v for v in val if v not in _BLANK_VALS]

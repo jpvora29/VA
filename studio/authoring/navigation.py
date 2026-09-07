@@ -25,8 +25,14 @@ def register_navigation(app):
         Input("qs-tdoc", "data"),
         Input("qs-dataset", "data"),
         State("qs-selection", "data"),
+        # STATE, not Input: ticking a page in "What's in your QBR" must repaint that
+        # panel (``studio.authoring.setup.deck_slides``), never rebuild the whole shell
+        # underneath the author's cursor.
+        State("qs-slides", "data"),
     )
-    def render(view, doc, tdoc, dataset, selection):
+    def render(view, doc, tdoc, dataset, selection, slides):
+        from studio.template_fill.deck_slides import DeckSlides
+
         deck = _deck(doc)
         tdoc = usable_tdoc(tdoc)   # a persisted doc whose temp .pptx is gone must not crash the app
         opts = _friendly_options(dataset)
@@ -41,6 +47,7 @@ def register_navigation(app):
             filter_values=fvals,
             tdoc=tdoc,
             dataset=dataset,
+            slides=DeckSlides.from_store(slides),
         )
 
     # ── mode switching ─────────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ from studio import opportunity as O
 from studio.posture import (
     LEAD_RANK, MATERIAL_SHARE_MOVE, SCALE_GROWTH_MARGIN, Posture, PostureInput, posture_for,
 )
+from studio.template_fill.deck_slides import DeckSlides
 
 
 @pytest.fixture(autouse=True)
@@ -160,7 +161,8 @@ def test_the_deck_states_a_portfolio_call_and_a_book_call(tmp_path):
 
     result = compute_overall(
         filters={"Carrier_Group": "Zurich", "Country": "Singapore", "Year": 2025})
-    out = A.assemble_deck(result, out_path=str(tmp_path / "deck.pptx"), scope="overall")
+    out = A.assemble_deck(result, out_path=str(tmp_path / "deck.pptx"),
+                        slides=DeckSlides.only("overall"))
     text = "\n".join(sh.text_frame.text for s in Presentation(out).slides
                      for sh in s.shapes if sh.has_text_frame)
 
@@ -199,7 +201,7 @@ def test_the_deck_never_calls_placed_premium_an_addressable_market(tmp_path):
 
     result = compute_overall(
         filters={"Carrier_Group": "Zurich", "Country": "Singapore", "Year": 2025})
-    out = A.assemble_deck(result, out_path=str(tmp_path / "deck.pptx"), scope="all")
+    out = A.assemble_deck(result, out_path=str(tmp_path / "deck.pptx"))
     text = " ".join(sh.text_frame.text for s in Presentation(out).slides
                     for sh in s.shapes if sh.has_text_frame).lower()
 

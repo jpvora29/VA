@@ -21,6 +21,7 @@ from studio.ai.models import CommentaryBullet, CommentarySection, CommentarySect
 from studio.template_fill import commentary_batch as B
 from studio.template_fill import rewrites
 from studio.template_fill.rewrites import PendingRewrite
+from studio.template_fill.deck_slides import DeckSlides
 
 
 # ── fixtures: one book, enough of it to build a real evidence pack ───────────
@@ -276,7 +277,9 @@ def test_changed_evidence_invalidates_the_cached_section(stub_model):
 def test_a_new_prompt_version_invalidates_the_cache(stub_model, monkeypatch):
     facts = _facts()
     rewrites.write_all([_value_set(facts, topics=("working",))])
-    monkeypatch.setattr(B, "PROMPT_VERSION", "section-v2")
+    # Any version other than the shipped one. Naming the NEXT version here made the test
+    # fail the day that version shipped, which is the one day it had nothing to say.
+    monkeypatch.setattr(B, "PROMPT_VERSION", B.PROMPT_VERSION + "-changed")
     rewrites.write_all([_value_set(facts, topics=("working",))])
     assert len([c for c in stub_model if c["phase"] == "author"]) == 2
 
@@ -449,9 +452,10 @@ def test_a_real_deck_is_written_section_by_section_and_every_field_is_ai_authore
     monkeypatch.setenv("STUDIO_MAX_WORKERS", "1")        # deterministic ordering in the log
 
     result = compute_overall(filters={"carrier": "Zurich", "country": ["Singapore"]})
-    shape = deck_shape(result, scope="country")
+    shape = deck_shape(result, slides=DeckSlides.only("overall", "country"))
     out = assemble_deck(result, out_path=str(tmp_path / "deck.pptx"),
-                        work_dir=str(tmp_path / "work"), scope="country")
+                        work_dir=str(tmp_path / "work"),
+                        slides=DeckSlides.only("overall", "country"))
 
     assert Presentation(out).slides                       # a deck came out
     authored = [c for c in stub_model if c["phase"] == "author"]
@@ -477,7 +481,8 @@ def test_a_real_deck_refuses_to_ship_when_the_model_is_gone(tmp_path, monkeypatc
     result = compute_overall(filters={"carrier": "Zurich", "country": ["Singapore"]})
     with pytest.raises(mode.CommentaryUnavailable):
         assemble_deck(result, out_path=str(tmp_path / "deck.pptx"),
-                      work_dir=str(tmp_path / "work"), scope="overall")
+                      work_dir=str(tmp_path / "work"),
+                      slides=DeckSlides.only("overall"))
 
 
 def test_a_risk_flag_reaches_the_audit_line_rather_than_being_asked_for_and_binned(

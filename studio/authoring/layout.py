@@ -64,6 +64,11 @@ def studio_stores() -> list:
         dcc.Store(id="qs-doc", data=None, storage_type="local"),
         # The filled-template document — the actual deliverable in template mode.
         dcc.Store(id="qs-tdoc", data=None, storage_type="local"),
+        # Which template pages the deck carries — "What's in your QBR", as
+        # ``{axis: [excluded slide index…]}``. Local storage, like the selection it
+        # belongs with: an author who left three pages out means it for the next deck
+        # too, and losing that to a refresh means silently building pages they removed.
+        dcc.Store(id="qs-slides", data=None, storage_type="local"),
         # The active uploaded dataset — ONLY {"active": id, "rev": n}; the data
         # itself lives server-side in the dataset repository, so it survives
         # restarts without the stale-temp-file failure mode.

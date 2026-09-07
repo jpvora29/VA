@@ -19,7 +19,7 @@ and their curated maps.
 from __future__ import annotations
 
 import tempfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -35,6 +35,7 @@ from studio.template_fill.survey import kpi as survey_kpi
 from studio.template_fill.survey import page as survey_page
 from studio.template_fill.analyze import analyze
 from studio.template_fill.binding_map import BindingMap, available, get_binding_map
+from studio.template_fill.deck_slides import DeckSlides
 from studio.template_fill.bindings import (
     carrier_countries,
     carrier_vocab,
@@ -63,26 +64,20 @@ PRODUCT = "product"
 COUNTRY = "country"
 END = "end"
 
-# The Carrier Survey page. NOT a member of _SCOPE_AXES: it is not a scope choice but a
-# DATA BASIS one — the Setup form's "Premium + survey" — so it is gated separately, and
-# rides along with whichever country blocks the chosen scope already builds. The same
+# The Carrier Survey page. NOT a member of _ALL_AXES: whether it is built at all is a DATA
+# BASIS question — the Setup form's "Premium + survey" — so it is gated separately, and
+# rides along with whichever country blocks the deck already builds. The same
 # choice also decides whether the summary page keeps its overall survey-score tile
 # (:mod:`studio.template_fill.survey.kpi`); both read it off the result.
 SURVEY = "survey"
 
-# Which sub-deck axes each Setup "scope" choice assembles, in deck order. "all" is the full
-# deck; the single-axis choices let the author generate just the overall, product or country
-# pages. Every choice still gets the closing back cover.
-_SCOPE_AXES: Dict[str, Tuple[str, ...]] = {
-    "all": (OVERALL, PRODUCT, COUNTRY, END),
-    OVERALL: (OVERALL, END),
-    PRODUCT: (OVERALL, PRODUCT, END),
-    COUNTRY: (OVERALL, COUNTRY, END),
-}
-
-
-def _axes_for(scope: Optional[str]) -> Tuple[str, ...]:
-    return _SCOPE_AXES.get((scope or "all"), _SCOPE_AXES["all"])
+# The sub-deck axes a full deck assembles, in deck order.
+#
+# There is no longer a Setup "scope" choice mapping to a subset of these. The author ticks
+# the pages they want in "What's in your QBR", and an axis with no ticked pages is not built
+# — which is the same decision, made a page at a time instead of four at a time. See
+# :mod:`studio.template_fill.deck_slides`, which is where that answer lives.
+_ALL_AXES: Tuple[str, ...] = (OVERALL, PRODUCT, COUNTRY, END)
 
 
 def _buildable() -> set:
@@ -121,6 +116,14 @@ class DeckShape:
     products: Tuple[str, ...] = ()
     countries: Tuple[str, ...] = ()
     with_survey: bool = False
+    #: Which slides of each axis the author kept. Carried here because the two questions
+    #: Setup asks of a shape — how many PAGES and how many COMMENTARY FIELDS — are both
+    #: answered per slide now that pages can be unticked one at a time.
+    slides: DeckSlides = field(default_factory=DeckSlides.everything)
+
+    def pages(self) -> int:
+        """Template pages this deck fills, before per-entity repetition."""
+        return sum(len(self.slides.kept(axis)) for axis in self.blocks())
 
     def blocks(self) -> Dict[str, int]:
         """``{axis: how many sub-decks of it}`` — the overall block is built once."""
@@ -144,34 +147,41 @@ class DeckShape:
         # market in scope — which is what decides how many feedback-table rows are filled.
         per_block = {axis: (1 if axis == COUNTRY else max(1, len(self.countries)))
                      for axis in self.blocks()}
-        return sum(deck_fields({axis: n}, countries=per_block[axis])
+        # Only the pages that are still in the deck are written: unticking the SWOT page is
+        # a page the author does not wait for, and the estimate has to say so or Setup
+        # promises a wait the build no longer takes.
+        return sum(deck_fields({axis: n}, countries=per_block[axis],
+                               hidden={axis: self.slides.hidden(axis)})
                    for axis, n in self.blocks().items())
 
 
-def deck_shape(result, *, scope: Optional[str] = None,
+def deck_shape(result, *, slides: Optional[DeckSlides] = None,
                data_basis: Optional[str] = None) -> DeckShape:
     """The shape a selection assembles to — the axes in scope and the entities each covers.
 
-    The entity rule is the one the deck has always used: the user's selection when they pin
-    any, ELSE every product/country the carrier writes in, so an unfiltered run produces the
-    carrier's full book one block at a time.
+    ``slides`` is the author's include/exclude answer from Setup; an axis with every page
+    unticked is not built at all. The entity rule is the one the deck has always used: the
+    user's selection when they pin any, ELSE every product/country the carrier writes in, so
+    an unfiltered run produces the carrier's full book one block at a time.
     """
-    axes = _axes_for(scope)
+    slides = slides or DeckSlides.everything()
     names = _buildable()
     basis = str(data_basis or DATA_BASIS_PREMIUM)
 
     def wants(axis: str) -> bool:
-        return axis in axes and axis in names
+        return axis in names and slides.wants(axis)
 
     products = ((selected_products(result) or product_vocab(result))
                 if wants(PRODUCT) else ())
     countries = ((selected_countries(result) or carrier_countries(result))
                  if wants(COUNTRY) else ())
     return DeckShape(
-        axes=tuple(axis for axis in axes if axis in names),
+        axes=tuple(axis for axis in _ALL_AXES if wants(axis)),
         products=tuple(str(p) for p in products),
         countries=tuple(str(c) for c in countries),
-        with_survey=(basis == DATA_BASIS_WITH_SURVEY and SURVEY in names and wants(COUNTRY)),
+        with_survey=(basis == DATA_BASIS_WITH_SURVEY and SURVEY in names
+                     and slides.wants(SURVEY) and wants(COUNTRY)),
+        slides=slides,
     )
 
 
@@ -295,21 +305,46 @@ def _report_quality(sub: SubDeck) -> None:
         logger.warning("assemble: quality report failed for %s: %s", sub.label, exc)
 
 
+def _without_slides(template, dropped: Sequence[int]):
+    """``template`` with ``dropped`` taken out — same slides, same indices, fewer of them.
+
+    Each :class:`~studio.template_fill.analyze.Slide` carries its own index, so a filtered
+    template addresses exactly the slides the original does; nothing downstream has to be
+    told that it is looking at a subset.
+    """
+    if not dropped:
+        return template
+    keep = [s for s in template.slides if s.index not in set(dropped)]
+    return replace(template, slides=keep)
+
+
 def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], label: str,
-                   *, providers=_PREMIUM_PROVIDERS) -> SubDeck:
-    """Plan a sub-deck: enrich its values and prune its surplus pages.
+                   *, providers=_PREMIUM_PROVIDERS, dropped: Tuple[int, ...] = ()) -> SubDeck:
+    """Plan a sub-deck: enrich its values, and drop the pages it will not ship.
+
+    Two kinds of page come off, and they are merged here because the fill engine takes one
+    list: the surplus country pages a selection does not reach (``prune``) and the ones the
+    AUTHOR unticked in "What's in your QBR" (``dropped``). Neither knows about the other,
+    and a page named by either is a page the deck does not carry.
 
     The template is analysed once here. Any failure is swallowed — no enrichment
     may break assembly (a full deck beats a broken one). The prose columns come back
     as :class:`~studio.template_fill.rewrites.PendingRewrite`, already carrying their
     deterministic draft; :func:`_write_prose` turns the whole deck's into text at once.
     """
-    hidden: Tuple[int, ...] = ()
+    hidden: Tuple[int, ...] = tuple(dropped)
     try:
         template = analyze(get_binding_map(template_name).path)
-        values = _enrich_values(template_name, template, scoped_result, values, providers)
+        # The providers see only the pages that will SHIP. A provider reads the template to
+        # find the boxes it fills, so hiding a page from it is what stops the deck composing
+        # — and paying a model to write — commentary for a slide nobody asked for. The fill
+        # engine still gets the whole template plus ``hidden``, so every slide index the
+        # bindings carry still means the same slide.
+        values = _enrich_values(template_name, _without_slides(template, hidden),
+                                scoped_result, values, providers)
         values = _stamp_template_year(template, values)
-        hidden = tuple(prune.hidden_country_pages(template, _country_count(values)))
+        hidden = tuple(sorted(set(hidden) |
+                              set(prune.hidden_country_pages(template, _country_count(values)))))
     except Exception as exc:  # noqa: BLE001 — grid/pruning must never break assembly
         logger.warning("assemble: grid/prune failed for %s: %s", template_name, exc)
     return SubDeck(template_name, values, label=label, hidden=hidden,
@@ -344,19 +379,20 @@ class SubDeckPlanBuilder:
 
         overall → one per product → one per country (+ its survey page) → back cover
 
-    An axis the Setup scope excludes, or whose template is not registered and on
+    An axis the author unticked in full, or whose template is not registered and on
     disk, simply adds nothing: the deck comes out shorter rather than failing.
     """
 
-    def __init__(self, result, *, scope: Optional[str] = None,
+    def __init__(self, result, *, slides: Optional[DeckSlides] = None,
                  data_basis: Optional[str] = None) -> None:
-        self._axes = _axes_for(scope)
+        self._slides = slides or DeckSlides.everything()
         self._names = _buildable()
         basis = str(data_basis or DATA_BASIS_PREMIUM)
 
         # Which axes, over which entities — read from :func:`deck_shape`, the one place
         # that answers it, so what Setup previewed is what this builds.
-        shape = deck_shape(result, scope=scope, data_basis=data_basis)
+        shape = deck_shape(result, slides=self._slides, data_basis=data_basis)
+        self._axes = shape.axes
         self._vocab = product_vocab(result) if PRODUCT in self._names else ()
         self._products = shape.products
         self._countries = shape.countries
@@ -421,7 +457,8 @@ class SubDeckPlanBuilder:
     def add_end(self) -> "SubDeckPlanBuilder":
         """The closing back cover — nothing to fill, so no provider runs over it."""
         if self._wants(END):
-            self._decks.append(SubDeck(END, {}, label="end"))
+            self._decks.append(SubDeck(END, {}, label="end",
+                                       hidden=self._slides.hidden(END)))
         return self
 
     def build(self) -> List[SubDeck]:
@@ -438,7 +475,7 @@ class SubDeckPlanBuilder:
     # ── internals ──
 
     def _wants(self, axis: str) -> bool:
-        """In the chosen scope AND registered with its ``.pptx`` on disk."""
+        """Ticked in Setup AND registered with its ``.pptx`` on disk."""
         return axis in self._axes and axis in self._names
 
     def _with_context(self, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -448,16 +485,17 @@ class SubDeckPlanBuilder:
     def _add(self, template: str, scoped_result, values: Dict[str, Any], label: str,
              *, providers=None) -> None:
         self._decks.append(_build_subdeck(template, scoped_result, values, label,
-                                          providers=providers or self._providers))
+                                          providers=providers or self._providers,
+                                          dropped=self._slides.hidden(template)))
 
 
-def plan_subdecks(result, *, scope: Optional[str] = None,
+def plan_subdecks(result, *, slides: Optional[DeckSlides] = None,
                   data_basis: Optional[str] = None) -> List[SubDeck]:
     """The ordered sub-decks for ``result``: overall, then per product, then per country.
 
-    ``scope`` (from the Setup "scope" control) selects which axes to build — the full deck
-    ("all"), or just the overall / product / country pages. ``data_basis`` (the Setup form's
-    DATA BASIS control) decides whether the run draws on the survey book at all: only
+    ``slides`` (from Setup's "What's in your QBR" checkboxes) says which template pages the
+    deck carries — an axis with none of them ticked is not built at all. ``data_basis`` (the
+    Setup form's DATA BASIS control) decides whether the run draws on the survey book: only
     ``"premium_survey"`` follows each country block with its Carrier Survey page, and keeps
     the summary page's overall survey-score tile.
 
@@ -467,7 +505,7 @@ def plan_subdecks(result, *, scope: Optional[str] = None,
         plan the sub-decks  ->  write every column at once  ->  score what they ship
     """
     planned = (
-        SubDeckPlanBuilder(result, scope=scope, data_basis=data_basis)
+        SubDeckPlanBuilder(result, slides=slides, data_basis=data_basis)
         .add_overall()
         .add_products()
         .add_countries()
@@ -536,12 +574,13 @@ def _fill_subdecks(decks: Sequence[SubDeck], work_dir: str) -> List[str]:
 
 
 def assemble_deck(result, *, out_path: Optional[str] = None, work_dir: Optional[str] = None,
-                  scope: Optional[str] = None, data_basis: Optional[str] = None) -> str:
+                  slides: Optional[DeckSlides] = None,
+                  data_basis: Optional[str] = None) -> str:
     """Fill every sub-deck for ``result`` and merge them, in order, into ``out_path``.
 
         plan the sub-decks  ->  fill each one  ->  merge them into one file
 
-    ``scope`` picks which axes to assemble (see :func:`plan_subdecks`); ``work_dir`` holds
+    ``slides`` is the author's page selection (see :func:`plan_subdecks`); ``work_dir`` holds
     the intermediate filled sub-decks (a temp dir by default).
     """
     # One memo for the whole assembly. Every sub-deck asks the warehouse the same
@@ -552,7 +591,7 @@ def assemble_deck(result, *, out_path: Optional[str] = None, work_dir: Optional[
     label = f"assemble:{result.subject or 'deck'}"
     with telemetry.job(label), build_memo(label):
         with telemetry.phase("plan"):
-            decks = plan_subdecks(result, scope=scope, data_basis=data_basis)
+            decks = plan_subdecks(result, slides=slides, data_basis=data_basis)
         with telemetry.phase("fill"):
             filled = _fill_subdecks(decks,
                                     work_dir or tempfile.mkdtemp(prefix="qbr_assemble_"))

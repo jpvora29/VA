@@ -12,6 +12,7 @@ from pptx.util import Inches
 from studio import compute as C
 from studio.template_fill import assemble as A
 from studio.template_fill import binding_map as BM
+from studio.template_fill.deck_slides import DeckSlides
 
 
 @pytest.fixture(autouse=True)
@@ -78,7 +79,8 @@ def test_a_country_with_no_survey_book_is_skipped(axes):
 
 
 def test_an_overall_only_scope_generates_no_survey_slide(axes):
-    decks = A.plan_subdecks(_result(), scope="overall", data_basis="premium_survey")
+    decks = A.plan_subdecks(_result(), slides=DeckSlides.only("overall"),
+                              data_basis="premium_survey")
     assert [d.template for d in decks] == ["overall", "end"]
 
 

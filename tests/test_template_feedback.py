@@ -14,6 +14,7 @@ from studio import compute as C
 from studio.template_fill import feedback as F
 from studio.template_fill import roles as R
 from studio.template_fill.analyze import Shape, Slide, Template
+from studio.template_fill.deck_slides import DeckSlides
 
 
 @pytest.fixture(autouse=True)
@@ -688,7 +689,7 @@ def test_no_commentary_cell_is_blank_in_a_generated_deck(tmp_path):
 
     result = compute_overall(
         filters={"Carrier_Group": "Zurich", "Country": "Singapore", "Year": 2025})
-    out = A.assemble_deck(result, out_path=str(tmp_path / "deck.pptx"), scope="all")
+    out = A.assemble_deck(result, out_path=str(tmp_path / "deck.pptx"))
 
     headers = {"What’s working well", "What’s not", "Growth Opportunities"}
     blank: list = []
@@ -782,7 +783,8 @@ def test_the_summary_page_carries_the_thesis(tmp_path):
 
     result = compute_overall(
         filters={"Carrier_Group": "Zurich", "Country": "Singapore", "Year": 2025})
-    out = A.assemble_deck(result, out_path=str(tmp_path / "deck.pptx"), scope="overall")
+    out = A.assemble_deck(result, out_path=str(tmp_path / "deck.pptx"),
+                        slides=DeckSlides.only("overall"))
     text = " ".join(sh.text_frame.text for s in Presentation(out).slides
                     for sh in s.shapes if sh.has_text_frame)
     assert "against a Marsh book that grew" in text, "no thesis on the deck"

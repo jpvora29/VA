@@ -42,7 +42,7 @@ logger = get_logger(__name__)
 #: Bumped when the prompt below changes in a way that should invalidate cached commentary.
 #: Read by :mod:`studio.template_fill.commentary_cache` — a better prompt must not be
 #: shadowed by yesterday's answer.
-PROMPT_VERSION = "section-v1"
+PROMPT_VERSION = "section-v2"
 
 #: How many repair rounds a section gets. One: a field the author and one repair both failed
 #: to write acceptably is not going to be written on a third identical request, and the
@@ -191,14 +191,21 @@ def section_payload(section: Section, pack, glossary_brief: str, *,
                     show_draft: bool = True) -> str:
     """The user message: the evidence once, the definitions once, then each field's ask."""
     blocks = [f"CARRIER: {section.subject}", "",
-              "EVIDENCE — the only facts you may use across every field below:",
+              "EVIDENCE — the only facts you may use across every field below. Every "
+              "figure you write must appear here, and every line must cite the fact ids it "
+              "rests on:",
               pack.as_brief()]
     if glossary_brief:
-        blocks += ["", "ICG DEFINITIONS — use these terms exactly as defined:", glossary_brief]
+        blocks += ["",
+                   "ICG DEFINITIONS — what each term means, how this system computes "
+                   "it, and the NEVER it carries. The NEVER lines are bans, not advice:",
+                   glossary_brief]
     blocks += ["", f"Write {len(section.columns)} field(s). Return one entry per field, with "
-                   "its field_id copied exactly. Every field is read on the SAME slide deck "
-                   "by the same people, so no two fields may make the same point in "
-                   "different words.", ""]
+                   "its field_id copied exactly. Read every field's brief before writing any "
+                   "of them: they are read on the SAME slide deck by the same people, so no "
+                   "two fields may make the same point in different words. When one fact "
+                   "could serve two fields, give it to the field whose brief owns it and "
+                   "make the other earn its place on something else.", ""]
     blocks += [_column_block(c, show_draft=show_draft) for c in section.columns]
     return "\n".join(blocks)
 

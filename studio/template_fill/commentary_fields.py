@@ -23,9 +23,24 @@ belongs to the caller, which is the only place that knows the selection.
 """
 from __future__ import annotations
 
-from typing import Mapping, Tuple
+from dataclasses import replace
+from functools import lru_cache
+from typing import Mapping, Sequence, Tuple
 
 from studio.template_fill.analyze import Template
+
+
+def without(template: Template, hidden: Sequence[int] = ()) -> Template:
+    """``template`` minus the slides an author unticked in Setup.
+
+    Counting is what tells an author how long a build will take, so it has to be counted
+    over the pages the build will actually write — a deck with its SWOT page removed does
+    not pay for SWOT commentary.
+    """
+    if not hidden:
+        return template
+    drop = {int(i) for i in hidden}
+    return replace(template, slides=[s for s in template.slides if s.index not in drop])
 
 
 def commentary_fields(template: Template) -> int:
@@ -60,22 +75,35 @@ def fields(template: Template, *, countries: int = 1) -> int:
     return commentary_fields(template) + feedback_fields(template, countries=countries)
 
 
-def fields_for_axis(axis: str, *, countries: int = 1) -> int:
+def fields_for_axis(axis: str, *, countries: int = 1, hidden: Sequence[int] = ()) -> int:
     """The commentary-field count of a registered axis's template, or 0 if unreadable.
 
     A template that will not parse must not stop Setup from drawing a form, so this
     answers 0 rather than raising — the panel then simply says nothing about that axis.
     """
+    return _axis_fields(axis, int(countries), tuple(sorted(int(i) for i in hidden)))
+
+
+@lru_cache(maxsize=64)
+def _axis_fields(axis: str, countries: int, hidden: Tuple[int, ...]) -> int:
+    """:func:`fields_for_axis` with hashable arguments, cached.
+
+    Cached because Setup asks it on every repaint of the page list — once per axis, and
+    again each time a page is ticked — and answering means parsing a ``.pptx``. The
+    templates are a fixed, author-made set that does not change while the app runs, which
+    is the same assumption :func:`studio.template_fill.deck_slides.catalog` makes.
+    """
     from studio.template_fill.analyze import analyze
     from studio.template_fill.binding_map import template_path
 
     try:
-        return fields(analyze(template_path(axis)), countries=countries)
+        return fields(without(analyze(template_path(axis)), hidden), countries=countries)
     except Exception:  # noqa: BLE001 — a count is an aid, never a gate
         return 0
 
 
-def deck_fields(entities: Mapping[str, int], *, countries: int = 1) -> int:
+def deck_fields(entities: Mapping[str, int], *, countries: int = 1,
+                hidden: Mapping[str, Sequence[int]] = ()) -> int:
     """Total commentary fields for ``{axis: how many blocks of it}``.
 
     The plan's formula — overall + per-product + per-country — read off the templates
@@ -83,11 +111,15 @@ def deck_fields(entities: Mapping[str, int], *, countries: int = 1) -> int:
     with it. ``countries`` is how many markets a single block reports on, which is what
     decides how many rows of a feedback table are filled rather than blanked.
     """
-    return sum(fields_for_axis(axis, countries=countries) * int(count)
+    dropped = dict(hidden or {})
+    return sum(fields_for_axis(axis, countries=countries, hidden=dropped.get(axis, ()))
+               * int(count)
                for axis, count in entities.items())
 
 
-def axis_field_counts(axes: Tuple[str, ...]) -> Tuple[Tuple[str, int], ...]:
+def axis_field_counts(axes: Tuple[str, ...],
+                      hidden: Mapping[str, Sequence[int]] = ()) -> Tuple[Tuple[str, int], ...]:
     """``(axis, fields)`` for each axis that has any — for the Setup preview panel."""
-    counted = ((axis, fields_for_axis(axis)) for axis in axes)
+    dropped = dict(hidden or {})
+    counted = ((axis, fields_for_axis(axis, hidden=dropped.get(axis, ()))) for axis in axes)
     return tuple((axis, n) for axis, n in counted if n)

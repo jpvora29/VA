@@ -50,11 +50,15 @@ def _friendly_options(dataset_store: Optional[Dict[str, Any]] = None) -> Dict[st
     otherwise the governed DB's cached distincts."""
     from studio.dataset.source import dataset_filter_options, dataset_in_use
 
+    from studio.compute import form_options, quarter_options
+
     record = dataset_in_use(dataset_store)
     if record is not None:
-        return dataset_filter_options(record.dataset_id, FILTER_COLUMN)
-    col_opts = cached_filter_options("gpr")
-    return {fid: col_opts.get(col, []) for fid, col in FILTER_COLUMN.items()}
+        # An uploaded dataset answers for its own columns; the quarter is the calendar's,
+        # not the book's, so it rides along either way.
+        return {**dataset_filter_options(record.dataset_id, FILTER_COLUMN),
+                "quarter": quarter_options()}
+    return form_options(cached_filter_options("gpr"))
 
 
 def _engine_for(selection: Dict[str, Any]):
@@ -260,7 +264,9 @@ def _assembled_for(selection_json: str) -> Optional[str]:
     subject = str(filters.get("carrier", "Carrier")).replace(" ", "_")
     tag = hashlib.sha1(selection_json.encode("utf-8")).hexdigest()[:8]
     out = Path(tempfile.gettempdir()) / f"{subject}_{tag}_QBR.pptx"
-    return assemble_deck(result, out_path=str(out), scope=selection.get("template_scope"),
+    from studio.template_fill.deck_slides import from_selection
+
+    return assemble_deck(result, out_path=str(out), slides=from_selection(selection),
                          data_basis=selection.get("data_basis"))
 
 
@@ -351,8 +357,9 @@ def _assemble_message(selection: Optional[Dict[str, Any]], result) -> str:
     default = "Writing the commentary and filling the templates…"
     try:
         from studio.template_fill.assemble import deck_shape
+        from studio.template_fill.deck_slides import from_selection
 
-        shape = deck_shape(result, scope=(selection or {}).get("template_scope"),
+        shape = deck_shape(result, slides=from_selection(selection),
                            data_basis=(selection or {}).get("data_basis"))
         fields, blocks = shape.commentary_fields(), sum(shape.blocks().values())
     except Exception as exc:  # noqa: BLE001 — a progress message must never cost a build
@@ -404,8 +411,7 @@ def build_documents(selection: Optional[Dict[str, Any]],
     #
     # …and ONE telemetry job around it, so every model call the build makes lands in one
     # summary. It is re-entrant for the same reason the memo is.
-    scope = (selection or {}).get("template_scope") or "all"
-    with telemetry.job(f"{label}:{scope}"), build_memo(f"generate:{label}"):
+    with telemetry.job(f"{label}:qbr"), build_memo(f"generate:{label}"):
         report("data", "Loading the book for this selection…")
         with telemetry.phase("data"):
             _result_for(key)

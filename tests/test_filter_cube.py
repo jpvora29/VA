@@ -49,8 +49,16 @@ def _sql_cascade(selected):
 
 
 def _cube_cascade(selected):
+    """The cube path, narrowed to the columns the cascade actually answers.
+
+    ``cascade_filter_options`` also offers the QUARTER, which is not a column of the book at
+    all — it resolves to month names (``studio.compute.QUARTER_MONTHS``) and is deliberately
+    outside the cube, so there is no SQL cascade to compare it against. It has its own test
+    below; the equivalence tests are about the columns both paths answer.
+    """
     return {fid: [o["value"] for o in opts]
-            for fid, opts in cascade_filter_options(selected, None).items()}
+            for fid, opts in cascade_filter_options(selected, None).items()
+            if fid in FILTER_COLUMN}
 
 
 # ── equivalence: the cube must not change a single answer ─────────────────────
@@ -59,6 +67,15 @@ def _cube_cascade(selected):
 @pytest.mark.parametrize("selected", SELECTIONS, ids=lambda s: ",".join(s) or "unfiltered")
 def test_cube_cascade_matches_the_sql_cascade(selected):
     assert _cube_cascade(selected) == _sql_cascade(selected)
+
+
+@pytest.mark.parametrize("selected", SELECTIONS, ids=lambda s: ",".join(s) or "unfiltered")
+def test_the_quarter_is_offered_whole_whatever_else_is_selected(selected):
+    """The quarter is the calendar's, not the book's. It never narrows and is never
+    narrowed — which is what keeps the month column out of the cube."""
+    from studio.compute import quarter_options
+
+    assert cascade_filter_options(selected, None)["quarter"] == quarter_options()
 
 
 def test_a_columns_own_selection_does_not_collapse_its_own_list():

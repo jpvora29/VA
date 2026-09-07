@@ -222,6 +222,55 @@ def test_the_prompt_tells_the_model_the_rule_it_is_held_to():
     assert "THIS COLUMN" in system and "MECHANISM" in system   # the column's own brief
 
 
+def test_the_prompt_specifies_what_one_line_must_carry():
+    """"Write good commentary" is not a specification. The four parts are.
+
+    A line that names no driver is a headline and a line that names no consequence is a
+    read-out, and both are true sentences — so the gates cannot catch them and the prompt
+    has to ask for the other two parts by name.
+    """
+    system = CM.deck_voice("balanced", "Zurich")
+    for part in ("CLAIM", "DRIVER", "EVIDENCE", "CONSEQUENCE"):
+        assert part in system, part
+    assert "one breath" in system                      # the length ceiling, said usably
+
+
+def test_the_prompt_shows_the_model_a_good_line_and_three_bad_ones():
+    """One worked example beats three paragraphs of instruction, and there was none."""
+    system = CM.deck_voice("balanced", "Zurich")
+    assert "GOOD:" in system and system.count("WEAK:") >= 3
+    # …and the invented figures are declared as invented, because the numeric verifier
+    # deletes any line carrying a figure that is not in the evidence pack.
+    assert "invented" in system
+
+
+def test_the_prompt_says_the_icg_definitions_are_binding():
+    """The glossary travels with every section already; what was missing was any
+    instruction to read it as a constraint rather than as background."""
+    system = CM.deck_voice("balanced", "Zurich")
+    assert "BINDING" in system
+    for overstatement in ("is not the market", "not market share"):
+        assert overstatement in system
+
+
+def test_the_definitions_reach_the_model_with_their_bans():
+    """Each term carries the overstatement it attracts; a definition without its ``never``
+    is the half that lets a sentence claim more than the figures can carry."""
+    from core.definitions import get_glossary
+
+    brief = get_glossary().brief(("share_of_wallet", "marsh_book"))
+    assert "NEVER:" in brief
+    assert "market share" in brief.lower()
+
+
+def test_a_sharpened_prompt_is_not_shadowed_by_yesterdays_answer():
+    """The section cache keys on the prompt version, so improving the prompt has to move
+    it or the next run serves the text the old prompt wrote."""
+    from studio.template_fill import commentary_batch as B
+
+    assert B.PROMPT_VERSION != "section-v1"
+
+
 def test_every_column_is_briefed_differently():
     """Key Messages and Challenges draw on the SAME six figures — without separate briefs
     the model has no reason to write them apart, which is why they read alike."""

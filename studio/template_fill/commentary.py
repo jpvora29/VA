@@ -334,6 +334,60 @@ _FAITHFULNESS = (
     "never invent, recalculate or round a figure; never name a competitor carrier. "
 )
 
+# What the ICG glossary is FOR, said once, so the definitions that travel with every
+# section are read as rules rather than as background.
+#
+# The glossary (``core/definitions/terms.yaml``) gives each term its meaning, the formula
+# THIS system computes it with, and a ``never`` — the specific overstatement the term
+# attracts. Handing a model those four fields under the heading "definitions" invites it to
+# skim them; every one of them is a constraint on what a sentence may claim, and the bans
+# are the half that keeps a page defensible.
+_DEFINITIONS = (
+    "THE DEFINITIONS YOU ARE GIVEN ARE BINDING. Each term carries what it means, how it is "
+    "computed here, and a NEVER — the overstatement that term attracts. Claim exactly what "
+    "the term measures and nothing wider: premium placed with Marsh is not the carrier's "
+    "book, the Marsh book is not the market, share of wallet is not market share, rank is "
+    "rank within the Marsh book, and headroom is premium another carrier already writes. A "
+    "term shown as NOT computed from our data is something this book cannot see — never "
+    "infer it from premium. "
+)
+
+# The anatomy of ONE line. The rules above say what a column is for and what it may not
+# say; this says what a single sentence has to CONTAIN to earn its space on the slide.
+#
+# It is the difference between a true sentence and a usable one. "Marine premium fell 12%"
+# is true and a reader can do nothing with it: they do not learn where it fell, against
+# what, or what follows. The four parts are what a partner says in the room, and naming
+# them is what turns "write good commentary" into a specification a model can meet.
+_POINTER = (
+    "EVERY LINE IS A POINTER, and a pointer has four parts: the CLAIM — what is true of "
+    "this book; the DRIVER — the named industry, product line, client segment or market it "
+    "rests on; the EVIDENCE — a figure from the pack AND what it is measured against (the "
+    "Marsh book, the peer average, the prior year); and the CONSEQUENCE — what it means for "
+    "this account. A line with no driver is a headline, a line with no consequence is a "
+    "read-out, and neither belongs on the page. Name the driver in the line itself: 'the "
+    "largest three industries' names nothing. Keep each sentence to something a partner "
+    "could say in one breath — around twenty-five words, never more than thirty-five. "
+)
+
+# One worked example beats three paragraphs of instruction, and there was none. The figures
+# are invented on purpose and said to be: the numeric verifier
+# (:func:`studio.template_fill.commentary_verify.check_numbers`) deletes any line carrying a
+# figure that is not in the evidence pack, so a model that copies them loses the line.
+_EXAMPLES = (
+    "WHAT A LINE SHOULD LOOK LIKE (the shape, not the content — these figures are "
+    "invented, and a line that reuses them is deleted):\n"
+    "  GOOD: The year's growth sat almost entirely in Marine, which added $4.1m against "
+    "a Marsh pool up 3%, lifting share there to 11.2% while the rest of the book held "
+    "flat.\n"
+    "  WEAK: Premium grew 8.4% year on year. — true, and it names nothing and "
+    "settles nothing.\n"
+    "  WEAK: The book showed robust growth, indicating a solid foothold in the region. "
+    "— an adjective standing where the driver should be.\n"
+    "  WEAK: Continue to build on strengths and pursue opportunities in key segments. "
+    "— true of any carrier in any quarter.\n\n"
+)
+
 # The habit that most separates the chat analyst's prose from this deck's. The chat writer
 # is told to connect its sections explicitly ("that decline is concentrated in…", "which is
 # why…"); a commentary column was told only to keep its bullets in priority order, so it
@@ -394,7 +448,8 @@ def deck_voice(style: Optional[str], subject: str = "") -> str:
     one request, and repeating six hundred words of craft rules per column in that request
     would be most of its prompt.
     """
-    return (_VOICE + _analyst_principles() + _CRAFT + _FAITHFULNESS + _ARGUMENT + _TENSION
+    return (_VOICE + _analyst_principles() + _CRAFT + _FAITHFULNESS + _DEFINITIONS
+            + _POINTER + _ARGUMENT + _TENSION + _EXAMPLES
             + _openings_rule(subject) + _style_directive(style))
 
 
@@ -409,14 +464,16 @@ def _style_system(style: Optional[str], *, topic: str = "", wanted: int = 1,
     """The system prompt for one column, widest rule to narrowest.
 
         who is writing -> how to read the book -> craft -> what may not change
-          -> how the column argues -> this column's own brief -> its length
+          -> what the terms mean -> what one line must carry -> how the column argues
+          -> what good and bad look like -> this column's own brief -> its length
 
     The middle three are shared with the chat analyst
     (:func:`_analyst_principles`, :data:`_ARGUMENT`, :data:`_TENSION`): the deck reads
     as a worse writer than the chatbot largely because the chatbot was told how to read
     the data and how to connect what it found, and the deck was told neither.
     """
-    return (_VOICE + _analyst_principles() + _CRAFT + _FAITHFULNESS + _ARGUMENT + _TENSION
+    return (_VOICE + _analyst_principles() + _CRAFT + _FAITHFULNESS + _DEFINITIONS
+            + _POINTER + _ARGUMENT + _TENSION + _EXAMPLES
             + _openings_rule(subject)
             + _bullet_rules(wanted) + _TOPIC_BRIEF.get(topic, "")
             + _voice_rule(topic) + _questions_rule(topic)

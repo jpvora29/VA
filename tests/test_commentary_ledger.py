@@ -115,7 +115,7 @@ def test_a_generated_deck_does_not_repeat_its_claims(tmp_path):
 
     result = compute_overall(
         filters={"Carrier_Group": "Zurich", "Country": "Singapore", "Year": 2025})
-    out = A.assemble_deck(result, out_path=str(tmp_path / "deck.pptx"), scope="all")
+    out = A.assemble_deck(result, out_path=str(tmp_path / "deck.pptx"))
 
     repeated = _repeated_sentences(out)
     extra = sum(len(slides) - 1 for slides in repeated.values())

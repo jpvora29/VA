@@ -13,6 +13,7 @@ import pytest
 
 from studio.compute import DATA_BASIS_PREMIUM, DATA_BASIS_WITH_SURVEY
 from studio.template_fill.survey import pointer as P
+from studio.template_fill.deck_slides import DeckSlides
 
 
 @pytest.fixture(autouse=True)
@@ -172,10 +173,10 @@ def test_the_survey_line_lands_on_the_page_that_carries_the_score_tile(tmp_path)
         filters={"Carrier_Group": "Zurich", "Country": "Singapore", "Year": 2025})
 
     with_survey = _slide_texts(A.assemble_deck(
-        result, out_path=str(tmp_path / "survey.pptx"), scope="overall",
+        result, out_path=str(tmp_path / "survey.pptx"), slides=DeckSlides.only("overall"),
         data_basis=DATA_BASIS_WITH_SURVEY))
     premium = _slide_texts(A.assemble_deck(
-        result, out_path=str(tmp_path / "premium.pptx"), scope="overall",
+        result, out_path=str(tmp_path / "premium.pptx"), slides=DeckSlides.only("overall"),
         data_basis=DATA_BASIS_PREMIUM))
 
     carrying = [t for t in with_survey if "Brokers scored" in t]

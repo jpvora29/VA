@@ -19,10 +19,11 @@ from studio.compute import DATA_BASIS_PREMIUM, DATA_BASIS_WITH_SURVEY
 from studio.page.authoring.setup import (
     deck_axes,
     peer_set_body,
-    scope_axes,
+    registered_axes,
     setup_body,
     template_sections_panel,
 )
+from studio.template_fill.deck_slides import DeckSlides, catalog
 
 
 def _rendered(component) -> str:
@@ -759,7 +760,7 @@ def test_the_deck_shape_questions_come_first():
 
 def test_the_controls_ask_questions_rather_than_naming_themselves():
     form = _form()
-    for question in ("How much of the deck should we build?",
+    for question in ("What's in your QBR",
                      "Who is this deck for?",
                      "How should the commentary read?",
                      "Where should the numbers come from?",
@@ -773,7 +774,7 @@ def test_the_controls_ask_questions_rather_than_naming_themselves():
 def test_every_question_carries_an_explanation():
     """A three-word answer to a modelling question is exactly what needs a footnote."""
     form = _form()
-    for tip in ("qs-tip-scope", "qs-tip-audience", "qs-tip-style", "qs-tip-source",
+    for tip in ("qs-tip-pages", "qs-tip-audience", "qs-tip-style", "qs-tip-source",
                 "qs-tip-basis", "qs-tip-sec-peers", "qs-tip-sec-filters",
                 "qs-tip-survey-carrier", "qs-tip-survey-peers"):
         assert tip in form, tip
@@ -802,44 +803,40 @@ def test_the_filter_pane_starts_its_second_line_with_year():
     assert "repeat(3, minmax(0, 1fr))" in block
 
 
-# ── deck sections track the assembly scope ───────────────────────────────────
+# ── the page list IS the deck's shape control ────────────────────────────────
 
 
-def test_scope_axes_maps_all_to_every_registered_axis():
-    assert scope_axes("all") == ("overall", "product", "country", "end")
-    assert scope_axes(None) == ("overall", "product", "country", "end")
+def test_the_form_no_longer_asks_how_much_of_the_deck_to_build():
+    """The four-way scope radio is gone; the pages themselves are the control."""
+    form = _form()
+    assert "How much of the deck should we build?" not in form
+    assert "Entire QBR" not in form and "Product-wise" not in form
+    # …and every template page is on the form, with its own tick.
+    assert form.count('"qs-slide"') == sum(len(catalog(a)) for a in registered_axes()
+                                           if a != "survey")
 
 
-def test_every_scope_previews_exactly_what_the_assembler_builds():
-    """The panel and the builder must not hold two opinions about one choice.
-
-    They did: Setup's table said "product" built the product pages alone, and
-    ``assemble._SCOPE_AXES`` built the overall block, the product pages and the back
-    cover. An author who wanted the overall pages read the panel as a reason to pick
-    "All" and then waited on every product block they had not asked for.
-    """
-    from studio.template_fill.assemble import _SCOPE_AXES as BUILT
-    from studio.page.authoring.setup import _SCOPE_AXES as PREVIEWED
-
-    assert PREVIEWED == BUILT
+def test_deck_axes_lists_every_registered_axis_by_default():
+    assert deck_axes() == ("overall", "product", "country", "end")
+    assert deck_axes(DATA_BASIS_PREMIUM, DeckSlides.everything()) == (
+        "overall", "product", "country", "end")
 
 
-def test_product_and_country_scopes_still_include_the_overall_block():
-    for scope in ("product", "country"):
-        assert scope_axes(scope)[0] == "overall"
-        assert scope_axes(scope)[-1] == "end"
+def test_an_axis_ticked_off_entirely_is_not_in_the_deck():
+    slides = DeckSlides({"country": [e.index for e in catalog("country")]})
+    assert deck_axes(DATA_BASIS_PREMIUM, slides) == ("overall", "product", "end")
 
 
 def test_the_survey_basis_adds_the_survey_block_to_whats_in_your_qbr():
     """Regression: "What's in your QBR" listened to Scope alone, so choosing
     GPR + Carrier Survey changed the deck that gets built but not the panel that
     describes it — the survey pages appeared only after Generate."""
-    gpr = _rendered(template_sections_panel("all", DATA_BASIS_PREMIUM))
-    survey = _rendered(template_sections_panel("all", DATA_BASIS_WITH_SURVEY))
+    gpr = _rendered(template_sections_panel(DATA_BASIS_PREMIUM))
+    survey = _rendered(template_sections_panel(DATA_BASIS_WITH_SURVEY))
 
     assert "Carrier Survey" not in gpr
     assert "Carrier Survey" in survey
-    assert _rendered(template_sections_panel("all", DATA_BASIS_PREMIUM)) == gpr
+    assert _rendered(template_sections_panel(DATA_BASIS_PREMIUM)) == gpr
 
 
 def test_the_survey_block_is_gated_the_way_the_assembler_gates_it():
@@ -848,42 +845,37 @@ def test_the_survey_block_is_gated_the_way_the_assembler_gates_it():
     promise pages the assembler will not build."""
     # Straight after the country block it rides along with, and before the back cover —
     # which is where ``assemble.SubDeckPlanBuilder.add_countries`` puts it.
-    assert deck_axes("all", DATA_BASIS_WITH_SURVEY) == (
+    assert deck_axes(DATA_BASIS_WITH_SURVEY) == (
         "overall", "product", "country", "survey", "end")
-    assert deck_axes("country", DATA_BASIS_WITH_SURVEY) == (
-        "overall", "country", "survey", "end")
     # No country blocks -> no survey block, whatever the basis says.
-    assert "survey" not in deck_axes("overall", DATA_BASIS_WITH_SURVEY)
-    assert "survey" not in deck_axes("product", DATA_BASIS_WITH_SURVEY)
-    assert "survey" not in deck_axes("all", DATA_BASIS_PREMIUM)
+    no_countries = DeckSlides({"country": [e.index for e in catalog("country")]})
+    assert "survey" not in deck_axes(DATA_BASIS_WITH_SURVEY, no_countries)
+    assert "survey" not in deck_axes(DATA_BASIS_PREMIUM)
 
 
-def test_deck_sections_round_trip_between_all_and_a_single_axis():
+def test_the_page_list_round_trips_between_the_whole_deck_and_a_trimmed_one():
     """Regression: switching Scope to Product and back to All used to leave the
     panel showing the overall template alone, so 'All' looked like a dead click."""
-    every = _rendered(template_sections_panel("all"))
-    product = _rendered(template_sections_panel("product"))
+    trimmed = DeckSlides({"country": [e.index for e in catalog("country")]})
+    every = _rendered(template_sections_panel())
+    fewer = _rendered(template_sections_panel(slides=trimmed))
 
-    assert every != product
-    assert _rendered(template_sections_panel("all")) == every  # returning restores it
+    assert every != fewer
+    assert _rendered(template_sections_panel()) == every  # returning restores it
 
-    for axis in ("OVERALL", "PRODUCT", "COUNTRY"):
-        assert axis.title() in every
-    # The overall block is in EVERY scope (see ``assemble._SCOPE_AXES``); what
-    # "Product-wise" drops is the country blocks.
-    assert "Overall" in product and "Country" not in product
+    for axis in ("Overall", "Product", "Country"):
+        assert axis in every and axis in fewer     # every axis stays listed either way
 
 
-def test_deck_sections_page_count_is_the_sum_of_the_axes_it_assembles():
-    def pages(scope: str) -> int:
-        panel = template_sections_panel(scope)
+def test_the_page_count_is_the_sum_of_the_pages_still_ticked():
+    def pages(slides=None) -> int:
+        panel = template_sections_panel(slides=slides)
         summary = panel.children[0].children[0]  # "<b>N</b> base pages"
         return int(summary.children[0].children)
 
-    # Every scope carries the overall block and the back cover, so the three single
-    # choices double-count them twice over against "all".
-    shared = pages("overall")
-    assert pages("all") == pages("product") + pages("country") - shared
+    dropped = DeckSlides({"overall": [0]})
+    assert pages() == sum(len(catalog(a)) for a in ("overall", "product", "country", "end"))
+    assert pages(dropped) == pages() - 1
 
 
 def test_country_scoped_peer_group_reaches_the_deck_benchmark(tmp_path):
@@ -941,7 +933,9 @@ def test_setup_selection_builds_the_assembled_deck(tmp_path):
         "meeting_length": "standard",
         "style": "balanced",
         "ai": False,                            # deterministic path for the test
-        "template_scope": "overall",
+        # Overall only: every product and country page unticked in "What's in your QBR".
+        "slides": {"product": [e.index for e in catalog("product")],
+                   "country": [e.index for e in catalog("country")]},
         "template_path": "template/overall_template.pptx",
         "dataset_id": None,
     }
@@ -975,7 +969,7 @@ def test_per_market_custom_peers_build_a_two_country_deck():
         "meeting_length": "standard",
         "style": "balanced",
         "ai": False,                            # deterministic path for the test
-        "template_scope": "country",
+        "slides": {"product": [e.index for e in catalog("product")]},
         "template_path": "template/country_template.pptx",
         "dataset_id": None,
     }

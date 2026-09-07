@@ -88,11 +88,11 @@ class DeckJob:
             "done": done,
             "error": error,
             "retryable": retryable,
-            # The SCOPE this build was started with, so the progress view can say which
-            # deck is being made. The selection is frozen at start, so it is safe to read
-            # outside the lock — and the author who picked "Country-wise" twenty minutes
-            # ago should not have to remember that they did.
-            "scope": str(self.selection.get("template_scope") or "all"),
+            # WHICH deck is being made, so the progress view can say so. The selection is
+            # frozen at start, so it is safe to read outside the lock — and the author who
+            # unticked half the pages twenty minutes ago should not have to remember that
+            # they did.
+            "scope": _shape_label(self.selection),
             "elapsed": int(time.time() - self.started_at),
             "slides": slides,
         }
@@ -102,6 +102,21 @@ class DeckJob:
         with self._lock:
             return self.result
 
+
+
+def _shape_label(selection: dict) -> str:
+    """"Full QBR" or "12 of 17 pages" — what this build was asked for, in three words.
+
+    Read off the page selection rather than a scope choice, because the page selection is
+    now what decides the deck (:mod:`studio.template_fill.deck_slides`).
+    """
+    from studio.template_fill.deck_slides import from_selection
+
+    slides = from_selection(selection)
+    if slides.empty:
+        return "Full QBR"
+    dropped = sum(len(idxs) for _axis, idxs in slides.excluded)
+    return f"{dropped} page{'s' if dropped != 1 else ''} left out"
 
 _JOBS: Dict[str, DeckJob] = {}
 _LOCK = threading.Lock()

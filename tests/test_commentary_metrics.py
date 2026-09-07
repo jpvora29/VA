@@ -15,6 +15,7 @@ from __future__ import annotations
 from studio.template_fill import commentary_metrics as M
 from studio.template_fill import feedback as F
 from studio.template_fill.openings import vary_openings
+from studio.template_fill.deck_slides import DeckSlides
 
 _FACTS = {
     "subject": "Zurich",
@@ -160,7 +161,7 @@ def test_every_assembled_sub_deck_reports_its_score(monkeypatch):
     monkeypatch.setattr(assemble.commentary_metrics, "log_score",
                         lambda values, **kw: scored.append(kw.get("label")))
 
-    decks = assemble.plan_subdecks(OverallResult(subject="Zurich"), scope="overall")
+    decks = assemble.plan_subdecks(OverallResult(subject="Zurich"), slides=DeckSlides.only("overall"))
 
     assert scored == [sub.label for sub in decks]
 
@@ -178,7 +179,7 @@ def test_a_sub_deck_is_scored_on_the_written_column_not_the_draft(monkeypatch):
         lambda decks: [__import__("dataclasses").replace(d, values={"note:0:1": "written"})
                        for d in decks])
 
-    assemble.plan_subdecks(OverallResult(subject="Zurich"), scope="overall")
+    assemble.plan_subdecks(OverallResult(subject="Zurich"), slides=DeckSlides.only("overall"))
 
     assert seen and all(v == {"note:0:1": "written"} for v in seen)
     assert all(not rewrites.pending_items(v) for v in seen)

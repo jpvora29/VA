@@ -17,7 +17,7 @@ import dash
 import dash_bootstrap_components as dbc
 from dash import ALL, Input, Output, State, dcc, html
 
-from studio.compute import FILTER_COLUMN, compute_overall
+from studio.compute import compute_overall, form_options
 from studio.data import cached_filter_options, dependent_options, get_engine, peer_members
 from studio.deck import build_deck
 from studio.export import export_deck
@@ -39,8 +39,7 @@ def _friendly_options() -> dict:
 
     The distinct scans (expensive on a huge table) happen here — on the boot
     callback, after first paint, behind a spinner — never at import."""
-    col_opts = cached_filter_options("gpr")
-    return {fid: col_opts.get(col, []) for fid, col in FILTER_COLUMN.items()}
+    return form_options(cached_filter_options("gpr"))
 
 
 _BLANK = (None, "", [], "all", "All")

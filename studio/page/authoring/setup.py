@@ -1,9 +1,10 @@
 """Setup mode — the real build form, wired to the DB.
 
-``setup_body`` composes the deck-shape questions, the data source, the scope
-filters, the peer sets and the survey identities, plus the live scope-preview
-aside and the Generate button. The scope-preview cards, the peer pickers and the
-template-sections panel are refreshed by app callbacks.
+``setup_body`` composes the voice questions, the data source, the scope filters, the peer
+sets and the survey identities, plus the live scope-preview aside, the Generate button and
+"What's in your QBR" — the per-page include/exclude list that decides the deck's shape
+(:mod:`studio.template_fill.deck_slides`). The scope-preview cards, the peer pickers and
+that page list are refreshed by app callbacks.
 """
 from __future__ import annotations
 
@@ -104,8 +105,7 @@ def generate_progress(state: Optional[Mapping[str, Any]]) -> Any:
             html.Div(
                 [
                     html.Span(state.get("step") or "Working", className="qs-gen-step"),
-                    html.Span(_SCOPE_LABELS.get(str(state.get("scope") or "all"), ""),
-                              className="qs-gen-scope"),
+                    html.Span(str(state.get("scope") or ""), className="qs-gen-scope"),
                     html.Span(_elapsed(int(state.get("elapsed") or 0)),
                               className="qs-gen-elapsed"),
                 ],
@@ -189,19 +189,23 @@ def _radio_field(label: str, cid: str, options: Sequence[Mapping[str, str]], val
 
 
 def _setup_options() -> html.Div:
-    """The three questions that decide the SHAPE of the deck, asked as questions.
+    """The two questions that decide the VOICE of the deck, asked as questions.
 
     They come first on the form because they are the ones an author answers from the
-    brief — how much of the deck, for whom, in what voice — before touching a filter.
-    "SCOPE / AUDIENCE / COMMENTARY STYLE" named the control rather than the decision,
-    which is exactly the label that needs a footnote; the question does not.
+    brief — for whom, in what voice — before touching a filter. "AUDIENCE / COMMENTARY
+    STYLE" named the control rather than the decision, which is exactly the label that
+    needs a footnote; the question does not.
 
     There is no REPORT control: Full QBR is the only deliverable, so offering a
     one-option radio was pure noise. ``generate`` pins ``report="qbr"``.
+
+    There is no SCOPE control either. "How much of the deck should we build?" offered four
+    answers to a question authors have page by page, and the panel that listed the deck's
+    pages could only read it back. The pages are now the control — see
+    :func:`template_sections_panel`.
     """
     return html.Div(
         [
-            _template_control(),
             # The two audiences this deck is actually written for. "Executive /
             # Deal team / Board" described a corporate-finance reader who does not
             # exist here: a QBR is taken by a Marsh regional team to a carrier's
@@ -594,70 +598,9 @@ def _scope_preview() -> html.Div:
     )
 
 
-# Assembly-scope choices (Setup "Scope" dropdown). Value = the axis set to assemble;
-# "all" is the full deck (overall + product + country). Only axes with a registered
-# template are offered.
-# Short enough to sit in a segmented control beside the other two questions. The
-# long form ("All — overall + product + country") was written for a dropdown, where
-# there is room for a subtitle; as a chip it wrapped and broke the row.
-# The labels name what the deck CONTAINS, not which axis was ticked. Every choice
-# except "Overall" still builds the overall block in front of the repeating one
-# (``assemble._SCOPE_AXES``), so "Country only" was describing a deck that has never
-# been produced — an author who wanted the overall pages read that as a reason to pick
-# "All" and then waited on every product block they did not want.
-_SCOPE_LABELS = {
-    "all": "Entire QBR",
-    "overall": "Overall",
-    "product": "Product-wise",
-    "country": "Country-wise",
-}
-
-
-def _scope_options() -> list:
-    """The scope choices, gated to the axes whose fixed template is registered."""
-    from studio.template_fill.binding_map import available
-
-    axes = set(available())
-    opts = [{"label": _SCOPE_LABELS["all"], "value": "all"}]
-    for axis in ("overall", "product", "country"):
-        if axis in axes:
-            opts.append({"label": _SCOPE_LABELS[axis], "value": axis})
-    return opts
-
-
-def _template_control() -> html.Div:
-    """Assembly scope — which fixed sub-decks to build and merge.
-
-    Templates are a fixed, author-made set (``overall`` / ``product`` / ``country``), split
-    by axis and merged per selection. This dropdown picks how much of the deck to assemble:
-    everything, or just the overall / product / country pages.
-    """
-    options = _scope_options()
-    return html.Div(
-        [
-            _label(
-                "How much of the deck should we build?",
-                tip_id="qs-tip-scope",
-                tip="Which fixed sub-decks to assemble and merge. All builds the overall "
-                    "block, one block per product line and one per country; the single "
-                    "choices build just that block.",
-            ),
-            # A radio, not a dropdown: this is one of the three questions that
-            # decide the shape of the deck, and the other two are segmented
-            # controls. Three answers behind a closed menu read as a different
-            # KIND of question than the three sitting in front of you.
-            dcc.RadioItems(
-                id="studio-template", options=options, value="all",
-                className="studio-report-radio", inputClassName="studio-report-input",
-                labelClassName="studio-report-label",
-            ),
-        ],
-        className="studio-field",
-    )
-
-
-# Section type → (friendly label, icon, how it's handled) for the template preview.
+# Section type → (friendly label, icon, how it's handled) for the slide list.
 _SECTION_META: Mapping[str, Tuple[str, str, str]] = {
+    "cover": ("Cover", "bi-file-earmark-richtext", ""),
     "summary": ("Executive summary", "bi-grid-1x2", ""),
     "highlights": ("Highlights", "bi-stars", "Commentary auto-written"),
     "trading_summary": ("Trading summary", "bi-chat-square-text", "Commentary auto-written"),
@@ -671,13 +614,14 @@ _SECTION_META: Mapping[str, Tuple[str, str, str]] = {
     "breakdown": ("Carrier breakdown", "bi-table", "Per-product, per-country"),
     "carrier_title": ("Section title", "bi-bookmark", ""),
     "survey": ("Carrier Survey", "bi-clipboard-data", "Sourced from the survey book"),
+    "back_cover": ("Back cover", "bi-file-earmark-check", ""),
     "other": ("Other", "bi-file-earmark", ""),
 }
 
 
-# Assembly axis → (label, icon, how often the sub-deck repeats). "all" builds all
-# three and merges them, which is why the panel below is per-axis rather than one
-# flat page count — the product/country sub-decks repeat per selected value.
+# Assembly axis → (label, icon, how often the sub-deck repeats). A full deck builds all
+# of them and merges them, which is why the panel below is per-axis rather than one flat
+# page count — the product/country sub-decks repeat per selected value.
 _AXIS_META: Mapping[str, Tuple[str, str, str]] = {
     "overall": ("Overall", "bi-grid-1x2", "built once"),
     "product": ("Product", "bi-box-seam", "repeats per product line"),
@@ -686,107 +630,125 @@ _AXIS_META: Mapping[str, Tuple[str, str, str]] = {
     "end": ("Back cover", "bi-file-earmark-check", "closes every deck"),
 }
 
-# Scope choice → the axes it assembles, in deck order.
-#
-# This table is a MIRROR of ``studio.template_fill.assemble._SCOPE_AXES`` and is asserted
-# against it (``tests/test_studio_setup_form.py``). It used to be a second, shorter opinion
-# — "product" listed only the product axis — so the panel promised a deck of product pages
-# and the build produced the overall block, the product pages and the back cover. A preview
-# that disagrees with the builder is worse than no preview.
-_SCOPE_AXES: Mapping[str, Tuple[str, ...]] = {
-    "all": ("overall", "product", "country", "end"),
-    "overall": ("overall", "end"),
-    "product": ("overall", "product", "end"),
-    "country": ("overall", "country", "end"),
-}
 
-
-def deck_axes(scope: Optional[str], basis: Optional[str] = None) -> Tuple[str, ...]:
-    """The registered sub-decks a scope AND data basis assemble, in deck order.
-
-    Mirrors ``studio.template_fill.assemble.plan_subdecks``, which is where the deck is
-    really built: the Carrier Survey block is NOT a scope choice but a BASIS one, so it
-    is gated separately and rides along with whichever country blocks the chosen scope
-    already builds. Reading the basis is what makes "What's in your QBR" answer the
-    survey question — before this, picking GPR + Carrier Survey changed the deck but
-    not the panel describing it.
-    """
+def registered_axes() -> Tuple[str, ...]:
+    """The deck axes whose fixed template is registered, in deck order."""
     from studio.template_fill.binding_map import available
+    from studio.template_fill.deck_slides import DECK_AXES
 
-    registered = set(available())
-    wanted = _SCOPE_AXES.get(scope or "all", _SCOPE_AXES["all"])
-    axes = tuple(axis for axis in wanted if axis in registered)
+    names = set(available())
+    return tuple(axis for axis in DECK_AXES if axis in names)
+
+
+def deck_axes(basis: Optional[str] = None, slides: Optional[Any] = None) -> Tuple[str, ...]:
+    """The sub-decks this selection assembles, in deck order.
+
+    Mirrors :func:`studio.template_fill.assemble.deck_shape`, which is where the deck is
+    really built. Two things gate an axis, and they are different questions:
+
+    * the author's own page ticks — an axis with every page unticked is not built, which is
+      what replaced the old four-way scope choice;
+    * the DATA BASIS — the Carrier Survey block is not a page choice but a basis one, so it
+      is gated separately and rides along with whichever country blocks are being built.
+    """
+    from studio.template_fill.deck_slides import DeckSlides
+
+    chosen = slides if slides is not None else DeckSlides.everything()
+    axes = chosen.axes(registered_axes())
     with_survey = str(basis or DATA_BASIS_DEFAULT) == DATA_BASIS_WITH_SURVEY
-    if with_survey and "country" in axes and "survey" in registered:
-        # After the country block it rides along with, and BEFORE the back cover — which
-        # is where the builder puts it. Appending it to the end used to leave the panel
-        # closing on the survey page and the deck closing on the cover.
-        at = axes.index("country") + 1
-        axes = axes[:at] + ("survey",) + axes[at:]
-    return axes
+    if with_survey and "country" in axes and "survey" in axes:
+        return axes
+    return tuple(axis for axis in axes if axis != "survey")
 
 
-def scope_axes(scope: Optional[str]) -> Tuple[str, ...]:
-    """The registered axes a SCOPE choice assembles, on the default (premium) basis."""
-    return deck_axes(scope, DATA_BASIS_DEFAULT)
+def _slide_meta(entry) -> Tuple[str, str, str]:
+    """``(label, icon, note)`` for one page — its section, named for a reader.
+
+    A section the classifier does not know still gets a row: its own name, title-cased. The
+    page list is driven by the templates, so it has to survive a template that grows a kind
+    of page this table has never seen.
+    """
+    return _SECTION_META.get(entry.section,
+                             (entry.section.replace("_", " ").title(),
+                              "bi-file-earmark", ""))
 
 
-def _section_counts(axis: str) -> Optional[List[Tuple[str, int]]]:
-    """``[(section key, page count)]`` in reading order for an axis's template."""
-    from studio.template_fill.binding_map import template_path
-    from studio.template_fill.registry import derive_manifest
-    from studio.template_fill.sections import classify_sections
+def _slide_preview(entry, url: Optional[str], label: str) -> html.Div:
+    """The hover card: the TEMPLATE's own rendering of this page.
 
-    try:
-        template, _ = derive_manifest(template_path(axis))
-        secs = classify_sections(template)
-    except Exception:  # noqa: BLE001 — a missing/odd template must not break Setup
-        return None
-    counts: dict = {}
-    for idx in sorted(secs):
-        key = secs[idx].value
-        counts[key] = counts.get(key, 0) + 1
-    return list(counts.items())
+    Rendered from the template file, so it shows the layout rather than this carrier's
+    numbers — which is the point. The deck the author is deciding about does not exist yet;
+    the page they are deciding about does.
+
+    A thumbnail that is not rendered yet (a machine with no PowerPoint, or the first seconds
+    after start-up) falls back to naming the page. The row stays usable either way — the
+    preview helps the decision, it is not the decision.
+    """
+    body = (
+        html.Img(src=url, className="qs-slide-shot", alt=f"{entry.title or entry.section} slide")
+        if url else
+        html.Div([html.I(className="bi bi-image"), html.Span("Preview not rendered yet")],
+                 className="qs-slide-shot empty")
+    )
+    return html.Div(
+        [body, html.Div(entry.title or label, className="qs-slide-cap")],
+        className="qs-slide-pop",
+    )
 
 
-def _section_chips(counts: Sequence[Tuple[str, int]]) -> html.Div:
-    chips = []
-    for key, n in counts:
-        label, icon, _ = _SECTION_META.get(key, (key.title(), "bi-file-earmark", ""))
-        chips.append(
-            html.Span(
+def _slide_row(entry, *, included: bool, url: Optional[str]) -> html.Div:
+    """One template page, with the tick that decides whether the deck carries it."""
+    label, icon, note = _slide_meta(entry)
+    return html.Div(
+        [
+            dbc.Checkbox(
+                id={"type": "qs-slide", "axis": entry.axis, "idx": entry.index},
+                value=included,
+                class_name="qs-slide-check",
+            ),
+            html.I(className=f"bi {icon} qs-slide-icon"),
+            html.Div(
                 [
-                    html.I(className=f"bi {icon}"),
-                    html.Span(label, className="qs-tchip-label"),
-                    html.Span(str(n), className="qs-tchip-n"),
+                    html.Span(label, className="qs-slide-name"),
+                    html.Span(note, className="qs-slide-note") if note else None,
                 ],
-                className="qs-tchip",
-            )
-        )
-    return html.Div(chips, className="qs-tchip-row")
+                className="qs-slide-text",
+            ),
+            html.I(className="bi bi-eye qs-slide-eye",
+                   title="Hover to preview this page from the template"),
+            _slide_preview(entry, url, label),
+        ],
+        className="qs-slide-row" + ("" if included else " is-off"),
+    )
 
 
-def _commentary_fields(axis: str) -> int:
-    """How many prose columns a model writes on one block of this axis."""
+def _axis_block(axis: str, slides) -> Optional[html.Div]:
+    """One sub-template: its pages, each with its own tick, and what the block costs.
+
+    The header counts what is STILL in the deck — pages and the commentary fields a model
+    will be asked to write — because that is the number an author is trading against when
+    they untick a page. A build's minutes are spent writing commentary, so the count moves
+    as they choose rather than after they press Generate.
+    """
+    from studio.template_fill import slide_previews
     from studio.template_fill.commentary_fields import fields_for_axis
+    from studio.template_fill.deck_slides import catalog
 
-    return fields_for_axis(axis)
-
-
-def _axis_block(axis: str, counts: Sequence[Tuple[str, int]]) -> html.Div:
+    entries = catalog(axis)
+    if not entries:
+        return None
     label, icon, repeat = _AXIS_META.get(axis, (axis.title(), "bi-file-earmark", ""))
-    pages = sum(n for _, n in counts)
-    # What the block costs in model calls, next to what it costs in pages. A build's
-    # minutes are spent writing commentary, so the author deserves to see the number that
-    # sets them BEFORE they press Generate rather than in the log afterwards.
-    written = _commentary_fields(axis)
+    urls = slide_previews.urls(axis)
+    kept = [e for e in entries if slides.includes(axis, e.index)]
+    written = fields_for_axis(axis, hidden=slides.hidden(axis))
     return html.Div(
         [
             html.Div(
                 [
                     html.I(className=f"bi {icon}"),
                     html.Span(label, className="qs-tsec-axis-name"),
-                    html.Span(f"{pages} page" + ("s" if pages != 1 else ""),
+                    html.Span(f"{len(kept)}/{len(entries)} page"
+                              + ("s" if len(entries) != 1 else ""),
                               className="qs-tsec-axis-n"),
                     html.Span(f"{written} written",
                               className="qs-tsec-axis-ai",
@@ -797,51 +759,71 @@ def _axis_block(axis: str, counts: Sequence[Tuple[str, int]]) -> html.Div:
                 className="qs-tsec-axis-head",
             ),
             html.Div(repeat, className="qs-tsec-axis-note") if repeat else None,
-            _section_chips(counts),
+            html.Div(
+                [_slide_row(e, included=slides.includes(axis, e.index),
+                            url=urls[e.index] if e.index < len(urls) else None)
+                 for e in entries],
+                className="qs-slide-list",
+            ),
         ],
-        className="qs-tsec-axis",
+        className="qs-tsec-axis" + ("" if kept else " is-dropped"),
     )
 
 
-def template_sections_panel(
-    scope: Optional[str] = "all", basis: Optional[str] = None
-) -> html.Div:
-    """The sections the current SCOPE and BASIS will produce, one block per axis.
+def template_sections_panel(basis: Optional[str] = None,
+                            slides: Optional[Any] = None) -> html.Div:
+    """"What's in your QBR" — every template page, with the tick that includes it.
 
-    Selection is driven by the templates themselves, not a static list. "All" builds
-    the overall, product and country sub-decks and merges them, so all three are
-    listed — previewing only the overall template (the old behaviour) made switching
-    Scope back to "All" look like nothing had happened. Choosing GPR + Carrier Survey
-    adds the survey block for the same reason: the deck gains those pages, so the
-    panel that describes the deck has to gain them too.
+    This is the deck's shape control, not a read-out of one. Selection is driven by the
+    TEMPLATES themselves, so a page added to a template appears here (ticked) with no code
+    change, and unticking every page of a sub-template is how a deck is built without it.
+
+    The data basis still gates the Carrier Survey block: it is sourced from a different book
+    entirely, so it appears only when the run draws on that book (see :func:`deck_axes`).
     """
-    axes = deck_axes(scope, basis)
-    blocks, base_pages = [], 0
-    for axis in axes:
-        counts = _section_counts(axis)
-        if not counts:
-            continue
-        base_pages += sum(n for _, n in counts)
-        blocks.append(_axis_block(axis, counts))
+    from studio.template_fill.deck_slides import DeckSlides
+
+    chosen = slides if slides is not None else DeckSlides.everything()
+    # Every registered axis is LISTED, so an axis can be ticked back on; only the survey
+    # block — which is the basis's decision, not the author's — is left out when off.
+    blocks = [b for b in (_axis_block(axis, chosen) for axis in _listable(basis))
+              if b is not None]
     if not blocks:
         return html.Div(
-            [html.I(className="bi bi-exclamation-circle"), " No template registered for this scope."],
+            [html.I(className="bi bi-exclamation-circle"), " No template registered."],
             className="qs-preview-empty",
         )
+    built = deck_axes(basis, chosen)
+    pages = sum(len(chosen.kept(axis)) for axis in built)
     return html.Div(
         [
             html.Div(
                 [
-                    html.Span([html.B(str(base_pages)), " base pages"], className="qs-tsec-total"),
-                    html.Span([html.B(str(len(blocks))), " sub-deck" + ("s" if len(blocks) > 1 else "")],
+                    html.Span([html.B(str(pages)), " base pages"], className="qs-tsec-total"),
+                    html.Span([html.B(str(len(built))),
+                               " sub-deck" + ("s" if len(built) != 1 else "")],
                               className="qs-tsec-total alt"),
                 ],
                 className="qs-tsec-summary",
             ),
+            html.Div("Untick a page to leave it out. Hover one to see it.",
+                     className="qs-tsec-hint"),
             html.Div(blocks, className="qs-tsec-axes"),
         ],
         className="qs-tsec",
     )
+
+
+def _listable(basis: Optional[str]) -> Tuple[str, ...]:
+    """Which axes the panel SHOWS — every registered one bar an out-of-basis survey block.
+
+    Different from :func:`deck_axes`, which answers what gets BUILT. An axis the author has
+    unticked entirely still has to be on screen, or there would be no way to tick it back.
+    """
+    axes = registered_axes()
+    if str(basis or DATA_BASIS_DEFAULT) == DATA_BASIS_WITH_SURVEY:
+        return axes
+    return tuple(a for a in axes if a != "survey")
 
 
 def setup_body(
@@ -850,19 +832,20 @@ def setup_body(
     filter_options: Mapping[str, Any] | None = None,
     filter_values: Mapping[str, Any] | None = None,
     dataset: Optional[Mapping[str, Any]] = None,
+    slides: Optional[Any] = None,
 ) -> html.Div:
     # Order follows how a deck is actually briefed: what shape is it and who is it for,
     # then where the numbers come from, then which slice of them, then the benchmarks.
     sections = html.Div(
         [
             _setup_section(
-                "bi-sliders", "Scope, audience & voice",
-                "The three questions that decide the shape of the deck.",
+                "bi-sliders", "Audience & voice",
+                "Who reads this deck, and how it should read.",
                 _setup_options(), span=True,
                 tip_id="qs-tip-sec-shape",
-                tip="Answer these from the brief. They decide which sub-decks get "
-                    "assembled, who the commentary is pitched at, and how much prose "
-                    "each slide carries — before any filter is touched.",
+                tip="Answer these from the brief. They decide who the commentary is "
+                    "pitched at and how much prose each slide carries. WHICH pages the "
+                    "deck carries is the list on the right.",
             ),
             _setup_section(
                 "bi-database", "Data source",
@@ -926,12 +909,29 @@ def setup_body(
             # Why a Generate click was refused (no money measure, dataset not
             # submitted). Written by the generate callback.
             html.Div(id="studio-setup-msg", className="qs-setup-msg"),
-            # Deck sections live in the aside so the main form stays a single screen.
+            # The deck's page list lives in the aside so the main form stays a single
+            # screen. It is a CONTROL, not a summary: each page carries the tick that
+            # decides whether the deck includes it, and the deck's shape is read back off
+            # those ticks (``studio.template_fill.deck_slides``).
             html.Div(
                 [
-                    html.Div([html.I(className="bi bi-collection"), "What's in your QBR"],
-                             className="qs-aside-card-head"),
-                    html.Div(template_sections_panel("all"), id="studio-template-sections"),
+                    html.Div(
+                        [
+                            html.I(className="bi bi-collection"), "What's in your QBR",
+                            info_tip(
+                                "qs-tip-pages",
+                                "Every page of every sub-template, with the tick that "
+                                "decides whether your deck carries it. Untick a page and "
+                                "it is not built, not filled and not written — a "
+                                "sub-template with nothing ticked is left out of the deck "
+                                "entirely. Hover a page to see it as the template draws "
+                                "it; the preview is the template's own example, not this "
+                                "carrier's numbers.",
+                            ),
+                        ],
+                        className="qs-aside-card-head"),
+                    html.Div(template_sections_panel(basis=DATA_BASIS_DEFAULT, slides=slides),
+                             id="studio-template-sections"),
                 ],
                 className="qs-aside-card",
             ),

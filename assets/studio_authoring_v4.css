@@ -412,15 +412,79 @@
     background: var(--v4-field) !important;
     box-shadow: inset 0 0 0 1px var(--v4-hair) !important;
 }
-.qs-root .qs-tchip {
-    border-radius: 9px; padding: 5px 8px; font-size: 11px; font-weight: 600;
-    color: var(--va-ink-700); background: var(--va-surface-0);
-    box-shadow: var(--v4-ring);
+/* The separator before "N written". studio_authoring_v3.css sets it to a middle dot that
+   was written to that file as a stray NUL byte followed by "B7" (a mis-encoded U+00B7), so
+   every axis header read "6/6 pages B7 5 written" with a missing-glyph box in front of it.
+   Overridden here rather than edited there: v3 is mis-encoded as a whole (git reads it as
+   binary), and re-saving it would rewrite far more than this one character. */
+.qs-root .qs-tsec-axis-ai::before { content: "·"; margin: 0 5px; }
+
+.qs-root .qs-tsec-hint { font-size: 10.5px; color: var(--va-ink-500); margin: -6px 0 10px; }
+.qs-root .qs-tsec-axis.is-dropped { opacity: 0.62; }
+
+/* ── the page list: one tickable row per template slide ─────────────────── */
+
+.qs-root .qs-slide-list { display: flex; flex-direction: column; gap: 1px; margin-top: 8px; }
+.qs-root .qs-slide-row {
+    position: relative;
+    display: flex; align-items: center; gap: 7px;
+    padding: 5px 6px; border-radius: 9px;
+    transition: background var(--v4-ease);
 }
-.qs-root .qs-tchip i { color: var(--va-blue); }
-.qs-root .qs-tchip-n {
-    min-width: 16px; padding: 0 4px; border-radius: 999px; font-size: 9.5px; font-weight: 800;
-    color: var(--va-blue); background: var(--va-blue-soft);
+.qs-root .qs-slide-row:hover { background: var(--va-surface-0); box-shadow: var(--v4-ring); }
+.qs-root .qs-slide-check { margin: 0; }
+.qs-root .qs-slide-check .form-check-input { margin: 0; cursor: pointer; }
+.qs-root .qs-slide-icon { font-size: 12px; color: var(--va-blue); }
+.qs-root .qs-slide-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.qs-root .qs-slide-name {
+    font-size: 11.5px; font-weight: 650; color: var(--va-ink-800);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.qs-root .qs-slide-note { font-size: 9.5px; color: var(--va-ink-500); }
+.qs-root .qs-slide-eye { font-size: 11px; color: var(--va-ink-400); opacity: 0; }
+.qs-root .qs-slide-row:hover .qs-slide-eye { opacity: 1; }
+.qs-root .qs-slide-row.is-off .qs-slide-icon,
+.qs-root .qs-slide-row.is-off .qs-slide-note { opacity: 0.45; }
+.qs-root .qs-slide-row.is-off .qs-slide-name {
+    color: var(--va-ink-400); text-decoration: line-through;
+}
+
+/* The hover preview of the page, rendered from the TEMPLATE itself.
+
+   `position: fixed`, not absolute: the panel it lives in is a narrow, sticky, scrollable
+   column, and an absolutely-positioned card would be clipped by it the moment the list
+   grew past the card. Fixed takes it out of that flow entirely and parks it beside the
+   panel, so every row previews at the same readable size wherever the row happens to be. */
+.qs-root .qs-slide-pop {
+    position: fixed; right: 356px; top: 50%; transform: translateY(-50%) scale(0.98);
+    width: min(420px, 34vw); z-index: 60;
+    padding: 10px; border-radius: 14px;
+    background: var(--va-surface-0);
+    box-shadow: 0 2px 6px rgba(10, 22, 54, 0.10), 0 26px 60px -18px rgba(10, 22, 54, 0.45);
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity var(--v4-ease), transform var(--v4-ease);
+}
+.qs-root .qs-slide-row:hover .qs-slide-pop {
+    opacity: 1; visibility: visible; transform: translateY(-50%) scale(1);
+}
+.qs-root .qs-slide-shot {
+    display: block; width: 100%; border-radius: 9px;
+    box-shadow: inset 0 0 0 1px var(--v4-hair);
+}
+.qs-root .qs-slide-shot.empty {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 6px; aspect-ratio: 16 / 9; font-size: 11px; color: var(--va-ink-500);
+    background: var(--v4-field);
+}
+.qs-root .qs-slide-shot.empty i { font-size: 18px; }
+.qs-root .qs-slide-cap {
+    margin-top: 8px; font-size: 10.5px; font-weight: 650; color: var(--va-ink-600);
+    text-align: center;
+}
+
+@media (max-width: 1200px) {
+    /* No room beside the panel — the preview would sit on top of the form. */
+    .qs-root .qs-slide-pop { display: none; }
 }
 
 /* ── peers ───────────────────────────────────────────────────────────────── */

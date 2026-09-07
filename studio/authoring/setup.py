@@ -20,10 +20,11 @@ from typing import Sequence
 from dash import ALL, MATCH, Input, Output, State, no_update
 
 from logger import get_logger
-from studio.compute import FILTER_COLUMN
+from studio.compute import FILTER_COLUMN, quarter_options
 from studio.data import cascade_options, peer_members
 from studio.page import authoring as A
-from studio.template_fill import registry
+from studio.template_fill import registry, slide_previews
+from studio.template_fill.deck_slides import DeckSlides
 
 from studio.authoring import jobs
 from studio.authoring.config import BLANK, BREAKDOWNS, engine
@@ -32,19 +33,19 @@ from studio.content.report_plan import DEFAULT_AUDIENCE
 log = get_logger(__name__)
 
 
-def _scope_template_path(scope):
-    """A concrete template ``.pptx`` for the tdoc fallback, derived from the scope choice.
+def _fallback_template_path(slides):
+    """A concrete template ``.pptx`` for the tdoc fallback, from the pages still ticked.
 
     The assembled preview drives the canvas; this path only feeds the single-template
-    fallback (``new_template_doc``), so a specific axis maps to its template and "all"
-    maps to the overall template.
+    fallback (``new_template_doc``), so it wants the FIRST sub-deck the selection builds —
+    the overall block in an ordinary deck, and whatever is left when that block has been
+    unticked entirely.
     """
     from studio.template_fill.binding_map import available, template_path
 
-    axes = set(available())
-    axis = scope if scope in {"overall", "product", "country"} else "overall"
-    if axis not in axes:
-        axis = "overall" if "overall" in axes else (sorted(axes)[0] if axes else None)
+    axes = [a for a in slides.axes(sorted(available())) if a != "end"]
+    axis = next((a for a in ("overall", "product", "country") if a in axes),
+                axes[0] if axes else None)
     try:
         return template_path(axis) if axis else registry.active_template_path()
     except Exception:  # noqa: BLE001 — fall back to whatever the registry considers active
@@ -154,10 +155,15 @@ def cascade_filter_options(selected: dict, record) -> dict:
     products, cover lines, industries and segments it writes in remain; and so on. One
     cached pass over the filter cube answers all ten columns
     (:func:`studio.data.cascade_options`).
+
+    The QUARTER is the exception, and answers the calendar rather than the cube. It is not
+    a column of the book (:data:`studio.compute.QUARTER_MONTHS`), and a quarter has no
+    business narrowing the carrier list — so it is offered whole and left out of the pass.
     """
     where = {FILTER_COLUMN[c]: v for c, v in (selected or {}).items() if c in FILTER_COLUMN}
     by_column = _cascade(record, _FILTER_COLUMNS, where)
-    return {fid: by_column[col] for fid, col in FILTER_COLUMN.items() if col in by_column}
+    options = {fid: by_column[col] for fid, col in FILTER_COLUMN.items() if col in by_column}
+    return {**options, "quarter": quarter_options()}
 
 
 # ── the peer group, market by market ─────────────────────────────────────────
@@ -490,6 +496,14 @@ def _short_peer_warning(short: Sequence[str]):
     return html.Span(f"{A.MIN_PEERS_MESSAGE}{where}.", className="qs-map-hint warn")
 
 
+def _no_pages_warning():
+    """The refusal for a deck with every page unticked."""
+    from dash import html
+
+    return html.Span("Tick at least one page in “What’s in your QBR” — "
+                     "a deck with no pages is not a deck.", className="qs-map-hint warn")
+
+
 def _peer_count(count: int, source: str) -> str:
     return f"{count} peer{'s' if count != 1 else ''} from {source}."
 
@@ -571,18 +585,31 @@ def _scope_figures(key: tuple, dataset_id):
 
     country = filters.get("country")
     n_countries = len(country) if isinstance(country, (list, tuple)) else (1 if country else "All")
-    year_val = filters.get("year")
-    if isinstance(year_val, (list, tuple, set)):
-        years = sorted(str(y) for y in year_val if str(y).strip())
-        year_disp = ", ".join(years) if years else "All"
-    else:
-        year_disp = str(year_val) if year_val else "All"
     return (
         {"label": "Total GWP", "value": money(figures.total), "sub": str(subject)},
         {"label": "Market rank", "value": figures.rank_rendered},
         {"label": "Countries", "value": str(n_countries)},
-        {"label": "Year", "value": year_disp},
+        {"label": "Period", "value": period_label(filters)},
     )
+
+
+def period_label(filters: dict) -> str:
+    """The reporting period the figures beside it are for — "2025 · Q3", "2024, 2025", "All".
+
+    The tile used to say YEAR, which stopped being the whole answer the moment Setup could
+    pin a quarter: a card reading "2025" over a Q3 total describes a year the deck does not
+    report on.
+    """
+    years = _listed(filters.get("year"))
+    quarters = _listed(filters.get("quarter"))
+    period = ", ".join(years) if years else "All"
+    return f"{period} · {', '.join(quarters)}" if quarters else period
+
+
+def _listed(value) -> list:
+    """A form value as a sorted list of non-empty strings."""
+    values = value if isinstance(value, (list, tuple, set)) else (value,)
+    return sorted(str(v).strip() for v in values if str(v or "").strip())
 
 
 def _busy(flag: str):
@@ -659,9 +686,30 @@ def _story_agents_enabled() -> bool:
     return (os.getenv("STUDIO_STORY_AGENTS", "") or "").strip().lower() in _STORY_AGENTS_ON
 
 
+def slides_from_form(ids, values) -> DeckSlides:
+    """The page checkboxes read back as a :class:`DeckSlides` — what is UNTICKED.
+
+    Excluded rather than included, so a template that grows a page later grows the deck
+    (:mod:`studio.template_fill.deck_slides`) instead of quietly dropping it out of every
+    saved selection.
+    """
+    excluded: dict = {}
+    for ident, on in zip(ids or [], values or []):
+        if on:
+            continue
+        axis = str((ident or {}).get("axis") or "")
+        excluded.setdefault(axis, []).append(int((ident or {}).get("idx") or 0))
+    return DeckSlides(excluded)
+
+
 def register_setup(app):
     """Wire the Generate + scope-preview callbacks onto ``app``."""
     _register_busy_overlay(app)
+    # The page thumbnails the include/exclude panel hovers are rendered from the fixed
+    # templates and cached on disk, so this is a one-off per machine. On a background
+    # thread because it opens PowerPoint, and nothing on the page waits for it: a row
+    # with no thumbnail yet still ticks, and picks one up on its next repaint.
+    slide_previews.warm_async()
 
     @app.callback(
         Output("qs-selection", "data"),
@@ -680,7 +728,7 @@ def register_setup(app):
         State({"type": "studio-peer-custom", "country": ALL}, "id"),
         State("studio-audience", "value"),
         State("studio-commentary-style", "value"),
-        State("studio-template", "value"),
+        State("qs-slides", "data"),
         State("studio-data-basis", "value"),
         State("studio-survey-carrier", "value"),
         State({"type": "studio-survey-peer", "country": ALL}, "value"),
@@ -690,7 +738,7 @@ def register_setup(app):
         prevent_initial_call=True,
     )
     def start_generate(n, fvals, fids, cut_vals, cut_ids, peer_mode, peer_vals, peer_ids,
-                       audience, style, template_scope, data_basis,
+                       audience, style, slide_store, data_basis,
                        survey_carrier, survey_peer_vals, survey_peer_ids, dataset_store,
                        running_job):
         """Read the form, refuse what we must, and start the build in its own thread.
@@ -730,6 +778,17 @@ def register_setup(app):
         blocked = _generation_blocked(dataset_store, record)
         if blocked:
             return (*_REFUSED[:-1], blocked)
+        # Which template pages the deck carries, straight off "What's in your QBR".
+        # An author who unticked EVERY page has asked for no deck at all, which is a
+        # refusal rather than an empty file.
+        #
+        # Asked of ``deck_axes`` rather than of the selection alone, because the two differ
+        # in exactly the case this guard exists for: the Carrier Survey block is gated by
+        # the DATA BASIS, so on a premium run it is never unticked (its rows are not on
+        # screen) and a selection with everything else off still looked like a deck.
+        slides = DeckSlides.from_store(slide_store)
+        if not A.deck_axes(data_basis, slides):
+            return (*_REFUSED[:-1], _no_pages_warning())
         selection = {
             # Full QBR is the only deliverable, so the Setup form no longer asks.
             "report": "qbr",
@@ -757,8 +816,12 @@ def register_setup(app):
             # Turning them off must never turn commentary off, which is exactly why the
             # two flags are two flags. ``STUDIO_STORY_AGENTS=on`` brings them back.
             "ai_story": _story_agents_enabled(),
-            "template_scope": template_scope or "all",
-            "template_path": _scope_template_path(template_scope),
+            # The author's page selection, as ``{axis: [excluded slide index…]}``. It is
+            # what decides which sub-decks are assembled and which pages each one keeps
+            # (``studio.template_fill.deck_slides``), and it rides in the selection so
+            # every cached build re-keys when the author changes their mind.
+            "slides": slides.as_store(),
+            "template_path": _fallback_template_path(slides),
             # Which books the deck draws on ("premium" | "premium_survey"). Carried into
             # every cached build so a change re-keys them (see A.DATA_BASIS_OPTIONS).
             "data_basis": data_basis or A.DATA_BASIS_DEFAULT,
@@ -979,3 +1042,48 @@ def register_setup(app):
 
         selected = {i["col"]: v for i, v in zip(ids or [], values or []) if v not in BLANK}
         return scope_preview_body(selected, dataset_in_use(dataset_store))
+
+    # ── "What's in your QBR": the pages the deck carries ─────────────────────
+    #
+    # TWO callbacks, deliberately, and they do not form a cycle:
+    #
+    #   ticks  ->  the store          (``remember_pages``)
+    #   store  ->  the panel          (``deck_pages``)
+    #
+    # Rebuilding the panel re-creates the checkboxes, which fires ``remember_pages``
+    # again — with the same answer. It returns ``no_update`` when nothing changed, so
+    # the round trip stops there instead of repainting for ever.
+
+    @app.callback(
+        Output("qs-slides", "data"),
+        Input({"type": "qs-slide", "axis": ALL, "idx": ALL}, "value"),
+        State({"type": "qs-slide", "axis": ALL, "idx": ALL}, "id"),
+        State("qs-slides", "data"),
+        prevent_initial_call=True,
+    )
+    def remember_pages(values, ids, stored):
+        """Write the ticked pages to the store the deck is built from."""
+        if not ids:
+            return no_update
+        chosen = slides_from_form(ids, values)
+        if chosen == DeckSlides.from_store(stored):
+            return no_update
+        return chosen.as_store()
+
+    @app.callback(
+        Output("studio-template-sections", "children"),
+        Input("qs-slides", "data"),
+        Input("studio-data-basis", "value"),
+        # Same full-page cue as the other Setup controls: either input re-derives the
+        # page list, and the author should see that it is happening.
+        running=[(Output(A.BUSY_SECTIONS, "className"), A.BUSY_FLAG_ON, A.BUSY_FLAG_CLASS)],
+        prevent_initial_call=True,
+    )
+    def deck_pages(stored, basis):
+        """Repaint the page list: what is ticked, and what the deck now costs.
+
+        Two inputs because two choices change the deck. The ticks decide which pages (and
+        so which sub-decks) are built; the DATA BASIS decides whether each country block is
+        followed by a Carrier Survey page, which is sourced from a different book entirely.
+        """
+        return A.template_sections_panel(basis=basis, slides=DeckSlides.from_store(stored))

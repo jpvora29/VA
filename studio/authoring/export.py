@@ -2,8 +2,9 @@
 
 ``export`` serves the deliverable — the assembled deck if we have it, else the
 single filled template, else the edited document — all as one ``.pptx``. The
-rest edit the template doc: override a slot, add a note, auto-fix, refresh the
-sections list, or force validation to re-run.
+rest edit the template doc: override a slot, add a note, auto-fix, or force
+validation to re-run. (The deck's page list moved to ``studio.authoring.setup``,
+where the rest of the Setup form's callbacks live.)
 """
 from __future__ import annotations
 
@@ -14,7 +15,6 @@ from dash import ALL, Input, Output, State, ctx, dcc, no_update
 
 from logger import get_logger
 from studio.export import export_document
-from studio.page import authoring as A
 from studio.template_fill import fill_template
 from studio.template_fill import validate as TV
 from studio.template_fill.model import add_element
@@ -128,27 +128,6 @@ def register_export(app):
 
     # Template upload was removed: templates are now a fixed, author-made set (assembled
     # per product/country and merged), not user-uploaded. See studio/template_fill/assemble.py.
-
-    @app.callback(
-        Output("studio-template-sections", "children"),
-        Input("studio-template", "value"),
-        Input("studio-data-basis", "value"),
-        # Same full-page cue as the other Setup controls: changing either input
-        # re-derives the section list, and the user should see that it is happening.
-        running=[(Output(A.BUSY_SECTIONS, "className"), A.BUSY_FLAG_ON, A.BUSY_FLAG_CLASS)],
-        prevent_initial_call=True,
-    )
-    def template_sections(scope, basis):
-        """Refresh "What's in your QBR" when the scope OR the data basis changes.
-
-        Two inputs because two choices change the deck. The scope carries an axis set
-        ("all" → overall + product + country); the basis decides whether each country
-        block is followed by a Carrier Survey page. The panel lists every axis the pair
-        assembles — see ``A.deck_axes``, which mirrors ``assemble.plan_subdecks``.
-        """
-        if not scope:
-            return no_update
-        return A.template_sections_panel(scope, basis)
 
     @app.callback(
         Output("qs-view", "data", allow_duplicate=True),

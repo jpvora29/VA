@@ -52,13 +52,14 @@ def body_for(
     filter_values: Mapping[str, Any] | None = None,
     tdoc: Optional[Mapping[str, Any]] = None,
     dataset: Optional[Mapping[str, Any]] = None,
+    slides: Optional[Any] = None,
 ) -> Any:
     if mode == "data":
         return data_body(dataset)
     if mode == "setup":
         return setup_body(
             cut_groups, filter_options=filter_options, filter_values=filter_values,
-            dataset=dataset,
+            dataset=dataset, slides=slides,
         )
     # Template-faithful bodies: when a template doc exists it IS the deliverable —
     # the canvas previews the filled template, Review validates it (and hosts Export).
@@ -104,6 +105,7 @@ def authoring_shell(
     filter_values: Mapping[str, Any] | None = None,
     tdoc: Optional[Mapping[str, Any]] = None,
     dataset: Optional[Mapping[str, Any]] = None,
+    slides: Optional[Any] = None,
 ) -> html.Div:
     view = view or {"idx": 0, "tab": "setup"}
     counts = deck_counts(deck, doc) if deck else {"total": 0}
@@ -116,7 +118,7 @@ def authoring_shell(
     body = body_for(
         mode, deck, view, doc,
         cut_groups=cut_groups, filter_options=filter_options, filter_values=filter_values,
-        tdoc=tdoc, dataset=dataset,
+        tdoc=tdoc, dataset=dataset, slides=slides,
     )
     return html.Div(
         [

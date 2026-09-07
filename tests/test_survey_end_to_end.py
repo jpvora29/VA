@@ -19,6 +19,7 @@ from pptx import Presentation
 from studio import seed as S
 from studio.compute import compute_overall
 from studio.template_fill.assemble import assemble_deck, plan_subdecks
+from studio.template_fill.deck_slides import DeckSlides
 
 pytestmark = pytest.mark.e2e
 
@@ -67,7 +68,8 @@ def test_each_survey_page_follows_its_own_country_block(result, tmp_path):
     # correct, unrelated pre-existing behaviour (see plan_subdecks' docstring), not a defect
     # in the survey feature. Scoping to "country" isolates exactly what this test names:
     # survey placement relative to its own country block.
-    axes = [d.template for d in plan_subdecks(result, scope="country", data_basis="premium_survey")]
+    axes = [d.template for d in plan_subdecks(result, slides=DeckSlides.only("overall", "country", "survey"),
+                                        data_basis="premium_survey")]
     assert axes == ["overall", "country", "survey", "country", "survey", "end"]
 
 
@@ -209,5 +211,6 @@ def test_the_overall_survey_tile_comes_off_the_page_on_the_premium_basis(result,
     """A premium-basis deck must not carry a survey number — nor the template's own "x.x"
     where one would have gone. Scoped to the overall block: that is the page under test."""
     path = assemble_deck(result, out_path=str(tmp_path / "premium.pptx"),
-                         work_dir=str(tmp_path / "work"), scope="overall")
+                         work_dir=str(tmp_path / "work"),
+                         slides=DeckSlides.only("overall"))
     assert _survey_tiles(path) == []
