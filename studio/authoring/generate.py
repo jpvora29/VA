@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from studio import commentary_mode, telemetry
+from studio.commentary_mode import CommentaryUnavailable
 from studio.compute import FILTER_COLUMN, compute_overall
 from studio.data import cached_filter_options
 from studio.deck import build_deck
@@ -109,6 +110,25 @@ def usable_tdoc(tdoc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return tdoc
 
 
+# Why the three build wrappers below re-raise ``CommentaryUnavailable``.
+#
+# Each of them catches broadly on purpose: a bad selection, an odd template or a failed
+# assembly must not white-screen the app, so the wrapper logs and answers ``None`` and the
+# build carries on with whatever else it produced.
+#
+# A strict-mode refusal is not that kind of failure. ``COMMENTARY_MODE=ai_required`` exists
+# to STOP a deck rather than degrade it, and a broad catch turned that decision into its
+# opposite: the refusal became a warning, the builder answered ``None``, the job "succeeded"
+# with nothing in it, and the canvas kept the deck from the run before. Two log lines, no
+# deliverable, and a screen that looked like nothing had happened — which is exactly the
+# silent-deterministic-deck outcome strict mode was added to prevent, wearing a different
+# hat.
+#
+# So the refusal travels: out of here, out of ``build_documents``, into
+# ``studio.authoring.jobs``, which already knows how to present it — with its ``retryable``
+# flag, and with the canvas cleared rather than left showing yesterday's deck.
+
+
 # ── the on-screen deck (a generated deck, or the edited document) ─────────────
 
 
@@ -165,8 +185,10 @@ def _generated_deck(selection: Optional[Dict[str, Any]]) -> Optional[DeckSpec]:
         return None
     try:
         return _deck_for(json.dumps(selection, sort_keys=True))
-    except Exception as exc:  # noqa: BLE001 — a bad selection must not white-screen the app
-        log.warning("deck build failed: %s", exc)
+    except CommentaryUnavailable:
+        raise                    # a refusal STOPS the build — see the note above
+    except Exception:  # noqa: BLE001 — a bad selection must not white-screen the app
+        log.exception("deck build failed")
         return None
 
 
@@ -196,8 +218,10 @@ def _generated_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
         return None
     try:
         return _with_background_urls(_tdoc_for(json.dumps(selection, sort_keys=True)))
-    except Exception as exc:  # noqa: BLE001 — template issues must not white-screen the app
-        log.warning("template doc build failed: %s", exc)
+    except CommentaryUnavailable:
+        raise                    # a refusal STOPS the build — see the note above
+    except Exception:  # noqa: BLE001 — template issues must not white-screen the app
+        log.exception("template doc build failed")
         return None
 
 
@@ -306,8 +330,10 @@ def _generated_assembled_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[D
         return None
     try:
         return _assembled_tdoc(selection)
-    except Exception as exc:  # noqa: BLE001 — a bad assembly must not white-screen the app
-        log.warning("assembled preview build failed: %s", exc)
+    except CommentaryUnavailable:
+        raise                    # a refusal STOPS the build — see the note above
+    except Exception:  # noqa: BLE001 — a bad assembly must not white-screen the app
+        log.exception("assembled preview build failed")
         return None
 
 

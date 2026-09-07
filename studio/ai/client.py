@@ -28,6 +28,8 @@ import time
 from contextlib import contextmanager
 from typing import Callable, Optional, Type, TypeVar
 
+from dotenv import load_dotenv
+
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -37,6 +39,19 @@ T = TypeVar("T")
 # The values that turn Studio AI OFF. There is deliberately no value that turns it ON:
 # a configured LLM is the switch, and a second one to remember is a way to ship a
 # deterministic deck by accident.
+# Read ``.env`` at import, for the same reason ``core.llm.clients`` does: the environment
+# is a property of the PROCESS, not of whichever module happens to want it first.
+#
+# Without this, every plain ``os.getenv`` in the Studio layer was answered before anything
+# had loaded the file. ``COMMENTARY_MODE=ai_required`` in ``.env`` therefore resolved to
+# ``auto`` and the build shipped deterministic prose — silently, and in exactly the case
+# strict mode exists to prevent, because ``preflight`` is the FIRST thing a build runs and
+# nothing before it imports ``core.llm.clients``. Same for ``STUDIO_AI=off``.
+#
+# ``load_dotenv`` never overrides a real environment variable and is a no-op the second
+# time, so this costs nothing and cannot fight an explicitly exported value.
+load_dotenv()
+
 _OFF = {"off", "0", "false", "no"}
 
 _DEFAULT_TIER = "balanced"

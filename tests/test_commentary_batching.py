@@ -506,3 +506,96 @@ def test_a_risk_flag_reaches_the_audit_line_rather_than_being_asked_for_and_binn
             rewrites.write_all([_value_set(_facts(), topics=("working",))])
     assert "risk[" in caplog.text and "concern" in caplog.text
     assert record.counters.get("commentary_risk_concern") == 1
+
+
+def test_the_env_file_is_read_before_the_commentary_mode_is_decided():
+    """Regression: ``COMMENTARY_MODE`` in ``.env`` used to be invisible.
+
+    ``preflight`` is the FIRST thing a build runs, and nothing ahead of it imported
+    ``core.llm.clients`` — the only module that called ``load_dotenv``. So a ``.env``
+    saying ``ai_required`` resolved to ``auto`` and the deck shipped deterministic prose,
+    silently, in precisely the case strict mode exists to prevent.
+
+    Run in a subprocess because the guarantee is about IMPORT ORDER, and by the time this
+    test module is collected the whole app has been imported.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    probe = textwrap.dedent("""
+        import sys
+        from studio import commentary_mode
+        commentary_mode.mode()
+        assert "dotenv" in sys.modules, "the .env file was never read"
+        print("ok")
+    """)
+    done = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    assert "ok" in done.stdout
+
+
+# ── a refusal must FAIL the build, not vanish into a warning ────────────────
+
+
+def _refusing_builder(*_a, **_kw):
+    raise mode.CommentaryUnavailable("no model", retryable=True)
+
+
+def test_a_refusal_is_not_swallowed_by_the_best_effort_build_wrappers(monkeypatch):
+    """Regression: strict mode's whole point is to STOP a deck, and the three build
+    wrappers in ``generate`` caught it, logged a warning and answered ``None``.
+
+    The job then "succeeded" with nothing in it, the canvas kept the previous run's deck,
+    and the only trace was two warnings — the silent-deterministic-deck outcome strict
+    mode exists to prevent, wearing a different hat.
+    """
+    from studio.authoring import generate as G
+
+    monkeypatch.setattr(G, "_deck_for", _refusing_builder)
+    monkeypatch.setattr(G, "_tdoc_for", _refusing_builder)
+    monkeypatch.setattr(G, "_assembled_tdoc", _refusing_builder)
+
+    sel = {"filters": {"carrier": "Zurich"}}
+    for build in (G._generated_deck, G._generated_tdoc, G._generated_assembled_tdoc):
+        with pytest.raises(mode.CommentaryUnavailable):
+            build(sel)
+
+
+def test_an_ordinary_build_failure_is_still_tolerated(monkeypatch):
+    """The broad catch stays for what it was for: a bad selection or an odd template
+    must not white-screen the app."""
+    from studio.authoring import generate as G
+
+    def explode(*_a, **_kw):
+        raise ValueError("a template nobody can parse")
+
+    monkeypatch.setattr(G, "_deck_for", explode)
+    monkeypatch.setattr(G, "_tdoc_for", explode)
+    monkeypatch.setattr(G, "_assembled_tdoc", explode)
+
+    sel = {"filters": {"carrier": "Zurich"}}
+    assert G._generated_deck(sel) is None
+    assert G._generated_tdoc(sel) is None
+    assert G._generated_assembled_tdoc(sel) is None
+
+
+def test_a_refused_build_clears_the_canvas_instead_of_keeping_the_last_deck():
+    """The symptom the user saw: no preview, and the PREVIOUS deck still on screen."""
+    import time
+
+    from studio.authoring import jobs
+
+    job = jobs.start_build({"filters": {"carrier": "Zurich"}},
+                           builder=lambda selection, report: _refusing_builder())
+    deadline = time.time() + 10
+    while time.time() < deadline and not job.snapshot()["done"]:
+        time.sleep(0.01)
+
+    state = job.snapshot()
+    assert state["done"] and state["error"], "a refusal must reach the user as an error"
+    assert state["retryable"] is True
+    # This is the condition ``poll_generate`` reads to blank both document stores.
+    produced = job.documents() is not None and not job.documents().empty
+    assert state["error"] or not produced
+    jobs.clear_job(job.job_id)
