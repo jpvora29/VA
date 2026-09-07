@@ -52,7 +52,9 @@ from studio.template_fill.ledger import ClaimLedger
 from studio.template_fill.merge import merge_to_file
 from studio.template_fill.model import _template_year
 
+from studio import telemetry
 from studio.memo import build_memo
+
 
 logger = get_logger(__name__)
 
@@ -100,6 +102,77 @@ def _buildable() -> set:
         except KeyError:                    # noqa: PERF203 — a broken map must not stop the rest
             logger.warning("assemble: axis %r skipped — no binding map", name)
     return names
+
+
+@dataclass(frozen=True)
+class DeckShape:
+    """What a selection will actually build: which axes, over which entities.
+
+    Extracted so the QUESTION "how big is this deck" has one answer. Setup wants it before
+    Generate (to show the page and commentary-field counts), the job progress wants it to
+    say "writing 8 sections", and :class:`SubDeckPlanBuilder` wants it to build from — and
+    three answers to that question is three chances for the preview to promise a deck
+    nobody builds.
+
+    Pure with respect to the plan: reading it runs the vocabulary queries and nothing else.
+    """
+
+    axes: Tuple[str, ...] = ()
+    products: Tuple[str, ...] = ()
+    countries: Tuple[str, ...] = ()
+    with_survey: bool = False
+
+    def blocks(self) -> Dict[str, int]:
+        """``{axis: how many sub-decks of it}`` — the overall block is built once."""
+        counts: Dict[str, int] = {}
+        for axis in self.axes:
+            if axis == PRODUCT:
+                counts[PRODUCT] = len(self.products)
+            elif axis == COUNTRY:
+                counts[COUNTRY] = len(self.countries)
+            else:
+                counts[axis] = 1
+        if self.with_survey:
+            counts[SURVEY] = len(self.countries)
+        return {axis: n for axis, n in counts.items() if n}
+
+    def commentary_fields(self) -> int:
+        """How many prose columns a model is asked to write for this deck."""
+        from studio.template_fill.commentary_fields import deck_fields
+
+        # A country block reports on ONE market, and the overall/product blocks on every
+        # market in scope — which is what decides how many feedback-table rows are filled.
+        per_block = {axis: (1 if axis == COUNTRY else max(1, len(self.countries)))
+                     for axis in self.blocks()}
+        return sum(deck_fields({axis: n}, countries=per_block[axis])
+                   for axis, n in self.blocks().items())
+
+
+def deck_shape(result, *, scope: Optional[str] = None,
+               data_basis: Optional[str] = None) -> DeckShape:
+    """The shape a selection assembles to — the axes in scope and the entities each covers.
+
+    The entity rule is the one the deck has always used: the user's selection when they pin
+    any, ELSE every product/country the carrier writes in, so an unfiltered run produces the
+    carrier's full book one block at a time.
+    """
+    axes = _axes_for(scope)
+    names = _buildable()
+    basis = str(data_basis or DATA_BASIS_PREMIUM)
+
+    def wants(axis: str) -> bool:
+        return axis in axes and axis in names
+
+    products = ((selected_products(result) or product_vocab(result))
+                if wants(PRODUCT) else ())
+    countries = ((selected_countries(result) or carrier_countries(result))
+                 if wants(COUNTRY) else ())
+    return DeckShape(
+        axes=tuple(axis for axis in axes if axis in names),
+        products=tuple(str(p) for p in products),
+        countries=tuple(str(c) for c in countries),
+        with_survey=(basis == DATA_BASIS_WITH_SURVEY and SURVEY in names and wants(COUNTRY)),
+    )
 
 
 @dataclass(frozen=True)
@@ -250,6 +323,10 @@ def _write_prose(decks: Sequence[SubDeck]) -> List[SubDeck]:
     a whole deck has around a hundred; batching at the deck means the wait is set by the
     slowest column rather than by their sum. Each column is written back to the role it
     was composed for, so the deck is identical to one written a page at a time.
+
+    ``write_all`` now writes a SUB-DECK per call rather than a column per call
+    (:mod:`studio.template_fill.commentary_batch`); the deferral is what makes that
+    grouping possible, because every column in a sub-deck is pending at the same moment.
     """
     written = rewrites.write_all([sub.values for sub in decks])
     return [replace(sub, values=values) for sub, values in zip(decks, written)]
@@ -277,16 +354,13 @@ class SubDeckPlanBuilder:
         self._names = _buildable()
         basis = str(data_basis or DATA_BASIS_PREMIUM)
 
-        # The entities each axis covers: the user's selection when they pin any, ELSE
-        # every product/country the carrier writes in (so an unfiltered run produces the
-        # carrier's full book, one block each).
+        # Which axes, over which entities — read from :func:`deck_shape`, the one place
+        # that answers it, so what Setup previewed is what this builds.
+        shape = deck_shape(result, scope=scope, data_basis=data_basis)
         self._vocab = product_vocab(result) if PRODUCT in self._names else ()
-        self._products = (selected_products(result) or self._vocab) if self._wants(PRODUCT) else ()
-        self._countries = (
-            (selected_countries(result) or carrier_countries(result))
-            if self._wants(COUNTRY) else ())
-        self._wants_survey = (
-            basis == DATA_BASIS_WITH_SURVEY and SURVEY in self._names and self._wants(COUNTRY))
+        self._products = shape.products
+        self._countries = shape.countries
+        self._wants_survey = shape.with_survey
 
         # Every sub-deck sees the run's whole country and product set, so a page can tell a
         # single-country run from a multi-country one — and a portfolio page can widen a
@@ -475,11 +549,16 @@ def assemble_deck(result, *, out_path: Optional[str] = None, work_dir: Optional[
     # single-country build were exact repeats. The memo spans planning AND filling
     # because both read the same scopes, and it is discarded when this returns, so
     # no answer outlives the build that computed it.
-    with build_memo(f"assemble:{result.subject or 'deck'}"):
-        decks = plan_subdecks(result, scope=scope, data_basis=data_basis)
-        filled = _fill_subdecks(decks, work_dir or tempfile.mkdtemp(prefix="qbr_assemble_"))
+    label = f"assemble:{result.subject or 'deck'}"
+    with telemetry.job(label), build_memo(label):
+        with telemetry.phase("plan"):
+            decks = plan_subdecks(result, scope=scope, data_basis=data_basis)
+        with telemetry.phase("fill"):
+            filled = _fill_subdecks(decks,
+                                    work_dir or tempfile.mkdtemp(prefix="qbr_assemble_"))
         out = out_path or str(Path.cwd() / "qbr_assembled.pptx")
-        merge_to_file(filled, out)
+        with telemetry.phase("merge"):
+            merge_to_file(filled, out)
 
     logger.info("assemble_deck: %d sub-deck(s) [%s] -> %s",
                 len(decks), ", ".join(d.label for d in decks), out)

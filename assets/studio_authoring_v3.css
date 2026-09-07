@@ -259,6 +259,14 @@
     margin-left: auto; font-size: 10px; font-weight: 700; color: var(--blue);
     font-variant-numeric: tabular-nums;
 }
+/* What the block costs in MODEL CALLS, beside what it costs in pages. A build's minutes
+   are spent writing commentary, so the number that sets them belongs on the panel that
+   describes the deck rather than only in the log afterwards. */
+.qs-tsec-axis-ai {
+    font-size: 10px; font-weight: 600; color: var(--faint);
+    font-variant-numeric: tabular-nums;
+}
+.qs-tsec-axis-ai::before { content: " B7"; margin: 0 5px; }
 .qs-tsec-axis-note { font-size: 10px; color: var(--faint); }
 .qs-tsec-axis .qs-tchip { background: #fff; }
 
@@ -354,8 +362,14 @@
     background: var(--va-surface-0); color: var(--va-ink-800);
     box-shadow: var(--va-shadow-lg), 0 0 0 1px var(--va-border-soft);
 }
-.qs-gen-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.qs-gen-head { display: flex; align-items: baseline; gap: 10px; }
 .qs-gen-step { font-weight: 650; font-size: 13px; color: var(--va-ink-900); }
+/* Which deck is being built. A build runs for minutes while the author reads the last
+   one, and by the time it lands they should not have to remember what they picked. */
+.qs-gen-scope {
+    margin-right: auto; font-size: 11px; font-weight: 600; color: var(--va-ink-400);
+    padding: 1px 7px; border-radius: var(--va-radius-pill); background: var(--va-surface-2);
+}
 .qs-gen-elapsed { font-size: 12px; color: var(--va-ink-400); font-variant-numeric: tabular-nums; }
 .qs-gen-track {
     margin-top: 8px; height: 5px; border-radius: var(--va-radius-pill); overflow: hidden;

@@ -81,3 +81,36 @@ class CommentaryVerdicts(BaseModel):
     verdicts: List[CommentaryVerdict] = Field(
         default_factory=list, description="One verdict per sentence, in the order given"
     )
+
+
+# ── Section-level commentary (one call per sub-deck) ─────────────────────────
+#
+# The per-column schema above writes ONE textbox per request. A six-product QBR has 27 of
+# them, and 27 author calls plus 27 verifier calls is the reason a build took hours. These
+# carry a whole sub-deck's columns in a single request and a single answer.
+#
+# There is deliberately no `headline` field. The plan's draft contract had one, and the
+# shipped templates already print the column's header on the slide — a headline the fill
+# layer must discard is tokens spent on nothing, and a slot nobody renders is where a
+# "PowerPoint rewrites the commentary" habit starts.
+
+
+class CommentarySection(BaseModel):
+    """One commentary field: its sentences, the action it lands on, and its risk read."""
+
+    field_id: str = Field(description="The field id EXACTLY as given in the request")
+    bullets: List[CommentaryBullet] = Field(default_factory=list)
+    action: str = Field(
+        default="",
+        description="One specific leadership action, naming a segment and a figure. Empty "
+                    "unless the column is asked for one.",
+    )
+    risk_flag: str = Field(
+        default="none", description="none | watch | concern — the risk this column carries"
+    )
+
+
+class CommentarySections(BaseModel):
+    """Every field in one sub-deck, answered in one call."""
+
+    sections: List[CommentarySection] = Field(default_factory=list)

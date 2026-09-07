@@ -67,20 +67,20 @@ def _written(values: Mapping[str, Any], text_by_role: Mapping[str, str]) -> Dict
 
 def write_all(value_sets: Sequence[Mapping[str, Any]], write: Optional[ColumnWriter] = None,
               ) -> List[Dict[str, Any]]:
-    """Every pending column across every value set, written concurrently.
+    """Every pending column across every value set, written.
 
-    The unit of concurrency is deliberately the WHOLE deck rather than one page or one
-    sub-deck: a country block has four columns and a pool sized for four would spend the
-    build idle. Results are written back by role, so a value set comes out in the order
-    it went in whatever order the models answered.
+    Two writers behind one call, chosen by whether the caller supplied one:
 
-    ``write`` defaults to the real model writer; passing one is how a test drives this
-    without a model, and how the caller stays testable without one.
+    * **No writer (production).** The deck is written SECTION at a time
+      (:mod:`studio.template_fill.commentary_batch`) — one author call and one verifier call
+      per sub-deck instead of two per textbox. That is the change that took a six-product
+      build from about 54 model calls to about nine.
+    * **An explicit ``write``.** The per-column path, unchanged. It is how a test drives this
+      without a model, and how a caller that genuinely wants one column at a time gets it.
+
+    Either way results are written back BY ROLE, so a value set comes out in the order it
+    went in whatever order the models answered.
     """
-    from studio.parallel import gather_list
-    from studio.template_fill.commentary import write_column
-
-    write = write or write_column
     indexed = [(i, role, pending)
                for i, values in enumerate(value_sets)
                for role, pending in pending_items(values)]
@@ -89,13 +89,31 @@ def write_all(value_sets: Sequence[Mapping[str, Any]], write: Optional[ColumnWri
 
     logger.info("rewrites: writing %d commentary column(s) across %d value set(s)",
                 len(indexed), len(value_sets))
-    texts = gather_list([lambda p=item: write(p) for _, _, item in indexed])
+    by_set = (_write_per_column(value_sets, indexed, write) if write is not None
+              else _write_per_section(value_sets))
+    written = [_written(values, by_set[i]) for i, values in enumerate(value_sets)]
+    _log_authorship(indexed, [by_set[i].get(role, "") for i, role, _ in indexed])
+    return written
 
+
+def _write_per_section(value_sets: Sequence[Mapping[str, Any]]) -> List[Dict[str, str]]:
+    """The batched writer: one call per sub-deck, concurrent across sub-decks."""
+    from studio.template_fill import commentary_batch
+
+    return commentary_batch.write_deck(value_sets)
+
+
+def _write_per_column(value_sets: Sequence[Mapping[str, Any]],
+                      indexed: Sequence[Tuple[int, str, PendingRewrite]],
+                      write: ColumnWriter) -> List[Dict[str, str]]:
+    """The per-column writer: one task per column, run concurrently."""
+    from studio.parallel import gather_list
+
+    texts = gather_list([lambda p=item: write(p) for _, _, item in indexed])
     by_set: List[Dict[str, str]] = [{} for _ in value_sets]
     for (i, role, pending), text in zip(indexed, texts):
         by_set[i][role] = text if text else pending.draft
-    _log_authorship(indexed, texts)
-    return [_written(values, by_set[i]) for i, values in enumerate(value_sets)]
+    return by_set
 
 
 def _log_authorship(indexed: Sequence[Tuple[int, str, PendingRewrite]],

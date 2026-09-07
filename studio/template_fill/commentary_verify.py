@@ -150,7 +150,7 @@ def check_claims(judged: Sequence[Judged], pack, *, glossary_brief: str = "",
     report = client.structured(
         CommentaryVerdicts, _JUDGE_SYSTEM,
         _judge_payload(items, pack, glossary_brief),
-        tier=commentary._VERIFIER_TIER, node=f"{node}-verify")
+        tier=commentary._VERIFIER_TIER, node=f"{node}-verify", phase="verify")
     if report is None or len(report.verdicts) != len(items):
         if report is not None:
             logger.info("commentary_verify: %s judge returned %d verdict(s) for %d "

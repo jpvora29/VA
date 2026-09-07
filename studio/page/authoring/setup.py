@@ -89,9 +89,13 @@ def generate_progress(state: Optional[Mapping[str, Any]]) -> Any:
     if not state or (state.get("done") and not state.get("error")):
         return ""
     if state.get("error"):
+        # A refusal that a re-run could clear reads differently from a configuration
+        # mistake, and saying "try again" to the second sends the author round a loop
+        # that cannot close (see ``studio.commentary_mode.CommentaryUnavailable``).
+        again = " Re-running the same selection may succeed." if state.get("retryable") else ""
         return html.Div(
             [html.I(className="bi bi-exclamation-triangle"),
-             html.Span(f"The deck could not be built: {state['error']}")],
+             html.Span(f"The deck could not be built: {state['error']}{again}")],
             className="qs-gen-progress is-failed",
         )
     percent = int(state.get("percent") or 0)
@@ -100,6 +104,8 @@ def generate_progress(state: Optional[Mapping[str, Any]]) -> Any:
             html.Div(
                 [
                     html.Span(state.get("step") or "Working", className="qs-gen-step"),
+                    html.Span(_SCOPE_LABELS.get(str(state.get("scope") or "all"), ""),
+                              className="qs-gen-scope"),
                     html.Span(_elapsed(int(state.get("elapsed") or 0)),
                               className="qs-gen-elapsed"),
                 ],
@@ -594,11 +600,16 @@ def _scope_preview() -> html.Div:
 # Short enough to sit in a segmented control beside the other two questions. The
 # long form ("All — overall + product + country") was written for a dropdown, where
 # there is room for a subtitle; as a chip it wrapped and broke the row.
+# The labels name what the deck CONTAINS, not which axis was ticked. Every choice
+# except "Overall" still builds the overall block in front of the repeating one
+# (``assemble._SCOPE_AXES``), so "Country only" was describing a deck that has never
+# been produced — an author who wanted the overall pages read that as a reason to pick
+# "All" and then waited on every product block they did not want.
 _SCOPE_LABELS = {
-    "all": "All",
-    "overall": "Overall only",
-    "product": "Product only",
-    "country": "Country only",
+    "all": "Entire QBR",
+    "overall": "Overall",
+    "product": "Product-wise",
+    "country": "Country-wise",
 }
 
 
@@ -672,14 +683,21 @@ _AXIS_META: Mapping[str, Tuple[str, str, str]] = {
     "product": ("Product", "bi-box-seam", "repeats per product line"),
     "country": ("Country", "bi-globe2", "repeats per country"),
     "survey": ("Carrier Survey", "bi-clipboard-data", "repeats per country"),
+    "end": ("Back cover", "bi-file-earmark-check", "closes every deck"),
 }
 
 # Scope choice → the axes it assembles, in deck order.
+#
+# This table is a MIRROR of ``studio.template_fill.assemble._SCOPE_AXES`` and is asserted
+# against it (``tests/test_studio_setup_form.py``). It used to be a second, shorter opinion
+# — "product" listed only the product axis — so the panel promised a deck of product pages
+# and the build produced the overall block, the product pages and the back cover. A preview
+# that disagrees with the builder is worse than no preview.
 _SCOPE_AXES: Mapping[str, Tuple[str, ...]] = {
-    "all": ("overall", "product", "country"),
-    "overall": ("overall",),
-    "product": ("product",),
-    "country": ("country",),
+    "all": ("overall", "product", "country", "end"),
+    "overall": ("overall", "end"),
+    "product": ("overall", "product", "end"),
+    "country": ("overall", "country", "end"),
 }
 
 
@@ -700,7 +718,11 @@ def deck_axes(scope: Optional[str], basis: Optional[str] = None) -> Tuple[str, .
     axes = tuple(axis for axis in wanted if axis in registered)
     with_survey = str(basis or DATA_BASIS_DEFAULT) == DATA_BASIS_WITH_SURVEY
     if with_survey and "country" in axes and "survey" in registered:
-        axes += ("survey",)
+        # After the country block it rides along with, and BEFORE the back cover — which
+        # is where the builder puts it. Appending it to the end used to leave the panel
+        # closing on the survey page and the deck closing on the cover.
+        at = axes.index("country") + 1
+        axes = axes[:at] + ("survey",) + axes[at:]
     return axes
 
 
@@ -744,9 +766,20 @@ def _section_chips(counts: Sequence[Tuple[str, int]]) -> html.Div:
     return html.Div(chips, className="qs-tchip-row")
 
 
+def _commentary_fields(axis: str) -> int:
+    """How many prose columns a model writes on one block of this axis."""
+    from studio.template_fill.commentary_fields import fields_for_axis
+
+    return fields_for_axis(axis)
+
+
 def _axis_block(axis: str, counts: Sequence[Tuple[str, int]]) -> html.Div:
     label, icon, repeat = _AXIS_META.get(axis, (axis.title(), "bi-file-earmark", ""))
     pages = sum(n for _, n in counts)
+    # What the block costs in model calls, next to what it costs in pages. A build's
+    # minutes are spent writing commentary, so the author deserves to see the number that
+    # sets them BEFORE they press Generate rather than in the log afterwards.
+    written = _commentary_fields(axis)
     return html.Div(
         [
             html.Div(
@@ -755,6 +788,11 @@ def _axis_block(axis: str, counts: Sequence[Tuple[str, int]]) -> html.Div:
                     html.Span(label, className="qs-tsec-axis-name"),
                     html.Span(f"{pages} page" + ("s" if pages != 1 else ""),
                               className="qs-tsec-axis-n"),
+                    html.Span(f"{written} written",
+                              className="qs-tsec-axis-ai",
+                              title="Commentary fields a model writes for each block of "
+                                    "this axis — the number that sets how long the build "
+                                    "takes.") if written else None,
                 ],
                 className="qs-tsec-axis-head",
             ),

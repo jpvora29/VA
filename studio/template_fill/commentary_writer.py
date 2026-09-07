@@ -57,11 +57,18 @@ def compose_from_rules(request: ColumnRequest) -> Tuple[str, ...]:
 
 def _writer_payload(request: ColumnRequest, glossary_brief: str) -> str:
     """What the model is shown: the evidence, the definitions, and the draft to beat."""
+    from studio.commentary_mode import show_draft_to_author
+
     blocks = [f"CARRIER: {request.subject}", "", "EVIDENCE — the only facts you may use:",
               request.pack.as_brief(request.focus)]
     if glossary_brief:
         blocks += ["", "ICG DEFINITIONS — use these terms exactly as defined:", glossary_brief]
-    if request.draft:
+    # In ``COMMENTARY_MODE=ai_required`` the finished deterministic prose is withheld: a
+    # model shown completed sentences rewords them, and a reworded rule draft carrying an
+    # ``authorship=ai`` label is exactly what strict mode exists to prevent. The evidence,
+    # the brief and the column's questions still reach it — that is the intent the draft
+    # was standing in for.
+    if request.draft and show_draft_to_author():
         blocks += ["", "A DETERMINISTIC DRAFT of this column, for the claims it selected "
                        "and their priority order. You are not editing it — write the column "
                        "properly from the evidence:",
@@ -96,7 +103,8 @@ def compose_with_agent(request: ColumnRequest) -> Tuple[str, ...]:
     column = client.structured(CommentaryColumn, system,
                                _writer_payload(request, glossary_brief),
                                tier=request.tier,
-                               node=f"commentary-{request.topic}")
+                               node=f"commentary-{request.topic}",
+                               phase="author", fields=(request.topic,))
     if column is None or not column.bullets:
         return ()
     judged = [V.Judged(text=(b.text or "").strip(), fact_ids=tuple(b.fact_ids or ()))
@@ -117,4 +125,11 @@ def make_writer(*, ai_enabled: Optional[bool] = None) -> ColumnWriter:
         from studio.ai import client
 
         ai_enabled = client.llm_available()
+    if not ai_enabled:
+        # ``ai_required`` means a deterministic column is a build failure, not a fallback,
+        # so the factory must not hand one back. ``preflight`` normally catches this before
+        # the build starts; reaching here means the endpoint died mid-run.
+        from studio.commentary_mode import refuse
+
+        refuse("no model client is available to write commentary", retryable=True)
     return compose_with_agent if ai_enabled else compose_from_rules

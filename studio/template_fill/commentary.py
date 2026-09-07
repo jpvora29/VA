@@ -381,6 +381,29 @@ def _analyst_principles() -> str:
     return "\n\nHOW TO READ THIS BOOK:\n" + body + "\n\n"
 
 
+def _style_directive(style: Optional[str]) -> str:
+    """How long a line runs, from the Setup voice control."""
+    return _STYLE_DIRECTIVE.get((style or "balanced").lower(), _STYLE_DIRECTIVE["balanced"])
+
+
+def deck_voice(style: Optional[str], subject: str = "") -> str:
+    """Every rule that is true of EVERY column in this deck.
+
+    Split out of :func:`_style_system` so a section-level call can state it once instead of
+    once per column: :mod:`studio.template_fill.commentary_batch` writes a whole sub-deck in
+    one request, and repeating six hundred words of craft rules per column in that request
+    would be most of its prompt.
+    """
+    return (_VOICE + _analyst_principles() + _CRAFT + _FAITHFULNESS + _ARGUMENT + _TENSION
+            + _openings_rule(subject) + _style_directive(style))
+
+
+def column_rules(topic: str, wanted: int) -> str:
+    """The rules that belong to ONE column: its length, its brief, its voice, its questions."""
+    return (_bullet_rules(wanted) + _TOPIC_BRIEF.get(topic, "")
+            + _voice_rule(topic) + _questions_rule(topic))
+
+
 def _style_system(style: Optional[str], *, topic: str = "", wanted: int = 1,
                   subject: str = "") -> str:
     """The system prompt for one column, widest rule to narrowest.
@@ -397,8 +420,7 @@ def _style_system(style: Optional[str], *, topic: str = "", wanted: int = 1,
             + _openings_rule(subject)
             + _bullet_rules(wanted) + _TOPIC_BRIEF.get(topic, "")
             + _voice_rule(topic) + _questions_rule(topic)
-            + _STYLE_DIRECTIVE.get((style or "balanced").lower(),
-                                   _STYLE_DIRECTIVE["balanced"]))
+            + _style_directive(style))
 
 
 def _openings_rule(subject: str) -> str:
@@ -493,6 +515,15 @@ def _prose_targets(template: Template) -> List[Dict[str, Any]]:
                 out.append({"slide_idx": slide.index, "shape_id": sh.shape_id,
                             "topic": _topic_key(_column_topic(slide, sh), section)})
     return out
+
+
+def prose_targets(template: Template) -> List[Dict[str, Any]]:
+    """:func:`_prose_targets`, for the callers outside this module that COUNT them.
+
+    :mod:`studio.template_fill.commentary_fields` tells Setup how many model calls a scope
+    will make before the author waits for them, and counting is not a private concern.
+    """
+    return _prose_targets(template)
 
 
 def _role(slide_idx: int, shape_id: int, para: int = 0) -> str:
@@ -665,6 +696,17 @@ def _accept(lines: List[str], *, wanted: int, node: str, subject: str = "") -> O
     return NEWLINE.join(kept)
 
 
+def accept_column(lines: Sequence[str], *, wanted: int, node: str,
+                  subject: str = "") -> Optional[str]:
+    """:func:`_accept`, for the batch writer — the same shape and reading bar.
+
+    A column written one-at-a-time and a column written as part of a section must clear the
+    identical gate, or "batched" silently means "held to a lower standard".
+    """
+    return _accept([_LEADING_BULLET.sub("", ln).strip() for ln in lines if ln and ln.strip()],
+                   wanted=wanted, node=node, subject=subject)
+
+
 # Commentary is the deliverable, not an inner loop. The `fast` tier is the one
 # ``core.initialization`` describes as "the mechanical inner-loop nodes" — minimal reasoning
 # effort — and asking it for a partner's judgement got a partner's vocabulary over a
@@ -718,8 +760,17 @@ def write_column(pending) -> str:
     Everything the model returns has to survive both verifiers (numbers against cited
     facts, then claims and term use against the evidence and the glossary) and then
     :func:`_accept`, which rules on shape and reading. If any of that refuses it, the
-    deterministic draft stands.
+    deterministic draft stands — unless ``COMMENTARY_MODE=ai_required``, where it refuses
+    the build instead (:mod:`studio.commentary_mode`).
+
+    **A deck no longer takes this path.** :func:`studio.template_fill.rewrites.write_all`
+    writes a whole sub-deck per call (:mod:`studio.template_fill.commentary_batch`), which
+    is one round trip where this is one per textbox. This stays because ONE column is still
+    a thing you sometimes want — a lone caller through :func:`_rewrite`, a debugging run
+    through ``write_all(write=write_column)``, and the tests that pin the per-column gates.
+    Both paths clear the same bar; see ``commentary_batch``'s module docstring.
     """
+    from studio import commentary_mode as mode
     from studio.ai import client
     from studio.template_fill import commentary_evidence as E
     from studio.template_fill import commentary_writer as W
@@ -732,6 +783,7 @@ def write_column(pending) -> str:
     def call() -> Optional[str]:
         pack = E.build_pack(pending.facts or {})
         if not pack.items:                  # nothing to cite — the draft is all we have
+            mode.refuse(f"{node} has no citable evidence", retryable=False)
             return None
         write = W.make_writer()
         lines = list(write(W.ColumnRequest(
@@ -740,10 +792,28 @@ def write_column(pending) -> str:
             voice=_style_system(style, topic=topic, wanted=wanted, subject=subject),
             tier=_COMMENTARY_TIER, focus=evidence_focus(topic),
         )))
-        return _accept([_LEADING_BULLET.sub("", ln).strip() for ln in lines],
-                       wanted=wanted, node=node, subject=subject)
+        accepted = _accept([_LEADING_BULLET.sub("", ln).strip() for ln in lines],
+                           wanted=wanted, node=node, subject=subject)
+        if accepted is None:
+            mode.refuse(f"{node} was written but did not survive verification",
+                        retryable=True)
+        return accepted
 
-    return client.run_or_fallback(call, lambda: text)
+    if not client.llm_available():
+        mode.refuse("no model client is available to write commentary", retryable=True)
+        return text
+    # Deliberately NOT ``client.run_or_fallback``: it swallows every exception, which is the
+    # right contract for a best-effort agent and the wrong one here — it would eat the very
+    # refusal ``ai_required`` exists to raise and ship the deterministic draft anyway.
+    try:
+        written = call()
+    except mode.CommentaryUnavailable:
+        raise
+    except Exception as exc:  # noqa: BLE001 — in ``auto`` the draft is a valid answer
+        logger.warning("commentary: %s failed (%s)", node, exc)
+        mode.refuse(f"{node} failed", retryable=True, detail=str(exc))
+        written = None
+    return written if written is not None else text
 
 
 def _rewrite(text: str, *, node: str, style: Optional[str] = None, topic: str = "",

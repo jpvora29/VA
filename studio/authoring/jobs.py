@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, Optional
 from logger import get_logger
 from studio.authoring.generate import DeckDocuments, build_documents
 from studio.authoring.progress import label_for, percent_done
+from studio.commentary_mode import CommentaryUnavailable
 
 log = get_logger(__name__)
 
@@ -44,6 +45,11 @@ class DeckJob:
     message: str = "Starting"
     done: bool = False
     error: Optional[str] = None
+    #: True when re-running the identical selection could succeed — a rate limit, a
+    #: timed-out endpoint, a section the model could not write this time. False for a
+    #: configuration mistake, where "try again" sends the author round a loop that
+    #: cannot close.
+    retryable: bool = False
     result: Optional[DeckDocuments] = None
     started_at: float = field(default_factory=time.time)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
@@ -60,15 +66,17 @@ class DeckJob:
             self.message = "Your deck is ready."
             self.done = True
 
-    def fail(self, message: str) -> None:
+    def fail(self, message: str, *, retryable: bool = False) -> None:
         with self._lock:
             self.error = message
+            self.retryable = retryable
             self.done = True
 
     def snapshot(self) -> dict:
         """Everything the UI needs for one tick, read under the lock."""
         with self._lock:
             phase, message, done, error = self.phase, self.message, self.done, self.error
+            retryable = self.retryable
             slides = int((self.result.tdoc or {}).get("n_slides", 0)) if self.result else 0
         return {
             "job_id": self.job_id,
@@ -78,6 +86,12 @@ class DeckJob:
             "percent": percent_done(phase, finished=done and error is None),
             "done": done,
             "error": error,
+            "retryable": retryable,
+            # The SCOPE this build was started with, so the progress view can say which
+            # deck is being made. The selection is frozen at start, so it is safe to read
+            # outside the lock — and the author who picked "Country-wise" twenty minutes
+            # ago should not have to remember that they did.
+            "scope": str(self.selection.get("template_scope") or "all"),
             "elapsed": int(time.time() - self.started_at),
             "slides": slides,
         }
@@ -101,6 +115,12 @@ def start_build(selection: Dict[str, Any], builder: Builder = build_documents) -
     def work() -> None:
         try:
             job.succeed(builder(job.selection, report=job.report))
+        except CommentaryUnavailable as exc:
+            # ``COMMENTARY_MODE=ai_required`` refused to ship deterministic prose. That is
+            # the mode working, not a crash, so it is logged as a refusal and carries
+            # whether re-running could plausibly help.
+            log.warning("studio deck[%s] refused: %s", job.job_id, exc)
+            job.fail(str(exc), retryable=exc.retryable)
         except Exception as exc:  # noqa: BLE001 — a failed build must reach the user
             log.exception("studio deck[%s] failed", job.job_id)
             job.fail(str(exc) or exc.__class__.__name__)

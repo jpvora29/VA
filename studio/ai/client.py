@@ -24,6 +24,8 @@ and its tests — never depends on an LLM being configured.
 from __future__ import annotations
 
 import os
+import time
+from contextlib import contextmanager
 from typing import Callable, Optional, Type, TypeVar
 
 from logger import get_logger
@@ -81,31 +83,93 @@ def _log_usage(node: str, resp: object) -> None:
         logger.info("studio.ai %s usage=%s", node, usage)
 
 
-def generate(system: str, user: str, *, tier: str = "balanced", node: str = "ai") -> Optional[str]:
+def deployment_for(tier: str) -> str:
+    """Which deployment a tier resolves to — ``""`` when nothing names one.
+
+    Recorded on every call so a tier change is visible in the telemetry, and part of the
+    commentary cache key so swapping the model invalidates yesterday's answers.
+    """
+    try:
+        from core.llm.clients import resolve_tier
+
+        return str(resolve_tier(tier).deployment or "")
+    except Exception:  # noqa: BLE001 — a label must never break a call
+        return ""
+
+
+@contextmanager
+def _timed(node: str, tier: str, phase: str, fields: tuple = ()):
+    """Time one model call and file it with :mod:`studio.telemetry`.
+
+    The record is written on the way OUT of the call whatever happened, so a build's
+    slowest calls include the ones that failed — which is the case that matters, because a
+    request that times out at 60 seconds costs a minute and produces nothing.
+
+    Structured calls report no token counts: LangChain's ``with_structured_output`` returns
+    the parsed model and the usage metadata rides on the raw message it discards. Recovering
+    them means ``include_raw=True`` and a second return shape for every caller, which is not
+    worth it while latency and failure category are the numbers in question.
+    """
+    from studio import telemetry
+
+    started = time.perf_counter()
+    outcome = {"status": "ok", "failure": "", "tokens": (0, 0)}
+    try:
+        yield outcome
+    except BaseException as exc:      # noqa: BLE001 — recorded, then re-raised for the caller
+        outcome["status"] = "error"
+        outcome["failure"] = telemetry.classify_failure(exc)
+        raise
+    finally:
+        telemetry.record(telemetry.ModelCall(
+            node=node, phase=phase, tier=tier, deployment=deployment_for(tier),
+            seconds=time.perf_counter() - started, status=str(outcome["status"]),
+            input_tokens=outcome["tokens"][0], output_tokens=outcome["tokens"][1],
+            failure=str(outcome["failure"]), fields=tuple(fields),
+        ))
+
+
+def generate(system: str, user: str, *, tier: str = "balanced", node: str = "ai",
+             phase: str = "other") -> Optional[str]:
     """One free-text LLM call. Returns None (caller falls back) if unavailable/fails."""
     if not llm_available():
         return None
     from langchain_core.messages import HumanMessage, SystemMessage
+    from studio import telemetry
 
     try:
-        resp = _tier_client(tier).invoke([SystemMessage(content=system), HumanMessage(content=user)])
-        _log_usage(node, resp)
-        return getattr(resp, "content", None) or None
+        with _timed(node, tier, phase) as outcome:
+            resp = _tier_client(tier).invoke([SystemMessage(content=system),
+                                              HumanMessage(content=user)])
+            outcome["tokens"] = telemetry.token_counts(resp)
+            content = getattr(resp, "content", None) or None
+            if content is None:
+                outcome["status"] = "empty"
+            return content
     except Exception as exc:  # noqa: BLE001 — AI is best-effort
         logger.warning("studio.ai generate(%s) failed: %s", node, exc)
         return None
 
 
-def structured(model: Type[T], system: str, user: str, *, tier: str = "balanced", node: str = "ai") -> Optional[T]:
-    """One structured (Pydantic) LLM call. Returns None on unavailable/failure."""
+def structured(model: Type[T], system: str, user: str, *, tier: str = "balanced",
+               node: str = "ai", phase: str = "other", fields: tuple = ()) -> Optional[T]:
+    """One structured (Pydantic) LLM call. Returns None on unavailable/failure.
+
+    ``phase`` and ``fields`` are telemetry only — which part of the build asked for this
+    call, and which commentary field ids ride on it — so a summary can say that authorship
+    made eight calls and verification one, rather than that something made nine.
+    """
     if not llm_available():
         return None
     from langchain_core.messages import HumanMessage, SystemMessage
 
     try:
-        client = _tier_client(tier).with_structured_output(model)
-        result = client.invoke([SystemMessage(content=system), HumanMessage(content=user)])
-        return result
+        with _timed(node, tier, phase, fields) as outcome:
+            client = _tier_client(tier).with_structured_output(model)
+            result = client.invoke([SystemMessage(content=system), HumanMessage(content=user)])
+            if result is None:
+                outcome["status"] = "empty"
+            return result
     except Exception as exc:  # noqa: BLE001
         logger.warning("studio.ai structured(%s, %s) failed: %s", node, getattr(model, "__name__", model), exc)
         return None

@@ -42,6 +42,7 @@
 .qs-root .qs-rail-count-num,
 .qs-root .qs-tchip-n,
 .qs-root .qs-tsec-axis-n,
+.qs-root .qs-tsec-axis-ai,
 .qs-root .qs-rstat-num { font-variant-numeric: tabular-nums; }
 
 /* One visible focus ring, keyboard only — the app was navigable but not legibly so. */

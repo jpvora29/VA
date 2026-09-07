@@ -639,6 +639,26 @@ def _failed(state: dict) -> dict:
                               "carrier and filters, then try again"}
 
 
+# What turns the optional deck agents back ON. There is deliberately no value that turns
+# them off individually: they are one enhancement, and four switches for one idea is four
+# ways to end up in a state nobody meant to be in.
+_STORY_AGENTS_ON = {"on", "1", "true", "yes"}
+
+
+def _story_agents_enabled() -> bool:
+    """Whether this run should also spend model calls restructuring the on-screen deck.
+
+    OFF by default. The deliverable is the assembled template deck, and the selection,
+    story, layout and critic agents rework the *preview* — four sequential calls before
+    a single word of the deliverable's commentary is written. This is the plan's
+    "AI commentary required" / "AI story enhancement" split: the commentary flag above
+    is not affected by this one in either direction.
+    """
+    import os
+
+    return (os.getenv("STUDIO_STORY_AGENTS", "") or "").strip().lower() in _STORY_AGENTS_ON
+
+
 def register_setup(app):
     """Wire the Generate + scope-preview callbacks onto ``app``."""
     _register_busy_overlay(app)
@@ -730,6 +750,13 @@ def register_setup(app):
             # AI assist is no longer a Setup control — the narrative IS the deck, and the
             # commentary is faithfulness-verified against the same facts either way.
             "ai": True,
+            # …but the OPTIONAL deck agents (selection, story, layout, critic) are a
+            # separate switch, and default OFF. They restructure the on-screen DeckSpec,
+            # which is not the deliverable — the assembled template deck is — so every
+            # Generate was paying four extra sequential model calls to rework a preview.
+            # Turning them off must never turn commentary off, which is exactly why the
+            # two flags are two flags. ``STUDIO_STORY_AGENTS=on`` brings them back.
+            "ai_story": _story_agents_enabled(),
             "template_scope": template_scope or "all",
             "template_path": _scope_template_path(template_scope),
             # Which books the deck draws on ("premium" | "premium_survey"). Carried into

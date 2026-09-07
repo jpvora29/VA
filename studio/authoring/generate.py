@@ -15,6 +15,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from studio import commentary_mode, telemetry
 from studio.compute import FILTER_COLUMN, compute_overall
 from studio.data import cached_filter_options
 from studio.deck import build_deck
@@ -148,7 +149,12 @@ def _deck_for(selection_json: str) -> Optional[DeckSpec]:
         year=_latest_year(filters.get("year")),
         report=sel.get("report") or "qbr",
         cuts=tuple(sel.get("cuts") or ()),
-        ai=bool(sel.get("ai")),
+        # The OPTIONAL deck agents (selection → story → layout → critic), not the
+        # commentary. ``ai`` says a model writes the deck's prose; ``ai_story`` says it
+        # may also restructure this on-screen preview, which is four more sequential
+        # calls and is not the deliverable. Absent, they are off — see
+        # ``studio.authoring.setup._story_agents_enabled``.
+        ai=bool(sel.get("ai_story")),
         audience=sel.get("audience") or DEFAULT_AUDIENCE,
         meeting_length=sel.get("meeting_length") or "standard",
     )
@@ -308,6 +314,30 @@ def _generated_assembled_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[D
 # ── the whole build, as one reportable pipeline ──────────────────────────────
 
 
+def _assemble_message(selection: Optional[Dict[str, Any]], result) -> str:
+    """"Writing 27 commentary field(s) across 8 section(s)…" — what the wait is FOR.
+
+    A progress bar that says "writing the commentary" for twenty minutes is
+    indistinguishable from a hang. Saying how much there is to write turns the same wait
+    into a number the author can judge, and it is the same count Setup showed them before
+    they pressed Generate.
+    """
+    default = "Writing the commentary and filling the templates…"
+    try:
+        from studio.template_fill.assemble import deck_shape
+
+        shape = deck_shape(result, scope=(selection or {}).get("template_scope"),
+                           data_basis=(selection or {}).get("data_basis"))
+        fields, blocks = shape.commentary_fields(), sum(shape.blocks().values())
+    except Exception as exc:  # noqa: BLE001 — a progress message must never cost a build
+        log.debug("progress: could not size the deck (%s)", exc)
+        return default
+    if not fields:
+        return default
+    return (f"Writing {fields} commentary field(s) across {blocks} sub-deck(s), then "
+            "filling the templates…")
+
+
 @dataclass(frozen=True)
 class DeckDocuments:
     """What one Generate produces: the editable document, and the template preview."""
@@ -332,27 +362,41 @@ def build_documents(selection: Optional[Dict[str, Any]],
     :mod:`studio.authoring.jobs`; scripts and tests pass nothing and get silence.
     """
     key = json.dumps(selection or {}, sort_keys=True)
+    label = (selection or {}).get("filters", {}).get("carrier") or "deck"
+
+    # BEFORE anything expensive. In ``COMMENTARY_MODE=ai_required`` a missing endpoint or
+    # key must be an actionable error in the first second, not a deterministic deck in the
+    # thirtieth minute — and the analytics layer below is minutes of querying.
+    commentary_mode.preflight()
+    log.info("studio generate: %s", commentary_mode.describe(label))
 
     # ONE memo for the whole build. The on-screen deck and the assembled deck ask the
     # warehouse the same questions about the same scopes; measured, 217 of 305
     # primitive calls in a single-country build were exact repeats. `assemble_deck`
     # opens its own memo and `build_memo` is re-entrant, so that inner one shares this
     # cache rather than starting a second. It is discarded when the build returns.
-    with build_memo(f"generate:{(selection or {}).get('filters', {}).get('carrier') or 'deck'}"):
+    #
+    # …and ONE telemetry job around it, so every model call the build makes lands in one
+    # summary. It is re-entrant for the same reason the memo is.
+    scope = (selection or {}).get("template_scope") or "all"
+    with telemetry.job(f"{label}:{scope}"), build_memo(f"generate:{label}"):
         report("data", "Loading the book for this selection…")
-        _result_for(key)
+        with telemetry.phase("data"):
+            _result_for(key)
 
         report("deck", "Laying out the deck…")
-        deck = _generated_deck(selection)
-        doc = D.new_document(deck) if deck else None
+        with telemetry.phase("deck"):
+            deck = _generated_deck(selection)
+            doc = D.new_document(deck) if deck else None
 
         # The ASSEMBLED deck (overall + per product + per country) is the deliverable
         # and what the canvas previews; the single filled template is the fallback for a
         # template set that cannot assemble. Both phases are announced here rather than
         # inside, because assembling is where a build spends its minutes and the author
         # should see that.
-        report("assemble", "Writing the commentary and filling the templates…")
-        tdoc = _generated_assembled_tdoc(selection) or _generated_tdoc(selection)
+        report("assemble", _assemble_message(selection, _result_for(key)))
+        with telemetry.phase("assemble"):
+            tdoc = _generated_assembled_tdoc(selection) or _generated_tdoc(selection)
 
     report("render", "Rendering the slides…")
     return DeckDocuments(doc=doc, tdoc=tdoc)

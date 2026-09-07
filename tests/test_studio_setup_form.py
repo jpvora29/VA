@@ -806,9 +806,28 @@ def test_the_filter_pane_starts_its_second_line_with_year():
 
 
 def test_scope_axes_maps_all_to_every_registered_axis():
-    assert scope_axes("all") == ("overall", "product", "country")
-    assert scope_axes("product") == ("product",)
-    assert scope_axes(None) == ("overall", "product", "country")
+    assert scope_axes("all") == ("overall", "product", "country", "end")
+    assert scope_axes(None) == ("overall", "product", "country", "end")
+
+
+def test_every_scope_previews_exactly_what_the_assembler_builds():
+    """The panel and the builder must not hold two opinions about one choice.
+
+    They did: Setup's table said "product" built the product pages alone, and
+    ``assemble._SCOPE_AXES`` built the overall block, the product pages and the back
+    cover. An author who wanted the overall pages read the panel as a reason to pick
+    "All" and then waited on every product block they had not asked for.
+    """
+    from studio.template_fill.assemble import _SCOPE_AXES as BUILT
+    from studio.page.authoring.setup import _SCOPE_AXES as PREVIEWED
+
+    assert PREVIEWED == BUILT
+
+
+def test_product_and_country_scopes_still_include_the_overall_block():
+    for scope in ("product", "country"):
+        assert scope_axes(scope)[0] == "overall"
+        assert scope_axes(scope)[-1] == "end"
 
 
 def test_the_survey_basis_adds_the_survey_block_to_whats_in_your_qbr():
@@ -827,8 +846,12 @@ def test_the_survey_block_is_gated_the_way_the_assembler_gates_it():
     """``assemble.plan_subdecks`` builds the survey block only on the survey basis AND
     only alongside country blocks (it rides along with them). The panel must not
     promise pages the assembler will not build."""
-    assert deck_axes("all", DATA_BASIS_WITH_SURVEY)[-1] == "survey"
-    assert deck_axes("country", DATA_BASIS_WITH_SURVEY) == ("country", "survey")
+    # Straight after the country block it rides along with, and before the back cover —
+    # which is where ``assemble.SubDeckPlanBuilder.add_countries`` puts it.
+    assert deck_axes("all", DATA_BASIS_WITH_SURVEY) == (
+        "overall", "product", "country", "survey", "end")
+    assert deck_axes("country", DATA_BASIS_WITH_SURVEY) == (
+        "overall", "country", "survey", "end")
     # No country blocks -> no survey block, whatever the basis says.
     assert "survey" not in deck_axes("overall", DATA_BASIS_WITH_SURVEY)
     assert "survey" not in deck_axes("product", DATA_BASIS_WITH_SURVEY)
@@ -846,7 +869,9 @@ def test_deck_sections_round_trip_between_all_and_a_single_axis():
 
     for axis in ("OVERALL", "PRODUCT", "COUNTRY"):
         assert axis.title() in every
-    assert "Overall" not in product and "Country" not in product
+    # The overall block is in EVERY scope (see ``assemble._SCOPE_AXES``); what
+    # "Product-wise" drops is the country blocks.
+    assert "Overall" in product and "Country" not in product
 
 
 def test_deck_sections_page_count_is_the_sum_of_the_axes_it_assembles():
@@ -855,7 +880,10 @@ def test_deck_sections_page_count_is_the_sum_of_the_axes_it_assembles():
         summary = panel.children[0].children[0]  # "<b>N</b> base pages"
         return int(summary.children[0].children)
 
-    assert pages("all") == pages("overall") + pages("product") + pages("country")
+    # Every scope carries the overall block and the back cover, so the three single
+    # choices double-count them twice over against "all".
+    shared = pages("overall")
+    assert pages("all") == pages("product") + pages("country") - shared
 
 
 def test_country_scoped_peer_group_reaches_the_deck_benchmark(tmp_path):

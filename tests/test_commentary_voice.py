@@ -248,7 +248,7 @@ def test_the_column_tier_actually_reaches_the_model():
 
     seen = {}
 
-    def fake_structured(model, system, user, *, tier="balanced", node="ai"):
+    def fake_structured(model, system, user, *, tier="balanced", node="ai", **kw):
         seen["tier"] = tier
         return None
 
