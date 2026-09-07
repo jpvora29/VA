@@ -429,3 +429,32 @@ def test_remove_returns_false_rather_than_raising_whatever_goes_wrong(tmp_path,
 
     monkeypatch.setattr(shutil, "rmtree", unsupported)
     assert PA._remove(target) is False        # no exception escapes
+
+
+# ── a lost build must not masquerade as a finished one ──────────────────────
+
+
+def test_a_delivered_job_is_remembered_so_its_absence_stays_benign():
+    docs = DeckDocuments(doc={"order": [0]}, tdoc={"n_slides": 3})
+    job = jobs.start_build({"filters": {"carrier": "Zurich"}},
+                           builder=lambda s, report: docs)
+    _await(job)
+    assert not jobs.was_handled(job.job_id), "not collected yet"
+    jobs.clear_job(job.job_id)
+    assert jobs.get_job(job.job_id) is None
+    assert jobs.was_handled(job.job_id), "a delivered job's absence is expected"
+
+
+def test_a_job_that_never_landed_is_not_mistaken_for_a_delivered_one():
+    """The regression: a build lost to a process restart looked exactly like a finished
+    one — poll stopped, stores untouched, canvas still showing the PREVIOUS deck."""
+    assert not jobs.was_handled("never-existed")
+    assert jobs.get_job("never-existed") is None
+
+
+def test_the_handled_record_stays_bounded():
+    for i in range(jobs._HANDLED_MAX + 10):
+        jobs.clear_job(f"job-{i}")
+    assert len(jobs._HANDLED) <= jobs._HANDLED_MAX
+    assert not jobs.was_handled("job-0"), "the oldest ids fall out"
+    assert jobs.was_handled(f"job-{jobs._HANDLED_MAX + 9}")

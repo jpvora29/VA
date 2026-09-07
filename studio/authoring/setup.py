@@ -803,10 +803,27 @@ def register_setup(app):
         """
         job = jobs.get_job(job_id)
         if job is None:
-            # No job behind this id — the poll has nothing left to collect. Stop it
-            # rather than tick forever, but leave the canvas alone: an id can go
-            # missing after a successful delivery, and blanking here would undo it.
-            return (no_update,) * 3 + (True, no_update)
+            # No job behind this id. Two very different reasons, and reading them as one
+            # is what made a lost build indistinguishable from a finished one.
+            if jobs.was_handled(job_id):
+                # Already delivered: the deck is on screen. Stop the poll and touch
+                # nothing — blanking here would undo the delivery.
+                return (no_update,) * 3 + (True, no_update)
+            # Never delivered. ``jobs._JOBS`` lives in this process, so a restart while a
+            # build was running takes the registry and the worker thread with it. The poll
+            # used to stop silently here: no error, stores untouched, view still on Setup,
+            # and the canvas quietly went on showing the PREVIOUS deck. Say so, and clear
+            # the stale deck — an empty canvas that explains itself beats a full one
+            # showing the wrong deck.
+            log.warning("studio deck[%s] vanished before it landed — the app most likely "
+                        "restarted mid-build; the job registry does not survive that",
+                        job_id)
+            return (None, None, {"mode": "setup", "idx": 0, "tab": "setup"}, True,
+                    A.generate_progress({
+                        "done": True, "retryable": True,
+                        "error": "the build was interrupted before it finished — the app "
+                                 "restarted while it was running. Press Generate again.",
+                    }))
         state = job.snapshot()
         if not state["done"]:
             # Only the progress card moves while the build runs. Writing the poll's own

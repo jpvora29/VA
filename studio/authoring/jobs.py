@@ -22,6 +22,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
@@ -105,6 +106,21 @@ class DeckJob:
 _JOBS: Dict[str, DeckJob] = {}
 _LOCK = threading.Lock()
 
+# The ids the poll has already collected. A job is removed from ``_JOBS`` on the tick that
+# delivers it, so a later tick carrying the same id finds nothing — and "nothing" has to
+# mean two different things:
+#
+#   * already delivered  -> benign; the deck is on screen and the poll should just stop;
+#   * never delivered    -> the build was LOST. ``_JOBS`` is an in-process dict, so a
+#                           restart mid-Generate destroys it along with the worker thread.
+#
+# Reading both as benign is what made a lost build silent: the poll stopped, the document
+# stores were left untouched, the view stayed on Setup, and the canvas went on showing the
+# PREVIOUS deck as though it were the new one. Bounded, because this only has to answer for
+# the handful of builds a session actually runs.
+_HANDLED: "OrderedDict[str, None]" = OrderedDict()
+_HANDLED_MAX = 32
+
 
 def start_build(selection: Dict[str, Any], builder: Builder = build_documents) -> DeckJob:
     """Register a job for ``selection`` and build it in a daemon thread."""
@@ -137,7 +153,19 @@ def get_job(job_id: Optional[str]) -> Optional[DeckJob]:
 
 
 def clear_job(job_id: Optional[str]) -> None:
+    """Retire a job the poll has collected, remembering that it WAS collected."""
     if not job_id:
         return
     with _LOCK:
         _JOBS.pop(job_id, None)
+        _HANDLED[job_id] = None
+        while len(_HANDLED) > _HANDLED_MAX:
+            _HANDLED.popitem(last=False)
+
+
+def was_handled(job_id: Optional[str]) -> bool:
+    """True if the poll already collected this build — so its absence is expected."""
+    if not job_id:
+        return False
+    with _LOCK:
+        return job_id in _HANDLED
