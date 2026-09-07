@@ -390,3 +390,42 @@ def test_a_deck_no_model_wrote_says_so_loudly(caplog):
     with caplog.at_level(logging.WARNING, logger="studio.template_fill.rewrites"):
         rewrites.write_all(sets, write=lambda p: p.draft)
     assert "NO column in this deck was model-written" in caplog.text
+
+
+# ── the preview-cache prune must never throw, on any interpreter ────────────
+
+
+def test_the_prune_works_on_pythons_without_onexc(tmp_path, monkeypatch):
+    """Regression: ``rmtree(onexc=…)`` is 3.12+, and the app was launched on 3.11.
+
+    ``TypeError: rmtree() got an unexpected keyword argument 'onexc'`` is not an
+    ``OSError``, so it sailed past the guard in ``_remove`` and out of the whole prune.
+    """
+    from studio.template_fill import preview_assets as PA
+
+    stale = tmp_path / "stale"
+    stale.mkdir()
+    (stale / "slide.png").write_bytes(b"x")
+
+    # Force the pre-3.12 spelling and prove the handler still fits it.
+    monkeypatch.setattr(PA, "_RMTREE_HANDLER", "onerror")
+    assert PA._remove(stale) is True
+    assert not stale.exists()
+
+
+def test_remove_returns_false_rather_than_raising_whatever_goes_wrong(tmp_path,
+                                                                     monkeypatch):
+    """``_remove``'s contract is "returns False, never raises". A guard that names only
+    the failure it expected keeps that contract until something new goes wrong."""
+    import shutil
+
+    from studio.template_fill import preview_assets as PA
+
+    target = tmp_path / "dir"
+    target.mkdir()
+
+    def unsupported(*_a, **_kw):
+        raise TypeError("rmtree() got an unexpected keyword argument 'onexc'")
+
+    monkeypatch.setattr(shutil, "rmtree", unsupported)
+    assert PA._remove(target) is False        # no exception escapes

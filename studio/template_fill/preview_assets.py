@@ -17,6 +17,7 @@ import json
 import os
 import shutil
 import stat
+import sys
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Set
 
@@ -366,9 +367,25 @@ def _clear_readonly(func, path, _exc) -> None:
     it on the folders it syncs — and ``rmtree`` refuses those with ``Access is denied``
     rather than with anything that names the cause. Clearing the bit and retrying is the
     documented remedy, and it is scoped to the one path that failed.
+
+    The third argument is ignored, which is what lets one handler serve both of
+    ``rmtree``'s callback spellings — see :data:`_RMTREE_HANDLER`.
     """
     os.chmod(path, stat.S_IWRITE)
     func(path)
+
+
+# Which keyword hands ``rmtree`` its error callback. ``onexc`` is 3.12+; ``onerror`` is the
+# older spelling, deprecated but still accepted. The two differ only in the third argument
+# they pass (an exception vs. an ``exc_info`` triple), and :func:`_clear_readonly` ignores
+# it, so one handler serves both.
+#
+# This was pinned to ``onexc``, and since the project declares ``requires-python = ">=3.12"``
+# that was correct on paper. It still broke a real run: the app was launched on 3.11, where
+# ``TypeError: rmtree() got an unexpected keyword argument 'onexc'`` is not an ``OSError``
+# and so sailed straight past the guard below and out of the whole prune. Picking the
+# keyword costs one comparison at import and removes a way for housekeeping to throw.
+_RMTREE_HANDLER = "onexc" if sys.version_info >= (3, 12) else "onerror"
 
 
 def _remove(path: Path) -> bool:
@@ -376,11 +393,15 @@ def _remove(path: Path) -> bool:
 
     A directory a browser still has open cannot be removed on Windows, and a preview that
     fails to be tidied away is not a reason to fail a generation.
+
+    ``TypeError`` is caught beside ``OSError`` deliberately: the contract here is "returns
+    False, never raises", and a guard naming only the failure it expected is not that
+    contract — it is that contract right up until something new goes wrong.
     """
     try:
-        shutil.rmtree(path, onexc=_clear_readonly)
+        shutil.rmtree(path, **{_RMTREE_HANDLER: _clear_readonly})
         return True
-    except OSError as exc:
+    except (OSError, TypeError) as exc:
         logger.debug("preview cache: could not remove %s (%s)", path, exc)
         return False
 
