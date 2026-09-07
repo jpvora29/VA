@@ -20,6 +20,15 @@ GENERATED: Dict[str, Dict[str, Any]] = {
     "insights": {"label": "Insight cards", "icon": "bi bi-stars", "content": "bespoke"},
     "commentary": {"label": "Commentary", "icon": "bi bi-card-text", "content": "bespoke"},
     "comparison": {"label": "Comparison", "icon": "bi bi-layout-split", "content": "bespoke"},
+    # ── explainable widgets (what a new digest produces) ──
+    "watchlist": {"label": "Risk & watchlist", "icon": "bi bi-exclamation-diamond", "content": "bespoke"},
+    "headroom": {"label": "Product line headroom", "icon": "bi bi-bar-chart-steps", "content": "bespoke"},
+    "whitespace": {"label": "Industry whitespace", "icon": "bi bi-grid-1x2", "content": "bespoke"},
+    "quarterly": {"label": "Quarterly performance", "icon": "bi bi-calendar3-range", "content": "bespoke"},
+    "portfolio_map": {"label": "Product portfolio map", "icon": "bi bi-circle-square", "content": "bespoke"},
+    "top_carriers": {"label": "Top carriers", "icon": "bi bi-bar-chart-line", "content": "bespoke"},
+    "positioning_actual": {"label": "Positioning (actuals)", "icon": "bi bi-crosshair2", "content": "bespoke"},
+    # ── legacy kinds — saved boards still contain these ──
     "timeline": {"label": "Timeline", "icon": "bi bi-hourglass-split", "content": "bespoke"},
     "opportunity_map": {"label": "Opportunity map", "icon": "bi bi-globe-americas", "content": "bespoke"},
     "opportunity_radar": {"label": "Opportunity radar", "icon": "bi bi-radar", "content": "bespoke"},
@@ -65,7 +74,70 @@ LIBRARY: List[Dict[str, Any]] = [
          {"text": "The single most important message for the board.", "tone": "neutral"}, "full"),
     _lib("image", "Image / Logo", "bi bi-image", "Add-ons", "image",
          {"url": "", "caption": ""}, "md"),
-    # ── Analytics group: the rich AI widgets, now user-addable & fully editable ──
+    # ── Explainable group: business measures only, every classification traceable ──
+    _lib("watchlist", "Risk & watchlist", "bi bi-exclamation-diamond", "Explainable", "bespoke",
+         {"watchlist": {
+             "items": [{"risk": "New watch item", "scope": "", "premium_exposed": "",
+                        "premium_exposed_value": None, "movement": "", "movement_pct": None,
+                        "adverse": True, "comparison": "", "trigger": "",
+                        "consecutive_periods": 1, "breached_kpi": "",
+                        "periods_comparable": True, "owner_action": "", "tone": "warn"}],
+             "basis": "", "note": "", "thresholds": "", "thresholds_approved": False}},
+         "full"),
+    _lib("headroom", "Product line headroom", "bi bi-bar-chart-steps", "Explainable", "bespoke",
+         {"headroom": {
+             "rows": [{"product_line": "Product line", "carrier_premium": "", "carrier_premium_value": None,
+                       "marsh_premium": "", "marsh_premium_value": None, "share_of_wallet_pct": None,
+                       "share_of_portfolio_pct": None, "whitespace_premium": "",
+                       "whitespace_premium_value": None, "market_change": "", "status": "unknown",
+                       "focus": ""}],
+             "definition": "Whitespace premium = Marsh premium - carrier premium (floored at zero).",
+             "basis": "", "note": ""}},
+         "full"),
+    _lib("whitespace", "Industry whitespace", "bi bi-grid-1x2", "Explainable", "bespoke",
+         {"whitespace": {
+             "rows": [{"industry": "Industry", "product_line": "", "marsh_premium": "",
+                       "marsh_premium_value": None, "carrier_premium": "", "carrier_premium_value": None,
+                       "share_of_wallet_pct": None, "share_of_portfolio_pct": None,
+                       "peer_share_of_wallet_pct": None, "whitespace_premium": "",
+                       "whitespace_premium_value": None, "marsh_change": "", "status": "unknown",
+                       "focus_reason": ""}],
+             "product_line": "", "product_lines": [],
+             "definition": "An industry qualifies when Marsh premium is material and carrier premium is zero or low.",
+             "basis": "", "note": ""}},
+         "full"),
+    _lib("quarterly", "Quarterly performance", "bi bi-calendar3-range", "Explainable", "bespoke",
+         {"quarterly": {
+             "rows": [{"quarter": "Q1 2026", "premium": "", "premium_value": None,
+                       "change_currency": "", "change_pct": None, "share_of_wallet_pct": None,
+                       "rank_change": "", "driver": "", "complete": True}],
+             "basis": "QoQ", "note": ""}},
+         "full"),
+    _lib("portfolio_map", "Product portfolio map", "bi bi-circle-square", "Explainable", "bespoke",
+         {"portfolio_map": {
+             "bubbles": [{"product_line": "Product line", "share_of_wallet_pct": None,
+                          "share_of_portfolio_pct": None, "premium": "", "premium_value": None,
+                          "marsh_premium": "", "marsh_premium_value": None, "growth": "",
+                          "growth_pct": None, "peer_share_of_wallet_pct": None, "tone": "neutral"}],
+             "wallet_benchmark_pct": None, "portfolio_benchmark_pct": None,
+             "benchmark_label": "Carrier average / market mix", "basis": "", "note": ""}},
+         "lg"),
+    _lib("top_carriers", "Top carriers", "bi bi-bar-chart-line", "Explainable", "bespoke",
+         {"top_carriers": {
+             "carriers": [{"carrier": "Carrier", "is_subject": True, "rank": None, "premium": "",
+                           "premium_value": None, "share_of_wallet_pct": None, "movement": "",
+                           "movement_pct": None}],
+             "field_size": None, "scope": "", "basis": "", "note": ""}},
+         "full"),
+    _lib("positioning_actual", "Positioning (actuals)", "bi bi-crosshair2", "Explainable", "bespoke",
+         {"positioning_actual": {
+             "points": [{"label": "Carrier", "x_value": None, "x_display": "", "y_value": None,
+                         "y_display": "", "is_subject": True, "tone": "neutral"}],
+             "x_label": "Share of wallet", "x_unit": "%", "y_label": "Broker score", "y_unit": "",
+             "x_benchmark": None, "y_benchmark": None, "benchmark_label": "Peer average", "note": ""}},
+         "lg"),
+    # ── Analytics group: the score-based widgets the roadmap retired. Kept so a
+    #    saved board still opens and a user can still add one deliberately. ──
     _lib("opportunity_radar", "Opportunity radar", "bi bi-radar", "Analytics", "bespoke",
          {"opportunities": [
              {"area": "New opportunity", "dimension": "product", "carrier_level": "",
@@ -97,7 +169,7 @@ LIBRARY: List[Dict[str, Any]] = [
 ]
 
 LIBRARY_BY_KIND: Dict[str, Dict[str, Any]] = {w["kind"]: w for w in LIBRARY}
-CATEGORIES = ["Boardroom widgets", "Add-ons", "Analytics"]
+CATEGORIES = ["Boardroom widgets", "Explainable", "Add-ons", "Analytics"]
 
 
 def library_by_category() -> Dict[str, List[Dict[str, Any]]]:

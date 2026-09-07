@@ -447,10 +447,35 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                         [
                             dbc.Col(
                                 [
+                                    # Named context pills stating the scope of the
+                                    # last answer (country, product, period,
+                                    # carrier) plus the custom-peers control, so
+                                    # the analytical scope is always visible.
+                                    # Filled by `render_scope_bar` in ui.callbacks.
+                                    html.Div(
+                                        [
+                                            html.Div(
+                                                id="chat-scope-pills",
+                                                className="chat-scope-pills",
+                                            ),
+                                            # The peer set is scope too, but it is
+                                            # the one the user can edit or clear, so
+                                            # its interactive pill sits on the same
+                                            # row instead of a second, static chip.
+                                            html.Div(
+                                                id="custom-peers-cue",
+                                                className="custom-peers-cue",
+                                            ),
+                                        ],
+                                        id="chat-scope-bar",
+                                        className="chat-scope-bar",
+                                    ),
                                     # Live status bar — shown only while a turn is
-                                    # streaming. poll_job updates the agent label +
-                                    # elapsed seconds; a clientside callback toggles
-                                    # its visibility off is-thinking.
+                                    # streaming. poll_job updates the stage label +
+                                    # elapsed time; a clientside callback toggles
+                                    # its visibility off is-thinking. The bar keeps
+                                    # a shimmer track so a long turn still reads as
+                                    # progress rather than a frozen pill.
                                     html.Div(
                                         [
                                             html.Span(className="thinking-dot"),
@@ -464,6 +489,7 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                                 id="thinking-elapsed",
                                                 className="thinking-elapsed",
                                             ),
+                                            html.Span(className="thinking-track"),
                                         ],
                                         id="thinking-bar",
                                         className="thinking-bar",
@@ -551,13 +577,6 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                                         caret=False,
                                                         toggleClassName="pitch-trigger-btn",
                                                         className="composer-add-wrap",
-                                                    ),
-                                                    # Visual cue (like Claude's Search
-                                                    # pill) shown only while a custom
-                                                    # peer set is pinned.
-                                                    html.Div(
-                                                        id="custom-peers-cue",
-                                                        className="custom-peers-cue",
                                                     ),
                                                     # Armed-state pill for Boardroom
                                                     # Mode; next answer is a card.

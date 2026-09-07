@@ -397,23 +397,32 @@ def page_actions(_add, _dup, _del, _up, _down, _lock, _exp, chat_history):
     return chat_history
 
 
+# Which page field each editable input writes, so the three share one callback.
+_PAGE_TEXT_FIELDS = {
+    "bm-page-title": "title",
+    "bm-page-caption": "caption",
+    "bm-page-notes": "notes",
+}
+
+
 @callback(
     Output("chat-store", "data", allow_duplicate=True),
     Input({"type": "bm-page-title", "idx": ALL, "pid": ALL}, "value"),
+    Input({"type": "bm-page-caption", "idx": ALL, "pid": ALL}, "value"),
     Input({"type": "bm-page-notes", "idx": ALL, "pid": ALL}, "value"),
     State("chat-store", "data"),
     prevent_initial_call=True,
 )
-def page_text(titles, notes, chat_history):
+def page_text(titles, captions, notes, chat_history):
     tid = ctx.triggered_id
     if not isinstance(tid, dict):
         return no_update
+    field = _PAGE_TEXT_FIELDS.get(tid.get("type"))
     doc = _doc_at(chat_history, tid.get("idx"))
     p = model.find_page(doc, tid.get("pid")) if doc else None
-    if not p:
+    if not p or not field:
         return no_update
     val = _triggered_value()
-    field = "title" if tid.get("type") == "bm-page-title" else "notes"
     if (p.get(field) or "") == (val or ""):
         return no_update  # no real change -> avoid a render loop
     p[field] = val or ""

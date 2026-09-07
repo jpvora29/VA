@@ -21,6 +21,7 @@ from dash import dcc, html
 from ui.boardroom import catalog, widgets_generated, widgets_library
 from ui.boardroom.model import GRID_COLUMNS, SIZE_SPAN, SIZES, widget_height, widget_span
 from ui.boardroom.themes import theme
+from ui.components.scope_bar import scope_bar
 
 _SIZE_LABELS = {"sm": "S", "md": "M", "lg": "L", "full": "Full"}
 
@@ -221,12 +222,24 @@ def _page_toolbar(page, card_idx):
     pid = page["id"]
     return html.Div(
         [
-            dcc.Input(
-                id=_id("bm-page-title", card_idx, pid=pid),
-                value=page.get("title", ""),
-                debounce=True,
-                className="bm-page-title-input",
-                placeholder="Page title",
+            html.Div(
+                [
+                    dcc.Input(
+                        id=_id("bm-page-title", card_idx, pid=pid),
+                        value=page.get("title", ""),
+                        debounce=True,
+                        className="bm-page-title-input",
+                        placeholder="Page title",
+                    ),
+                    dcc.Input(
+                        id=_id("bm-page-caption", card_idx, pid=pid),
+                        value=page.get("caption", ""),
+                        debounce=True,
+                        className="bm-page-caption-input",
+                        placeholder="The question this step answers…",
+                    ),
+                ],
+                className="bm-page-titles",
             ),
             html.Div(
                 [
@@ -253,7 +266,31 @@ def _page_toolbar(page, card_idx):
     )
 
 
-def _render_page(page, figures, edit_mode, card_idx, page_index, active_page=0):
+def _page_heading(page, page_index, total):
+    """The funnel step: which stage this page is, and the question it answers.
+
+    Without it the pager's page names are the only clue that the board narrows
+    from overview to a single industry, and a page seen on its own says nothing
+    about where in the argument it sits.
+    """
+    caption = (page.get("caption") or "").strip()
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.Span(f"Step {page_index + 1} of {total}", className="bm-step-index"),
+                    html.I(className=page.get("icon") or "bi bi-file-earmark"),
+                    html.Span(page.get("title", ""), className="bm-step-title"),
+                ],
+                className="bm-step-id",
+            ),
+            html.Div(caption, className="bm-step-caption") if caption else None,
+        ],
+        className="bm-step-head",
+    )
+
+
+def _render_page(page, figures, edit_mode, card_idx, page_index, active_page=0, total=1):
     widgets = page.get("widgets", [])
     n = len(widgets)
     grid_items = [
@@ -261,11 +298,14 @@ def _render_page(page, figures, edit_mode, card_idx, page_index, active_page=0):
     ]
     grid_items = [g for g in grid_items if g is not None]
 
-    body = [html.Div(grid_items, className="bm-grid")]
+    # `data-bm-grid` marks the grid for assets/boardroom_ui.js, which watches its
+    # width and collapses the 12-column spans on narrow screens (a widget's span
+    # is an inline style, so only the observer can override it responsively).
+    body = [html.Div(grid_items, className="bm-grid", **{"data-bm-grid": "1"})]
     if not grid_items:
         body = [html.Div([html.I(className="bi bi-grid-3x3-gap"), html.Span("Empty page — add a widget")], className="bm-charts-empty")]
 
-    children = []
+    children = [_page_heading(page, page_index, total)]
     if edit_mode:
         children.append(_page_toolbar(page, card_idx))
     children.extend(body)
@@ -291,11 +331,15 @@ def _render_page(page, figures, edit_mode, card_idx, page_index, active_page=0):
 
 
 def _header(doc, edit_mode, card_idx):
+    # The board states the scope it was built from, in the same pills the chat
+    # composer shows and the same order the exported slide prints.
+    scope = scope_bar(doc.get("scope"), compact=True)
     title_block = html.Div(
         [
             html.Div([html.I(className="bi bi-grid-1x2-fill"), html.Span("Boardroom")], className="bm-eyebrow"),
             html.Div(doc.get("title", "Boardroom"), className="bm-title"),
             html.Div(doc.get("subtitle", ""), className="bm-subtitle") if doc.get("subtitle") else None,
+            scope,
         ],
         className="bm-title-block",
     )
@@ -321,11 +365,16 @@ def _header(doc, edit_mode, card_idx):
 def _pager(pages, card_idx, active_page=0):
     if len(pages) <= 1:
         return None
-    marks = {p: {"label": pg.get("title", f"Page {p+1}")} for p, pg in enumerate(pages)}
+    marks = {p: {"label": f"{p + 1}. " + pg.get("title", f"Page {p+1}")} for p, pg in enumerate(pages)}
     return html.Div(
         [
             html.Div(
-                [html.I(className="bi bi-layers-half"), html.Span(f"{len(pages)} pages · drag the slider to navigate")],
+                [
+                    html.I(className="bi bi-funnel"),
+                    html.Span(
+                        f"{len(pages)} steps, widest first · drag to move through the board"
+                    ),
+                ],
                 className="bm-pager-caption",
             ),
             dcc.Slider(
@@ -354,7 +403,10 @@ def render_document(
     # Clamp the remembered page (a page may have been deleted since).
     active_page = max(0, min(active_page or 0, max(0, len(pages) - 1)))
 
-    page_divs = [_render_page(pg, figures, edit_mode, card_idx, p, active_page) for p, pg in enumerate(pages)]
+    page_divs = [
+        _render_page(pg, figures, edit_mode, card_idx, p, active_page, total=len(pages))
+        for p, pg in enumerate(pages)
+    ]
 
     children = [_header(doc, edit_mode, card_idx), html.Div(page_divs, className="bm-pages")]
 

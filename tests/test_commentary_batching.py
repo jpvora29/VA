@@ -604,3 +604,217 @@ def test_a_refused_build_clears_the_canvas_instead_of_keeping_the_last_deck():
     produced = job.documents() is not None and not job.documents().empty
     assert state["error"] or not produced
     jobs.clear_job(job.job_id)
+
+
+# ── a field that fails: the reasons must reach the repair and the refusal ────
+#
+# The reported symptom was a strict-mode build stopping on
+# ``1 field(s) in section set2.0 could not be written (feedback-growth)`` — which names the
+# field and nothing else. There was no way to tell whether the model had cited a figure the
+# evidence did not carry, written a fragment, or simply come back a line short, and the one
+# repair call it got asked the identical question again.
+
+
+def _one_growth_field() -> dict:
+    """A single two-bullet ``growth`` column — the shape of a feedback-table cell."""
+    return {"note:0:0:0": _pending("growth", "growth line one.\ngrowth line two.", _facts())}
+
+
+@pytest.fixture
+def failing_model(monkeypatch):
+    """A model whose answer always loses a line to the reading gate.
+
+    A fragment is dropped by ``_keep_lines``, which leaves one line where the column asked
+    for two — and ``min_lines(2)`` is 2, so a two-bullet column has no tolerance at all.
+    That is exactly how a real build loses one field out of a section.
+    """
+    import studio.ai.client as client
+
+    calls = []
+
+    def structured(model, system, user, *, tier="balanced", node="ai", phase="other",
+                   fields=(), **kw):
+        calls.append({"node": node, "phase": phase, "fields": tuple(fields), "user": user})
+        if model is CommentarySections:
+            asked = [line.split()[2] for line in user.splitlines()
+                     if line.startswith("--- FIELD ")]
+            return CommentarySections(sections=[
+                CommentarySection(field_id=fid, bullets=[
+                    CommentaryBullet(text="Momentum: Cyber", fact_ids=[]),      # a fragment
+                    CommentaryBullet(text=_SENTENCES[0], fact_ids=[]),
+                ]) for fid in asked])
+        return None
+
+    monkeypatch.setattr(client, "structured", structured)
+    monkeypatch.setattr(client, "llm_available", lambda: True)
+    return calls
+
+
+def test_the_repair_is_told_why_the_first_answer_was_rejected(failing_model):
+    """Otherwise the retry is a re-roll of the same dice, at the price of a call."""
+    rewrites.write_all([_one_growth_field()])
+
+    repairs = [c for c in failing_model if "REJECTED" in c["user"]]
+    assert repairs, "the repair call must carry the previous answer's verdict"
+    assert "fragment" in repairs[0]["user"], "and name what was actually wrong"
+
+
+def test_a_strict_refusal_says_why_the_field_could_not_be_written(monkeypatch,
+                                                                  failing_model):
+    monkeypatch.setenv("COMMENTARY_MODE", "ai_required")
+    with pytest.raises(mode.CommentaryUnavailable) as raised:
+        rewrites.write_all([_one_growth_field()])
+
+    message = str(raised.value)
+    assert "feedback-growth" in message or "commentary-growth" in message
+    assert "fragment" in message, "the refusal must be actionable, not just an id"
+    assert "line(s) survived" in message, "and say how short the column came up"
+    assert raised.value.retryable is True
+
+
+def test_a_field_that_repairs_successfully_ships_and_does_not_refuse(monkeypatch):
+    """The repair earns its call: a second answer that clears the gates is used."""
+    import studio.ai.client as client
+
+    monkeypatch.setenv("COMMENTARY_MODE", "ai_required")
+    attempts = {"n": 0}
+
+    def structured(model, system, user, *, tier="balanced", node="ai", phase="other",
+                   fields=(), **kw):
+        if model is not CommentarySections:
+            return None
+        attempts["n"] += 1
+        asked = [line.split()[2] for line in user.splitlines()
+                 if line.startswith("--- FIELD ")]
+        bullets = ([CommentaryBullet(text="Momentum: Cyber", fact_ids=[]),
+                    CommentaryBullet(text=_SENTENCES[0], fact_ids=[])]
+                   if attempts["n"] == 1 else
+                   [CommentaryBullet(text=s, fact_ids=[]) for s in _SENTENCES[:2]])
+        return CommentarySections(sections=[
+            CommentarySection(field_id=fid, bullets=bullets) for fid in asked])
+
+    monkeypatch.setattr(client, "structured", structured)
+    monkeypatch.setattr(client, "llm_available", lambda: True)
+
+    written = rewrites.write_all([_one_growth_field()])[0]
+    assert attempts["n"] == 2, "one author call, one repair"
+    assert list(written.values())[0] == "\n".join(_SENTENCES[:2])
+
+
+# ── strict mode has to be survivable, not just strict ───────────────────────
+#
+# ``ai_required`` is the mode this deck ships in, so a model that writes one unusable line
+# per field — which is normal — must not fail the build. It used to: a two-bullet feedback
+# cell had no room, so one rejected line refused the deck. These pin the whole path.
+
+
+def _model_writing_one_bad_line(monkeypatch, *, bad="Momentum: Cyber"):
+    """A model that answers with one unusable line and then good ones, up to the ask.
+
+    Honours the requested line count, which is the point: the prompt now asks a
+    zero-tolerance column for a spare, and a stub that ignores that would test nothing.
+    """
+    import studio.ai.client as client
+
+    calls = []
+
+    def structured(model, system, user, *, tier="balanced", node="ai", phase="other",
+                   fields=(), **kw):
+        calls.append({"node": node, "phase": phase, "user": user})
+        if model is not CommentarySections:
+            return None
+        asked = [line.split()[2] for line in user.splitlines()
+                 if line.startswith("--- FIELD ")]
+        wanted = 3 if "Write 3 lines" in user else 2
+        texts = [bad] + list(_SENTENCES[:wanted - 1])
+        return CommentarySections(sections=[
+            CommentarySection(field_id=fid,
+                              bullets=[CommentaryBullet(text=t, fact_ids=[]) for t in texts])
+            for fid in asked])
+
+    monkeypatch.setattr(client, "structured", structured)
+    monkeypatch.setattr(client, "llm_available", lambda: True)
+    return calls
+
+
+def test_one_unusable_line_no_longer_refuses_a_strict_build(monkeypatch):
+    """The reported failure, end to end: it must now produce a deck."""
+    monkeypatch.setenv("COMMENTARY_MODE", "ai_required")
+    calls = _model_writing_one_bad_line(monkeypatch)
+
+    written = rewrites.write_all([_one_growth_field()])[0]
+
+    text = list(written.values())[0]
+    assert text.splitlines() == list(_SENTENCES[:2]), "the spare covered the rejected line"
+    assert "growth line one." not in text, "and no deterministic prose was substituted"
+    assert len([c for c in calls if c["phase"] == "author"]) == 1, "no repair was needed"
+
+
+def test_a_whole_sub_deck_of_flaky_fields_still_builds(monkeypatch):
+    """Not one field — every field, which is what a real deck asks of the mode."""
+    monkeypatch.setenv("COMMENTARY_MODE", "ai_required")
+    _model_writing_one_bad_line(monkeypatch)
+
+    written = rewrites.write_all([_value_set(_facts())])[0]
+
+    assert len(written) == 3
+    for text in written.values():
+        assert text.splitlines() == list(_SENTENCES[:2])
+
+
+def test_a_field_the_model_cannot_write_still_stops_the_deck(monkeypatch):
+    """The mode still means what it says — the spare is tolerance, not a bypass."""
+    monkeypatch.setenv("COMMENTARY_MODE", "ai_required")
+    _model_writing_one_bad_line(monkeypatch, bad=_SENTENCES[0])   # every line a duplicate
+    import studio.ai.client as client
+
+    def all_fragments(model, system, user, *, tier="balanced", node="ai", phase="other",
+                      fields=(), **kw):
+        if model is not CommentarySections:
+            return None
+        asked = [line.split()[2] for line in user.splitlines()
+                 if line.startswith("--- FIELD ")]
+        return CommentarySections(sections=[
+            CommentarySection(field_id=fid, bullets=[
+                CommentaryBullet(text="Momentum: Cyber", fact_ids=[]),
+                CommentaryBullet(text="Rank improved to 4th.", fact_ids=[]),
+            ]) for fid in asked])
+
+    monkeypatch.setattr(client, "structured", all_fragments)
+    with pytest.raises(mode.CommentaryUnavailable):
+        rewrites.write_all([_one_growth_field()])
+
+
+def test_the_fields_that_were_written_are_cached_before_the_refusal(monkeypatch):
+    """So a re-run only re-attempts what failed, instead of paying for the deck again."""
+    monkeypatch.setenv("COMMENTARY_MODE", "ai_required")
+    import studio.ai.client as client
+
+    def one_bad_field(model, system, user, *, tier="balanced", node="ai", phase="other",
+                      fields=(), **kw):
+        if model is not CommentarySections:
+            return None
+        asked = [line.split()[2] for line in user.splitlines()
+                 if line.startswith("--- FIELD ")]
+        return CommentarySections(sections=[
+            CommentarySection(
+                field_id=fid,
+                bullets=[CommentaryBullet(text="Momentum: Cyber", fact_ids=[])]
+                if fid.startswith("growth")
+                else [CommentaryBullet(text=s, fact_ids=[]) for s in _SENTENCES[:2]],
+            ) for fid in asked])
+
+    monkeypatch.setattr(client, "structured", one_bad_field)
+    monkeypatch.setattr(client, "llm_available", lambda: True)
+
+    with pytest.raises(mode.CommentaryUnavailable):
+        rewrites.write_all([_value_set(_facts())])
+
+    from studio.template_fill import commentary_cache as cache
+
+    section = B.group_sections([_value_set(_facts())])[0]
+    pack = B._pack_for(section)
+    cached = {column.topic for column in section.columns
+              if cache.get(B.cache_key(section, column, pack))}
+    assert {"working", "challenges"} <= cached, "the fields that were written survived"
+    assert "growth" not in cached, "the one that failed did not"

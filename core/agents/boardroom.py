@@ -11,10 +11,10 @@ first fields and left the widget tail null even when the data supported it):
 
   1. CORE call — title/headline/KPIs/insights/commentary/risks (always).
   2. Deterministic signal detection over the RAW rows decides which widgets
-     the data actually supports (>=2 periods -> timeline, >=2 countries or
-     products -> opportunity map + radar, premium+perception -> positioning,
-     >=2 carrier-ish values or peer talk -> comparison, any carrier ->
-     battlecards).
+     the data actually supports (>=2 quarters -> quarterly performance, else
+     >=2 periods -> timeline; premium split by product -> headroom + portfolio
+     map; an industry dimension -> whitespace; >=2 carriers -> top carriers and
+     comparison).
   3. One SMALL per-widget call per detected signal; each has one output, so it
      cannot under-fill. A failed widget is skipped, never fatal.
 
@@ -31,6 +31,7 @@ import logging
 import re
 from typing import Any, Dict, List, Set, Tuple
 
+from core.boardroom import priority
 from core.llm import Predictor
 from core.observability import log_event
 from core.schemas.boardroom import (
@@ -38,11 +39,17 @@ from core.schemas.boardroom import (
     BoardroomComparisonSignature,
     BoardroomCoreSignature,
     BoardroomDigest,
-    BoardroomOpportunitiesSignature,
-    BoardroomOpportunityMapSignature,
-    BoardroomPositioningSignature,
     BoardroomTimelineSignature,
 )
+from core.schemas.boardroom_explainable import (
+    BoardroomHeadroomSignature,
+    BoardroomPortfolioMapSignature,
+    BoardroomQuarterlySignature,
+    BoardroomTopCarriersSignature,
+    BoardroomWatchlistSignature,
+    BoardroomWhitespaceSignature,
+)
+from core.scope import chips_from_state, chips_to_dicts
 from core.state.agent_state import AgentState
 from logger import get_logger
 
@@ -64,11 +71,22 @@ _CORE_PREDICTOR = Predictor(
 
 
 # widget name -> (signature, the output field carrying its content).
+#
+# The explainable widgets REPLACE the score-based ones the roadmap retired: a new
+# digest never asks for an opportunity radar, a 0-100 heatmap, or a positioning
+# plot plotting share of wallet against a broker score (two unrelated measures on
+# one chart - the Product Portfolio Map answers that question properly).
+#
+# Their schemas and renderers stay in the codebase so saved boards still open and
+# the widget library can still add one by hand.
 _WIDGET_SIGNATURES: Dict[str, Tuple[Any, str]] = {
+    "watchlist": (BoardroomWatchlistSignature, "watchlist"),
+    "headroom": (BoardroomHeadroomSignature, "headroom"),
+    "whitespace": (BoardroomWhitespaceSignature, "whitespace"),
+    "quarterly": (BoardroomQuarterlySignature, "quarterly"),
+    "portfolio_map": (BoardroomPortfolioMapSignature, "portfolio_map"),
+    "top_carriers": (BoardroomTopCarriersSignature, "top_carriers"),
     "timeline": (BoardroomTimelineSignature, "timeline"),
-    "opportunity_map": (BoardroomOpportunityMapSignature, "opportunity_map"),
-    "opportunities": (BoardroomOpportunitiesSignature, "opportunities"),
-    "positioning": (BoardroomPositioningSignature, "positioning"),
     "comparison": (BoardroomComparisonSignature, "comparison"),
     "battlecards": (BoardroomBattlecardsSignature, "battlecards"),
 }
@@ -211,11 +229,16 @@ def _gather_rows(state: AgentState) -> Dict[str, str]:
 # Column-name shapes per signal. Values are counted across ALL result sets, so
 # a multi-year trend in one lens and a multi-country split in another both fire.
 _PERIOD_COLS = re.compile(r"(?i)year|quarter|month|period|date")
+_QUARTER_COLS = re.compile(r"(?i)quarter|qtr")
 _GEO_COLS = re.compile(r"(?i)country|market|region")
 _PRODUCT_COLS = re.compile(r"(?i)product|line|cover|practice|lob")
+_INDUSTRY_COLS = re.compile(r"(?i)industry|sector|sic")
 _CARRIER_COLS = re.compile(r"(?i)carrier|peer|group")
 _PREMIUM_COLS = re.compile(r"(?i)premium|sow|wallet|appetite|gpr")
 _PERCEPTION_COLS = re.compile(r"(?i)score|nps|perception|rating")
+
+# A quarter label anywhere in a period column ("Q2 2026", "2026-Q2", "FY26 Q2").
+_QUARTER_VALUE = re.compile(r"(?i)(^|[^a-z])q[1-4]([^a-z]|$)")
 
 # Rows scanned per result set when counting distinct signal values.
 _SIGNAL_SCAN_ROWS = 200
@@ -247,47 +270,103 @@ def _has_column(
     return False
 
 
+def quarter_labels(row_sets: List[Tuple[str, List[Dict[str, Any]]]]) -> Set[str]:
+    """Distinct quarter labels in the rows — a quarter column, or 'Q2' in a period."""
+    labels = {v for v in _distinct_values(row_sets, _QUARTER_COLS) if v}
+    labels |= {
+        v for v in _distinct_values(row_sets, _PERIOD_COLS) if _QUARTER_VALUE.search(v)
+    }
+    return labels
+
+
 def detect_widget_signals(
     row_sets: List[Tuple[str, List[Dict[str, Any]]]], commentary: str
 ) -> Set[str]:
     """Which query-dependent widgets the data actually supports.
 
-    Mirrors the population rules the old single-call prompt stated in prose —
-    but decided deterministically, so a widget the data supports always gets
-    its dedicated fill call instead of depending on the model's stamina."""
+    Deterministic, so a widget the data supports always gets its dedicated fill
+    call instead of depending on the model's stamina — and, just as importantly,
+    so a widget the data CANNOT support is never manufactured: quarterly
+    performance needs two real quarters, headroom needs premium split by product,
+    whitespace needs an industry dimension.
+    """
     signals: Set[str] = set()
-    if len(_distinct_values(row_sets, _PERIOD_COLS)) >= 2:
+    periods = _distinct_values(row_sets, _PERIOD_COLS)
+    quarters = quarter_labels(row_sets)
+    has_premium = _has_column(row_sets, _PREMIUM_COLS)
+    has_perception = _has_column(row_sets, _PERCEPTION_COLS)
+
+    # Quarterly performance is the QBR default; the annual timeline is the
+    # fallback for data that carries no comparable quarters.
+    if len(quarters) >= 2:
+        signals.add("quarterly")
+    elif len(periods) >= 2:
         signals.add("timeline")
-    geo = _distinct_values(row_sets, _GEO_COLS)
-    products = _distinct_values(row_sets, _PRODUCT_COLS)
-    if len(geo) >= 2 or len(products) >= 2:
-        signals.add("opportunity_map")
-        signals.add("opportunities")
+
+    # A watch item needs a movement, so it needs two periods and a measure.
+    if len(periods) >= 2 and (has_premium or has_perception):
+        signals.add("watchlist")
+
+    if has_premium and len(_distinct_values(row_sets, _PRODUCT_COLS)) >= 2:
+        # Both product views: headroom ranks the money left on the table, the
+        # portfolio map shows where the book sits against where it wins.
+        signals.add("headroom")
+        signals.add("portfolio_map")
+    if has_premium and _has_column(row_sets, _INDUSTRY_COLS):
+        signals.add("whitespace")
+
     carriers = _distinct_values(row_sets, _CARRIER_COLS)
     if len(carriers) >= 2 or "peer" in (commentary or "").lower():
         signals.add("comparison")
     if carriers:
         signals.add("battlecards")
-    if _has_column(row_sets, _PREMIUM_COLS) and _has_column(
-        row_sets, _PERCEPTION_COLS
-    ):
-        signals.add("positioning")
+    if has_premium and len(carriers) >= 2:
+        signals.add("top_carriers")
     return signals
 
 
 def _nullify_empty(name: str, widget: Any) -> Any:
-    """Collapse a structurally-empty widget model to the None/[] the UI expects."""
+    """Collapse a structurally-empty widget model to the None/[] the UI expects.
+
+    An explainable widget with no content but a `note` survives on purpose: "no
+    comparable quarters in this data" is a result the board should see, not a
+    silently missing panel.
+    """
     if widget is None:
         return None
     if name == "comparison" and not getattr(widget, "subjects", None):
         return None
-    if name == "opportunity_map" and not (
-        getattr(widget, "cells", None) or getattr(widget, "rows", None)
+    if name == "portfolio_map" and not (
+        getattr(widget, "bubbles", None) or getattr(widget, "note", "")
     ):
         return None
-    if name == "positioning" and not getattr(widget, "points", None):
+    if name == "top_carriers" and not (
+        getattr(widget, "carriers", None) or getattr(widget, "note", "")
+    ):
+        return None
+    if name == "watchlist" and not (getattr(widget, "items", None) or getattr(widget, "note", "")):
+        return None
+    if name in ("headroom", "whitespace", "quarterly") and not (
+        getattr(widget, "rows", None) or getattr(widget, "note", "")
+    ):
         return None
     return widget
+
+
+def _rate_watchlist(watchlist: Any) -> Any:
+    """Apply the approved priority rules to an extracted watchlist.
+
+    The model reported facts; the label, its reason and the tests behind it come
+    from `core.boardroom.priority`, so a `High` on the card can always name the
+    threshold it crossed.
+    """
+    if watchlist is None:
+        return None
+    payload = watchlist.model_dump()
+    payload["items"] = priority.rate_items(payload.get("items") or [])
+    payload["thresholds"] = priority.get_thresholds().summary()
+    payload["thresholds_approved"] = priority.get_thresholds().approved
+    return payload
 
 
 def _fill_widgets(
@@ -313,6 +392,12 @@ def _fill_widgets(
                 error=str(exc),
             )
     return widgets
+
+
+def _turn_scope(state: AgentState):
+    """The scope chips this dashboard was built from (the chat shows the same ones)."""
+    peers = state.get("custom_peers") if state.get("custom_peers_active") else None
+    return chips_from_state(state, peers)
 
 
 def boardroom_node(state: AgentState) -> Dict[str, Any]:
@@ -388,8 +473,12 @@ def boardroom_node(state: AgentState) -> Dict[str, Any]:
         comparison=widgets.get("comparison"),
         battlecards=widgets.get("battlecards") or [],
         timeline=widgets.get("timeline") or [],
-        opportunity_map=widgets.get("opportunity_map"),
-        opportunities=widgets.get("opportunities") or [],
-        positioning=widgets.get("positioning"),
+        watchlist=_rate_watchlist(widgets.get("watchlist")),
+        headroom=widgets.get("headroom"),
+        whitespace=widgets.get("whitespace"),
+        quarterly=widgets.get("quarterly"),
+        portfolio_map=widgets.get("portfolio_map"),
+        top_carriers=widgets.get("top_carriers"),
+        scope=chips_to_dicts(_turn_scope(state)),
     )
     return {"boardroom": digest.model_dump()}

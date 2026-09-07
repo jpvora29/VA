@@ -16,9 +16,28 @@ from __future__ import annotations
 from typing import Any, List, Literal, Optional
 
 from core.llm import InputField, OutputField, Signature
+from core.schemas.boardroom_explainable import (
+    ActualPositioning,
+    IndustryWhitespace,
+    ProductLineHeadroom,
+    ProductPortfolioMap,
+    QuarterlyPerformance,
+    TopCarriers,
+    Watchlist,
+)
 from pydantic import BaseModel, Field
 
 Tone = Literal["good", "warn", "danger", "neutral"]
+
+
+class ScopeChipModel(BaseModel):
+    """One chip of the scope a dashboard was built from (see `core.scope`)."""
+
+    key: str = Field(description="Chip kind: country / product / industry / segment / period / carrier / peers.")
+    label: str = Field(description="Chip label as displayed, e.g. 'Country'.")
+    value: str = Field(description="Chip value as displayed, e.g. 'Canada'.")
+    icon: str = Field(default="", description="Bootstrap-icon class for the chip.")
+    source: str = Field(default="", description="Where the value came from (asked / carried over / custom set).")
 
 
 class KpiCard(BaseModel):
@@ -286,6 +305,55 @@ class BoardroomDigest(BaseModel):
             "Peer Positioning Matrix (2x2: premium strength vs broker perception). Populate "
             "ONLY when BOTH premium and survey/perception signals are present for the carriers; "
             "else null."
+        ),
+    )
+
+    # ── Explainable widgets (roadmap phase 1) — actual measures, no scores ──
+    #
+    # These REPLACE the score-based widgets above for every new digest; the old
+    # fields stay so saved conversations keep rendering. All are assembled by
+    # `core.agents.boardroom`, and `watchlist` carries priorities that came from
+    # `core.boardroom.priority`, never from a model.
+    watchlist: Optional[Watchlist] = Field(
+        default=None,
+        description="Risk & Watchlist: one evidence-backed row per issue, with premium exposed and the trigger.",
+    )
+    headroom: Optional[ProductLineHeadroom] = Field(
+        default=None,
+        description="Product Line Headroom: carrier vs Marsh premium and the whitespace between them, in currency.",
+    )
+    whitespace: Optional[IndustryWhitespace] = Field(
+        default=None,
+        description="Industry Whitespace: industries ranked by whitespace premium within one product line.",
+    )
+    quarterly: Optional[QuarterlyPerformance] = Field(
+        default=None,
+        description="Quarterly Performance: adjacent, complete quarters with QoQ movement in currency and percent.",
+    )
+    portfolio_map: Optional[ProductPortfolioMap] = Field(
+        default=None,
+        description=(
+            "Product Portfolio Map: one bubble per product line — share of wallet (x) "
+            "against share of portfolio (y), sized by premium."
+        ),
+    )
+    top_carriers: Optional[TopCarriers] = Field(
+        default=None,
+        description="Top Carriers: who leads this scope in the Marsh book, and how each is moving.",
+    )
+    positioning_actual: Optional[ActualPositioning] = Field(
+        default=None,
+        description=(
+            "RETIRED (share of wallet against a broker score compared two unrelated "
+            "measures). Kept so saved boards still render; `portfolio_map` replaced it."
+        ),
+    )
+    scope: List[ScopeChipModel] = Field(
+        default_factory=list,
+        description=(
+            "The analytical scope this dashboard was built from (carrier, country, product, "
+            "period, peers). Derived deterministically from the turn's routing context — "
+            "never written by a model."
         ),
     )
 

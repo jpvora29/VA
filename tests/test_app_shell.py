@@ -157,14 +157,40 @@ def test_the_studio_rail_keeps_its_pattern_ids_after_the_restyle():
         assert json.dumps({"mode": mode["id"], "type": "qs-mode"}, sort_keys=True) in ids
 
 
-def test_the_shell_stylesheet_still_loads_last():
+# Sheets that deliberately sort AFTER va_shell.css (Dash serves /assets sorted).
+# They are workspace refinement layers — they may restyle a widget, never the
+# shell chrome, which is what `test_post_shell_layers_leave_the_chrome_alone`
+# enforces below.
+POST_SHELL_SHEETS = {"va_shell_boardroom.css", "va_shell_chat.css"}
+
+
+def test_the_shell_stylesheet_loads_after_every_workspace_sheet():
     """`va_shell.css` overrides the navy rail and the full-viewport heights the two
     apps declared when each owned the page. Dash serves /assets sorted, so a new
-    stylesheet sorting after it would silently take the chrome back."""
+    workspace stylesheet sorting after it would silently take the chrome back."""
     import os
 
     sheets = sorted(f for f in os.listdir("assets") if f.endswith(".css"))
-    assert sheets[-1] == "va_shell.css", sheets
+    before = sheets[: sheets.index("va_shell.css")]
+    after = sheets[sheets.index("va_shell.css") + 1 :]
+    assert before, sheets
+    assert set(after) <= POST_SHELL_SHEETS, (
+        "a new stylesheet sorts after va_shell.css; either rename it to sort "
+        f"before, or add it to POST_SHELL_SHEETS deliberately: {after}"
+    )
+
+
+def test_post_shell_layers_leave_the_chrome_alone():
+    """The layers that load after the shell may restyle their own workspace, but the
+    rail, the sidebar and the pane heights belong to `va_shell.css` alone."""
+    chrome = (".va-rail", ".qs-root", ".app-sidebar", ".va-shell", "100vh")
+    for name in sorted(POST_SHELL_SHEETS):
+        css = pathlib.Path("assets", name).read_text(encoding="utf-8")
+        rules = "\n".join(
+            line for line in css.splitlines() if not line.strip().startswith(("/*", "*", "//"))
+        )
+        for selector in chrome:
+            assert selector not in rules, f"{name} restyles shell chrome: {selector}"
 
 
 def test_collapsing_moves_studios_grid_track_not_just_its_rail():

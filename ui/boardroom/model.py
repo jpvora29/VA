@@ -164,11 +164,20 @@ def make_page(
     *,
     icon: str = "bi bi-file-earmark",
     template: Optional[str] = None,
+    caption: str = "",
 ) -> Dict[str, Any]:
+    """A page of widgets.
+
+    ``caption`` is the question the page answers ("Where is the book losing
+    ground?"). The board is read as a funnel — overview, then pain points, then
+    the drill-downs — and the caption is what makes that order legible instead
+    of implied.
+    """
     return {
         "id": _uid("p"),
         "title": title,
         "icon": icon,
+        "caption": caption,
         "template": template,
         "widgets": widgets or [],
         "locked": False,
@@ -181,14 +190,25 @@ def make_page(
 
 
 def make_document(
-    *, title: str = "Boardroom", subtitle: str = "", pages: List[Dict[str, Any]] | None = None
+    *,
+    title: str = "Boardroom",
+    subtitle: str = "",
+    pages: List[Dict[str, Any]] | None = None,
+    scope: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
+    """A document, plus the analytical scope it was built from.
+
+    ``scope`` is a list of ``core.scope.ScopeChip`` dicts. It is part of the
+    document (not of a widget) because every widget on the board shares it, and
+    because the PowerPoint export prints the same line on every slide.
+    """
     return {
         "id": _uid("doc"),
         "title": title,
         "subtitle": subtitle,
         "theme": "default",
         "pages": pages or [],
+        "scope": list(scope or []),
         "version": 1,
     }
 

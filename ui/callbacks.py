@@ -31,6 +31,8 @@ from dash import dash_table
 import dash_bootstrap_components as dbc
 from dash.development.base_component import Component
 
+from core.scope import chips_from_state, chips_to_dicts
+from ui.components.scope_bar import scope_bar
 from ui.components.chatbot import (
     clarify_card,
     clarify_questions_of,
@@ -608,6 +610,21 @@ def apply_custom_peers(
 def render_custom_peers_cue(chat_history: dict[str, Any]):
     """Show the composer pill whenever a custom peer set is pinned."""
     return custom_peers_cue((chat_history or {}).get("custom_peers"))
+
+
+@callback(
+    Output("chat-scope-pills", "children"),
+    Input("chat-store", "data"),
+)
+def render_scope_bar(chat_history: dict[str, Any]):
+    """The named context pills above the composer — the turn's analytical scope.
+
+    The peer set is scope as well, but it has its own editable pill on the same
+    row (``render_custom_peers_cue``), so it is dropped here rather than stated
+    twice.
+    """
+    scope = (chat_history or {}).get("scope") or []
+    return scope_bar([chip for chip in scope if chip.get("key") != "peers"])
 
 
 @callback(
@@ -1464,6 +1481,12 @@ def _commit_turn(
         chat_history = _update_last_chat_message(chat_history, last_human, rephrased_query)
     chat_history = _update_chat_history(chat_history, state, table)
     chat_history["followups"] = state.get("followup_questions") or []
+    # The scope this turn actually resolved to, for the composer's context pills.
+    # Derived from the same routing context the Boardroom digest uses, so the two
+    # surfaces always state the same scope.
+    chat_history["scope"] = chips_to_dicts(
+        chips_from_state(state, chat_history.get("custom_peers"))
+    )
     return chat_history
 
 
@@ -1617,13 +1640,19 @@ def _live_draft(text: str, boardroom_mode: bool = False):
 
 
 def _fmt_elapsed(seconds: int) -> str:
-    """Format elapsed time as a running clock — seconds under a minute, then
-    ``M:SS`` (Claude-style) once a turn crosses the first minute."""
+    """Elapsed time with its units spelled out: ``42s``, then ``1m 05s``.
+
+    A bare ``1:05`` reads as a timestamp; on a status line the units say what
+    the number is without the user having to work it out.
+    """
     seconds = max(0, int(seconds))
     if seconds < 60:
         return f"{seconds}s"
     minutes, secs = divmod(seconds, 60)
-    return f"{minutes}:{secs:02d}"
+    if minutes < 60:
+        return f"{minutes}m {secs:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m {secs:02d}s"
 
 
 @callback(

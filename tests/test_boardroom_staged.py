@@ -17,10 +17,15 @@ from core.schemas.boardroom import (
     BoardroomCore,
     ComparisonView,
     KpiCard,
-    OpportunityMap,
-    PositioningMatrix,
-    PositioningPoint,
     TimelineEvent,
+)
+from core.schemas.boardroom_explainable import (
+    PortfolioBubble,
+    ProductPortfolioMap,
+    QuarterlyPerformance,
+    TopCarriers,
+    WatchItem,
+    Watchlist,
 )
 
 # ── deterministic widget-signal detection ────────────────────────────────────
@@ -36,16 +41,54 @@ def test_single_period_does_not_fire_timeline():
     assert "timeline" not in boardroom.detect_widget_signals(rows, "")
 
 
-def test_multi_country_fires_map_and_radar():
-    rows = [("premium", [{"Country": "Canada", "P": 1}, {"Country": "France", "P": 2}])]
-    signals = boardroom.detect_widget_signals(rows, "")
-    assert {"opportunity_map", "opportunities"} <= signals
+def test_multi_product_with_premium_fires_headroom():
+    rows = [
+        ("premium", [
+            {"Product_Line": "Cyber", "Premium": 1},
+            {"Product_Line": "Property", "Premium": 2},
+        ])
+    ]
+    assert "headroom" in boardroom.detect_widget_signals(rows, "")
 
 
-def test_multi_product_fires_map_and_radar():
-    rows = [("premium", [{"Product_Line": "Cyber", "P": 1}, {"Product_Line": "Property", "P": 2}])]
+def test_products_without_a_premium_measure_fire_no_headroom():
+    """Headroom is carrier premium against Marsh premium; with no premium column
+    there is nothing explainable to show."""
+    rows = [("survey", [{"Product_Line": "Cyber", "Score": 7}, {"Product_Line": "Property", "Score": 6}])]
+    assert "headroom" not in boardroom.detect_widget_signals(rows, "")
+
+
+def test_industry_dimension_fires_whitespace():
+    rows = [("premium", [{"SIC_Major_Class": "Manufacturing", "Premium": 3}])]
+    assert "whitespace" in boardroom.detect_widget_signals(rows, "")
+
+
+def test_retired_score_widgets_are_never_requested():
+    """The roadmap replaced the 0-100 widgets; a new digest must not ask for one."""
+    rows = [
+        ("premium", [
+            {"Country": "Canada", "Product_Line": "Cyber", "Premium": 1, "Score": 7},
+            {"Country": "France", "Product_Line": "Property", "Premium": 2, "Score": 6},
+        ])
+    ]
+    signals = boardroom.detect_widget_signals(rows, "peers")
+    # `positioning_actual` joined the retired list: share of wallet against a
+    # broker score plotted two unrelated measures on one chart.
+    assert not (
+        {"opportunity_map", "opportunities", "positioning", "positioning_actual"} & signals
+    )
+
+
+def test_two_quarters_fire_quarterly_instead_of_the_timeline():
+    rows = [("premium", [{"Quarter": "Q1 2026", "Premium": 1}, {"Quarter": "Q2 2026", "Premium": 2}])]
     signals = boardroom.detect_widget_signals(rows, "")
-    assert {"opportunity_map", "opportunities"} <= signals
+    assert "quarterly" in signals
+    assert "timeline" not in signals
+
+
+def test_two_periods_and_a_measure_fire_the_watchlist():
+    rows = [("premium", [{"Year": 2023, "Premium": 1}, {"Year": 2024, "Premium": 2}])]
+    assert "watchlist" in boardroom.detect_widget_signals(rows, "")
 
 
 def test_carriers_fire_comparison_and_battlecards():
@@ -61,12 +104,24 @@ def test_peer_commentary_fires_comparison_without_carrier_rows():
     assert "battlecards" not in signals  # no carrier values in rows
 
 
-def test_premium_plus_perception_fires_positioning_across_sets():
+def test_two_carriers_with_premium_fire_top_carriers():
     rows = [
         ("gpr:trend", [{"Carrier_Group": "ZURICH GROUP", "Premium": 5.0}]),
-        ("survey:scores", [{"Carrier": "Zurich", "Score": 7.1}]),
+        ("gpr:peers", [{"Carrier_Group": "Peer 1", "Premium": 4.0}]),
     ]
-    assert "positioning" in boardroom.detect_widget_signals(rows, "")
+    assert "top_carriers" in boardroom.detect_widget_signals(rows, "")
+
+
+def test_products_with_premium_fire_both_product_views():
+    """Headroom ranks the money left on the table; the map shows the book's shape."""
+    rows = [
+        ("premium", [
+            {"Product_Line": "Property", "Premium": 8.0},
+            {"Product_Line": "Cyber", "Premium": 1.0},
+        ])
+    ]
+    signals = boardroom.detect_widget_signals(rows, "")
+    assert {"headroom", "portfolio_map"} <= signals
 
 
 def test_scalar_lookup_fires_nothing():
@@ -79,10 +134,18 @@ def test_scalar_lookup_fires_nothing():
 
 def test_nullify_empty_collapses_structurally_empty_widgets():
     assert boardroom._nullify_empty("comparison", ComparisonView()) is None
-    assert boardroom._nullify_empty("opportunity_map", OpportunityMap()) is None
-    assert boardroom._nullify_empty("positioning", PositioningMatrix()) is None
-    kept = PositioningMatrix(points=[PositioningPoint(label="Zurich")])
-    assert boardroom._nullify_empty("positioning", kept) is kept
+    assert boardroom._nullify_empty("portfolio_map", ProductPortfolioMap()) is None
+    assert boardroom._nullify_empty("top_carriers", TopCarriers()) is None
+    kept = ProductPortfolioMap(bubbles=[PortfolioBubble(product_line="Property")])
+    assert boardroom._nullify_empty("portfolio_map", kept) is kept
+
+
+def test_an_empty_widget_that_explains_itself_is_kept():
+    """"No comparable quarters in this data" is a result the board should see."""
+    silent = QuarterlyPerformance()
+    explained = QuarterlyPerformance(note="No comparable quarters in this scope.")
+    assert boardroom._nullify_empty("quarterly", silent) is None
+    assert boardroom._nullify_empty("quarterly", explained) is explained
 
 
 # ── staged node assembly ─────────────────────────────────────────────────────
@@ -119,6 +182,7 @@ def test_staged_node_assembles_core_plus_detected_widgets(monkeypatch):
     timeline_stub = _StubPredictor(
         timeline=[TimelineEvent(period="2024", title="Premium +100%")]
     )
+    watchlist_stub = _StubPredictor(watchlist=Watchlist(items=[WatchItem(risk="Rank slipping")]))
     never_stub = _StubPredictor()
     monkeypatch.setattr(boardroom, "_CORE_PREDICTOR", core_stub)
     monkeypatch.setattr(
@@ -126,9 +190,12 @@ def test_staged_node_assembles_core_plus_detected_widgets(monkeypatch):
         "_WIDGET_PREDICTORS",
         {
             "timeline": (timeline_stub, "timeline"),
-            "opportunity_map": (never_stub, "opportunity_map"),
-            "opportunities": (never_stub, "opportunities"),
-            "positioning": (never_stub, "positioning"),
+            "watchlist": (watchlist_stub, "watchlist"),
+            "portfolio_map": (never_stub, "portfolio_map"),
+            "top_carriers": (never_stub, "top_carriers"),
+            "headroom": (never_stub, "headroom"),
+            "whitespace": (never_stub, "whitespace"),
+            "quarterly": (never_stub, "quarterly"),
             "comparison": (never_stub, "comparison"),
             "battlecards": (never_stub, "battlecards"),
         },
@@ -143,7 +210,10 @@ def test_staged_node_assembles_core_plus_detected_widgets(monkeypatch):
     assert never_stub.calls == 0
     assert digest["timeline"][0]["title"] == "Premium +100%"
     assert digest["comparison"] is None
-    assert digest["positioning"] is None
+    assert digest["portfolio_map"] is None
+    # The model reported facts; the priority label came from the approved rules.
+    assert digest["watchlist"]["items"][0]["priority"]
+    assert digest["watchlist"]["items"][0]["priority_tests"]
 
 
 def test_widget_failure_never_sinks_the_dashboard(monkeypatch):

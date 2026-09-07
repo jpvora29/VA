@@ -31,184 +31,45 @@ from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Emu, Inches, Pt
 
+from core.scope import chips_from_dicts, scope_line
 from logger import get_logger
-from ui.boardroom import catalog, model
+from ui.boardroom import catalog, model, ppt_explainable
+from ui.boardroom.ppt_kit import (
+    BULLET,
+    COL_W,
+    CONTENT_H,
+    CONTENT_W,
+    FONT,
+    GRAY,
+    GUTTER_IN,
+    HEADER_IN,
+    LIGHT_BORDER,
+    MARGIN_IN,
+    NAVY,
+    PX_PER_IN,
+    SLIDE_H_IN,
+    SLIDE_W_IN,
+    SOFT_BG,
+    WHITE,
+    _dot,
+    _hex_rgb,
+    _para,
+    _rect,
+    _rounded,
+    _set_cell,
+    _textbox,
+    _tone,
+    _tone_color,
+    _tone_soft,
+)
+from ui.boardroom.ppt_kit import text_lines as _text_lines
 from ui.boardroom.themes import theme as bm_theme
 from ui.color_pallet import ColorPalette
 
 logger = get_logger(__name__)
 
-# -- Geometry: 16:9 slide, CSS px <-> inches at 96 px/in ----------------------
-SLIDE_W_IN = 13.333
-SLIDE_H_IN = 7.5
-MARGIN_IN = 0.45
-HEADER_IN = 0.72
-PX_PER_IN = 96.0
-GUTTER_IN = 14 / PX_PER_IN  # the on-screen grid gap is 14 px
-
-CONTENT_W = SLIDE_W_IN - 2 * MARGIN_IN
-CONTENT_H = SLIDE_H_IN - MARGIN_IN - HEADER_IN - 0.25
-COL_W = (CONTENT_W - (model.GRID_COLUMNS - 1) * GUTTER_IN) / model.GRID_COLUMNS
-
-FONT = "Segoe UI"
-BULLET = "•  "
-
-# Brand / tone colours (mirrors the UI tone classes + boardroom themes).
-NAVY = RGBColor(0x0B, 0x13, 0x20)
-GRAY = RGBColor(0x5B, 0x65, 0x77)
-LIGHT_BORDER = RGBColor(0xD7, 0xDF, 0xEB)
-SOFT_BG = RGBColor(0xF4, 0xF7, 0xFB)
-WHITE = RGBColor(0xFF, 0xFF, 0xFF)
-
-_TONE_HEX = {
-    "good": (0x1F, 0x9D, 0x55),
-    "warn": (0xB9, 0x81, 0x0A),
-    "danger": (0xC5, 0x35, 0x32),
-    "neutral": (0x0B, 0x4B, 0xFF),
-}
-
-
-def _tone(value: Optional[str]) -> str:
-    v = (value or "neutral").strip().lower()
-    return v if v in _TONE_HEX else "neutral"
-
-
-def _tone_color(value: Optional[str]) -> RGBColor:
-    return RGBColor(*_TONE_HEX[_tone(value)])
-
-
-def _tone_soft(value: Optional[str], alpha: float = 0.12) -> RGBColor:
-    """Tone blended towards white - the PPT stand-in for rgba(tone, alpha)."""
-    r, g, b = _TONE_HEX[_tone(value)]
-    mix = lambda c: int(round(255 + (c - 255) * alpha))  # noqa: E731
-    return RGBColor(mix(r), mix(g), mix(b))
-
-
-def _hex_rgb(value: str, fallback: RGBColor = NAVY) -> RGBColor:
-    m = re.fullmatch(r"#?([0-9a-fA-F]{6})", (value or "").strip())
-    return RGBColor.from_string(m.group(1)) if m else fallback
-
-
-# -- Low-level shape helpers ---------------------------------------------------
-
-
-def _textbox(slide, x, y, w, h):
-    box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
-    tf = box.text_frame
-    tf.word_wrap = True
-    tf.margin_left = tf.margin_right = Emu(0)
-    tf.margin_top = tf.margin_bottom = Emu(0)
-    return box, tf
-
-
-def _para(
-    tf,
-    text: str,
-    *,
-    size: float = 11,
-    bold: bool = False,
-    italic: bool = False,
-    color: RGBColor = NAVY,
-    align=PP_ALIGN.LEFT,
-    bullet: bool = False,
-    space_after: float = 2,
-    first: bool = False,
-):
-    p = tf.paragraphs[0] if first and not tf.paragraphs[0].runs else tf.add_paragraph()
-    p.alignment = align
-    p.space_after = Pt(space_after)
-    run = p.add_run()
-    run.text = (BULLET + text) if bullet else text
-    f = run.font
-    f.name = FONT
-    f.size = Pt(size)
-    f.bold = bold
-    f.italic = italic
-    f.color.rgb = color
-    return p
-
-
-def _rounded(slide, x, y, w, h, *, fill: Optional[RGBColor] = WHITE,
-             line: Optional[RGBColor] = LIGHT_BORDER, radius: float = 0.08):
-    shp = slide.shapes.add_shape(
-        MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h)
-    )
-    try:  # corner radius (fraction of the smaller side)
-        shp.adjustments[0] = radius
-    except Exception:  # noqa: BLE001 - cosmetic only
-        pass
-    if fill is None:
-        shp.fill.background()
-    else:
-        shp.fill.solid()
-        shp.fill.fore_color.rgb = fill
-    if line is None:
-        shp.line.fill.background()
-    else:
-        shp.line.color.rgb = line
-        shp.line.width = Pt(0.75)
-    shp.shadow.inherit = False
-    return shp
-
-
-def _rect(slide, x, y, w, h, fill: RGBColor, line: Optional[RGBColor] = None):
-    shp = slide.shapes.add_shape(
-        MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h)
-    )
-    shp.fill.solid()
-    shp.fill.fore_color.rgb = fill
-    if line is None:
-        shp.line.fill.background()
-    else:
-        shp.line.color.rgb = line
-        shp.line.width = Pt(0.75)
-    shp.shadow.inherit = False
-    return shp
-
-
-def _dot(slide, x, y, d, fill: RGBColor, line: Optional[RGBColor] = None):
-    shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(x), Inches(y), Inches(d), Inches(d))
-    shp.fill.solid()
-    shp.fill.fore_color.rgb = fill
-    if line is None:
-        shp.line.fill.background()
-    else:
-        shp.line.color.rgb = line
-        shp.line.width = Pt(1.0)
-    shp.shadow.inherit = False
-    return shp
-
-
-def _set_cell(cell, text: str, *, size=10, bold=False, color: RGBColor = NAVY,
-              fill: Optional[RGBColor] = None, align=PP_ALIGN.LEFT):
-    cell.margin_left = Inches(0.06)
-    cell.margin_right = Inches(0.06)
-    cell.margin_top = cell.margin_bottom = Inches(0.02)
-    cell.vertical_anchor = MSO_ANCHOR.MIDDLE
-    tf = cell.text_frame
-    tf.word_wrap = True
-    p = tf.paragraphs[0]
-    p.alignment = align
-    run = p.add_run()
-    run.text = str(text)
-    run.font.name = FONT
-    run.font.size = Pt(size)
-    run.font.bold = bold
-    run.font.color.rgb = color
-    if fill is not None:
-        cell.fill.solid()
-        cell.fill.fore_color.rgb = fill
-
 
 # -- Height estimation (inches) for auto-height widgets -------------------------
-
-
-def _text_lines(text: str, w_in: float, size_pt: float = 11) -> int:
-    chars_per_line = max(10, int(w_in * 96 / (size_pt * 0.55)))
-    lines = 0
-    for para in str(text or "").split("\n"):
-        lines += max(1, math.ceil(len(para) / chars_per_line))
-    return lines
 
 
 def _estimate_height(widget: Dict[str, Any], w_in: float) -> float:
@@ -217,6 +78,8 @@ def _estimate_height(widget: Dict[str, Any], w_in: float) -> float:
     data = widget.get("data") or {}
     content = catalog.content_of(kind)
 
+    if kind in ppt_explainable.RENDERERS:
+        return ppt_explainable.estimate_height(kind, data, w_in)
     if content == "chart":
         return 3.3
     if content == "kpis" or kind == "kpi":
@@ -820,6 +683,7 @@ def _image_bytes(url: str) -> Optional[bytes]:
 
 
 _RENDERERS: Dict[str, Callable] = {
+    **ppt_explainable.RENDERERS,  # watchlist / headroom / whitespace / quarterly / positioning
     "kpi": _render_kpis,
     "commentary": _render_commentary,
     "insights": _render_insights,
@@ -863,11 +727,22 @@ def _exportable_widgets(page: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
+def _doc_scope_line(doc: Dict[str, Any]) -> str:
+    """The document's scope as one line — the same chips the board shows."""
+    return scope_line(chips_from_dicts(doc.get("scope")))
+
+
 def _slide_header(slide, doc: Dict[str, Any], page: Dict[str, Any], page_no: int, total: int):
     _, tf = _textbox(slide, MARGIN_IN, 0.22, CONTENT_W - 2.2, 0.4)
     _para(tf, page.get("title") or f"Page {page_no}", size=18, bold=True, color=NAVY, first=True)
     _, tf = _textbox(slide, SLIDE_W_IN - MARGIN_IN - 3.2, 0.27, 3.2, 0.3)
     _para(tf, doc.get("title", ""), size=10, color=GRAY, first=True, align=PP_ALIGN.RIGHT)
+    # "The selected scope is visible in the widget and exported slide" — every
+    # slide restates the scope its numbers were filtered to.
+    scope = _doc_scope_line(doc)
+    if scope:
+        _, tf = _textbox(slide, MARGIN_IN, 0.56, CONTENT_W - 2.2, 0.2)
+        _para(tf, scope, size=8.5, color=GRAY, first=True)
     _rect(slide, MARGIN_IN, HEADER_IN - 0.06, CONTENT_W, 0.02, _hex_rgb("#0b4bff"))
     _, tf = _textbox(slide, SLIDE_W_IN - MARGIN_IN - 0.8, SLIDE_H_IN - 0.32, 0.8, 0.25)
     _para(tf, f"{page_no} / {total}", size=9, color=GRAY, first=True, align=PP_ALIGN.RIGHT)
@@ -909,6 +784,10 @@ def _add_title_slide(prs: Presentation, doc: Dict[str, Any]):
     if doc.get("subtitle"):
         _, tf = _textbox(slide, MARGIN_IN, 4.05, SLIDE_W_IN - 2 * MARGIN_IN, 0.6)
         _para(tf, doc["subtitle"], size=16, color=RGBColor(0x9F, 0xE0, 0xFF), first=True)
+    scope = _doc_scope_line(doc)
+    if scope:
+        _, tf = _textbox(slide, MARGIN_IN, 4.75, SLIDE_W_IN - 2 * MARGIN_IN, 0.4)
+        _para(tf, scope, size=11, color=RGBColor(0x8F, 0xA5, 0xC2), first=True)
     _, tf = _textbox(slide, MARGIN_IN, SLIDE_H_IN - 0.75, SLIDE_W_IN - 2 * MARGIN_IN, 0.3)
     _para(tf, f"Virtual Analyst | {date.today():%d %b %Y}", size=10.5,
           color=RGBColor(0x8F, 0xA5, 0xC2), first=True)
@@ -970,7 +849,12 @@ def export_pptx(doc: Dict[str, Any], figures: Optional[List[Any]] = None) -> byt
         if edited:
             notes_lines.append("Edited after generation: " + ", ".join(edited))
         if notes_lines:
-            slide.notes_slide.notes_text_frame.text = "\n\n".join(notes_lines)
+            # A widget may already have written evidence into the notes (the
+            # watchlist puts its triggers and rule sentences there), so add to
+            # what is present rather than replacing it.
+            frame = slide.notes_slide.notes_text_frame
+            existing = (frame.text or "").strip()
+            frame.text = "\n\n".join(([existing] if existing else []) + notes_lines)
 
     buf = io.BytesIO()
     prs.save(buf)

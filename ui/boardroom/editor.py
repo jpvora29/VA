@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
+from core.boardroom import priority
 from ui.boardroom import catalog, icons, model, themes
 
 SIZE_OPTS = [
@@ -60,6 +61,14 @@ SEVERITY_OPTS = [
     {"label": "High", "value": "High"},
     {"label": "Medium", "value": "Med"},
     {"label": "Low", "value": "Low"},
+]
+# Presence, not intensity: an explainable widget says "the carrier writes nothing
+# here", never "this scores 100".
+STATUS_OPTS = [
+    {"label": "No current premium", "value": "no_premium"},
+    {"label": "Low presence", "value": "low_presence"},
+    {"label": "Established", "value": "established"},
+    {"label": "Not stated", "value": "unknown"},
 ]
 
 
@@ -169,6 +178,147 @@ LIST_SPECS: Dict[str, Dict[str, Any]] = {
             {"key": "tone", "label": "Tone", "type": "tone"},
         ],
     },
+    # ── explainable widgets: actual measures, and no severity field anywhere ──
+    # Priority is derived from `core.boardroom.priority`, so the form collects the
+    # facts the rules need and never offers a High/Med/Low picker.
+    "watch_items": {
+        "path": "watchlist.items", "singular": "Watch item", "key_field": "risk",
+        "template": {"risk": "", "scope": "", "premium_exposed": "", "premium_exposed_value": None,
+                     "share_of_wallet_pct": None, "share_of_portfolio_pct": None,
+                     "movement": "", "movement_pct": None, "adverse": True,
+                     "comparison": "", "trigger": "", "consecutive_periods": 1, "breached_kpi": "",
+                     "periods_comparable": True, "owner_action": "", "tone": "warn"},
+        "fields": [
+            {"key": "risk", "label": "Risk", "type": "text"},
+            {"key": "scope", "label": "Scope (country / product / carrier)", "type": "text"},
+            {"key": "premium_exposed", "label": "Premium exposed (as shown)", "type": "text"},
+            {"key": "premium_exposed_value", "label": "Premium exposed (number)", "type": "decimal"},
+            {"key": "share_of_wallet_pct", "label": "Share of wallet (%)", "type": "decimal"},
+            {"key": "share_of_portfolio_pct", "label": "Share of portfolio (%)", "type": "decimal"},
+            {"key": "movement", "label": "Movement (as shown)", "type": "text"},
+            {"key": "movement_pct", "label": "Movement (%, signed)", "type": "decimal"},
+            {"key": "adverse", "label": "Movement is adverse for the carrier", "type": "bool"},
+            {"key": "comparison", "label": "Comparison basis", "type": "text"},
+            {"key": "trigger", "label": "Trigger — what the data shows", "type": "textarea"},
+            {"key": "consecutive_periods", "label": "Consecutive adverse periods", "type": "number"},
+            {"key": "breached_kpi", "label": "Governed KPI breached", "type": "text"},
+            {"key": "periods_comparable", "label": "Periods complete and comparable", "type": "bool"},
+            {"key": "owner_action", "label": "Owner / action", "type": "text"},
+            {"key": "tone", "label": "Tone", "type": "tone"},
+        ],
+    },
+    "headroom_rows": {
+        "path": "headroom.rows", "singular": "Product line", "key_field": "product_line",
+        "template": {"product_line": "", "carrier_premium": "", "carrier_premium_value": None,
+                     "marsh_premium": "", "marsh_premium_value": None, "share_of_wallet_pct": None,
+                     "share_of_portfolio_pct": None, "whitespace_premium": "",
+                     "whitespace_premium_value": None, "market_change": "", "status": "unknown",
+                     "focus": ""},
+        "fields": [
+            {"key": "product_line", "label": "Product line", "type": "text"},
+            {"key": "carrier_premium", "label": "Carrier premium (as shown)", "type": "text"},
+            {"key": "carrier_premium_value", "label": "Carrier premium (number)", "type": "decimal"},
+            {"key": "marsh_premium", "label": "Marsh premium (as shown)", "type": "text"},
+            {"key": "marsh_premium_value", "label": "Marsh premium (number)", "type": "decimal"},
+            {"key": "share_of_wallet_pct", "label": "Share of wallet (%)", "type": "decimal"},
+            {"key": "share_of_portfolio_pct", "label": "Share of portfolio (%)", "type": "decimal"},
+            {"key": "whitespace_premium", "label": "Whitespace premium (as shown)", "type": "text"},
+            {"key": "whitespace_premium_value", "label": "Whitespace premium (number)", "type": "decimal"},
+            {"key": "market_change", "label": "Market movement (with basis)", "type": "text"},
+            {"key": "status", "label": "Presence", "type": "select", "options": STATUS_OPTS},
+            {"key": "focus", "label": "Suggested focus", "type": "text"},
+        ],
+    },
+    "whitespace_rows": {
+        "path": "whitespace.rows", "singular": "Industry", "key_field": "industry",
+        "template": {"industry": "", "product_line": "", "marsh_premium": "", "marsh_premium_value": None,
+                     "carrier_premium": "", "carrier_premium_value": None, "share_of_wallet_pct": None,
+                     "share_of_portfolio_pct": None, "peer_share_of_wallet_pct": None,
+                     "whitespace_premium": "", "whitespace_premium_value": None, "marsh_change": "",
+                     "status": "unknown", "focus_reason": ""},
+        "fields": [
+            {"key": "industry", "label": "Industry", "type": "text"},
+            {"key": "product_line", "label": "Product line", "type": "text"},
+            {"key": "marsh_premium", "label": "Marsh premium (as shown)", "type": "text"},
+            {"key": "marsh_premium_value", "label": "Marsh premium (number)", "type": "decimal"},
+            {"key": "carrier_premium", "label": "Carrier premium (as shown)", "type": "text"},
+            {"key": "carrier_premium_value", "label": "Carrier premium (number)", "type": "decimal"},
+            {"key": "share_of_wallet_pct", "label": "Share of wallet (%)", "type": "decimal"},
+            {"key": "share_of_portfolio_pct", "label": "Share of portfolio (%)", "type": "decimal"},
+            {"key": "peer_share_of_wallet_pct", "label": "Peers hold - share of wallet (%)", "type": "decimal"},
+            {"key": "whitespace_premium", "label": "Whitespace premium (as shown)", "type": "text"},
+            {"key": "whitespace_premium_value", "label": "Whitespace premium (number)", "type": "decimal"},
+            {"key": "marsh_change", "label": "Marsh movement (with basis)", "type": "text"},
+            {"key": "status", "label": "Presence", "type": "select", "options": STATUS_OPTS},
+            {"key": "focus_reason", "label": "Why focus here", "type": "textarea"},
+        ],
+    },
+    "quarter_rows": {
+        "path": "quarterly.rows", "singular": "Quarter", "key_field": "quarter",
+        "template": {"quarter": "", "premium": "", "premium_value": None, "change_currency": "",
+                     "change_pct": None, "share_of_wallet_pct": None, "rank_change": "",
+                     "driver": "", "complete": True},
+        "fields": [
+            {"key": "quarter", "label": "Quarter", "type": "text"},
+            {"key": "premium", "label": "Premium (as shown)", "type": "text"},
+            {"key": "premium_value", "label": "Premium (number)", "type": "decimal"},
+            {"key": "change_currency", "label": "Change vs prior quarter (money)", "type": "text"},
+            {"key": "change_pct", "label": "Change vs prior quarter (%)", "type": "decimal"},
+            {"key": "share_of_wallet_pct", "label": "Share of wallet (%)", "type": "decimal"},
+            {"key": "rank_change", "label": "Rank movement", "type": "text"},
+            {"key": "driver", "label": "Main driver", "type": "text"},
+            {"key": "complete", "label": "Complete quarter", "type": "bool"},
+        ],
+    },
+    "portfolio_bubbles": {
+        "path": "portfolio_map.bubbles", "singular": "Product line", "key_field": "product_line",
+        "template": {"product_line": "", "share_of_wallet_pct": None, "share_of_portfolio_pct": None,
+                     "premium": "", "premium_value": None, "marsh_premium": "", "marsh_premium_value": None,
+                     "growth": "", "growth_pct": None, "peer_share_of_wallet_pct": None, "tone": "neutral"},
+        "fields": [
+            {"key": "product_line", "label": "Product line", "type": "text"},
+            {"key": "share_of_wallet_pct", "label": "Share of wallet (%) - x axis", "type": "decimal"},
+            {"key": "share_of_portfolio_pct", "label": "Share of portfolio (%) - y axis", "type": "decimal"},
+            {"key": "premium", "label": "Premium (as shown) - bubble size", "type": "text"},
+            {"key": "premium_value", "label": "Premium (number)", "type": "decimal"},
+            {"key": "marsh_premium", "label": "Marsh premium (as shown)", "type": "text"},
+            {"key": "marsh_premium_value", "label": "Marsh premium (number)", "type": "decimal"},
+            {"key": "growth", "label": "Growth (with basis)", "type": "text"},
+            {"key": "growth_pct", "label": "Growth (%)", "type": "decimal"},
+            {"key": "peer_share_of_wallet_pct", "label": "Peers hold - share of wallet (%)", "type": "decimal"},
+            {"key": "tone", "label": "Tone", "type": "tone"},
+        ],
+    },
+    "carrier_standings": {
+        "path": "top_carriers.carriers", "singular": "Carrier", "key_field": "carrier",
+        "template": {"carrier": "", "is_subject": False, "rank": None, "premium": "",
+                     "premium_value": None, "share_of_wallet_pct": None, "movement": "",
+                     "movement_pct": None},
+        "fields": [
+            {"key": "carrier", "label": "Carrier (peers stay anonymised)", "type": "text"},
+            {"key": "is_subject", "label": "The carrier in focus", "type": "bool"},
+            {"key": "rank", "label": "Rank", "type": "number"},
+            {"key": "premium", "label": "Premium (as shown)", "type": "text"},
+            {"key": "premium_value", "label": "Premium (number)", "type": "decimal"},
+            {"key": "share_of_wallet_pct", "label": "Share of wallet (%)", "type": "decimal"},
+            {"key": "movement", "label": "Movement (with basis)", "type": "text"},
+            {"key": "movement_pct", "label": "Movement (%)", "type": "decimal"},
+        ],
+    },
+    "position_points": {
+        "path": "positioning_actual.points", "singular": "Carrier", "key_field": "label",
+        "template": {"label": "", "x_value": None, "x_display": "", "y_value": None, "y_display": "",
+                     "is_subject": False, "tone": "neutral"},
+        "fields": [
+            {"key": "label", "label": "Carrier", "type": "text"},
+            {"key": "x_value", "label": "X — actual value", "type": "decimal"},
+            {"key": "x_display", "label": "X — as shown", "type": "text"},
+            {"key": "y_value", "label": "Y — actual value", "type": "decimal"},
+            {"key": "y_display", "label": "Y — as shown", "type": "text"},
+            {"key": "is_subject", "label": "Subject (carrier in focus)", "type": "bool"},
+            {"key": "tone", "label": "Tone", "type": "tone"},
+        ],
+    },
 }
 
 
@@ -207,6 +357,71 @@ KIND_EDITORS: Dict[str, Dict[str, Any]] = {
         "lists": ["metrics"],
     },
     "battlecards": {"scalars": [], "lists": ["battlecards"]},
+    # ── explainable widgets ──
+    "watchlist": {
+        "scalars": [
+            {"key": "watchlist.basis", "label": "Comparison basis (e.g. Q2 2026 vs Q1 2026)", "type": "text"},
+            {"key": "watchlist.note", "label": "Empty-state note", "type": "text"},
+        ],
+        "lists": ["watch_items"],
+    },
+    "headroom": {
+        "scalars": [
+            {"key": "headroom.basis", "label": "Period", "type": "text"},
+            {"key": "headroom.definition", "label": "Whitespace definition", "type": "textarea"},
+            {"key": "headroom.note", "label": "Empty-state note", "type": "text"},
+        ],
+        "lists": ["headroom_rows"],
+    },
+    "whitespace": {
+        "scalars": [
+            {"key": "whitespace.product_line", "label": "Product line in focus", "type": "text"},
+            {"key": "whitespace.product_lines", "label": "Selectable product lines (one per line)", "type": "lines"},
+            {"key": "whitespace.basis", "label": "Period", "type": "text"},
+            {"key": "whitespace.definition", "label": "Whitespace definition", "type": "textarea"},
+            {"key": "whitespace.note", "label": "Empty-state note", "type": "text"},
+        ],
+        "lists": ["whitespace_rows"],
+    },
+    "quarterly": {
+        "scalars": [
+            {"key": "quarterly.basis", "label": "Basis (QoQ / YTD vs prior YTD / Annual)", "type": "text"},
+            {"key": "quarterly.note", "label": "Empty-state note", "type": "text"},
+        ],
+        "lists": ["quarter_rows"],
+    },
+    "portfolio_map": {
+        "scalars": [
+            {"key": "portfolio_map.wallet_benchmark_pct", "label": "Share-of-wallet benchmark (%)", "type": "decimal"},
+            {"key": "portfolio_map.portfolio_benchmark_pct", "label": "Share-of-portfolio benchmark (%)", "type": "decimal"},
+            {"key": "portfolio_map.benchmark_label", "label": "Benchmark label", "type": "text"},
+            {"key": "portfolio_map.basis", "label": "Period", "type": "text"},
+            {"key": "portfolio_map.note", "label": "Note / empty-state", "type": "text"},
+        ],
+        "lists": ["portfolio_bubbles"],
+    },
+    "top_carriers": {
+        "scalars": [
+            {"key": "top_carriers.scope", "label": "Scope of the ranking", "type": "text"},
+            {"key": "top_carriers.field_size", "label": "Carriers in the field", "type": "number"},
+            {"key": "top_carriers.basis", "label": "Period / movement basis", "type": "text"},
+            {"key": "top_carriers.note", "label": "Note / empty-state", "type": "text"},
+        ],
+        "lists": ["carrier_standings"],
+    },
+    "positioning_actual": {
+        "scalars": [
+            {"key": "positioning_actual.x_label", "label": "X axis measure", "type": "text"},
+            {"key": "positioning_actual.x_unit", "label": "X axis unit", "type": "text"},
+            {"key": "positioning_actual.y_label", "label": "Y axis measure", "type": "text"},
+            {"key": "positioning_actual.y_unit", "label": "Y axis unit", "type": "text"},
+            {"key": "positioning_actual.x_benchmark", "label": "X benchmark", "type": "decimal"},
+            {"key": "positioning_actual.y_benchmark", "label": "Y benchmark", "type": "decimal"},
+            {"key": "positioning_actual.benchmark_label", "label": "Benchmark label", "type": "text"},
+            {"key": "positioning_actual.note", "label": "Note", "type": "text"},
+        ],
+        "lists": ["position_points"],
+    },
 }
 
 
@@ -235,7 +450,7 @@ def _control(ftype: str, key: str, value: Any, options: Optional[List[dict]] = N
     if ftype == "csv":
         text = ", ".join(str(x) for x in value) if isinstance(value, list) else (value or "")
         return dcc.Input(id=_ef(key), value=text, className="bm-ef-input")
-    if ftype == "number":
+    if ftype in ("number", "decimal"):
         return dcc.Input(id=_ef(key), type="number",
                          value=value if value not in (None, "") else None,
                          className="bm-ef-input bm-ef-num")
@@ -524,6 +739,15 @@ def _coerce(ftype: str, val: Any):
             return int(float(val))
         except (TypeError, ValueError):
             return 0
+    if ftype == "decimal":
+        # A measure, not a count: keep the fraction, and keep "not reported" as
+        # None rather than turning a blank field into a real zero premium.
+        if val in (None, ""):
+            return None
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return None
     if ftype == "bool":
         return bool(val)
     if ftype == "lines":
@@ -601,6 +825,17 @@ def _apply_generic(content: str, data: Dict[str, Any], meta: Dict[str, Any], val
         meta["sort"] = values.get("sort") or None
 
 
+def _rerate_watchlist(data: Dict[str, Any]) -> None:
+    """Recompute every watch item's priority from the approved thresholds."""
+    watchlist = data.get("watchlist")
+    if not isinstance(watchlist, dict):
+        return
+    thresholds = priority.get_thresholds()
+    watchlist["items"] = priority.rate_items(watchlist.get("items") or [])
+    watchlist["thresholds"] = thresholds.summary()
+    watchlist["thresholds_approved"] = thresholds.approved
+
+
 def _materialize(widget: Dict[str, Any], values: Dict[str, Any], keep_empty: bool = False) -> None:
     """Write collected {key: value} edits into a widget in place (no provenance).
     Shared by ``apply_editor`` (on Save, ``keep_empty=False``) and the live
@@ -628,6 +863,12 @@ def _materialize(widget: Dict[str, Any], values: Dict[str, Any], keep_empty: boo
             _set_nested(data, spec["path"], _parse_list(values, spec, keep_empty=keep_empty))
     else:
         _apply_generic(catalog.content_of(kind), data, meta, values)
+
+    # A priority is derived, not stored: re-run the approved rules over whatever
+    # the user just changed, so an edited exposure or movement cannot leave a
+    # stale "High" (or its explanation) on the card.
+    if kind == "watchlist":
+        _rerate_watchlist(data)
 
     if "theme" in values:
         meta["theme"] = values["theme"]

@@ -195,3 +195,57 @@ def test_a_stance_line_is_the_same_on_every_build():
 
     args = ("scale this book", "share of wallet rose 1.2 points", "Property")
     assert _stance_sentence(*args) == _stance_sentence(*args)
+
+
+# ── the spare line: why a two-bullet cell no longer fails on one bad line ────
+#
+# ``COMMENTARY_MODE=ai_required`` stops the build when a field cannot be written, and the
+# reported failure was always the same shape: a feedback-table cell (two bullets, so
+# ``min_lines`` leaves NO room) lost one line to a gate and took the deck with it. The gate
+# now judges every line the model wrote before trimming, and a zero-tolerance column is
+# asked for one spare — so a rejected line is covered instead of fatal.
+
+
+def test_a_two_bullet_cell_has_no_room_to_lose_a_line():
+    """The condition the spare exists for. If this changes, the spare is unnecessary."""
+    assert min_lines(_CELL_BULLETS) == _CELL_BULLETS
+
+
+def test_a_column_with_no_room_is_asked_for_a_spare():
+    from studio.template_fill.commentary import ask_lines
+
+    assert ask_lines(_CELL_BULLETS) == _CELL_BULLETS + 1
+    assert ask_lines(1) == 2
+    # A column that may already merge or drop has its room; it is not asked for more.
+    assert ask_lines(_PANEL_BULLETS) == _PANEL_BULLETS
+    assert ask_lines(4) == 4
+
+
+def test_the_prompt_explains_the_spare_rather_than_asking_for_a_longer_cell():
+    from studio.template_fill.commentary import _bullet_rules
+
+    rules = _bullet_rules(_CELL_BULLETS)
+    assert f"Write {_CELL_BULLETS + 1} lines" in rules
+    assert f"The cell shows {_CELL_BULLETS}" in rules
+
+
+def test_a_spare_covers_a_rejected_line_and_the_cell_still_ships_full():
+    """The exact failure: one fragment in a two-bullet cell used to empty the column."""
+    kept = _lines(_accept([FRAGMENT, GOOD[0], GOOD[1]], wanted=2, node="n", subject=SUBJECT))
+    assert kept == [GOOD[0], GOOD[1]]
+
+
+def test_the_spare_never_makes_the_cell_longer_than_it_shows():
+    kept = _lines(_accept(list(GOOD), wanted=2, node="n", subject=SUBJECT))
+    assert len(kept) == 2
+
+
+def test_two_bad_lines_still_fail_the_cell():
+    """The bar has not moved: the spare covers ONE rejection, not any number."""
+    assert _accept([FRAGMENT, READOUT, GOOD[0]], wanted=2, node="n", subject=SUBJECT) is None
+
+
+def test_lines_are_judged_before_they_are_trimmed():
+    """A good line beyond the cell's length is reachable; it used to be cut unseen."""
+    lines = [FRAGMENT, GOOD[0], GOOD[1], GOOD[2]]
+    assert _lines(_accept(lines, wanted=3, node="n", subject=SUBJECT)) == GOOD

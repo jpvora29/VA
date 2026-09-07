@@ -44,10 +44,16 @@ logger = get_logger(__name__)
 #: shadowed by yesterday's answer.
 PROMPT_VERSION = "section-v2"
 
-#: How many repair rounds a section gets. One: a field the author and one repair both failed
-#: to write acceptably is not going to be written on a third identical request, and the
-#: budget is better spent failing fast with an actionable message.
-MAX_REPAIRS = 1
+#: How many repair rounds a section gets.
+#:
+#: This was one, on the reasoning that a third identical request would not do better than
+#: the first two. That reasoning held while the repair WAS identical. It now carries the
+#: verdicts that emptied the field (see :class:`Failure`), so a second round is a second
+#: piece of information rather than a second roll of the same dice — and in
+#: ``COMMENTARY_MODE=ai_required`` the alternative to one more call on one field is a
+#: refused deck. Repairs only ever run for fields that failed, so the cost is bounded by
+#: how rare that is.
+MAX_REPAIRS = 2
 
 
 # ── what one batched call is asked for ───────────────────────────────────────
@@ -68,6 +74,27 @@ class Column:
     @property
     def draft_text(self) -> str:
         return "\n".join(self.draft)
+
+
+@dataclass(frozen=True)
+class Failure:
+    """One column the gates emptied, and the reasons they gave for emptying it.
+
+    The reasons travel twice. Into the REPAIR call, so the second attempt is told what was
+    wrong with the first instead of re-rolling the same dice — an identical retry of a
+    field a model has already failed is a coin flip, and one that costs a call. And into
+    the strict-mode REFUSAL, so a build that stops says why it stopped rather than only
+    which field it stopped on.
+    """
+
+    column: "Column"
+    reasons: Tuple[str, ...] = ()
+
+    def brief(self) -> str:
+        """One line naming the field and, when known, what happened to it."""
+        if not self.reasons:
+            return self.column.node
+        return f"{self.column.node}: {'; '.join(self.reasons)}"
 
 
 @dataclass(frozen=True)
@@ -169,7 +196,7 @@ def _columns_from(items: Sequence[Tuple[str, Any]]) -> Tuple[Column, ...]:
 # ── the prompt ───────────────────────────────────────────────────────────────
 
 
-def _column_block(column: Column, *, show_draft: bool) -> str:
+def _column_block(column: Column, *, show_draft: bool, rejected: Sequence[str] = ()) -> str:
     """One column's ask, inside the section request."""
     from studio.template_fill import commentary as C
 
@@ -179,6 +206,13 @@ def _column_block(column: Column, *, show_draft: bool) -> str:
         "LEAD FROM these fact families: " + ", ".join(C.evidence_focus(column.topic))
         if C.evidence_focus(column.topic) else "",
     ]
+    if rejected:
+        # What the checks said about the last answer for this field. Stated as the
+        # verdict, not as prose to edit: the model writes the field again from the
+        # evidence, avoiding what the checks rejected.
+        lines += ["YOUR PREVIOUS ANSWER FOR THIS FIELD WAS REJECTED. Write it again and "
+                  "do not repeat these problems:",
+                  *(f"- {reason}" for reason in rejected)]
     if show_draft and column.draft:
         lines += ["A DETERMINISTIC DRAFT of this field, for the claims it selected and their "
                   "priority order. You are not editing it — write the field properly from "
@@ -188,7 +222,8 @@ def _column_block(column: Column, *, show_draft: bool) -> str:
 
 
 def section_payload(section: Section, pack, glossary_brief: str, *,
-                    show_draft: bool = True) -> str:
+                    show_draft: bool = True,
+                    rejected: Optional[Mapping[str, Sequence[str]]] = None) -> str:
     """The user message: the evidence once, the definitions once, then each field's ask."""
     blocks = [f"CARRIER: {section.subject}", "",
               "EVIDENCE — the only facts you may use across every field below. Every "
@@ -206,7 +241,8 @@ def section_payload(section: Section, pack, glossary_brief: str, *,
                    "two fields may make the same point in different words. When one fact "
                    "could serve two fields, give it to the field whose brief owns it and "
                    "make the other earn its place on something else.", ""]
-    blocks += [_column_block(c, show_draft=show_draft) for c in section.columns]
+    blocks += [_column_block(c, show_draft=show_draft, rejected=(rejected or {}).get(c.field_id, ()))
+               for c in section.columns]
     return "\n".join(blocks)
 
 
@@ -232,7 +268,8 @@ def _glossary_brief(pack) -> str:
         return ""
 
 
-def _author(section: Section, pack, glossary_brief: str, *, columns=None):
+def _author(section: Section, pack, glossary_brief: str, *, columns=None,
+            rejected: Optional[Mapping[str, Sequence[str]]] = None):
     """One author call over ``columns`` (default: the whole section). Returns the model's answer."""
     from studio.ai import client
     from studio.ai.models import CommentarySections
@@ -244,7 +281,8 @@ def _author(section: Section, pack, glossary_brief: str, *, columns=None):
     return client.structured(
         CommentarySections,
         C.deck_voice(section.style, section.subject),
-        section_payload(ask, pack, glossary_brief, show_draft=show_draft_to_author()),
+        section_payload(ask, pack, glossary_brief, show_draft=show_draft_to_author(),
+                        rejected=rejected),
         tier=C._COMMENTARY_TIER, node=f"section-{section.label}",
         phase="author", fields=ask.field_ids,
     )
@@ -303,7 +341,7 @@ def _wants_action(field_id: str, columns: Sequence[Column]) -> bool:
 
 
 def _verify_section(by_field: Dict[str, List[Any]], pack, glossary_brief: str,
-                    *, label: str) -> Dict[str, List[str]]:
+                    *, label: str) -> Tuple[Dict[str, List[str]], Dict[str, List[str]]]:
     """Both verifiers over a whole section: numbers per bullet, then ONE claim call.
 
     The deterministic pass stays per bullet because it is free and exact. The model pass —
@@ -313,40 +351,56 @@ def _verify_section(by_field: Dict[str, List[Any]], pack, glossary_brief: str,
     """
     from studio.template_fill import commentary_verify as V
 
+    kept: Dict[str, List[str]] = {fid: [] for fid in by_field}
+    dropped: Dict[str, List[str]] = {fid: [] for fid in by_field}
     flat: List[Tuple[str, Any]] = [(fid, j) for fid, items in by_field.items() for j in items]
     if not flat:
-        return {fid: [] for fid in by_field}
+        return kept, dropped
 
     numeric = V.check_numbers([j for _, j in flat], pack)
     numeric.log(f"section-{label}")
-    survivors = [(fid, j) for (fid, _), j in zip(flat, numeric.judged) if j.kept]
+    survivors: List[Tuple[str, Any]] = []
+    for (fid, _), judged in zip(flat, numeric.judged):
+        if judged.kept:
+            survivors.append((fid, judged))
+        else:
+            dropped[fid].append(judged.reason or "unsupported figure")
     if not survivors:
-        return {fid: [] for fid in by_field}
+        return kept, dropped
 
     claims = V.check_claims([j for _, j in survivors], pack, glossary_brief=glossary_brief,
                             node=f"section-{label}")
     claims.log(f"section-{label}")
-    kept: Dict[str, List[str]] = {fid: [] for fid in by_field}
     for (fid, _), verdict in zip(survivors, claims.judged):
         if verdict.kept:
             kept[fid].append(verdict.text)
-    return kept
+        else:
+            dropped[fid].append(verdict.reason or "unsupported claim")
+    return kept, dropped
 
 
 def _accepted(kept: Mapping[str, Sequence[str]], columns: Sequence[Column],
-              *, subject: str = "") -> Tuple[Dict[str, str], List[Column]]:
-    """``({field_id: text}, [columns that did not survive])`` after the shape/reading gate."""
+              *, subject: str = "",
+              dropped: Optional[Mapping[str, Sequence[str]]] = None,
+              ) -> Tuple[Dict[str, str], List[Failure]]:
+    """``({field_id: text}, [failures])`` after the shape/reading gate.
+
+    A failure carries every reason the field lost its lines — the verifiers' drops as well
+    as this gate's — because the two are read together: "one figure it could not cite, and
+    that left it a line short" is the whole story, and either half alone is not.
+    """
     from studio.template_fill import commentary as C
 
     text: Dict[str, str] = {}
-    failed: List[Column] = []
+    failed: List[Failure] = []
     for column in columns:
-        accepted = C.accept_column(kept.get(column.field_id, ()), wanted=column.bullets,
-                                   node=column.node, subject=subject)
-        if accepted:
-            text[column.field_id] = accepted
+        verdict = C.judge_column(kept.get(column.field_id, ()), wanted=column.bullets,
+                                 node=column.node, subject=subject)
+        if verdict.text:
+            text[column.field_id] = verdict.text
         else:
-            failed.append(column)
+            reasons = tuple((dropped or {}).get(column.field_id, ())) + verdict.reasons
+            failed.append(Failure(column, reasons or ("the model returned nothing for it",)))
     return text, failed
 
 
@@ -436,13 +490,13 @@ def write_section(section: Section) -> Dict[str, str]:
         refuse(f"the author returned nothing for section {section.label}", retryable=True)
         return _text_by_role(section.columns, text)
 
-    kept = _verify_section(_judged_by_field(answer, pending), pack, glossary_brief,
-                           label=section.label)
-    written, failed = _accepted(kept, pending, subject=section.subject)
+    kept, dropped = _verify_section(_judged_by_field(answer, pending), pack, glossary_brief,
+                                    label=section.label)
+    written, failed = _accepted(kept, pending, subject=section.subject, dropped=dropped)
     if failed:
         repaired = _repair(section, pack, glossary_brief, failed)
         written.update(repaired)
-        failed = [c for c in failed if c.field_id not in repaired]
+        failed = [f for f in failed if f.column.field_id not in repaired]
     _to_cache(section, pack, written)
     text.update(written)
     telemetry.count("commentary_fields_written", len(text))
@@ -450,17 +504,18 @@ def write_section(section: Section) -> Dict[str, str]:
     if failed:
         refuse(f"{len(failed)} field(s) in section {section.label} could not be written",
                retryable=True,
-               detail=", ".join(c.node for c in failed))
+               detail="; ".join(f.brief() for f in failed))
     return _text_by_role(section.columns, text)
 
 
 def _repair(section: Section, pack, glossary_brief: str,
-            failed: Sequence[Column]) -> Dict[str, str]:
+            failed: Sequence[Failure]) -> Dict[str, str]:
     """One more call for the failed fields ONLY — never the whole section, never the deck.
 
     Re-running the section would throw away the fields that passed and pay to write them
     again, and a second answer for a field already accepted is a second chance to make it
-    worse. So repair asks for exactly what is missing.
+    worse. So repair asks for exactly what is missing — and it says what was wrong with the
+    last answer, which is the difference between a repair and a re-roll.
     """
     from studio import telemetry
 
@@ -468,12 +523,14 @@ def _repair(section: Section, pack, glossary_brief: str,
         return {}
     for _ in range(MAX_REPAIRS):
         telemetry.count("commentary_repairs", len(failed))
-        answer = _author(section, pack, glossary_brief, columns=failed)
+        columns = [f.column for f in failed]
+        answer = _author(section, pack, glossary_brief, columns=columns,
+                         rejected={f.column.field_id: f.reasons for f in failed})
         if answer is None:
             return {}
-        kept = _verify_section(_judged_by_field(answer, failed), pack, glossary_brief,
-                               label=f"{section.label}-repair")
-        text, still_failing = _accepted(kept, failed, subject=section.subject)
+        kept, dropped = _verify_section(_judged_by_field(answer, columns), pack, glossary_brief,
+                                        label=f"{section.label}-repair")
+        text, still_failing = _accepted(kept, columns, subject=section.subject, dropped=dropped)
         if text or not still_failing:
             return text
         failed = still_failing
@@ -491,7 +548,7 @@ def _text_by_role(columns: Sequence[Column], text: Mapping[str, str]) -> Dict[st
             for column in columns for role in column.roles}
 
 
-def _log_section(section: Section, text: Mapping[str, str], failed: Sequence[Column],
+def _log_section(section: Section, text: Mapping[str, str], failed: Sequence[Failure],
                  *, risks: Optional[Mapping[str, str]] = None) -> None:
     """The audit line the plan asks for: who wrote this section, and how it was judged."""
     from studio import telemetry
@@ -503,6 +560,9 @@ def _log_section(section: Section, text: Mapping[str, str], failed: Sequence[Col
                 section.label, section.subject, len(section.columns), len(text), len(failed),
                 authorship(bool(text)), PROMPT_VERSION,
                 f" risk[{flagged}]" if flagged else "")
+    for failure in failed:
+        logger.warning("commentary_batch: section %s could not write %s", section.label,
+                       failure.brief())
     for flag in (risks or {}).values():
         telemetry.count(f"commentary_risk_{flag}")
 

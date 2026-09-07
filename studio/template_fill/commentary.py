@@ -27,12 +27,13 @@ produces the keyed text — both fold into the same doc the preview and fill con
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     Any,
     Callable,
     Dict,
     List,
+    Mapping,
     Optional,
     Sequence,
     Set,
@@ -81,9 +82,19 @@ _STYLE_DIRECTIVE: Dict[str, str] = {
 def _bullet_rules(wanted: int) -> str:
     """The line-structure contract for a column of ``wanted`` draft bullets."""
     floor = min_lines(wanted)
+    # When the floor equals the ask there is no room to merge or drop — a two-bullet
+    # feedback cell that comes back with one line fails the whole column, and in
+    # ``COMMENTARY_MODE=ai_required`` that fails the deck. So those columns are asked for
+    # one line MORE than the cell shows: a candidate the checks reject can then be dropped
+    # without leaving the cell short. Only the strongest `wanted` survivors ship, so the
+    # slide is unchanged and no weaker line reaches it.
     room = ("You may merge two bullets that make one point, or drop a bullet that adds "
             f"nothing once the others are written: return between {floor} and {wanted} "
-            "lines. " if floor < wanted else f"Return {wanted} line. ")
+            "lines. " if floor < wanted else
+            f"Write {ask_lines(wanted)} lines in priority order. The cell shows "
+            f"{wanted}; the extra line is a spare, so that a line which cannot be "
+            "evidenced can be dropped without leaving the cell short. Every line must "
+            "stand on its own — do not split one point across two of them. ")
     return (
         "The draft is a bullet list, ONE BULLET PER LINE, in priority order. " + room +
         "Keep the order. Do not write any bullet character, dash or number at the start of "
@@ -98,6 +109,17 @@ def min_lines(wanted: int) -> int:
     a rewrite that halves a page is not an edit, it is a different page.
     """
     return max(min(wanted, 2), wanted - 1)
+
+
+def ask_lines(wanted: int) -> int:
+    """How many lines to ASK a column for — one more when it has no room to lose any.
+
+    A column whose floor equals its ask (one- and two-bullet cells, which is every
+    feedback-table cell) fails outright if a single line is rejected. Asking for a spare
+    costs nothing on the slide — :func:`_judge` still ships at most ``wanted`` — and turns
+    the commonest cause of a refused build into a dropped candidate.
+    """
+    return wanted + 1 if min_lines(wanted) == wanted else wanted
 
 
 # What each column is FOR. The old prompt was identical for every topic, which is most of
@@ -718,8 +740,46 @@ def _keep_lines(lines: Sequence[str], subject: str) -> Tuple[List[str], Dict[str
     return kept, dropped
 
 
+@dataclass(frozen=True)
+class ColumnJudgement:
+    """What the shape/reading gate made of one column: the text, and why lines went.
+
+    The reasons used to be logged and dropped. They are the only thing that can tell a
+    repair call what was wrong with its first answer, and the only thing that can turn a
+    strict-mode refusal from "this field could not be written" into a sentence someone can
+    act on — so they travel with the verdict now.
+    """
+
+    text: Optional[str]
+    dropped: Mapping[str, int] = field(default_factory=dict)
+    kept: int = 0
+    wanted: int = 0
+
+    @property
+    def reasons(self) -> Tuple[str, ...]:
+        """Why this column did not ship, in the words a writer can use. Empty when it did."""
+        if self.text is not None:
+            return ()
+        out = [f"{name} ({count} line(s))" for name, count in sorted(self.dropped.items())]
+        out.append(f"only {self.kept} line(s) survived of the {self.wanted} asked for "
+                   f"(the column needs {min_lines(self.wanted)})")
+        return tuple(out)
+
+
+def judge_column(lines: Sequence[str], *, wanted: int, node: str,
+                 subject: str = "") -> ColumnJudgement:
+    """:func:`accept_column`, with the reasons kept. See :class:`ColumnJudgement`."""
+    return _judge([_LEADING_BULLET.sub("", ln).strip() for ln in lines if ln and ln.strip()],
+                  wanted=wanted, node=node, subject=subject)
+
+
 def _accept(lines: List[str], *, wanted: int, node: str, subject: str = "") -> Optional[str]:
-    """The rewritten bullets worth shipping, or ``None`` to keep the draft.
+    """The rewritten bullets worth shipping, or ``None`` to keep the draft."""
+    return _judge(lines, wanted=wanted, node=node, subject=subject).text
+
+
+def _judge(lines: List[str], *, wanted: int, node: str, subject: str = "") -> ColumnJudgement:
+    """The gate itself: which lines survive, and what happened to the rest.
 
     **Repairs rather than rejects.** This used to refuse the WHOLE column if any
     one line was a fragment, reached for a generated-sounding phrase, opened on
@@ -735,22 +795,27 @@ def _accept(lines: List[str], *, wanted: int, node: str, subject: str = "") -> O
     the draft stand.
     """
     floor = min_lines(wanted)
-    if len(lines) > wanted:
-        # Longer than asked for: keep the leading lines, which the prompt puts in
-        # priority order, rather than refusing a column for being generous.
-        logger.info("commentary: %s rewrite returned %d line(s) for %d bullet(s) — "
-                    "keeping the first %d", node, len(lines), wanted, wanted)
-        lines = lines[:wanted]
-
+    # JUDGE every line the model wrote, THEN take the best `wanted` of the survivors.
+    #
+    # This used to truncate first, and the order mattered more than it looks: a column
+    # asked for two bullets whose first line was a fragment lost that line AND never
+    # looked at the third, so an answer that contained two shippable sentences failed the
+    # column. Filtering first means a spare candidate can actually cover for a rejected
+    # line. Nothing weaker ships — every line still clears every rule, and at most
+    # `wanted` of them reach the slide.
     kept, dropped = _keep_lines(lines, subject)
+    if len(kept) > wanted:
+        logger.info("commentary: %s rewrite returned %d usable line(s) for %d bullet(s) — "
+                    "keeping the first %d", node, len(kept), wanted, wanted)
+        kept = kept[:wanted]
     if dropped:
         logger.info("commentary: %s dropped %d line(s) (%s)", node, sum(dropped.values()),
                     ", ".join(f"{k}={v}" for k, v in sorted(dropped.items())))
     if len(kept) < floor:
         logger.info("commentary: %s kept only %d of %d line(s), below the floor of %d — "
                     "keeping the deterministic draft", node, len(kept), len(lines), floor)
-        return None
-    return NEWLINE.join(kept)
+        return ColumnJudgement(None, dropped, len(kept), wanted)
+    return ColumnJudgement(NEWLINE.join(kept), dropped, len(kept), wanted)
 
 
 def accept_column(lines: Sequence[str], *, wanted: int, node: str,

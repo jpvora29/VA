@@ -1,0 +1,31 @@
+# Boardroom watchlist priority thresholds.
+#
+# These are the ONLY inputs that decide whether a watchlist item is High, Medium
+# or Low. They are read by `core.boardroom.priority` and shown to the user in the
+# widget's "Why this priority?" drawer, so every label can be defended.
+#
+# `approved` records whether the business has signed the numbers off. While it is
+# false the UI keeps the label but marks it as a default, pending approval
+# (roadmap §1, "the numeric thresholds must be configurable by the business").
+
+approved: false
+owner: "ICG product — pending domain-owner sign-off"
+currency: "GBP"
+
+# 1. Materiality — is the exposure big enough to matter at all?
+material_premium: 5000000          # 5.0m in `currency`
+material_share_of_wallet_pct: 5.0  # or the carrier holds >= 5% share of wallet
+
+# 2. Magnitude — how far past the approved movement threshold has it gone?
+watch_move_pct: 5.0    # early warning: an adverse move of at least this much
+severe_move_pct: 10.0  # breach: an adverse move of at least this much
+
+# 3. Persistence — how many consecutive adverse periods count as a trend?
+persistent_periods: 2
+
+# 4. Business breach — a governed KPI crossing its target is an adverse signal
+#    in its own right (rank slipping, broker score below target, SoW below plan).
+#    The extractor sets `breached_kpi`; no numeric threshold is needed here.
+
+# 5. Data confidence — an item built from incomplete or non-comparable periods
+#    never earns a priority label, whatever its size.

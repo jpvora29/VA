@@ -271,11 +271,13 @@ def test_the_workspace_brings_no_second_palette():
 
 
 def test_the_stylesheet_still_sorts_before_the_shell_sheet():
-    """Dash serves /assets sorted; va_shell.css must stay last (test_app_shell.py)."""
+    """Dash serves /assets sorted; the MoM sheet must load before the shell sheet,
+    which owns the rail and the pane heights (see test_app_shell.py for the full
+    ordering contract, including the layers that deliberately follow it)."""
     import os
 
     sheets = sorted(f for f in os.listdir("assets") if f.endswith(".css"))
-    assert "va_mom.css" in sheets and sheets[-1] == "va_shell.css"
+    assert sheets.index("va_mom.css") < sheets.index("va_shell.css"), sheets
 
 
 # ── the wired application ────────────────────────────────────────────────────
