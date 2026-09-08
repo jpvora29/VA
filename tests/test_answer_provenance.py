@@ -233,15 +233,38 @@ def test_an_answer_without_provenance_renders_unchanged():
 # ── editing an insight ──────────────────────────────────────────────────────
 
 
-def test_an_answer_opens_as_its_own_markdown_source():
-    """The structure — the headings and the points — is what an edit must keep."""
-    from ui.components.chatbot import answer_editor
+def test_the_commentary_is_edited_where_it_sits():
+    """Not a source box that replaces the card — the words themselves.
 
-    source = "### Lead" + chr(10) * 2 + "- Property leads at $8.2m."
-    editor = answer_editor(source, 1)
-    areas = [n for n in walk(editor) if type(n).__name__ == "Textarea"]
-    assert len(areas) == 1
-    assert areas[0].value.startswith("### Lead")
+    Swapping the card for a Markdown editor hid the chart and the figures the
+    edit is ABOUT, and read as a dialog rather than as your own document.
+    """
+    message = ai_message(ANSWER, False, idx=1, provenance=None, editing=True)
+    editable = [
+        n for n in walk(message)
+        if (getattr(n, "className", "") or "") == "answer-body-editing"
+    ]
+    assert len(editable) == 1
+    assert editable[0].contentEditable == "true"
+    # The rendered markdown is still what you are typing over.
+    assert any(type(n).__name__ == "Markdown" for n in walk(editable[0]))
+
+
+def test_the_card_keeps_its_evidence_while_being_edited():
+    """The chart is the reason you are editing; it must not disappear."""
+    from ui.evidence import build_views
+
+    views = build_views([{"rows": ROWS, "chart_data": {}, "lens": "premium"}])
+    message = ai_message(ANSWER, False, idx=1, evidence=views, editing=True)
+    assert any("ev-panel" in (getattr(n, "className", "") or "") for n in walk(message))
+    assert any("answer-body-editing" in (getattr(n, "className", "") or "") for n in walk(message))
+
+
+def test_an_answer_not_being_edited_is_not_editable():
+    message = ai_message(ANSWER, False, idx=1)
+    assert not any(
+        (getattr(n, "className", "") or "") == "answer-body-editing" for n in walk(message)
+    )
 
 
 def test_the_edit_control_is_not_one_of_the_next_steps():
@@ -276,10 +299,8 @@ def test_the_drawer_says_an_answer_was_rewritten():
     assert "Rewritten by you" in text_of(provenance_drawer(rewritten))
 
 
-def test_saving_an_edit_replaces_the_answer_and_re_verifies(monkeypatch):
-    import ui.callbacks as cb
-
-    history = {
+def _history() -> dict:
+    return {
         "thread_id": "t1",
         "messages": [
             {"type": "HumanMessage", "content": "premium by line"},
@@ -291,19 +312,52 @@ def test_saving_an_edit_replaces_the_answer_and_re_verifies(monkeypatch):
             {"type": "Evidence", "views": [{"rows": ROWS, "chart_data": {}}]},
         ],
     }
-    monkeypatch.setattr(
-        cb, "ctx",
-        type("C", (), {
-            "triggered_id": {"type": "answer-edit-save", "idx": 1},
-            "triggered": [{"value": 1}],
-            "states_list": [[{"id": {"type": "answer-edit-text", "idx": 1},
-                              "value": "Property leads. Peers average $4.4m."}]],
-        })(),
+
+
+def test_saving_an_edit_replaces_the_answer_and_re_verifies():
+    """The browser hands over Markdown; the server commits it and re-checks."""
+    from ui.callbacks import save_answer_edit
+
+    history = _history()
+    updated, editing = save_answer_edit(
+        {"idx": 1, "markdown": "Property leads. Peers average $4.4m.", "at": 1},
+        history,
     )
-    updated, editing = cb.save_answer_edit([1], ["ignored"], history)
     answer = updated["messages"][1]
     assert answer["content"] == "Property leads. Peers average $4.4m."
     assert answer["edited"] is True
     assert answer["provenance"]["state"] == pv.PARTIAL
     assert editing is None, "the editor closes on save"
+
+
+def test_discarding_leaves_the_answer_alone():
+    from dash import no_update
+
+    from ui.callbacks import save_answer_edit
+
+    updated, editing = save_answer_edit({"idx": 1, "markdown": ""}, _history())
+    assert updated is no_update
+    assert editing is None
+
+
+def test_saving_an_unchanged_answer_changes_nothing():
+    """Opening the editor and closing it must not mark the answer as edited."""
+    from dash import no_update
+
+    from ui.callbacks import save_answer_edit
+
+    updated, _editing = save_answer_edit({"idx": 1, "markdown": ANSWER}, _history())
+    assert updated is no_update
+
+def test_a_sub_million_figure_is_still_written_in_millions():
+    """940,000 is written "$0.9m" all the time; flagging that was a false alarm."""
+    rows = [{"Product_Line": "Marine", "Premium": 940_000.0}]
+    assert not fig.unsupported(fig.check("Marine wrote $0.9m.", {"premium": rows}))
+    assert not fig.unsupported(fig.check("Marine wrote $940k.", {"premium": rows}))
+
+
+def test_a_small_number_never_gains_a_meaningless_scaled_form():
+    """5 must not quietly become "0.0m" and support any figure that rounds there."""
+    rows = [{"Count": 5}]
+    assert fig.unsupported(fig.check("The gap is $0.0m.", {"premium": rows}))
 

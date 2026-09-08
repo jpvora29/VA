@@ -209,41 +209,102 @@ def toggle_answer_edit(_edit_clicks: list, _cancel_clicks: list) -> Any:
     return triggered.get("idx")
 
 
+# Saving happens in two hops. The browser holds the edited HTML, so a clientside
+# serialiser turns it back into Markdown and drops it in a store; the server then
+# commits it and re-checks the figures. Two hops because only the browser can see
+# what was typed, and only the server can persist it.
+clientside_callback(
+    """
+    function(saveClicks, cancelClicks, ids) {
+        const ctx = window.dash_clientside.callback_context;
+        const trig = ctx.triggered.length ? ctx.triggered[0] : null;
+        if (!trig || !trig.value) { return window.dash_clientside.no_update; }
+        let id = null;
+        try { id = JSON.parse(trig.prop_id.split('.')[0]); }
+        catch (e) { return window.dash_clientside.no_update; }
+        if (id.type !== 'answer-edit-save') { return window.dash_clientside.no_update; }
+
+        const host = document.querySelector('[data-answer-body="' + id.idx + '"]');
+        if (!host) { return window.dash_clientside.no_update; }
+
+        // HTML back to Markdown. Only the marks this product's answers use: the
+        // point is that a heading stays a heading and a point stays a point,
+        // not a general-purpose converter.
+        const inline = function (node) {
+            let out = '';
+            node.childNodes.forEach(function (child) {
+                if (child.nodeType === 3) { out += child.textContent; return; }
+                const tag = (child.tagName || '').toLowerCase();
+                const inner = inline(child);
+                if (tag === 'strong' || tag === 'b') { out += '**' + inner + '**'; }
+                else if (tag === 'em' || tag === 'i') { out += '_' + inner + '_'; }
+                else if (tag === 'code') { out += '`' + inner + '`'; }
+                else if (tag === 'br') { out += '\n'; }
+                else { out += inner; }
+            });
+            return out;
+        };
+
+        const lines = [];
+        host.childNodes.forEach(function (node) {
+            if (node.nodeType === 3) {
+                const bare = node.textContent.trim();
+                if (bare) { lines.push(bare, ''); }
+                return;
+            }
+            const tag = (node.tagName || '').toLowerCase();
+            const text = inline(node).trim();
+            if (!text && tag !== 'ul' && tag !== 'ol') { return; }
+            if (tag === 'h1') { lines.push('# ' + text, ''); }
+            else if (tag === 'h2') { lines.push('## ' + text, ''); }
+            else if (tag === 'h3') { lines.push('### ' + text, ''); }
+            else if (tag === 'h4') { lines.push('#### ' + text, ''); }
+            else if (tag === 'ul' || tag === 'ol') {
+                node.querySelectorAll('li').forEach(function (li, i) {
+                    const bullet = tag === 'ol' ? (i + 1) + '. ' : '- ';
+                    const point = inline(li).trim();
+                    if (point) { lines.push(bullet + point); }
+                });
+                lines.push('');
+            }
+            else { lines.push(text, ''); }
+        });
+
+        const markdown = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+        return {idx: id.idx, markdown: markdown, at: Date.now()};
+    }
+    """,
+    Output("answer-edit-buffer", "data"),
+    Input({"type": "answer-edit-save", "idx": ALL}, "n_clicks"),
+    Input({"type": "answer-edit-cancel", "idx": ALL}, "n_clicks"),
+    State({"type": "answer-body", "idx": ALL}, "id"),
+    prevent_initial_call=True,
+)
+
+
 @callback(
     Output("chat-store", "data", allow_duplicate=True),
     Output("answer-editing", "data", allow_duplicate=True),
-    Input({"type": "answer-edit-save", "idx": ALL}, "n_clicks"),
-    State({"type": "answer-edit-text", "idx": ALL}, "value"),
+    Input("answer-edit-buffer", "data"),
     State("chat-store", "data"),
     prevent_initial_call=True,
 )
-def save_answer_edit(
-    _clicks: list[int | None], texts: list[str | None], chat_history: dict[str, Any]
-) -> tuple[Any, Any]:
-    """Replace an answer with the user's own words, and re-check its figures.
+def save_answer_edit(buffer: dict[str, Any], chat_history: dict[str, Any]) -> tuple[Any, Any]:
+    """Commit an in-place edit, and re-check its figures against the same rows.
 
-    The verification badge must describe what is ON SCREEN. An answer someone
+    The verification badge must describe what is ON SCREEN. An answer somebody
     rewrote keeping a badge earned by the text it replaced would be the panel
-    lying, so the figure check runs again over the new prose against the same
-    rows — type a number the data does not contain and it says so, exactly as it
-    would for the model.
+    lying, so the figure check runs again over the new prose — type a number the
+    data does not contain and it says so, exactly as it would for the model.
     """
-    triggered = ctx.triggered_id
-    if not isinstance(triggered, dict) or not (ctx.triggered and ctx.triggered[0].get("value")):
-        return no_update, no_update
-
-    idx = triggered.get("idx")
-    edited = ""
-    for entry in (ctx.states_list[0] if ctx.states_list else []):
-        if (entry.get("id") or {}).get("idx") == idx:
-            edited = (entry.get("value") or "").strip()
-            break
-    if not edited:
+    edited = str((buffer or {}).get("markdown") or "").strip()
+    idx = (buffer or {}).get("idx")
+    if not edited or idx is None:
         return no_update, None
 
     chat_history = chat_history or {}
     answer = _answer_at(chat_history, idx)
-    if not answer:
+    if not answer or edited == (answer.get("content") or "").strip():
         return no_update, None
 
     answer["content"] = edited

@@ -139,13 +139,20 @@ def _forms_of_cell(cell: Any) -> Set[str]:
     forms = {_plain(number)}
     for places in (0, 1, 2):
         forms.add(_plain(round(number, places)))
-    # The scaled readings a writer would use for a large figure.
+    # The scaled readings a writer would use.
+    #
+    # Not gated on the number reaching the scale: 940,000 is written "$0.9m" all
+    # the time, and requiring >= 1,000,000 to offer an "m" form flagged that as
+    # unsupported. The floor is instead the point below which the reading stops
+    # being meaningful — 0.1 of the unit, so 5 never becomes "0.0m".
     for suffix, scale in (("k", 1_000), ("m", 1_000_000), ("bn", 1_000_000_000)):
-        if abs(number) >= scale:
-            scaled = round(number / scale, 1)
-            forms.add(f"{_plain(scaled)}{suffix}")
-            forms.add(_plain(scaled))
-            whole = round(number / scale)
+        scaled = round(number / scale, 1)
+        if abs(scaled) < 0.1:
+            continue
+        forms.add(f"{_plain(scaled)}{suffix}")
+        forms.add(_plain(scaled))
+        whole = round(number / scale)
+        if whole:
             forms.add(f"{_plain(whole)}{suffix}")
     # A ratio stored as 0.195 is written as 19.5%.
     if abs(number) <= 1:

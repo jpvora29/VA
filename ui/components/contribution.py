@@ -25,8 +25,12 @@ from dash import html
 
 from core.boardroom.money import format_money
 
-# Widest a bar gets, as a share of its half of the track.
-_MAX_BAR_PCT = 96.0
+# Widest a bar gets, as a percentage of the WHOLE track.
+#
+# A bar grows from the centre line outwards, so half the track is all it has:
+# at 96 the biggest mover ran off the panel and over the row label. 48 leaves a
+# hair of margin at the edge.
+_MAX_BAR_PCT = 48.0
 
 # Slices shown before the tail is folded into one row. Beyond this the list stops
 # being a finding and becomes a data dump.

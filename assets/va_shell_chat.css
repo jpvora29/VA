@@ -993,6 +993,11 @@
     background: transparent;
     box-shadow: none;
     width: auto;
+    /* Both panels also carry the `message` class, which caps a chat bubble at
+       82% — inside a card that made the chart 82% of the prose above it, which
+       is the "chart is not the same size as the insight" report. A panel nested
+       in a card is not a bubble. */
+    max-width: 100%;
 }
 .gpt-message .contrib-panel.is-empty,
 .insight-card .contrib-panel.is-empty {
@@ -1000,13 +1005,19 @@
 }
 
 /* The chart fills the card rather than sitting in a fixed-height well of its
-   own — inside an answer it is part of the answer, not an attachment. */
+   own — inside an answer it is part of the answer, not an attachment.
+
+   360px must equal `CHART_HEIGHT_PX` in ui/evidence.py, which is what actually
+   sizes the plot: plotly draws at ITS height, not the box's, so a mismatch does
+   not scale the chart, it spills it over whatever is underneath. `overflow`
+   makes a future mismatch clip instead of overlap. */
 .gpt-message .gpt-chart-display,
 .insight-card .gpt-chart-display {
     height: 360px;
     min-height: 360px;
     max-height: 360px;
     flex-basis: 360px;
+    overflow: hidden;
     margin: 0;
     padding: 0;
     border: none;
@@ -1154,3 +1165,74 @@
 .answer-edit-btn.ghost:hover { color: var(--va-navy); border-color: var(--va-ink-300); }
 .answer-edit-btn.primary { background: var(--va-blue); color: #ffffff; }
 .answer-edit-btn.primary:hover { background: var(--va-navy); }
+
+/* ── Editing the commentary in place ──────────────────────────────────────
+   The words become typeable where they are: the card keeps its chart, its
+   figures and its actions, and only the prose turns into an editable region.
+   The first attempt swapped the whole card for a Markdown source box, which
+   read as a dialog and hid the very evidence you were editing about. */
+.answer-body-editing {
+    outline: none;
+    padding: 10px 12px;
+    margin: -6px -12px 0;
+    border-radius: var(--va-radius-md);
+    background: var(--va-blue-soft);
+    box-shadow: inset 0 0 0 1px rgba(11, 75, 255, 0.22);
+    cursor: text;
+    transition: box-shadow var(--va-transition-fast);
+}
+.answer-body-editing:focus-within {
+    box-shadow: inset 0 0 0 2px var(--va-blue);
+}
+
+.answer-edit-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.answer-edit-flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: auto;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--va-blue);
+}
+.answer-edit-flag .bi { font-size: 10px; }
+
+.answer-edit-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 15px;
+    border-radius: var(--va-radius-pill);
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+    border: 1px solid transparent;
+}
+.answer-edit-btn.ghost {
+    background: transparent;
+    border-color: var(--va-border-mid);
+    color: var(--va-ink-500);
+}
+.answer-edit-btn.ghost:hover { color: var(--va-navy); border-color: var(--va-ink-300); }
+.answer-edit-btn.primary { background: var(--va-blue); color: #ffffff; }
+.answer-edit-btn.primary:hover { background: var(--va-navy); }
+
+/* The pencil beside copy and the thumbs. */
+.answer-edit-toggle {
+    border: none;
+    background: transparent;
+    color: var(--va-ink-300);
+    padding: 4px 6px;
+    border-radius: var(--va-radius-sm);
+    cursor: pointer;
+    font-size: 13px;
+}
+.answer-edit-toggle:hover { color: var(--va-blue); background: var(--va-surface-1); }

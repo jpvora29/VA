@@ -288,37 +288,42 @@ def followup_suggestions(followups: list[str]):
     )
 
 
-def answer_editor(content: str, idx: int):
-    """The answer, open for rewriting — its own Markdown source in a textarea.
+def _answer_body(content: str, idx: int, editing: bool, className: str = ""):
+    """The commentary — editable IN PLACE when the pencil is on.
 
-    A textarea over the SOURCE rather than a contentEditable over the rendered
-    output, because the thing worth preserving is the structure: the headings and
-    the bullets that make an insight scannable. contentEditable turns a pasted
-    bullet into a `<div>` and the next render loses the list; editing the
-    Markdown keeps what the writer and the reader both rely on.
+    Editing happens where the words are. The first attempt swapped the whole card
+    for a Markdown source box, which meant losing sight of the chart and the
+    figures you were editing ABOUT, and reading as a dialog rather than as your
+    own document. Here the card stays exactly as it is and the prose becomes
+    typeable, with the save/discard pair appearing under it.
+
+    Round-tripping is handled at save: a clientside serialiser walks the edited
+    HTML back to Markdown (see `ui.callbacks`), so headings and points survive
+    rather than collapsing into one paragraph the way raw contentEditable text
+    would.
     """
+    body = dcc.Markdown(content, className=className) if className else dcc.Markdown(content)
+    if not editing:
+        return html.Div(body, id={"type": "answer-body", "idx": idx})
     return html.Div(
         [
             html.Div(
-                [
-                    html.I(className="bi bi-pencil-square"),
-                    html.Span("Editing this insight"),
-                    html.Span(
-                        "Markdown — use ### for a heading and - for a point",
-                        className="answer-edit-hint",
-                    ),
-                ],
-                className="answer-edit-head",
-            ),
-            dcc.Textarea(
-                id={"type": "answer-edit-text", "idx": idx},
-                value=content,
-                className="answer-edit-text",
+                body,
+                id={"type": "answer-body", "idx": idx},
+                className="answer-body-editing",
+                contentEditable="true",
+                # The clientside serialiser finds the edited region by this
+                # attribute rather than by parsing a pattern-matching id string.
+                **{"data-answer-body": str(idx)},
             ),
             html.Div(
                 [
+                    html.Span(
+                        [html.I(className="bi bi-pencil-fill"), "Editing — type over anything"],
+                        className="answer-edit-flag",
+                    ),
                     html.Button(
-                        "Cancel",
+                        "Discard",
                         id={"type": "answer-edit-cancel", "idx": idx},
                         n_clicks=0,
                         className="answer-edit-btn ghost",
@@ -330,10 +335,10 @@ def answer_editor(content: str, idx: int):
                         className="answer-edit-btn primary",
                     ),
                 ],
-                className="answer-edit-actions",
+                className="answer-edit-bar",
             ),
         ],
-        className="message gpt-message answer-editing",
+        className="answer-body-wrap",
     )
 
 
@@ -392,9 +397,6 @@ def ai_message(
         has_rows=has_rows,
         is_insight=is_insight,
     )
-    if editing:
-        return answer_editor(content, idx)
-
     pills = answer_scope(scope)
     views = evidence_panel(evidence or [], idx if card_idx is None else card_idx,
                            pane_ids or []) if evidence else None
@@ -421,9 +423,7 @@ def ai_message(
                     className="insight-card-badge",
                 ),
                 pills,
-                dcc.Markdown(
-                    content, className="insight-card-body", link_target="_blank"
-                ),
+                _answer_body(content, idx, editing, className="insight-card-body"),
                 views,
                 drivers,
                 drawer,
@@ -434,7 +434,7 @@ def ai_message(
         )
 
     return html.Div(
-        [pills, dcc.Markdown(content), views, drivers, drawer, footer, panel],
+        [pills, _answer_body(content, idx, editing), views, drivers, drawer, footer, panel],
         className="message gpt-message" + wide,
     )
 
@@ -500,6 +500,8 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
             dcc.Store(id="persist-sink", data={}),  # write-only sink for edit persistence
             # Which answer (if any) is open for rewriting. One at a time.
             dcc.Store(id="answer-editing", data=None),
+            # The edited Markdown, handed from the browser to the server.
+            dcc.Store(id="answer-edit-buffer", data=None),
             # Polls the in-process streaming job for live status + completion;
             # enabled by launch_new_job / launch_resume_job. A short cadence makes
             # the answer flow in small increments (Claude-like) instead of landing

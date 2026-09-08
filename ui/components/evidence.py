@@ -134,7 +134,9 @@ def _tabs(views: Sequence[EvidenceView], idx: int) -> Any:
     )
 
 
-def evidence_panel(views: Sequence[EvidenceView], idx: int, pane_ids: Sequence[int]) -> Any:
+def evidence_panel(
+    views: Sequence[EvidenceView], idx: int, pane_ids: Sequence[Any] = ()
+) -> Any:
     """The whole panel. ``pane_ids`` gives each view its own toggle id.
 
     ``idx`` scopes the tabs to this panel; ``pane_ids[i]`` scopes view i's
@@ -145,7 +147,10 @@ def evidence_panel(views: Sequence[EvidenceView], idx: int, pane_ids: Sequence[i
         return None
     panes = [
         html.Div(
-            _view_body(view, pane_ids[i]),
+            # A caller that does not supply ids still gets a working panel: the
+            # switch only needs an id unique within the page, and the pane's own
+            # position gives one.
+            _view_body(view, pane_ids[i] if i < len(pane_ids) else f"{idx}-{i}"),
             id={"type": "ev-pane", "idx": idx, "view": i},
             className="ev-pane",
             style={} if i == 0 else {"display": "none"},

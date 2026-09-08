@@ -25,6 +25,15 @@ from ui.chart_functions import generate_chart
 
 logger = get_logger(__name__)
 
+# How tall a chart is INSIDE an answer card, in pixels.
+#
+# It is set on the FIGURE, not only in CSS, because plotly draws at its own
+# default height (450px) and a CSS box of a different size does not constrain it
+# — the plot simply overflowed its container and painted over the panels below.
+# The stylesheet gives `.gpt-message .gpt-chart-display` the same number; this is
+# the one that actually decides, and the two must stay equal.
+CHART_HEIGHT_PX = 360
+
 # Lens key -> what the tab calls it. A view the user is switching between needs a
 # business name, not a state key.
 LENS_LABELS = {
@@ -89,6 +98,8 @@ def build_view(
     if (chart_data or {}).get("chart_type"):
         try:
             figure, note = generate_chart(df=frame, chart_outputs=chart_data)
+            if figure is not None:
+                figure.update_layout(height=CHART_HEIGHT_PX, autosize=True)
         except Exception:  # noqa: BLE001 - a chart must never cost the answer
             logger.exception("evidence: chart generation failed for %r", label)
 
