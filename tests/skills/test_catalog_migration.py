@@ -55,6 +55,14 @@ _EDITED_BODIES = frozenset(
         "survey-timeframe",
         "gpr-response-formatting",
         "survey-response-analysis",
+        # Rewritten when the answer SHAPE became a per-turn decision. Both were
+        # single worked examples built on the old fixed five-section template,
+        # and being `always: true` they taught that template on every turn —
+        # which would have quietly re-imposed it over whatever shape the question
+        # actually called for. They now show voice across two DIFFERENT shapes
+        # and say outright that the structure comes from [RESPONSE_SHAPE].
+        "gpr-response-example",
+        "survey-response-example",
     }
 )
 

@@ -345,12 +345,13 @@ def test_write_insight_skips_prose_without_llm(monkeypatch, presentation):
     monkeypatch.setattr(iw.Initialization, "llm_reason", _Boom)
     out = iw.write_insight(
         question="q", route="premium", synthesis_focus="",
-        evidence=_EVIDENCE, presentation=presentation, depth="analyst",
+        evidence=_EVIDENCE, presentation=presentation, shape="analyst",
     )
     assert out == ""
 
 
-def test_write_insight_direct_uses_compact_contract(monkeypatch):
+def test_write_insight_shape_selects_the_contract(monkeypatch):
+    """The writer is handed the contract for the turn's shape, not a fixed one."""
     from core.agents.analyst import insight_writer as iw
 
     captured = {}
@@ -361,17 +362,25 @@ def test_write_insight_direct_uses_compact_contract(monkeypatch):
 
     direct = iw.write_insight(
         question="q", route="premium", synthesis_focus="",
-        evidence=_EVIDENCE, presentation="prose", depth="direct",
+        evidence=_EVIDENCE, presentation="prose", shape="direct",
     )
-    assert "DIRECT, short answer" in captured["system"]
-    assert "SUPPORTING DATA" not in captured["system"]
+    assert "SHAPE — DIRECT ANSWER" in captured["system"]
+    assert "supporting table" not in captured["system"]
     assert direct == "Premium fell **8%**, concentrated in Property."
 
     iw.write_insight(
         question="q", route="premium", synthesis_focus="",
-        evidence=_EVIDENCE, presentation="prose", depth="analyst",
+        evidence=_EVIDENCE, presentation="prose", shape="driver",
     )
-    assert "SUPPORTING DATA" in captured["system"]
+    assert "SHAPE — DRIVERS" in captured["system"]
+    assert "RANKED by how much of the movement" in captured["system"]
+
+    # An unknown/stale shape must still produce a contract, not an empty one.
+    iw.write_insight(
+        question="q", route="premium", synthesis_focus="",
+        evidence=_EVIDENCE, presentation="prose", shape="auto",
+    )
+    assert "SHAPE — FULL ANALYSIS" in captured["system"]
 
 
 # ── end-to-end: insight nodes + follow-ups honor suppression ─────────────────

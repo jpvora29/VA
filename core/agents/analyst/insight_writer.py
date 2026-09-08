@@ -15,6 +15,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from core.agents.analyst.common import digest_evidence
 from core.agents.common.analysis_rules import analysis_directives
+from core.agents.common.answer_shape import shape_contract, shape_label
 from core.analysis import get_lens_library
 from core.initialization import Initialization
 from core.observability import log_event
@@ -22,72 +23,6 @@ from core.schemas.analyst_subgraph import Evidence
 from logger import get_logger
 
 logger = get_logger(__name__)
-
-_OUTPUT_CONTRACT = """[OUTPUT CONTRACT — your reply is a single Markdown string. You are the deeper,
-agentic path: deliver MORE than a templated workflow would — more quantified
-findings, more cross-lens synthesis, more genuine "so what". Be richer, not
-longer for its own sake.]
-
-Structure (use `### ` H3 headings; emoji prefix optional):
-
-1. LEAD — open with ONE H3 heading that states the headline answer in a glance.
-   2-3 lines: the direct answer + headline number + business impact. You may
-   title it "📌 Executive Summary", "📌 Bottom Line", "📌 TL;DR", or whatever
-   fits the question — but it MUST be the first line (no preamble before it).
-
-2. BODY — then 2-4 H3 sections whose HEADINGS YOU CHOOSE to fit THIS question.
-   Do not force a fixed template. Name each section after what the data actually
-   shows, e.g. "📉 Rate Adequacy Gap", "🏆 Peer Benchmarking", "🎯 Appetite
-   Concentration", "🔄 Retention Risk", "📈 Trend & Momentum", "🧩 Segment Mix",
-   "🔍 Why This Is Happening". Each section is real analysis: rank shifts,
-   SoW/appetite moves, YoY/QoQ deltas, peer-aggregate gaps, drivers, disconnects
-   (e.g. premium up but SoW down = market grew faster). **Bold the critical
-   numbers.** Use 📈 📉 ⚠️ ✅ where natural.
-
-   NARRATIVE FUNNEL — order the body sections wide → narrow, like a story an
-   insurance leader reads top to bottom: the first section frames the BIG
-   PICTURE (whole portfolio / market position), the next narrows to the
-   segment, product, or geography DRIVING it, and the last lands the sharpest,
-   most specific insight (the anomaly, gap, or whitespace worth acting on).
-   Each section should answer the question the previous one raises, and the
-   prose should connect them explicitly ("that decline is concentrated in…",
-   "which is why…") — never disconnected bullets.
-
-3. RECOMMENDATIONS — one H3 section, 2-4 bullets, each starting with a verb
-   (Defend, Grow, Re-price, Exit, Re-underwrite, Target) tied to a finding above.
-
-4. SUPPORTING DATA — final H3 section ("📊 Supporting Data"). ALWAYS include a
-   compact Markdown table (top 5-10 rows), one row per entity/period. Format
-   premium as currency (e.g. $12.4M); SoW / Appetite / YoY / QoQ as %. Aggregate
-   peers into a single "Peer avg" row — never one row per named peer. If the
-   answer is a single scalar, still give a small 1-2 row table for context.
-
-STYLE: executive tone, no hedging, no filler, no data-dictionary phrasing; never
-repeat the same fact across sections.
-
-[CONFIDENTIALITY — non-negotiable]
-- Peers are ALWAYS aggregated. NEVER expose an individual peer/carrier name.
-- The evidence is already de-identified: a label like "Peer 1" / "Peer 2" IS the
-  anonymised form, not a carrier you may name or describe individually. Roll such
-  rows up into one aggregate ("peer average", "the peer set") rather than quoting
-  them one by one. It is fine to name Marsh and the carrier the question is about."""
-
-
-_DIRECT_CONTRACT = """[OUTPUT CONTRACT — the user asked for a DIRECT, short answer.]
-
-Reply with the answer ONLY: one or two sentences of plain prose that state the
-headline number and the direct conclusion. **Bold the critical number.**
-
-- NO headings, NO bullet sections, NO recommendations block, NO supporting-data
-  table, NO follow-up questions.
-- Lead with the answer; add at most one clause of essential context.
-- If a comparison is part of the answer, state it inline ("…, about 8% below the
-  peer average.").
-
-[CONFIDENTIALITY — non-negotiable]
-- Peers are ALWAYS aggregated. NEVER name an individual peer/carrier (Marsh and
-  the carrier asked about are fine). A "Peer 1" label in the evidence is the
-  anonymised form — aggregate it, do not quote it as an entity."""
 
 
 def write_insight(
@@ -97,7 +32,7 @@ def write_insight(
     synthesis_focus: str,
     evidence: List[Evidence],
     presentation: str = "prose",
-    depth: str = "analyst",
+    shape: str = "analyst",
 ) -> str:
     """Synthesize the final Markdown answer from all gathered evidence.
 
@@ -106,8 +41,11 @@ def write_insight(
 
     The per-turn response contract shapes the call: `presentation` of
     'chart_only'/'table_only' skips synthesis entirely (the UI renders the
-    chart/table alone, and we never spend the LLM call), while `depth` of
-    'direct' swaps the full analyst template for a one-to-two-sentence answer.
+    chart/table alone, and we never spend the LLM call), while `shape` selects
+    HOW the answer is written — a lookup gets a sentence, a "why" gets ranked
+    drivers, a "should we" gets a position (see
+    :mod:`core.agents.common.answer_shape`). An unknown shape falls back to the
+    full analysis, so a stale checkpoint can never leave a turn uncontracted.
     """
     if not evidence:
         return ""
@@ -128,7 +66,7 @@ def write_insight(
     focus = synthesis_focus or "Answer the question, then add the context a good analyst would."
     digest = digest_evidence(evidence)
 
-    contract = _DIRECT_CONTRACT if depth == "direct" else _OUTPUT_CONTRACT
+    contract = shape_contract(shape)
     # The signed-off ICG decision tree (studio/rules/rules.yaml) plus the framing a
     # threshold cannot express: Marsh is a broker whose book is the carrier's
     # addressable opportunity, penetration happens by industry inside a product, a
@@ -192,5 +130,6 @@ Synthesis focus: {focus}
         route=route,
         evidence_count=len(evidence),
         answered=bool(answer),
+        shape=shape_label(shape),
     )
     return answer

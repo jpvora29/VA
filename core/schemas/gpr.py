@@ -73,43 +73,39 @@ class GPRResponseSignature(Signature):
     - Peers are ALWAYS aggregated — never expose individual peer names.
     - If premium is declining, flag retention / rate / appetite issue. If SoW is rising while market shrinks, flag relative strength.
 
-    HARD OUTPUT CONTRACT — return a single Markdown string with these 5 sections in this exact order, using these exact headings:
+    OUTPUT SHAPE — the [RESPONSE_SHAPE] input tells you HOW to write THIS
+    answer, and it is binding. Follow its structure exactly. The shape is chosen
+    from the question, so a lookup gets a sentence and a strategy question gets a
+    full argument. Do NOT fall back to a standard five-section template: the same
+    headings turn after turn is what makes an assistant read as a form letter.
 
-    ### 📌 Executive Summary
-    2-3 punchy lines. State the direct answer and the business impact (growth / share / profitability / risk). Lead with the headline number.
+    Whatever the shape asks for, ground every number in sql_output, and where it
+    calls for a table, format premium as currency (e.g. $12.4M) and SoW /
+    Appetite / NPS / YoY as %.
 
-    ### 💡 Key Insights
-    3-5 bullets. Each bullet MUST be an insight, not a restatement. Rank shifts, SoW movement, YoY deltas, peer-aggregate gaps, appetite concentration, product/LOB mix changes. Use icons 📈 📉 ⚠️ ✅ where natural. Bold the critical numbers.
-
-    ### 🔍 Business Interpretation
-    A short paragraph on WHY this is happening in the real insurance context — pricing cycle, capacity, appetite shifts, distribution, retention, market hardening/softening, competitive positioning. Call out disconnects (e.g. premium up but SoW down = market grew faster).
-
-    ### 🎯 Recommendations
-    2-4 specific, actionable bullets. Start with a verb (Defend, Grow, Re-price, Exit, Re-underwrite, Target). Tie each to an insight above.
-
-    ### 📊 Supporting Data
-    Render the key numbers as a compact Markdown table (top 5-10 rows max). Format premium as currency (e.g. $12.4M), SoW / Appetite / YoY as %. If the result is a single scalar, state it in one line.
-
-    NARRATIVE ARC — the answer is a story, not a report (funnel: wide → narrow):
-    - Sequence Key Insights as a funnel a leader can follow: start at the broadest
-      level (total premium / overall rank / whole-portfolio position), then narrow
-      to the segment, product, or geography driving it, and end with the sharpest,
-      most specific finding (the anomaly, gap, or whitespace worth acting on).
-    - Each section answers the question the previous one raises: the Summary states
-      WHAT happened, Key Insights show WHERE it is concentrated, the Interpretation
-      explains WHY, the Recommendations say WHAT TO DO about it.
-    - Connect the dots explicitly ("that decline is concentrated in…", "which is
-      why…"). Never present disconnected bullets.
+    NARRATIVE ARC — wherever the shape has more than one section, the sections
+    are a story, not a report (funnel: wide → narrow): start at the broadest
+    level, narrow to the segment, attribute or product driving it, and end on the
+    sharpest specific finding. Each section answers the question the one above it
+    raises. Connect them explicitly ("that decline is concentrated in…", "which
+    is why…"). Never present disconnected bullets.
 
     STYLE RULES:
     - Executive tone. No hedging. No filler. No data-dictionary phrasing.
     - NEVER expose individual peer names.
     - Do not repeat the same fact across sections.
-    - No preamble. Start directly with the "### 📌 Executive Summary" heading.
+    - No preamble and no restatement of the question. Open with the answer, in the form [RESPONSE_SHAPE] asks for.
     """
 
     rules: str = InputField(
         desc="Important instruction for the response generation"
+    )
+    response_shape: str = InputField(
+        desc=(
+            "The binding structure for THIS answer, chosen from the question by "
+            "core.agents.common.answer_shape. Follow it exactly instead of any "
+            "default template."
+        )
     )
     user_query: str = InputField(desc="User's natural language question or query")
     sql_output: Dict[str, Any] = InputField(
@@ -122,5 +118,5 @@ class GPRResponseSignature(Signature):
         desc="Valid list of unique values for year-quarter combination. The values in the list are in ascending order i.e most recent date is the last element in the list. Useful for adding timeframe related context in the final response."
     )
     response: str = OutputField(
-        desc="Consulting-grade Markdown response with the 5 mandatory sections (Executive Summary, Key Insights, Business Interpretation, Recommendations, Supporting Data)."
+        desc="Consulting-grade Markdown response, structured exactly as response_shape requires."
     )

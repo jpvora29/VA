@@ -32,6 +32,7 @@ import dash_bootstrap_components as dbc
 from dash.development.base_component import Component
 
 from core.scope import chips_from_state, chips_to_dicts
+from ui.components.answer_actions import feedback_ack, is_finding
 from ui.components.scope_bar import scope_bar
 from ui.components.chatbot import (
     clarify_card,
@@ -84,6 +85,12 @@ from core.backend import (
 )
 from ui.chart_functions import generate_chart
 from core.agents.common.chart_spec import normalize_chart_spec
+from core.agents.common.directives import answer_shape
+from core.memory.feedback_reasons import (
+    FREE_TEXT_REASON,
+    is_valid as is_valid_reason,
+    reason_label,
+)
 from sqlalchemy import inspect, text
 from document_builder.report_generator import (
     get_theme,
@@ -612,6 +619,27 @@ def render_custom_peers_cue(chat_history: dict[str, Any]):
     return custom_peers_cue((chat_history or {}).get("custom_peers"))
 
 
+#: How many scope chips the composer bar shows before folding the rest behind
+#: a "+N". Four fits one line at the composer width on a laptop screen.
+_SCOPE_CHIPS_BEFORE_FOLD = 4
+
+
+# Expand the folded chips in place; no server round-trip for a disclosure.
+clientside_callback(
+    """
+    function(n) {
+        const bar = document.querySelector('.chat-scope-pills .scope-bar');
+        if (bar && n) { bar.classList.toggle('scope-expanded'); }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("chat-scope-pills", "className"),
+    # The button exists only while chips are actually folded.
+    Input("scope-overflow-toggle", "n_clicks", allow_optional=True),
+    prevent_initial_call=True,
+)
+
+
 @callback(
     Output("chat-scope-pills", "children"),
     Input("chat-store", "data"),
@@ -622,9 +650,15 @@ def render_scope_bar(chat_history: dict[str, Any]):
     The peer set is scope as well, but it has its own editable pill on the same
     row (``render_custom_peers_cue``), so it is dropped here rather than stated
     twice.
+
+    Folded past four chips: this bar sits directly above the input, so it has to
+    read as a caption on the composer, not as a second toolbar competing with it.
     """
     scope = (chat_history or {}).get("scope") or []
-    return scope_bar([chip for chip in scope if chip.get("key") != "peers"])
+    return scope_bar(
+        [chip for chip in scope if chip.get("key") != "peers"],
+        max_visible=_SCOPE_CHIPS_BEFORE_FOLD,
+    )
 
 
 @callback(
@@ -1463,6 +1497,43 @@ def _update_chat_history(
     return chat_history
 
 
+def _stamp_answer_context(
+    chat_history: dict[str, Any],
+    state: dict[str, Any],
+    question: str | None,
+    first_new: int,
+) -> dict[str, Any]:
+    """Record on each of this turn's answers what its action row needs to know.
+
+    The footer under an answer offers the next step (explore drivers, export,
+    raise a decision, rebuild as a board), and each of those needs the turn it
+    came from — the question, the route, whether any rows were returned, and the
+    shape the answer was written in. Stamped once here, while the turn's state is
+    still in hand, rather than re-derived per click from a transcript that no
+    longer knows which message belonged to which turn.
+
+    `first_new` is the message count from BEFORE this turn appended, so only its
+    own answers are stamped. Testing for a missing field instead would also catch
+    every answer in a conversation saved before this existed, and label each of
+    them with the current turn's question.
+    """
+    context = {
+        "question": question or "",
+        "route": state.get("current_route") or "",
+        "shape": answer_shape(state.get("routing_context")),
+    }
+    messages = chat_history.get("messages", [])
+    for idx, message in enumerate(messages):
+        if idx < first_new or message.get("type") != "AIMessage":
+            continue
+        message.update(context)
+        # Asked of the transcript, not of the graph state: `_rows_for_answer` is
+        # what the Export action will actually read, so deriving the flag from
+        # anywhere else risks offering a download that then finds nothing.
+        message["has_rows"] = bool(_rows_for_answer(chat_history, idx))
+    return chat_history
+
+
 def _commit_turn(
     chat_history: dict[str, Any], state: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1479,7 +1550,9 @@ def _commit_turn(
     )
     if last_human is not None:
         chat_history = _update_last_chat_message(chat_history, last_human, rephrased_query)
+    first_new = len(chat_history.get("messages", []))
     chat_history = _update_chat_history(chat_history, state, table)
+    chat_history = _stamp_answer_context(chat_history, state, last_human, first_new)
     chat_history["followups"] = state.get("followup_questions") or []
     # The scope this turn actually resolved to, for the composer's context pills.
     # Derived from the same routing context the Boardroom digest uses, so the two
@@ -2002,17 +2075,32 @@ def render_chat(
             elif msg["type"] == "AIMessage":
                 content = msg.get("content") or ""
 
-                # Detect the consulting-grade format and wrap it as an insight card.
-                # The deterministic rails always lead with "Executive Summary";
-                # the analyst agent uses dynamic, query-shaped H3 headings, so we
-                # also treat any answer with multiple "### " sections as an insight.
-                is_insight = (
-                    "Executive Summary" in content
-                    or content.lstrip().startswith("### ")
-                    or content.count("### ") >= 2
+                # Whether to wrap this answer in the consulting-card chrome.
+                # The turn's answer shape decides it: a lookup is a plain bubble,
+                # anything else is a finding. The markdown heuristic below is the
+                # fallback for transcripts saved before the shape was stamped —
+                # it reads the old fixed template ("Executive Summary", or two or
+                # more H3 sections), which every answer used to produce.
+                is_insight = is_finding(
+                    msg.get("shape") or "",
+                    looks_structured=(
+                        "Executive Summary" in content
+                        or content.lstrip().startswith("### ")
+                        or content.count("### ") >= 2
+                    ),
                 )
 
-                chat_items.append(ai_message(content, is_insight, idx=msg_idx))
+                chat_items.append(
+                    ai_message(
+                        content,
+                        is_insight,
+                        idx=msg_idx,
+                        question=msg.get("question") or "",
+                        route=msg.get("route") or "",
+                        shape=msg.get("shape") or "",
+                        has_rows=bool(msg.get("has_rows")),
+                    )
+                )
 
             elif msg["type"] == "ClarifyCard":
                 chat_items.append(clarify_card(msg.get("payload") or {}))
@@ -2275,6 +2363,14 @@ def download_data(n_clicks, chat_history, chat_messages):
     return no_update
 
 
+def _answer_at(chat_history: dict[str, Any], idx: Any) -> dict[str, Any]:
+    """The answer message at `idx`, or an empty dict when the index is stale."""
+    messages = (chat_history or {}).get("messages", [])
+    if isinstance(idx, int) and 0 <= idx < len(messages):
+        return messages[idx] or {}
+    return {}
+
+
 # 6. -------------------------- THUMBS UP/DOWN FEEDBACK ---------------------------------------
 
 
@@ -2328,10 +2424,215 @@ def record_message_feedback(
     idx = triggered.get("idx")
     chat_history = chat_history or {}
     conv_id = (chat_history.get("thread_id")) or active_id
-    messages = chat_history.get("messages", [])
-    note = None
-    if isinstance(idx, int) and 0 <= idx < len(messages):
-        note = (messages[idx].get("content") or "")[:300]
+    answer = _answer_at(chat_history, idx)
 
-    episodic_store.record_feedback(user_id, conv_id, rating, note)
+    # Written immediately, before the user has said what was wrong, so a rating
+    # given and then abandoned is never lost. When a reason follows,
+    # `record_feedback_reason` appends the diagnosis as its own episode.
+    episodic_store.record_feedback(
+        user_id,
+        conv_id,
+        rating,
+        (answer.get("content") or "")[:300] or None,
+        question=answer.get("question"),
+        route=answer.get("route"),
+    )
     return {"idx": idx, "rating": rating}
+
+
+# 6b. -------------------------- WHAT WENT WRONG (STRUCTURED FEEDBACK) -------------------------
+
+
+# A thumbs-down opens the reason chips; a thumbs-up closes them again (the
+# common case where a mis-click is corrected). Clientside so the panel appears
+# with the pressed thumb rather than a round-trip later.
+clientside_callback(
+    """
+    function(up, down) {
+        const ctx = window.dash_clientside.callback_context;
+        const trig = ctx.triggered.length ? ctx.triggered[0].prop_id : '';
+        return trig.indexOf('rating":"down') === -1;
+    }
+    """,
+    Output({"type": "fb-panel", "idx": MATCH}, "hidden"),
+    Input({"type": "msg-feedback", "idx": MATCH, "rating": "up"}, "n_clicks"),
+    Input({"type": "msg-feedback", "idx": MATCH, "rating": "down"}, "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(n) { return n ? true : window.dash_clientside.no_update; }
+    """,
+    Output({"type": "fb-panel", "idx": MATCH}, "hidden", allow_duplicate=True),
+    Input({"type": "fb-dismiss", "idx": MATCH}, "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output({"type": "fb-ack", "idx": MATCH}, "children"),
+    Input({"type": "fb-reason", "idx": MATCH, "reason": ALL}, "n_clicks"),
+    Input({"type": "fb-send", "idx": MATCH}, "n_clicks"),
+    State({"type": "fb-note", "idx": MATCH}, "value"),
+    State("chat-store", "data"),
+    State("user-store", "data"),
+    State("active-conversation", "data"),
+    prevent_initial_call=True,
+)
+def record_feedback_reason(
+    _reason_clicks: list[int | None],
+    _send_clicks: int | None,
+    note: str | None,
+    chat_history: dict[str, Any],
+    user_store: dict[str, Any],
+    active_id: str | None,
+) -> Any:
+    """Persist WHAT was wrong with an answer, not merely that something was.
+
+    A rating alone cannot be acted on: "wrong period" is a timeframe bug worth a
+    regression test and "hard to follow" is a writing problem, and one `rating`
+    column cannot tell them apart. The chosen reason plus the user's own
+    correction are appended as their own episode, carrying the question, route
+    and answer so a reviewer can reconstruct the turn without the transcript.
+
+    Nothing here changes behaviour on its own — a business rule learned from an
+    unreviewed downvote is a rule nobody agreed to. This fills a review queue.
+    """
+    triggered = ctx.triggered_id
+    if not isinstance(triggered, dict) or not (ctx.triggered and ctx.triggered[0].get("value")):
+        return no_update
+
+    user_id, _ = _current_user(user_store)
+    if user_id is None:
+        return no_update
+
+    idx = triggered.get("idx")
+    # The Send button carries no reason of its own; it submits a written note.
+    reason = triggered.get("reason") or FREE_TEXT_REASON
+    if not is_valid_reason(reason):
+        return no_update
+
+    note = (note or "").strip() or None
+    # "Something else" carries no diagnosis of its own, so the note IS the
+    # signal; without one there is nothing worth recording.
+    if reason == FREE_TEXT_REASON and not note:
+        return html.Span(
+            "Tell us what was wrong, then press Send.", className="fb-ack-hint"
+        )
+
+    answer = _answer_at(chat_history, idx)
+    episodic_store.record_feedback(
+        user_id,
+        (chat_history or {}).get("thread_id") or active_id,
+        "down",
+        note,
+        reason=reason,
+        question=answer.get("question"),
+        route=answer.get("route"),
+        answer=answer.get("content"),
+    )
+    logger.info("feedback reason recorded: reason=%s noted=%s", reason, bool(note))
+    return feedback_ack(reason_label(reason), bool(note))
+
+
+# 6c. -------------------------- ANSWER-TO-ACTION TOOLBAR -------------------------------------
+
+
+def _driver_followup(question: str) -> str:
+    """The "what drove this" question for a turn.
+
+    Phrased to land on the driver answer shape, which keys off "why" / "what
+    drove" — so the follow-up is written as ranked causes rather than as another
+    general analysis of the same slice.
+    """
+    base = (question or "").strip().rstrip("?").strip()
+    if not base:
+        return "Why did that happen? Break down the drivers behind the last answer."
+    return f"Why did that happen? Break down the biggest drivers behind: {base}"
+
+
+def _rows_for_answer(chat_history: dict[str, Any], idx: Any) -> list[dict[str, Any]]:
+    """The rows this answer was written from.
+
+    A turn appends its answer first and its chart / overflow payloads straight
+    after, so the rows are the ones between this answer and the next message that
+    starts a new turn. Scanning forward beats stashing a second copy on the
+    answer: the transcript is persisted per conversation, and rows are the
+    largest thing in it.
+    """
+    messages = (chat_history or {}).get("messages", [])
+    if not isinstance(idx, int):
+        return []
+    rows: list[dict[str, Any]] = []
+    for message in messages[idx + 1:]:
+        if message.get("type") in ("HumanMessage", "AIMessage", "Boardroom"):
+            break
+        rows.extend(message.get("updated_query") or message.get("query_result") or [])
+    return rows
+
+
+@callback(
+    Output("chat-store", "data", allow_duplicate=True),
+    Output("trigger-gpt", "data", allow_duplicate=True),
+    Output("is-thinking", "data", allow_duplicate=True),
+    Output("boardroom-mode-store", "data", allow_duplicate=True),
+    Input({"type": "answer-action", "idx": ALL, "action": "drivers"}, "n_clicks"),
+    Input({"type": "answer-action", "idx": ALL, "action": "board"}, "n_clicks"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def ask_from_answer(
+    _driver_clicks: list[int | None],
+    _board_clicks: list[int | None],
+    chat_history: dict[str, Any],
+) -> tuple[Any, Any, Any, Any]:
+    """Re-ask from an answer: explore its drivers, or rebuild it as a board.
+
+    Both send a question exactly the way the follow-up chips do, so the turn runs
+    through the normal graph instead of a second path that would then have to be
+    kept in step with it. "View as board" differs only in arming Boardroom Mode
+    for that turn.
+    """
+    triggered = ctx.triggered_id
+    if not isinstance(triggered, dict) or not (ctx.triggered and ctx.triggered[0].get("value")):
+        return no_update, no_update, no_update, no_update
+
+    action = triggered.get("action")
+    answer = _answer_at(chat_history, triggered.get("idx"))
+    question = (answer.get("question") or "").strip()
+    if action == "drivers":
+        question = _driver_followup(question)
+    elif not question:
+        # An answer from before this shipped carries no question to re-ask.
+        return no_update, no_update, no_update, no_update
+
+    chat_history = chat_history or {}
+    chat_history.setdefault("thread_id", uuid.uuid4().hex[:12])
+    chat_history.setdefault("messages", []).append(
+        {"type": "HumanMessage", "content": question, "rephrased_content": None}
+    )
+    chat_history["followups"] = []
+    return chat_history, True, True, action == "board"
+
+
+@callback(
+    Output("download-excel", "data", allow_duplicate=True),
+    Input({"type": "answer-action", "idx": ALL, "action": "export"}, "n_clicks"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def export_answer_rows(_clicks: list[int | None], chat_history: dict[str, Any]) -> Any:
+    """Download the rows behind one answer as .xlsx."""
+    triggered = ctx.triggered_id
+    if not isinstance(triggered, dict) or not (ctx.triggered and ctx.triggered[0].get("value")):
+        return no_update
+
+    rows = _rows_for_answer(chat_history, triggered.get("idx"))
+    if not rows:
+        logger.info("export_answer_rows: no rows behind idx=%s", triggered.get("idx"))
+        return no_update
+    return dcc.send_data_frame(
+        pd.DataFrame(rows).to_excel, "answer_data.xlsx", index=False
+    )

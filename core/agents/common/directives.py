@@ -20,6 +20,12 @@ from __future__ import annotations
 import re
 from typing import Any, Optional, Protocol, Tuple
 
+from core.agents.common.answer_shape import (
+    DEFAULT_SHAPE,
+    SHAPE_KEYS,
+    detect_answer_shape,
+)
+
 # The chart-ish nouns a directive can target.
 _CHART_NOUN = r"(?:charts?|graphs?|plots?|visuals?|visuali[sz]ations?)"
 
@@ -195,6 +201,27 @@ _DIRECTIVE_DETECTORS: Tuple[DirectiveDetector, ...] = (
 )
 
 
+def _apply_answer_shape(query: str, directives: Any) -> None:
+    """Which KIND of answer this question wants (see `answer_shape`).
+
+    Deliberately NOT one of the detectors above, and it does not report whether
+    it fired. Those read a preference the user STATED ("no charts", "briefly"),
+    which is why a hit stamps `source='deterministic'` and is reported as such in
+    telemetry. A shape is INFERRED from the question the user asked, so counting
+    it as a stated directive would make that telemetry claim a preference nobody
+    expressed — and would mask an LLM chart reading on every ordinary question.
+
+    Runs after the fold so an explicit "briefly" wins: a user who asked for one
+    line gets one line, even on a question that otherwise reads as advisory.
+    """
+    if _field(directives, "depth", "analyst") == "direct":
+        directives.shape = "direct"
+        return
+    shape = detect_answer_shape(query)
+    if shape:
+        directives.shape = shape
+
+
 def apply_directives(query: str, directives: Any) -> bool:
     """Fold every deterministic directive detector over the RAW query, writing
     each hit onto `directives`. Runs on the original query (the rephraser may
@@ -207,6 +234,9 @@ def apply_directives(query: str, directives: Any) -> bool:
             fired = True
     if fired:
         directives.source = "deterministic"
+    # Inferred, not stated — see `_apply_answer_shape`. Kept out of `fired` so
+    # `source` keeps meaning "the user asked for this".
+    _apply_answer_shape(query, directives)
     return fired
 
 
@@ -241,6 +271,21 @@ def presentation_mode(routing_context: Any) -> str:
 def response_depth(routing_context: Any) -> str:
     """This turn's answer length: 'analyst' (default) or 'direct'."""
     return _field(_directives_of(routing_context), "depth", "analyst")
+
+
+def answer_shape(routing_context: Any) -> str:
+    """This turn's answer KIND — the key of the shape the writer follows.
+
+    'auto' (nothing detected) and an unrecognised value both resolve to the
+    default full-analysis shape, so a missing or stale directive can never leave
+    a turn without a contract. An explicit 'direct' depth still overrides,
+    because a user who asked for one line asked for one line.
+    """
+    directives = _directives_of(routing_context)
+    if _field(directives, "depth", "analyst") == "direct":
+        return "direct"
+    shape = _field(directives, "shape", DEFAULT_SHAPE)
+    return shape if shape in SHAPE_KEYS else DEFAULT_SHAPE
 
 
 def prose_suppressed(routing_context: Any) -> bool:

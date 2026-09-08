@@ -64,6 +64,30 @@ class OutputDirectives(BaseModel):
             "user asks for a short/one-line answer. Per-turn; never inherited."
         ),
     )
+    shape: Literal[
+        "auto",
+        "direct",
+        "ranking",
+        "driver",
+        "comparison",
+        "trend",
+        "advisory",
+        "briefing",
+        "analyst",
+    ] = Field(
+        default="auto",
+        description=(
+            "What KIND of answer the question calls for, so a lookup is not "
+            "given the same five headings as a strategy question. 'direct' — a "
+            "bare number. 'ranking' — a league table is the answer. 'driver' — "
+            "the user asked WHY; ranked causes. 'comparison' — two subjects "
+            "side by side. 'trend' — a series over time. 'advisory' — the user "
+            "asked what to DO. 'briefing' — a pre-meeting summary. 'analyst' — "
+            "an open question wanting full analysis. 'auto' (the default) when "
+            "the question fits none of these clearly; the phrase detector's "
+            "reading wins wherever it fires."
+        ),
+    )
     source: str = Field(
         default="",
         description=(

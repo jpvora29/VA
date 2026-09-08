@@ -481,6 +481,30 @@ def column_rules(topic: str, wanted: int) -> str:
             + _voice_rule(topic) + _questions_rule(topic))
 
 
+def top_up_rules(topic: str, remaining: int) -> str:
+    """Column rules for a repair that KEEPS its verified lines and writes only the rest.
+
+    A repair used to re-ask for the whole column, which put every already-verified line
+    back at risk of a worse second answer and spent the call re-earning ground the field
+    had already won. Asking only for what is missing is both cheaper and strictly safer:
+    the kept lines cannot be lost by a retry that was meant to help them.
+    """
+    return (_top_up_bullet_rules(remaining) + _TOPIC_BRIEF.get(topic, "")
+            + _voice_rule(topic) + _questions_rule(topic))
+
+
+def _top_up_bullet_rules(remaining: int) -> str:
+    """The line contract for a top-up: only the missing lines, and one spare."""
+    return (
+        f"Write ONLY the {remaining} line(s) still missing from this field, one point per "
+        "line, in priority order, to follow the lines already written above. Do NOT "
+        "rewrite, reword or repeat those — they are final. Write one spare line beyond "
+        f"the {remaining} asked for, so a line that cannot be evidenced can be dropped "
+        "without leaving the field short. Do not write any bullet character, dash or "
+        "number at the start of a line — the slide adds the bullet itself. "
+    )
+
+
 def _style_system(style: Optional[str], *, topic: str = "", wanted: int = 1,
                   subject: str = "") -> str:
     """The system prompt for one column, widest rule to narrowest.
@@ -740,6 +764,22 @@ def _keep_lines(lines: Sequence[str], subject: str) -> Tuple[List[str], Dict[str
     return kept, dropped
 
 
+#: The fewest bullets a column may ship once repair has run out of rounds.
+#:
+#: :func:`min_lines` is the bar for a REWRITE — a model handed a full draft that comes
+#: back half the length has not edited the column, it has replaced it, and that is worth
+#: refusing. It is the wrong bar for a column whose evidence simply does not carry a
+#: second point: there, holding out for two bullets means the field falls back to
+#: deterministic prose (or fails the deck in ``ai_required``) while a verified,
+#: well-written line sits in hand. One such line beats both outcomes, and the fill engine
+#: already removes the surplus paragraph (:func:`studio.template_fill.fill._write_bullets`)
+#: so a short column leaves no empty bullet behind.
+#:
+#: Applied ONLY as a last resort, never on the first pass: the ask, the gates and the
+#: repair rounds are all unchanged, so a column that can make two points still must.
+SALVAGE_FLOOR = 1
+
+
 @dataclass(frozen=True)
 class ColumnJudgement:
     """What the shape/reading gate made of one column: the text, and why lines went.
@@ -748,12 +788,22 @@ class ColumnJudgement:
     repair call what was wrong with its first answer, and the only thing that can turn a
     strict-mode refusal from "this field could not be written" into a sentence someone can
     act on — so they travel with the verdict now.
+
+    So do the surviving `lines`, even when the verdict is a refusal. A column rejected for
+    being one line short still HAS its good line, and throwing it away is what made repair
+    regenerate the whole field and re-earn ground it had already won.
     """
 
     text: Optional[str]
     dropped: Mapping[str, int] = field(default_factory=dict)
-    kept: int = 0
+    lines: Tuple[str, ...] = ()
     wanted: int = 0
+    floor: int = 0
+
+    @property
+    def kept(self) -> int:
+        """How many lines survived. Derived, so it cannot disagree with `lines`."""
+        return len(self.lines)
 
     @property
     def reasons(self) -> Tuple[str, ...]:
@@ -762,23 +812,25 @@ class ColumnJudgement:
             return ()
         out = [f"{name} ({count} line(s))" for name, count in sorted(self.dropped.items())]
         out.append(f"only {self.kept} line(s) survived of the {self.wanted} asked for "
-                   f"(the column needs {min_lines(self.wanted)})")
+                   f"(the column needs {self.floor or min_lines(self.wanted)})")
         return tuple(out)
 
 
 def judge_column(lines: Sequence[str], *, wanted: int, node: str,
-                 subject: str = "") -> ColumnJudgement:
+                 subject: str = "", floor: Optional[int] = None) -> ColumnJudgement:
     """:func:`accept_column`, with the reasons kept. See :class:`ColumnJudgement`."""
     return _judge([_LEADING_BULLET.sub("", ln).strip() for ln in lines if ln and ln.strip()],
-                  wanted=wanted, node=node, subject=subject)
+                  wanted=wanted, node=node, subject=subject, floor=floor)
 
 
-def _accept(lines: List[str], *, wanted: int, node: str, subject: str = "") -> Optional[str]:
+def _accept(lines: List[str], *, wanted: int, node: str, subject: str = "",
+            floor: Optional[int] = None) -> Optional[str]:
     """The rewritten bullets worth shipping, or ``None`` to keep the draft."""
-    return _judge(lines, wanted=wanted, node=node, subject=subject).text
+    return _judge(lines, wanted=wanted, node=node, subject=subject, floor=floor).text
 
 
-def _judge(lines: List[str], *, wanted: int, node: str, subject: str = "") -> ColumnJudgement:
+def _judge(lines: List[str], *, wanted: int, node: str, subject: str = "",
+           floor: Optional[int] = None) -> ColumnJudgement:
     """The gate itself: which lines survive, and what happened to the rest.
 
     **Repairs rather than rejects.** This used to refuse the WHOLE column if any
@@ -794,7 +846,10 @@ def _judge(lines: List[str], *, wanted: int, node: str, subject: str = "") -> Co
     three good ones with it. Only when too few lines survive to make a column does
     the draft stand.
     """
-    floor = min_lines(wanted)
+    # `floor` overrides the rewrite bar for the salvage pass (see `SALVAGE_FLOOR`);
+    # everything else about the gate is identical, so a salvaged line has cleared every
+    # rule a normal one did.
+    floor = min_lines(wanted) if floor is None else floor
     # JUDGE every line the model wrote, THEN take the best `wanted` of the survivors.
     #
     # This used to truncate first, and the order mattered more than it looks: a column
@@ -814,8 +869,10 @@ def _judge(lines: List[str], *, wanted: int, node: str, subject: str = "") -> Co
     if len(kept) < floor:
         logger.info("commentary: %s kept only %d of %d line(s), below the floor of %d — "
                     "keeping the deterministic draft", node, len(kept), len(lines), floor)
-        return ColumnJudgement(None, dropped, len(kept), wanted)
-    return ColumnJudgement(NEWLINE.join(kept), dropped, len(kept), wanted)
+        # The survivors travel with the refusal: repair tops them up instead of
+        # rewriting the field, and the salvage pass can ship them as they stand.
+        return ColumnJudgement(None, dropped, tuple(kept), wanted, floor)
+    return ColumnJudgement(NEWLINE.join(kept), dropped, tuple(kept), wanted, floor)
 
 
 def accept_column(lines: Sequence[str], *, wanted: int, node: str,

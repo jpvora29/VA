@@ -137,6 +137,43 @@ def pin_decision(_clicks, version, user_store):
     return (version or 0) + 1
 
 
+def seed_from_answer(
+    chat_history: dict[str, Any] | None, idx: Any
+) -> Optional[dict[str, Any]]:
+    """A decision draft seeded from one chat answer.
+
+    Deliberately fills only the two fields the answer can honestly supply: the
+    question becomes the title (it is what the reader was asking about) and the
+    answer becomes the rationale (it is the evidence). Owner, status, priority
+    and the dates are business judgements the answer does not contain, so they
+    keep their blank defaults rather than being invented here.
+
+    Returns ``None`` for a stale index, which `render.form_values` already reads
+    as "blank new decision".
+    """
+    messages = (chat_history or {}).get("messages", [])
+    if not isinstance(idx, int) or not 0 <= idx < len(messages):
+        return None
+    answer = messages[idx] or {}
+    question = (answer.get("question") or "").strip()
+    return {
+        "title": _title_from(question),
+        "rationale": (answer.get("content") or "").strip(),
+    }
+
+
+def _title_from(question: str) -> str:
+    """A short decision title from the question that produced the answer."""
+    text = " ".join((question or "").split()).rstrip("?").strip()
+    if not text:
+        return "Decision from analysis"
+    return text if len(text) <= _TITLE_MAX else text[: _TITLE_MAX - 1].rstrip() + "…"
+
+
+#: Titles are a card heading on the board; a full sentence overflows it.
+_TITLE_MAX = 80
+
+
 # ── Create / edit modal ─────────────────────────────────────────────────────
 
 
@@ -155,23 +192,46 @@ _N_OPEN_OUTPUTS = 4 + len(_FORM_VALUE_OUTPUTS)  # 4 control outputs + field valu
     *_FORM_VALUE_OUTPUTS,
     Input("decision-new-btn", "n_clicks"),
     Input("decision-detail-edit", "n_clicks"),
+    Input({"type": "answer-action", "idx": ALL, "action": "decision"}, "n_clicks"),
     State("decision-detail-target", "data"),
+    State("chat-store", "data"),
     State("user-store", "data"),
     prevent_initial_call=True,
 )
-def open_editor(_new, _edit, target, user_store):
+def open_editor(_new, _edit, _from_answer, target, chat_history, user_store):
     """Open the editor and push values into the (static) form fields.
 
-    New button → blank defaults; Edit → the selected decision's values.
+    New button → blank defaults; Edit → the selected decision's values; the
+    "Create decision" action under a chat answer → a draft seeded from that
+    answer, which is the whole point of the action: the finding and its numbers
+    arrive as the rationale instead of being retyped from the transcript.
     """
     if not _clicked():
         return (no_update,) * _N_OPEN_OUTPUTS
-    if ctx.triggered_id == "decision-new-btn":
+    triggered = ctx.triggered_id
+    if isinstance(triggered, dict) and triggered.get("action") == "decision":
+        seed = seed_from_answer(chat_history, triggered.get("idx"))
+        return (True, "New decision", _NEW, no_update, *render.form_values(seed))
+    if triggered == "decision-new-btn":
         return (True, "New decision", _NEW, no_update, *render.form_values(None))
     d = store.get_decision(_uid(user_store), target)
     if d is None:
         return (no_update,) * _N_OPEN_OUTPUTS
     return (True, "Edit decision", target, False, *render.form_values(d))
+
+
+@callback(
+    Output("active-view", "data", allow_duplicate=True),
+    Input({"type": "answer-action", "idx": ALL, "action": "decision"}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def show_board_for_new_decision(_clicks):
+    """Switch to the board so the editor the action just opened is visible.
+
+    The two views are both mounted and toggled with ``display: none``, so opening
+    the modal from the chat pane would otherwise put it inside a hidden subtree.
+    """
+    return "board" if _clicked() else no_update
 
 
 @callback(

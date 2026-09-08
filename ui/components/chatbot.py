@@ -3,6 +3,7 @@ from datetime import datetime
 from dash import html, dcc, dash_table
 import dash_bootstrap_components as dbc
 from document_builder.report_generator import PITCH_THEMES, theme_options
+from ui.components.answer_actions import AnswerContext, answer_footer, feedback_panel
 
 
 # Example questions surfaced on the welcome screen and (mirrored) in the
@@ -251,46 +252,36 @@ def followup_suggestions(followups: list[str]):
     )
 
 
-def feedback_bar(idx: int):
-    """Thumbs up/down for an assistant turn; click is recorded to episodic memory.
+def ai_message(
+    content: str,
+    is_insight: bool,
+    idx: int = 0,
+    *,
+    question: str = "",
+    route: str = "",
+    shape: str = "",
+    has_rows: bool = False,
+):
+    """Render an assistant turn with the answer-actions footer beneath it.
 
-    `idx` is the message's position in the transcript so the recording callback
-    (and the clientside active-state toggle) can pair the click to its answer.
-    """
-    return html.Div(
-        [
-            html.Button(
-                html.I(className="bi bi-hand-thumbs-up"),
-                id={"type": "msg-feedback", "idx": idx, "rating": "up"},
-                n_clicks=0,
-                className="msg-feedback-btn",
-                title="Helpful",
-            ),
-            html.Button(
-                html.I(className="bi bi-hand-thumbs-down"),
-                id={"type": "msg-feedback", "idx": idx, "rating": "down"},
-                n_clicks=0,
-                className="msg-feedback-btn",
-                title="Not helpful",
-            ),
-        ],
-        className="msg-feedback",
-    )
+    Copy, the next steps (explore drivers, export, decision, board) and the
+    thumbs live in ONE row at the foot of the message rather than as two floating
+    hover clusters — see :mod:`ui.components.answer_actions`. The feedback panel
+    is mounted hidden and revealed by a thumbs-down.
 
-
-def ai_message(content: str, is_insight: bool, idx: int = 0):
-    """Render an assistant turn with copy + thumbs-up/down feedback actions.
-
-    `dcc.Clipboard` copies its `content` natively, so no callback is needed.
     The insight variant keeps the consulting-card chrome; the base variant is a
-    plain bubble. Both are position:relative so the actions can sit top-right.
+    plain bubble.
     """
-    copy = dcc.Clipboard(
-        content=content,
-        title="Copy",
-        className="msg-copy",
+    ctx = AnswerContext(
+        idx=idx,
+        question=question,
+        route=route,
+        shape=shape,
+        has_rows=has_rows,
+        is_insight=is_insight,
     )
-    feedback = feedback_bar(idx)
+    footer = answer_footer(ctx, content=content)
+    panel = feedback_panel(idx)
 
     if is_insight:
         return html.Div(
@@ -307,14 +298,14 @@ def ai_message(content: str, is_insight: bool, idx: int = 0):
                 dcc.Markdown(
                     content, className="insight-card-body", link_target="_blank"
                 ),
-                copy,
-                feedback,
+                footer,
+                panel,
             ],
             className="message insight-card",
         )
 
     return html.Div(
-        [dcc.Markdown(content), copy, feedback],
+        [dcc.Markdown(content), footer, panel],
         className="message gpt-message",
     )
 

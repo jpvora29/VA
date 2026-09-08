@@ -112,7 +112,26 @@ class SqliteEpisodicStore:
         conversation_id: str,
         rating: str,
         note: str | None = None,
+        *,
+        reason: str | None = None,
+        question: str | None = None,
+        route: str | None = None,
+        answer: str | None = None,
     ) -> None:
+        """Persist one rating, with the diagnosis when the user gave one.
+
+        A bare thumbs-down says an answer was wrong but not *how*, which is the
+        only part that can be acted on: "wrong period" and "confusing
+        explanation" are different defects with different fixes, and a store that
+        cannot tell them apart cannot feed a review queue, a terminology mapping
+        or a regression test. `reason` is one of
+        :data:`~core.memory.feedback_reasons.REASON_KEYS`; `note` is the user's
+        own correction, which is the most valuable field here and is kept
+        verbatim.
+
+        The question and the route travel with it so a correction can later be
+        matched to similar turns without re-reading the transcript.
+        """
         self.remember(
             user_id,
             {
@@ -120,6 +139,16 @@ class SqliteEpisodicStore:
                 "conversation_id": conversation_id,
                 "content": note,
                 "rating": rating,
+                "route": route,
+                "meta": {
+                    key: value
+                    for key, value in (
+                        ("reason", reason),
+                        ("question", question),
+                        ("answer", (answer or "")[:1000] or None),
+                    )
+                    if value
+                },
             },
         )
 
@@ -153,6 +182,21 @@ class SqliteEpisodicStore:
 
     def recent_feedback(self, user_id: Any, limit: int = 20) -> list[dict[str, Any]]:
         return self._recent(user_id, "feedback", limit)
+
+    def recent_corrections(self, user_id: Any, limit: int = 20) -> list[dict[str, Any]]:
+        """Downvotes that came with a diagnosis — the reviewable half of feedback.
+
+        A thumbs-down with no reason says only that a turn missed; these carry
+        the defect (and often the user's own correction), which is what a review
+        queue, a terminology mapping or a regression test can be built from.
+        Read-only: nothing here is applied to behaviour without review.
+        """
+        return [
+            episode
+            for episode in self._recent(user_id, "feedback", limit * 3)
+            if episode.get("rating") == "down"
+            and ((episode.get("meta") or {}).get("reason") or episode.get("content"))
+        ][:limit]
 
     def recall_sql_fixes(
         self, user_id: Any, route: str, question: str, k: int = 3

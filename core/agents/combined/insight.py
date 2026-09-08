@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import logging
 
-from core.agents.common.directives import prose_suppressed
+from core.agents.common.answer_shape import shape_contract
+from core.agents.common.directives import answer_shape, prose_suppressed
 from core.llm import Predictor
 from core.observability import log_event
 from core.schemas.combined import CombinedInsightSignature
@@ -28,11 +29,18 @@ class CombinedInsightNode:
         )
 
     def __call__(
-        self, user_query, survey_output, gpr_output, survey_reasoning, gpr_reasoning
+        self,
+        user_query,
+        response_shape,
+        survey_output,
+        gpr_output,
+        survey_reasoning,
+        gpr_reasoning,
     ):
         result = self.predictor(
             user_query=user_query,
             rules=self.rules,
+            response_shape=response_shape,
             survey_output=survey_output or [],
             gpr_output=gpr_output or [],
             survey_reasoning=survey_reasoning or "",
@@ -71,6 +79,9 @@ def combined_insight(state: AgentState) -> AgentState:
         node = CombinedInsightNode(rules=rules)
         combined = node(
             user_query=question,
+            response_shape=shape_contract(
+                answer_shape(state.get("routing_context"))
+            ),
             survey_output=survey_output,
             gpr_output=gpr_output,
             survey_reasoning=survey_reasoning,

@@ -36,9 +36,9 @@ from core.agents.common.peer_privacy import (
     subjects_from_resolved,
 )
 from core.agents.common.directives import (
+    answer_shape,
     charts_suppressed,
     presentation_mode,
-    response_depth,
 )
 from core.agents.analyst.generic_solver import solve_generic
 from core.agents.analyst.insight_writer import write_insight
@@ -237,7 +237,7 @@ def writer_node(state: AnalystState) -> dict:
         synthesis_focus=plan.synthesis_focus,
         evidence=evidence,
         presentation=presentation_mode(rc),
-        depth=response_depth(rc),
+        shape=answer_shape(rc),
     )
     return {"answer": scrub_peer_names(answer, evidence, state)}
 

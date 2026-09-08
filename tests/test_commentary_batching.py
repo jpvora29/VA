@@ -659,8 +659,39 @@ def test_the_repair_is_told_why_the_first_answer_was_rejected(failing_model):
     assert "fragment" in repairs[0]["user"], "and name what was actually wrong"
 
 
+@pytest.fixture
+def unusable_model(monkeypatch):
+    """A model whose every line is a fragment — nothing survives, so nothing can ship.
+
+    This is the case that must still refuse in strict mode. A field that came up SHORT is
+    now salvaged (see the salvage tests below); a field with no verified line at all has
+    nothing to salvage, and shipping deterministic prose under ``ai_required`` is the very
+    thing that mode exists to prevent.
+    """
+    import studio.ai.client as client
+
+    calls = []
+
+    def structured(model, system, user, *, tier="balanced", node="ai", phase="other",
+                   fields=(), **kw):
+        calls.append({"node": node, "phase": phase, "fields": tuple(fields), "user": user})
+        if model is CommentarySections:
+            asked = [line.split()[2] for line in user.splitlines()
+                     if line.startswith("--- FIELD ")]
+            return CommentarySections(sections=[
+                CommentarySection(field_id=fid, bullets=[
+                    CommentaryBullet(text="Momentum: Cyber", fact_ids=[]),
+                    CommentaryBullet(text="Growth: Property", fact_ids=[]),
+                ]) for fid in asked])
+        return None
+
+    monkeypatch.setattr(client, "structured", structured)
+    monkeypatch.setattr(client, "llm_available", lambda: True)
+    return calls
+
+
 def test_a_strict_refusal_says_why_the_field_could_not_be_written(monkeypatch,
-                                                                  failing_model):
+                                                                  unusable_model):
     monkeypatch.setenv("COMMENTARY_MODE", "ai_required")
     with pytest.raises(mode.CommentaryUnavailable) as raised:
         rewrites.write_all([_one_growth_field()])
@@ -670,6 +701,34 @@ def test_a_strict_refusal_says_why_the_field_could_not_be_written(monkeypatch,
     assert "fragment" in message, "the refusal must be actionable, not just an id"
     assert "line(s) survived" in message, "and say how short the column came up"
     assert raised.value.retryable is True
+
+
+# ── a short field is shipped, not lost ──────────────────────────────────────
+#
+# A two-bullet cell whose evidence carries one point used to fail the whole field — and in
+# ``ai_required`` the whole deck. Holding out for a second bullet cannot conjure evidence
+# that is not there, and the alternative on the slide was deterministic prose. One verified
+# line beats both.
+
+
+def test_a_field_short_of_a_bullet_ships_what_it_verified(failing_model):
+    """One good line beats the deterministic draft it would otherwise fall back to."""
+    written = rewrites.write_all([_one_growth_field()])[0]
+    assert list(written.values())[0] == _SENTENCES[0]
+
+
+def test_a_short_field_does_not_refuse_a_strict_build(monkeypatch, failing_model):
+    """``ai_required`` refuses UNWRITTEN fields, not short ones — the line is authored."""
+    monkeypatch.setenv("COMMENTARY_MODE", "ai_required")
+    written = rewrites.write_all([_one_growth_field()])[0]
+    assert list(written.values())[0] == _SENTENCES[0]
+
+
+def test_a_salvaged_line_still_cleared_every_gate(failing_model):
+    """Only the floor moves. The fragment the gate rejected must never reach the slide."""
+    written = list(rewrites.write_all([_one_growth_field()])[0].values())[0]
+    assert "Momentum: Cyber" not in written
+    assert "\n" not in written, "one surviving line means one bullet, not a blank second"
 
 
 def test_a_field_that_repairs_successfully_ships_and_does_not_refuse(monkeypatch):
@@ -818,3 +877,114 @@ def test_the_fields_that_were_written_are_cached_before_the_refusal(monkeypatch)
               if cache.get(B.cache_key(section, column, pack))}
     assert {"working", "challenges"} <= cached, "the fields that were written survived"
     assert "growth" not in cached, "the one that failed did not"
+
+
+# ── every failing field gets every repair round ─────────────────────────────
+#
+# The repair loop used to return the moment ANY field succeeded:
+#
+#     if text or not still_failing:
+#         return text
+#
+# So three failing fields of which the first round fixed one left the other two with their
+# second round unspent — and under ``ai_required`` that is a refused deck for a reason that
+# had a round left to fix it. Successes accumulate now, and the loop carries on with
+# whatever is still short.
+
+
+def _three_growth_fields() -> dict:
+    """Three two-bullet columns in one section, so one repair call covers all three."""
+    facts = _facts()
+    return {f"note:{i}:{i}:0": _pending("growth", "growth line one.\ngrowth line two.", facts)
+            for i in range(3)}
+
+
+@pytest.fixture
+def model_fixing_one_field_per_round(monkeypatch):
+    """Round 1 fixes one field, round 2 fixes the next. The third never recovers.
+
+    Pins the exact reported shape: a partial success must not end the loop for the fields
+    that are still short.
+    """
+    import studio.ai.client as client
+
+    rounds = {"n": 0}
+    calls = []
+
+    def structured(model, system, user, *, tier="balanced", node="ai", phase="other",
+                   fields=(), **kw):
+        if model is not CommentarySections:
+            return None
+        calls.append({"user": user, "fields": tuple(fields)})
+        rounds["n"] += 1
+        asked = [line.split()[2] for line in user.splitlines()
+                 if line.startswith("--- FIELD ")]
+        # On round N, the Nth field asked for is written properly; the rest lose a line.
+        out = []
+        for i, fid in enumerate(sorted(asked)):
+            good = [CommentaryBullet(text=s, fact_ids=[]) for s in _SENTENCES[:2]]
+            short = [CommentaryBullet(text="Momentum: Cyber", fact_ids=[]),
+                     CommentaryBullet(text=_SENTENCES[0], fact_ids=[])]
+            out.append(CommentarySection(field_id=fid,
+                                         bullets=good if i < rounds["n"] - 1 else short))
+        return CommentarySections(sections=out)
+
+    monkeypatch.setattr(client, "structured", structured)
+    monkeypatch.setattr(client, "llm_available", lambda: True)
+    return calls
+
+
+def test_a_partial_repair_does_not_abandon_the_fields_still_failing(
+        model_fixing_one_field_per_round):
+    """The bug: one field succeeding used to end repair for every other field."""
+    calls = model_fixing_one_field_per_round
+    rewrites.write_all([_three_growth_fields()])
+
+    repairs = [c for c in calls if "REJECTED" in c["user"]]
+    assert len(repairs) == B.MAX_REPAIRS, (
+        "every repair round must be spent while fields are still short — the loop used "
+        "to stop after the round that fixed the first field"
+    )
+    # And the last round still asks for the field that never recovered.
+    assert repairs[-1]["fields"], "the final round must still be asking for something"
+
+
+def test_repaired_fields_from_earlier_rounds_are_not_discarded(
+        model_fixing_one_field_per_round):
+    """Round 1's success has to survive round 2 running for somebody else."""
+    written = rewrites.write_all([_three_growth_fields()])[0]
+    full = [t for t in written.values() if t == "\n".join(_SENTENCES[:2])]
+    assert len(full) >= 2, (
+        f"expected the fields repaired in rounds 1 and 2 to both ship, got {written!r}"
+    )
+
+
+# ── repair tops a field up; it does not rewrite it ──────────────────────────
+
+
+def test_the_repair_shows_the_lines_already_verified_and_asks_only_for_the_rest(
+        failing_model):
+    """Re-asking for the whole field puts verified lines back at risk for nothing."""
+    rewrites.write_all([_one_growth_field()])
+
+    repairs = [c for c in failing_model if "REJECTED" in c["user"]]
+    assert repairs, "there must be a repair call to inspect"
+    user = repairs[0]["user"]
+    assert "ALREADY WRITTEN AND VERIFIED" in user, "the kept line must be shown as final"
+    assert _SENTENCES[0] in user, "and it must be the line that actually survived"
+    assert "Write ONLY the 1 line(s) still missing" in user, "ask for the gap, not the field"
+
+
+def test_a_kept_line_is_never_re_verified_and_so_cannot_be_lost(failing_model):
+    """The whole point of a top-up: a retry meant to help must not cost a good line."""
+    written = rewrites.write_all([_one_growth_field()])[0]
+    assert _SENTENCES[0] in list(written.values())[0]
+
+
+def test_a_model_that_echoes_a_kept_line_does_not_ship_it_twice():
+    """The prompt says not to repeat; the merge does not rely on it obeying."""
+    from studio.template_fill.commentary_batch import _merged
+
+    merged = _merged({"f": ("The book grew.",)},
+                     {"f": ("the  book   grew", "And then it held.")})
+    assert merged["f"] == ["The book grew.", "And then it held."]

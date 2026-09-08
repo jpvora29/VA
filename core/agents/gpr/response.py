@@ -10,7 +10,8 @@ try:
 except ModuleNotFoundError:
     valid_year_quarter_gpr = []
 from core.agents.common.analysis_rules import with_analysis_rules
-from core.agents.common.directives import prose_suppressed
+from core.agents.common.answer_shape import shape_contract
+from core.agents.common.directives import answer_shape, prose_suppressed
 from core.llm import Predictor
 from core.observability import log_event
 from core.rules.gpr import GPRRules
@@ -40,6 +41,7 @@ class GPRResponseNode:
         user_query: str,
         query_plan: str,
         rules: str,
+        response_shape: str,
         valid_year_quarter: List[str],
         sql_output: Dict[str, Any],
     ) -> str:
@@ -48,6 +50,7 @@ class GPRResponseNode:
 
         result = self.predictor(
             rules=rules,
+            response_shape=response_shape,
             user_query=user_query,
             query_plan=query_plan,
             valid_year_quarter=valid_year_quarter,
@@ -73,11 +76,18 @@ def gpr_insight(state: AgentState) -> AgentState:
     skill_rules = get_skill_loader().response("gpr", question)
     response_rules = skill_rules if skill_rules else GPRRules.response_rules
 
+    # The shape this question calls for (a lookup gets a sentence, a "why"
+    # gets ranked drivers). Resolved once here and handed to the writer as its
+    # binding contract, so the rails stop emitting the same five headings.
+    shape = shape_contract(answer_shape(state.get("routing_context")))
+
+
     try:
         gpr_response = _GPR_RESPONSE_NODE(
             user_query=question,
             query_plan=reasoning_plan,
             rules=response_rules,
+            response_shape=shape,
             valid_year_quarter=valid_year_quarter_gpr,
             sql_output=query_output,
         )

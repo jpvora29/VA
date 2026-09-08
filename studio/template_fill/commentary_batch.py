@@ -89,6 +89,16 @@ class Failure:
 
     column: "Column"
     reasons: Tuple[str, ...] = ()
+    #: The lines that DID clear every check. A field is usually rejected for being one
+    #: line short, not for being worthless, so these are the ground it already won —
+    #: repair tops them up rather than rewriting over them, and the salvage pass can
+    #: ship them as they stand.
+    kept_lines: Tuple[str, ...] = ()
+
+    @property
+    def missing(self) -> int:
+        """How many more lines this field needs before it can ship."""
+        return max(self.column.bullets - len(self.kept_lines), 1)
 
     def brief(self) -> str:
         """One line naming the field and, when known, what happened to it."""
@@ -196,16 +206,30 @@ def _columns_from(items: Sequence[Tuple[str, Any]]) -> Tuple[Column, ...]:
 # ── the prompt ───────────────────────────────────────────────────────────────
 
 
-def _column_block(column: Column, *, show_draft: bool, rejected: Sequence[str] = ()) -> str:
-    """One column's ask, inside the section request."""
+def _column_block(column: Column, *, show_draft: bool, rejected: Sequence[str] = (),
+                  keep: Sequence[str] = ()) -> str:
+    """One column's ask, inside the section request.
+
+    ``keep`` turns the ask into a TOP-UP: the lines already verified are shown as final
+    and the model writes only what is missing. Without it a repair re-asks for the whole
+    field, which puts lines that already passed every check back at risk of a worse
+    second answer.
+    """
     from studio.template_fill import commentary as C
 
+    remaining = max(column.bullets - len(keep), 1)
     lines = [
         f"--- FIELD {column.field_id} ---",
-        C.column_rules(column.topic, column.bullets),
+        C.top_up_rules(column.topic, remaining) if keep
+        else C.column_rules(column.topic, column.bullets),
         "LEAD FROM these fact families: " + ", ".join(C.evidence_focus(column.topic))
         if C.evidence_focus(column.topic) else "",
     ]
+    if keep:
+        lines += [f"ALREADY WRITTEN AND VERIFIED for this field — these {len(keep)} line(s) "
+                  "are final and will be kept. Write the missing line(s) to follow them, "
+                  "and do not make a point any of them already makes:",
+                  *(f"- {line}" for line in keep)]
     if rejected:
         # What the checks said about the last answer for this field. Stated as the
         # verdict, not as prose to edit: the model writes the field again from the
@@ -223,7 +247,8 @@ def _column_block(column: Column, *, show_draft: bool, rejected: Sequence[str] =
 
 def section_payload(section: Section, pack, glossary_brief: str, *,
                     show_draft: bool = True,
-                    rejected: Optional[Mapping[str, Sequence[str]]] = None) -> str:
+                    rejected: Optional[Mapping[str, Sequence[str]]] = None,
+                    keep: Optional[Mapping[str, Sequence[str]]] = None) -> str:
     """The user message: the evidence once, the definitions once, then each field's ask."""
     blocks = [f"CARRIER: {section.subject}", "",
               "EVIDENCE — the only facts you may use across every field below. Every "
@@ -241,7 +266,9 @@ def section_payload(section: Section, pack, glossary_brief: str, *,
                    "two fields may make the same point in different words. When one fact "
                    "could serve two fields, give it to the field whose brief owns it and "
                    "make the other earn its place on something else.", ""]
-    blocks += [_column_block(c, show_draft=show_draft, rejected=(rejected or {}).get(c.field_id, ()))
+    blocks += [_column_block(c, show_draft=show_draft,
+                             rejected=(rejected or {}).get(c.field_id, ()),
+                             keep=(keep or {}).get(c.field_id, ()))
                for c in section.columns]
     return "\n".join(blocks)
 
@@ -269,7 +296,8 @@ def _glossary_brief(pack) -> str:
 
 
 def _author(section: Section, pack, glossary_brief: str, *, columns=None,
-            rejected: Optional[Mapping[str, Sequence[str]]] = None):
+            rejected: Optional[Mapping[str, Sequence[str]]] = None,
+            keep: Optional[Mapping[str, Sequence[str]]] = None):
     """One author call over ``columns`` (default: the whole section). Returns the model's answer."""
     from studio.ai import client
     from studio.ai.models import CommentarySections
@@ -282,7 +310,7 @@ def _author(section: Section, pack, glossary_brief: str, *, columns=None,
         CommentarySections,
         C.deck_voice(section.style, section.subject),
         section_payload(ask, pack, glossary_brief, show_draft=show_draft_to_author(),
-                        rejected=rejected),
+                        rejected=rejected, keep=keep),
         tier=C._COMMENTARY_TIER, node=f"section-{section.label}",
         phase="author", fields=ask.field_ids,
     )
@@ -400,7 +428,8 @@ def _accepted(kept: Mapping[str, Sequence[str]], columns: Sequence[Column],
             text[column.field_id] = verdict.text
         else:
             reasons = tuple((dropped or {}).get(column.field_id, ())) + verdict.reasons
-            failed.append(Failure(column, reasons or ("the model returned nothing for it",)))
+            failed.append(Failure(column, reasons or ("the model returned nothing for it",),
+                                  kept_lines=verdict.lines))
     return text, failed
 
 
@@ -494,9 +523,12 @@ def write_section(section: Section) -> Dict[str, str]:
                                     label=section.label)
     written, failed = _accepted(kept, pending, subject=section.subject, dropped=dropped)
     if failed:
-        repaired = _repair(section, pack, glossary_brief, failed)
+        repaired, failed = _repair(section, pack, glossary_brief, failed)
         written.update(repaired)
-        failed = [f for f in failed if f.column.field_id not in repaired]
+    if failed:
+        # Last resort, after every repair round: a verified line beats the draft.
+        salvaged, failed = _salvage(failed, subject=section.subject, label=section.label)
+        written.update(salvaged)
     _to_cache(section, pack, written)
     text.update(written)
     telemetry.count("commentary_fields_written", len(text))
@@ -509,32 +541,117 @@ def write_section(section: Section) -> Dict[str, str]:
 
 
 def _repair(section: Section, pack, glossary_brief: str,
-            failed: Sequence[Failure]) -> Dict[str, str]:
-    """One more call for the failed fields ONLY — never the whole section, never the deck.
+            failed: Sequence[Failure]) -> Tuple[Dict[str, str], List[Failure]]:
+    """Repair the failed fields ONLY — never the whole section, never the deck.
 
     Re-running the section would throw away the fields that passed and pay to write them
     again, and a second answer for a field already accepted is a second chance to make it
     worse. So repair asks for exactly what is missing — and it says what was wrong with the
     last answer, which is the difference between a repair and a re-roll.
+
+    Two things this gets right that it used to get wrong.
+
+    **Every round is used by every field that still needs one.** It used to return the
+    moment ANY field succeeded (``if text or not still_failing: return text``), so three
+    failing fields of which the first round fixed one left the other two with their second
+    round unspent — and in ``ai_required`` that is a refused deck. Successes accumulate
+    now, and the loop carries on with whatever is still short.
+
+    **A field is topped up, not rewritten.** Each failure arrives carrying the lines it
+    already won (:attr:`Failure.kept_lines`); those are shown to the model as final and it
+    writes only what is missing. The kept lines are not re-verified — they already cleared
+    both verifiers — so a retry meant to help a field can no longer cost it a good line.
+
+    Returns the text it repaired and the failures that are still outstanding, so the
+    caller sees the up-to-date survivors rather than the ones it passed in.
     """
     from studio import telemetry
 
-    if not failed:
-        return {}
+    repaired: Dict[str, str] = {}
+    outstanding = list(failed)
     for _ in range(MAX_REPAIRS):
-        telemetry.count("commentary_repairs", len(failed))
-        columns = [f.column for f in failed]
+        if not outstanding:
+            break
+        telemetry.count("commentary_repairs", len(outstanding))
+        columns = [f.column for f in outstanding]
+        keep = {f.column.field_id: f.kept_lines for f in outstanding if f.kept_lines}
         answer = _author(section, pack, glossary_brief, columns=columns,
-                         rejected={f.column.field_id: f.reasons for f in failed})
+                         rejected={f.column.field_id: f.reasons for f in outstanding},
+                         keep=keep)
         if answer is None:
-            return {}
-        kept, dropped = _verify_section(_judged_by_field(answer, columns), pack, glossary_brief,
-                                        label=f"{section.label}-repair")
-        text, still_failing = _accepted(kept, columns, subject=section.subject, dropped=dropped)
-        if text or not still_failing:
-            return text
-        failed = still_failing
-    return {}
+            break                      # keep whatever the earlier rounds repaired
+        fresh, dropped = _verify_section(_judged_by_field(answer, columns), pack,
+                                         glossary_brief, label=f"{section.label}-repair")
+        text, outstanding = _accepted(_merged(keep, fresh), columns,
+                                      subject=section.subject, dropped=dropped)
+        repaired.update(text)
+    return repaired, outstanding
+
+
+def _merged(keep: Mapping[str, Sequence[str]],
+            fresh: Mapping[str, Sequence[str]]) -> Dict[str, List[str]]:
+    """Verified lines a field already had, then the new ones — in that order.
+
+    Priority order is the kept lines' order, so a top-up lands after what it is topping
+    up. A field the repair answer omitted entirely still keeps what it had, which is why
+    this unions the keys rather than iterating either side alone.
+
+    A repeated line is dropped. The top-up prompt tells the model the kept lines are final
+    and not to restate them, but a model that echoes one back anyway would otherwise have
+    its copy counted as the missing second bullet — and the field would ship the same
+    sentence twice, which is worse than the short column this exists to avoid.
+    """
+    out: Dict[str, List[str]] = {}
+    for fid in {*keep, *fresh}:
+        lines = list(keep.get(fid, ()))
+        seen = {_normalised(line) for line in lines}
+        for line in fresh.get(fid, ()):
+            if _normalised(line) in seen:
+                logger.info("commentary_batch: dropping a repeated line in %s top-up", fid)
+                continue
+            seen.add(_normalised(line))
+            lines.append(line)
+        out[fid] = lines
+    return out
+
+
+def _normalised(line: str) -> str:
+    """A line reduced to what makes it the same line — for the repeat check only."""
+    return " ".join(str(line).split()).casefold().rstrip(".")
+
+
+def _salvage(failed: Sequence[Failure], *, subject: str,
+             label: str) -> Tuple[Dict[str, str], List[Failure]]:
+    """Ship a SHORT column rather than lose it, once repair is out of rounds.
+
+    A field rejected only for being a line short still holds lines that cleared every
+    check there is. Refusing it means the slide gets deterministic prose instead — or, in
+    ``ai_required``, no deck at all — which is a worse outcome than a field that makes one
+    well-evidenced point. Where the evidence genuinely carries no second point, no number
+    of further rounds will produce one.
+
+    The gate is unchanged; only the floor moves (:data:`commentary.SALVAGE_FLOOR`), so a
+    salvaged line has passed exactly what a normal one passed. The fill engine drops the
+    surplus paragraph, so the slide shows one bullet rather than one bullet and a gap.
+    """
+    from studio import telemetry
+    from studio.template_fill import commentary as C
+
+    text: Dict[str, str] = {}
+    outstanding: List[Failure] = []
+    for failure in failed:
+        verdict = C.judge_column(failure.kept_lines, wanted=failure.column.bullets,
+                                 node=failure.column.node, subject=subject,
+                                 floor=C.SALVAGE_FLOOR)
+        if verdict.text:
+            text[failure.column.field_id] = verdict.text
+            telemetry.count("commentary_short_fields", 1)
+            logger.info("commentary_batch: section %s shipping %s short — %d of %d "
+                        "line(s), all verified", label, failure.column.node,
+                        verdict.kept, failure.column.bullets)
+        else:
+            outstanding.append(failure)
+    return text, outstanding
 
 
 def _drafts(columns: Sequence[Column]) -> Dict[str, str]:

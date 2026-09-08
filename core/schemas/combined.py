@@ -28,45 +28,40 @@ class CombinedInsightSignature(Signature):
     - Peers are ALWAYS aggregated — never expose individual peer names.
     - Format premium as currency (e.g. $12.4M); SoW / Appetite / YoY / NPS deltas as %.
 
-    HARD OUTPUT CONTRACT — return a single Markdown string with these 5 sections in this exact order:
+    OUTPUT SHAPE — the [RESPONSE_SHAPE] input tells you HOW to write THIS
+    answer, and it is binding. Follow its structure exactly. It is chosen from
+    the question, so a lookup gets a sentence and a strategy question gets a full
+    argument. Do NOT fall back to a standard five-section template.
 
-    ### 📌 Executive Summary
-    2-3 punchy lines fusing BOTH lenses. Lead with the headline — e.g. "Zurich's premium grew 8% YoY while broker NPS slipped 6pts — growth is masking a perception problem."
+    Whatever the shape asks for, the fused answer must still carry BOTH lenses:
+    at least one perception point, one financial point, and — where the evidence
+    shows one — the DISCONNECT between them, which is usually the most useful
+    sentence on the page. Where the shape calls for a table and both slices have
+    rows, give one small table per lens under a clear subheading; write
+    "— no data returned —" under a subheading whose slice is empty.
 
-    ### 💡 Key Insights
-    4-6 bullets. MUST include at least one perception insight, one financial insight, and one CORRELATION / DISCONNECT insight. Use icons 📈 📉 ⚠️ ✅ and bold the critical numbers.
-
-    ### 🔍 Business Interpretation
-    A short paragraph explaining the combined story — what the perception + performance pattern implies about pricing power, retention risk, distribution health, or competitive positioning.
-
-    ### 🎯 Recommendations
-    3-5 verb-led, specific actions. Each must address an insight above. Tag each with its lens — [Perception], [Financial], or [Both].
-
-    ### 📊 Supporting Data
-    Two compact Markdown tables under clear subheadings:
-      **Survey View** — top 5 rows of the survey slice.
-      **Premium View** — top 5 rows of the premium slice.
-    If a slice is empty, write "— no data returned —" under its subheading.
-
-    NARRATIVE ARC — the answer is a story, not a report (funnel: wide → narrow):
-    - Sequence Key Insights as a funnel: open at the broadest level (the combined
-      perception + performance position), narrow to the segment/product/geography
-      where the two lenses align or diverge, and end with the sharpest, most
-      specific finding (the disconnect or whitespace worth acting on).
-    - Each section answers the question the previous one raises: the Summary states
-      WHAT happened, Key Insights show WHERE it is concentrated, the Interpretation
-      explains WHY, the Recommendations say WHAT TO DO about it.
-    - Connect the dots explicitly ("that gap is widest in…", "which is why…").
+    NARRATIVE ARC — wherever the shape has more than one section, the sections
+    are a story, not a report (funnel: wide → narrow): open at the broadest
+    combined position, narrow to where the two lenses align or diverge, and end on
+    the sharpest specific finding. Connect them explicitly ("that gap is widest
+    in…", "which is why…").
 
     STYLE RULES:
     - Executive tone. No hedging. No filler.
     - Never repeat the same fact across sections.
-    - No preamble. Start directly with "### 📌 Executive Summary".
+    - No preamble and no restatement of the question. Open with the answer, in the form [RESPONSE_SHAPE] asks for.
     """
 
     user_query: str = InputField(desc="The user's original question.")
     rules: str = InputField(
         desc="Authoritative domain rules and confidentiality constraints to obey verbatim."
+    )
+    response_shape: str = InputField(
+        desc=(
+            "The binding structure for THIS answer, chosen from the question by "
+            "core.agents.common.answer_shape. Follow it exactly instead of any "
+            "default template."
+        )
     )
     survey_output: Any = InputField(
         desc="Survey SQL result rows (list of dicts) or empty list if unavailable."
