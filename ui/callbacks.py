@@ -260,7 +260,7 @@ def save_answer_edit(
 # the steps is clientside, because a tour that waits for a round trip between
 # screens is a tour people abandon halfway.
 @callback(
-    Output("tour-modal", "is_open"),
+    Output("tour-modal", "is_open", allow_duplicate=True),
     Input("tour-open", "n_clicks"),
     Input("tour-close", "n_clicks"),
     State("tour-modal", "is_open"),
@@ -278,31 +278,43 @@ def toggle_tour(open_clicks: int, close_clicks: int, is_open: bool) -> bool:
 
 clientside_callback(
     """
-    function(nextClicks, backClicks, dotClicks, stepIds, dotIds) {
+    function(nextClicks, backClicks, dotClicks, styles, dotIds) {
         const ctx = window.dash_clientside.callback_context;
         const trig = ctx.triggered.length ? ctx.triggered[0] : null;
-        const total = stepIds.length;
-        // Which step is showing now is read off the DOM rather than kept in a
-        // store: the panels ARE the state, so the two cannot fall out of step.
+        const noUpdate = window.dash_clientside.no_update;
+        if (!trig || !trig.value) { return noUpdate; }
+        const total = styles.length;
+        // Which step is showing is read off the styles this callback already
+        // receives as State. It used to be a document.querySelector built by
+        // string concatenation, which needed quotes inside quotes -- and Dash
+        // drops the backslash of an escaped quote when it inlines a clientside
+        // function into the page, so that line reached the browser as a syntax
+        // error and took every clientside callback on the page down with it.
         let current = 0;
         for (let i = 0; i < total; i++) {
-            const el = document.querySelector('[id*=\'"index":' + i + '\'][id*="tour-step"]');
-            if (el && el.style.display !== 'none') { current = i; break; }
+            const style = styles[i] || {};
+            if (!style.display) { current = i; break; }
         }
-        if (!trig || !trig.value) { return window.dash_clientside.no_update; }
         const id = trig.prop_id.split('.')[0];
+        // On the last step the forward button says "Done", so it has to DO that
+        // — a button that reads as finished and then does nothing is worse than
+        // no button. Closing is an output of this callback for that reason.
+        const finishing = (id === 'tour-next' && current === total - 1);
         let target = current;
         if (id === 'tour-next') { target = Math.min(current + 1, total - 1); }
         else if (id === 'tour-back') { target = Math.max(current - 1, 0); }
         else {
             try { target = JSON.parse(id).index; }
-            catch (e) { return window.dash_clientside.no_update; }
+            catch (e) { return noUpdate; }
         }
         return [
-            stepIds.map((_, i) => (i === target ? {} : {display: 'none'})),
-            dotIds.map((_, i) => 'tour-dot' + (i === target ? ' active' : '')),
+            styles.map(function (_, i) { return i === target ? {} : {display: 'none'}; }),
+            dotIds.map(function (_, i) {
+                return 'tour-dot' + (i === target ? ' active' : '');
+            }),
             target === 0,
             target === total - 1 ? 'Done' : 'Next',
+            finishing ? false : noUpdate
         ];
     }
     """,
@@ -310,10 +322,11 @@ clientside_callback(
     Output({"type": "tour-dot", "index": ALL}, "className"),
     Output("tour-back", "disabled"),
     Output("tour-next", "children"),
+    Output("tour-modal", "is_open", allow_duplicate=True),
     Input("tour-next", "n_clicks"),
     Input("tour-back", "n_clicks"),
     Input({"type": "tour-dot", "index": ALL}, "n_clicks"),
-    State({"type": "tour-step", "index": ALL}, "id"),
+    State({"type": "tour-step", "index": ALL}, "style"),
     State({"type": "tour-dot", "index": ALL}, "id"),
     prevent_initial_call=True,
 )
