@@ -192,6 +192,133 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
+# ── EDIT AN INSIGHT  ───────────────────────────────────────────────────────────────────────────────
+@callback(
+    Output("answer-editing", "data"),
+    Input({"type": "answer-edit-open", "idx": ALL}, "n_clicks"),
+    Input({"type": "answer-edit-cancel", "idx": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def toggle_answer_edit(_edit_clicks: list, _cancel_clicks: list) -> Any:
+    """Open one answer for rewriting, or close the one that is open."""
+    triggered = ctx.triggered_id
+    if not isinstance(triggered, dict) or not (ctx.triggered and ctx.triggered[0].get("value")):
+        return no_update
+    if triggered.get("type") == "answer-edit-cancel":
+        return None
+    return triggered.get("idx")
+
+
+@callback(
+    Output("chat-store", "data", allow_duplicate=True),
+    Output("answer-editing", "data", allow_duplicate=True),
+    Input({"type": "answer-edit-save", "idx": ALL}, "n_clicks"),
+    State({"type": "answer-edit-text", "idx": ALL}, "value"),
+    State("chat-store", "data"),
+    prevent_initial_call=True,
+)
+def save_answer_edit(
+    _clicks: list[int | None], texts: list[str | None], chat_history: dict[str, Any]
+) -> tuple[Any, Any]:
+    """Replace an answer with the user's own words, and re-check its figures.
+
+    The verification badge must describe what is ON SCREEN. An answer someone
+    rewrote keeping a badge earned by the text it replaced would be the panel
+    lying, so the figure check runs again over the new prose against the same
+    rows — type a number the data does not contain and it says so, exactly as it
+    would for the model.
+    """
+    triggered = ctx.triggered_id
+    if not isinstance(triggered, dict) or not (ctx.triggered and ctx.triggered[0].get("value")):
+        return no_update, no_update
+
+    idx = triggered.get("idx")
+    edited = ""
+    for entry in (ctx.states_list[0] if ctx.states_list else []):
+        if (entry.get("id") or {}).get("idx") == idx:
+            edited = (entry.get("value") or "").strip()
+            break
+    if not edited:
+        return no_update, None
+
+    chat_history = chat_history or {}
+    answer = _answer_at(chat_history, idx)
+    if not answer:
+        return no_update, None
+
+    answer["content"] = edited
+    answer["edited"] = True
+    if answer.get("provenance"):
+        answer["provenance"] = answer_provenance.reverify(
+            answer["provenance"], edited, _rows_for_answer(chat_history, idx)
+        )
+    return chat_history, None
+
+
+# ── GUIDED TOUR  ───────────────────────────────────────────────────────────────────────────────────
+# Opening and closing is a server callback (one click, no cost); MOVING through
+# the steps is clientside, because a tour that waits for a round trip between
+# screens is a tour people abandon halfway.
+@callback(
+    Output("tour-modal", "is_open"),
+    Input("tour-open", "n_clicks"),
+    Input("tour-close", "n_clicks"),
+    State("tour-modal", "is_open"),
+    prevent_initial_call=True,
+)
+def toggle_tour(open_clicks: int, close_clicks: int, is_open: bool) -> bool:
+    """Open from the navbar, close from the ✕."""
+    triggered = ctx.triggered_id
+    if triggered == "tour-open":
+        return True
+    if triggered == "tour-close":
+        return False
+    return bool(is_open)
+
+
+clientside_callback(
+    """
+    function(nextClicks, backClicks, dotClicks, stepIds, dotIds) {
+        const ctx = window.dash_clientside.callback_context;
+        const trig = ctx.triggered.length ? ctx.triggered[0] : null;
+        const total = stepIds.length;
+        // Which step is showing now is read off the DOM rather than kept in a
+        // store: the panels ARE the state, so the two cannot fall out of step.
+        let current = 0;
+        for (let i = 0; i < total; i++) {
+            const el = document.querySelector('[id*=\'"index":' + i + '\'][id*="tour-step"]');
+            if (el && el.style.display !== 'none') { current = i; break; }
+        }
+        if (!trig || !trig.value) { return window.dash_clientside.no_update; }
+        const id = trig.prop_id.split('.')[0];
+        let target = current;
+        if (id === 'tour-next') { target = Math.min(current + 1, total - 1); }
+        else if (id === 'tour-back') { target = Math.max(current - 1, 0); }
+        else {
+            try { target = JSON.parse(id).index; }
+            catch (e) { return window.dash_clientside.no_update; }
+        }
+        return [
+            stepIds.map((_, i) => (i === target ? {} : {display: 'none'})),
+            dotIds.map((_, i) => 'tour-dot' + (i === target ? ' active' : '')),
+            target === 0,
+            target === total - 1 ? 'Done' : 'Next',
+        ];
+    }
+    """,
+    Output({"type": "tour-step", "index": ALL}, "style"),
+    Output({"type": "tour-dot", "index": ALL}, "className"),
+    Output("tour-back", "disabled"),
+    Output("tour-next", "children"),
+    Input("tour-next", "n_clicks"),
+    Input("tour-back", "n_clicks"),
+    Input({"type": "tour-dot", "index": ALL}, "n_clicks"),
+    State({"type": "tour-step", "index": ALL}, "id"),
+    State({"type": "tour-dot", "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+
+
 # ── SLASH COMMANDS: FILTER THE MENU, INSERT ON CLICK  ──────────────────────────────────────────────
 # Both clientside. The menu is filtered on every keystroke, so a server round
 # trip per character would make typing feel heavy — which is exactly the thing a
@@ -2028,11 +2155,37 @@ def enrich_chat_store(chat_history: dict[str, Any], user_store: dict[str, Any]) 
     return chat_history if changed else no_update
 
 
+def _evidence_after(messages: list[dict[str, Any]], idx: int) -> tuple[list[dict[str, Any]], set]:
+    """The evidence specs belonging to the answer at `idx`, and their indices.
+
+    An answer and its chart/table are one card, so the renderer has to know which
+    messages the answer owns. They are the ones between it and the next message
+    that starts a new turn — the same rule `_rows_for_answer` uses, kept in step
+    deliberately so the card and the Export action can never disagree about what
+    an answer's evidence is.
+    """
+    specs: list[dict[str, Any]] = []
+    consumed: set = set()
+    for offset, message in enumerate(messages[idx + 1:], start=idx + 1):
+        kind = message.get("type")
+        if kind in ("HumanMessage", "AIMessage", "Boardroom", "ClarifyCard"):
+            break
+        if kind in ("Evidence", "SQLOutputForCharts"):
+            specs.extend(
+                message.get("views")
+                or [{"rows": message.get("updated_query"),
+                     "chart_data": message.get("chart_data")}]
+            )
+            consumed.add(offset)
+    return specs, consumed
+
+
 @callback(
     Output("chat-box", "children"),
     Input("chat-store", "data"),
     Input("is-thinking", "data"),
     Input("boardroom-edit-mode", "data"),
+    Input("answer-editing", "data"),
     State("boardroom-active-page", "data"),
     prevent_initial_call=True,
 )
@@ -2040,17 +2193,23 @@ def render_chat(
     chat_history: dict[str, Any],
     is_thinking: bool,
     edit_mode: bool,
+    editing_idx: Any,
     active_pages: dict[str, Any],
 ) -> list[Any] | NoUpdate:
 
     chat_items: list[Any] = []
     chart_idx = 0  # unique, stable per-chart id for the Chart/Data toggle
+    absorbed: set = set()  # evidence messages already drawn inside their answer
 
     # Guard on messages presence: chat-store can hold side state (e.g. custom_peers)
     # before any turn exists. Returning [] then would wipe the welcome hero, so only
     # re-render once there is an actual transcript.
     if chat_history and chat_history.get("messages"):
-        for msg_idx, msg in enumerate(chat_history["messages"]):
+        messages = chat_history["messages"]
+        for msg_idx, msg in enumerate(messages):
+            if msg_idx in absorbed:
+                continue
+
             if msg["type"] == "Boardroom":
                 # The editable document is built + stored at commit time; rebuild it
                 # for legacy messages that predate the builder.
@@ -2074,6 +2233,9 @@ def render_chat(
                 # One panel per turn, one view per result set. `SQLOutputForCharts`
                 # is the pre-panel shape — a conversation saved then holds one
                 # message per chart, and each still opens as a single-view panel.
+                # Orphaned evidence only: an answer absorbs the evidence that
+                # follows it (see `_evidence_after`), so reaching one here means
+                # it has no answer to belong to.
                 specs = msg.get("views") or [
                     {"rows": msg.get("updated_query"), "chart_data": msg.get("chart_data")}
                 ]
@@ -2085,6 +2247,7 @@ def render_chat(
                 chat_items.append(evidence_panel(views, msg_idx, pane_ids))
 
             elif msg["type"] == "Contribution":
+                # Pre-card shape: a decomposition saved as its own message.
                 panel = contribution_panel(msg.get("contribution"))
                 if panel is not None:
                     chat_items.append(panel)
@@ -2110,6 +2273,11 @@ def render_chat(
                     ),
                 )
 
+                specs, consumed = _evidence_after(messages, msg_idx)
+                absorbed |= consumed
+                views = build_views(specs)
+                pane_ids = list(range(chart_idx, chart_idx + len(views)))
+                chart_idx += len(views)
                 chat_items.append(
                     ai_message(
                         content,
@@ -2127,6 +2295,11 @@ def render_chat(
                             if chip.get("key") != "peers"
                         ],
                         provenance=msg.get("provenance"),
+                        evidence=views,
+                        contribution=msg.get("contribution"),
+                        card_idx=msg_idx,
+                        pane_ids=pane_ids,
+                        editing=(editing_idx == msg_idx),
                     )
                 )
 
@@ -2650,10 +2823,9 @@ def ask_from_answer(
             _rows_for_answer(chat_history, triggered.get("idx"))
         )
         if broken_down.is_supported:
-            chat_history = chat_history or {}
-            chat_history.setdefault("messages", []).append(
-                {"type": "Contribution", "contribution": broken_down.as_dict()}
-            )
+            # Stored ON the answer: it is part of that finding, and appending it
+            # as its own message would put it below the evidence card it explains.
+            answer["contribution"] = broken_down.as_dict()
             return chat_history, no_update, no_update, no_update
         question = _driver_followup(question)
     elif not question:

@@ -30,4 +30,14 @@ Identical / aligned periods (partial latest year):
   `Quarter <= latest_q` (or the same month/date-of-year) so neither side carries
   periods the other lacks.
 - Never compare a partial current year against a full prior year; that overstates
-  a decline. State the aligned window used (e.g. "YTD through Q1, YoY").
+  a decline.
+
+Say the window in WORDS, not in shorthand:
+- Write the comparison as a business reader would say it out loud: "2025 to the
+  end of Q1, against the same period in 2024". Say it ONCE, near the headline
+  figure — not on every sentence.
+- Do NOT emit shorthand like "2025 YoY through Q4", "YTD through Q1, YoY" or
+  "vs PY". Those read as codes; a reader should not have to decipher the basis of
+  a number to know what it covers.
+- When the latest year IS complete, say so plainly ("full-year 2025 against
+  2024") rather than labelling it YTD.

@@ -1,6 +1,12 @@
-"""What drove the movement, drawn as a signed bar per slice.
+"""What drove the movement — the read first, then the evidence for it.
 
-The point of the chart is the SIGN. A ranked table of movements makes the reader
+The panel used to open with a chart, which makes the reader derive the conclusion
+from a picture. The conclusion is one sentence and it is computable, so the panel
+states it ("Product line Property fell the most — 115% of the movement. Cyber
+moved the other way, holding the fall back"), and the bars are what you look at to
+check it.
+
+The point of the bars is the SIGN. A ranked table of movements makes the reader
 work out which slices pushed the total down and which pulled it back up; bars
 either side of a centre line say it at a glance, and the one that crosses furthest
 is the story.
@@ -65,7 +71,16 @@ def _driver_row(driver: Dict[str, Any], widest: float):
     )
     return html.Div(
         [
-            html.Span(str(driver.get("name") or ""), className="contrib-name"),
+            html.Div(
+                [
+                    html.Span(str(driver.get("name") or ""), className="contrib-name-text"),
+                    html.Span(
+                        f"{format_money(driver.get('prior'))} → {format_money(driver.get('current'))}",
+                        className="contrib-name-sub",
+                    ),
+                ],
+                className="contrib-name",
+            ),
             bar,
             html.Span(
                 _signed_money(delta),
@@ -115,8 +130,12 @@ def contribution_panel(payload: Dict[str, Any] | None):
         className="contrib-header",
     )
 
+    # The finding, in words, before anything has to be read off a bar.
+    headline = html.Div(str(payload.get("headline") or ""), className="contrib-headline")
+
     total = html.Div(
         [
+            html.Span("Total", className="contrib-total-label"),
             html.Span(format_money(payload.get("prior_total")), className="contrib-total-from"),
             html.I(className="bi bi-arrow-right"),
             html.Span(format_money(payload.get("current_total")), className="contrib-total-to"),
@@ -126,6 +145,17 @@ def contribution_panel(payload: Dict[str, Any] | None):
             ),
         ],
         className="contrib-total",
+    )
+
+    # Column headings, so a bar and a percentage are not left to be guessed at.
+    legend = html.Div(
+        [
+            html.Span(str(payload.get("dimension_label") or "Slice"), className="contrib-name"),
+            html.Span("Movement", className="contrib-col-bar"),
+            html.Span("Change", className="contrib-col-delta"),
+            html.Span("Of total", className="contrib-col-share"),
+        ],
+        className="contrib-row contrib-legend",
     )
 
     rows = [_driver_row(d, widest) for d in shown]
@@ -141,8 +171,9 @@ def contribution_panel(payload: Dict[str, Any] | None):
     return html.Div(
         [
             header,
+            headline,
             total,
-            html.Div(rows, className="contrib-rows"),
+            html.Div([legend] + rows, className="contrib-rows"),
             html.Div(
                 [
                     html.I(className="bi bi-calculator"),

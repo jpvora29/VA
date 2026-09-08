@@ -70,13 +70,57 @@ _TABLES = """[WHEN YOU WRITE A TABLE]
   into the table with what it shows, and follow it with what it means."""
 
 
+# Applies to every shape. The reported failure was "a bit of commentary and just
+# a table": paragraphs a reader has to mine for the finding, with no way to tell
+# where one idea stops and the next starts. Prose is not the problem — an
+# undifferentiated BLOCK of it is.
+_SCANNABLE = """[WRITE SO IT CAN BE SCANNED]
+- Open with the answer as ONE short sentence on its own line. Not a heading, not
+  a preamble — the finding, bolded where the number is.
+- Then group what follows under short labelled headings (###) that name what the
+  group IS: "Where the growth came from", "What is at risk", "Against the peer
+  set". Never a generic label — no "Analysis", "Key insights", "Overview",
+  "Details".
+- Inside a group, write POINTS, not paragraphs. One point per line, one idea per
+  point, each starting with the thing it is about and carrying its number:
+  "**Property** — £8.2m, up 14% and the only line growing above the market."
+- Two to five points per group. A group with one point is not a group; fold it
+  into the one above. A group with eight is two groups.
+- Never more than three groups. If a fourth is forming, the first one was not
+  the answer.
+- No point may repeat a number another point already made. Say it where it
+  matters most and reference it after that ("that same £3.1m fall")."""
+
+
+# Applies to every shape. A coined measure name is unanswerable: the reader
+# cannot look it up, cannot check it, and cannot tell whether it is the thing
+# they asked for. "share of product-line premium" was a real one — invented for a
+# question that asked which carriers led growth, where a share of anything was
+# not the measure and the reader was left decoding a phrase that exists nowhere
+# else in the product.
+_MEASURES = """[NAME MEASURES THE WAY THE BUSINESS DOES]
+- The governed measures are: premium, share of wallet, share of portfolio, rank,
+  peer average, headroom, whitespace, capture rate, concentration, momentum,
+  survey score, NPS, year on year, trailing twelve months, percentage point.
+  Use those names, exactly, for those things.
+- NEVER invent a measure name. No "share of product-line premium", no "growth
+  index", no "performance score". If a number needs a name the list above does
+  not have, write what it is in a short sentence instead — "£8.2m of the £42m
+  Marsh placed in the line" beats a label nobody can look up.
+- Report the measure the QUESTION asked for. A question about who is growing
+  fastest is answered with growth; adding a share of some total answers a
+  different question and buries the one that was asked.
+- Give every measure its unit and its basis the first time it appears, then stop
+  repeating them."""
+
+
 @dataclass(frozen=True)
 class AnswerShape:
     """One way of answering, and the phrasings that call for it.
 
     `contract` is the body of the OUTPUT CONTRACT the writer is handed; the
-    shared table, confidentiality and anti-template blocks are appended by
-    :func:`shape_contract`, so a shape never restates them.
+    shared measure-naming, table, confidentiality and anti-template blocks are
+    appended by :func:`shape_contract`, so a shape never restates them.
 
     `patterns` are matched against the RAW user question, in registry order, so a
     more specific shape declared earlier wins over a looser one below it.
@@ -89,6 +133,16 @@ class AnswerShape:
 
     def matches(self, question: str) -> bool:
         return any(p.search(question) for p in self.patterns)
+
+    @property
+    def is_scannable(self) -> bool:
+        """Whether this shape's answer is long enough to need grouping.
+
+        A direct lookup is one or two sentences — headings and bullet groups
+        would be scaffolding around a number. Everything else is a finding
+        somebody has to read at speed.
+        """
+        return self.key not in ("direct",)
 
     @property
     def allows_table(self) -> bool:
@@ -132,9 +186,11 @@ _RANKING = AnswerShape(
 1. ONE opening sentence: who leads, and by how much over second place. If the
    gap is trivial, say the top of the list is effectively tied — that is the
    finding.
-2. The ranked table. One row per entity, ordered, with the measure and its share
-   of the total. Currency as $12.4M; shares and growth as %. Peers aggregated
-   into a single row.
+2. The ranked table. One row per entity, ordered, showing THE MEASURE THE
+   QUESTION RANKS BY and nothing else invented alongside it. Currency as $12.4M;
+   growth as %. Add a second column only when it is a governed measure that
+   genuinely helps read the ranking (its premium beside its growth, say) — never
+   a share you had to name yourself. Peers aggregated into a single row.
 3. ONE closing line: the thing in the ranking a reader would not have guessed —
    a name higher or lower than expected, a long tail, a concentration.
 
@@ -291,23 +347,23 @@ _ANALYST = AnswerShape(
     label="Full analysis",
     contract="""[SHAPE — FULL ANALYSIS. An open question with room to explore it.]
 
-1. LEAD — one H3 heading stating the headline answer at a glance: the direct
-   answer, the headline number, the business consequence. Two or three lines.
-   Title it for THIS question, not "Executive Summary" every time.
-2. BODY — TWO OR THREE H3 sections, and only ones you have real analysis for.
-   Name each after what the data actually shows ("Rate adequacy gap", "Where the
-   growth went", "The retention problem underneath"). Order them wide -> narrow:
-   the portfolio picture, then the segment driving it, then the sharpest specific
-   finding. Connect them explicitly ("that decline is concentrated in..."), so
-   each section answers the question the one above it raises. **Bold the critical
-   numbers.**
-3. SO WHAT — 2-3 bullets, each starting with a verb, each tied to a finding
-   above. Include this ONLY when the analysis actually implies action.
+1. LEAD — ONE sentence, no heading above it, stating the answer and its number.
+   A reader who stops here should still have been answered.
+2. BODY — TWO OR THREE H3 groups, and only ones you have real analysis for.
+   Name each after what the data actually shows ("Where the growth went", "The
+   retention problem underneath"), never a generic label. Inside each, 2-5
+   POINTS, one per line, each leading with what it is about. Order the groups
+   wide -> narrow: the portfolio picture, then the segment driving it, then the
+   sharpest specific finding. Connect them explicitly ("that decline is
+   concentrated in..."), so each group answers the question the one above raises.
+   **Bold the critical numbers.**
+3. SO WHAT — 2-3 points, each starting with a verb, each tied to a finding above.
+   Include this ONLY when the analysis actually implies action.
 4. A compact supporting table (5-10 rows) when the answer rests on more numbers
    than the prose can carry. Skip it when it would only restate the prose.
 
-Three or four sections in total. If you find yourself writing a fifth, you are
-padding.""",
+Three groups at most. If you find yourself writing a fourth, the first one was
+not the answer.""",
 )
 
 # Registry order is detection priority. `analyst` carries no patterns: it is the
@@ -366,7 +422,9 @@ def shape_contract(key: Optional[str]) -> str:
     ]
     if shape.allows_table:
         blocks.append(_TABLES)
-    blocks += [_VARIETY, _CONFIDENTIALITY]
+    if shape.is_scannable:
+        blocks.append(_SCANNABLE)
+    blocks += [_MEASURES, _VARIETY, _CONFIDENTIALITY]
     return "\n\n".join(blocks)
 
 

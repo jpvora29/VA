@@ -188,11 +188,54 @@ def test_subjects_from_an_empty_or_missing_slice():
     assert subjects_from_resolved({}, "gpr") == ()
 
 
-def test_an_empty_policy_still_protects():
-    """A turn with no resolved subject treats every carrier as a peer."""
-    assert PeerPolicy().is_identity_column("Carrier_Group")
-    assert not PeerPolicy().may_name("AIG")
-    assert PeerPolicy().may_name("Marsh")
+def test_a_turn_with_no_subject_has_no_peers_to_protect():
+    """A peer only exists relative to a subject.
+
+    "Which carriers lead Singapore premium growth?" names nobody, so the result
+    is a market ranking and the carriers in it are competitors, not somebody's
+    disclosed peer set. Blanking them to "Peer 1, Peer 2" made the answer
+    useless without making it confidential.
+    """
+    policy = PeerPolicy()
+    assert policy.is_identity_column("Carrier_Group")
+    assert not policy.redacts
+    assert policy.may_name("AIG")
+    assert policy.may_name("Marsh")
+
+
+def test_a_subject_turns_every_other_carrier_into_a_peer():
+    policy = PeerPolicy(subjects=frozenset({"zurich group", "marsh"}))
+    assert policy.redacts
+    assert policy.may_name("ZURICH GROUP") and policy.may_name("Marsh")
+    assert not policy.may_name("AIG")
+
+
+def test_marsh_alone_is_not_a_subject():
+    """Marsh is the market proxy — nameable everywhere, and never the subject."""
+    assert not PeerPolicy(subjects=frozenset({"marsh"})).redacts
+
+
+def test_a_market_ranking_keeps_its_carrier_names():
+    rows = [{"Carrier_Group": "ZURICH GROUP"}, {"Carrier_Group": "AIG"}]
+    kept = redactor_for("gpr", resolved={"Country": ["Singapore"]}).rows(rows)
+    assert [r["Carrier_Group"] for r in kept] == ["ZURICH GROUP", "AIG"]
+
+
+def test_a_peer_comparison_still_anonymises():
+    rows = [{"Carrier_Group": "ZURICH GROUP"}, {"Carrier_Group": "AIG"}]
+    redacted = redactor_for(
+        "gpr", resolved={"Country": ["Singapore"], "Carrier_Group": ["ZURICH GROUP"]}
+    ).rows(rows)
+    assert [r["Carrier_Group"] for r in redacted] == ["ZURICH GROUP", "Peer 1"]
+
+
+def test_a_pinned_peer_set_still_anonymises():
+    """The user chose a benchmark, so the benchmark is a peer set."""
+    rows = [{"Carrier_Group": "ZURICH GROUP"}, {"Carrier_Group": "AIG"}]
+    redacted = redactor_for(
+        "gpr", resolved={}, custom_peers={"carrier": "ZURICH GROUP", "peers": ["AIG"]}
+    ).rows(rows)
+    assert [r["Carrier_Group"] for r in redacted] == ["ZURICH GROUP", "Peer 1"]
 
 
 # ── the vocabulary carried to the writer ─────────────────────────────────────

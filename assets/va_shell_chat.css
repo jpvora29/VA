@@ -687,6 +687,30 @@
 .prov-rows { font-weight: 700; color: var(--va-ink-600); font-size: 11.5px; }
 .prov-columns { font-size: 11px; color: var(--va-ink-300); }
 
+/* The steps ARE the explanation; the query is a technical footnote under them. */
+.prov-steps {
+    margin: 4px 0 6px;
+    padding-left: 20px;
+    color: var(--va-ink-600);
+    line-height: 1.7;
+}
+.prov-step { font-size: 12.5px; }
+.prov-step::marker { color: var(--va-blue); font-weight: 700; }
+
+.prov-sql-drawer { margin-top: 4px; }
+.prov-sql-summary {
+    cursor: pointer;
+    list-style: none;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--va-ink-300);
+    padding: 2px 0;
+}
+.prov-sql-summary::-webkit-details-marker { display: none; }
+.prov-sql-summary::before { content: "› "; }
+.prov-sql-drawer[open] .prov-sql-summary::before { content: "⌄ "; }
+.prov-sql-summary:hover { color: var(--va-blue); }
+
 .prov-sql {
     margin: 0;
     padding: 8px 10px;
@@ -755,7 +779,56 @@
 .contrib-total-move.up { color: var(--va-good); }
 .contrib-total-move.down { color: var(--va-danger); }
 
-.contrib-rows { display: flex; flex-direction: column; gap: 6px; }
+/* The read, before any bar has to be interpreted. */
+.contrib-headline {
+    font-size: 13.5px;
+    font-weight: 600;
+    line-height: 1.55;
+    color: var(--va-ink-700);
+    margin-bottom: 10px;
+}
+
+.contrib-total-label {
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--va-ink-300);
+    margin-right: 2px;
+}
+
+.contrib-rows { display: flex; flex-direction: column; gap: 8px; }
+
+/* Column headings, so a bar and a percentage are not left to be guessed at. */
+.contrib-legend {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--va-ink-300);
+    padding-bottom: 2px;
+    border-bottom: 1px solid var(--va-border-soft);
+}
+.contrib-col-bar { text-align: center; }
+.contrib-col-delta, .contrib-col-share { text-align: right; }
+
+.contrib-name-text {
+    display: block;
+    font-weight: 700;
+    color: var(--va-ink-700);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* Where the slice came from and went to — the bar shows the size of the move,
+   this shows the two numbers it is a move between. */
+.contrib-name-sub {
+    display: block;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--va-ink-300);
+    font-variant-numeric: tabular-nums;
+}
 
 .contrib-row {
     display: grid;
@@ -765,13 +838,7 @@
     font-size: 12.5px;
 }
 
-.contrib-name {
-    font-weight: 700;
-    color: var(--va-ink-700);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
+.contrib-name { min-width: 0; }
 
 /* The centre line is zero; a bar grows from it in the direction of its sign. */
 .contrib-bar-track {
@@ -879,3 +946,211 @@
 @media (max-width: 640px) {
     .cmd-hint { display: none; }
 }
+
+/* The status bar's contents are laid out so neither can move the other: the
+   stage label truncates into whatever space is left, and the clock is pinned to
+   the right on a fixed box. See the `.thinking-bar` rule in style.css for why
+   this matters — a bar that resizes once a second reads as a flicker. */
+.thinking-agent {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.thinking-elapsed {
+    flex: 0 0 auto;
+    margin-left: auto;
+    min-width: 52px;
+    text-align: right;
+}
+
+/* ── One answer, one card ─────────────────────────────────────────────────
+   The chart and the table used to be a separate message under the answer, at a
+   different width — two boxes that looked unrelated and made the pair read as
+   broken. They are now inside the answer, so a card that carries evidence takes
+   the room the evidence needs; a bare paragraph keeps the narrower bubble,
+   because stretching every answer to full width makes the short ones look
+   empty. */
+.gpt-message.has-evidence,
+.insight-card.has-evidence {
+    max-width: 100%;
+    align-self: stretch;
+}
+
+/* Inside a card the panel is a SECTION, not a card of its own: no second border,
+   no second shadow, no second background — just a rule separating it from the
+   prose above it. */
+.gpt-message .ev-panel,
+.insight-card .ev-panel,
+.gpt-message .contrib-panel,
+.insight-card .contrib-panel {
+    margin: 14px 0 0;
+    padding: 14px 0 0;
+    border: none;
+    border-top: 1px solid var(--va-border-soft);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    width: auto;
+}
+.gpt-message .contrib-panel.is-empty,
+.insight-card .contrib-panel.is-empty {
+    padding-top: 12px;
+}
+
+/* The chart fills the card rather than sitting in a fixed-height well of its
+   own — inside an answer it is part of the answer, not an attachment. */
+.gpt-message .gpt-chart-display,
+.insight-card .gpt-chart-display {
+    height: 360px;
+    min-height: 360px;
+    max-height: 360px;
+    flex-basis: 360px;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+/* ── Insight structure: a lead, then labelled groups of points ────────────
+   The contract asks the writer for a one-line lead, then 2-3 named groups of
+   short points (see `_SCANNABLE` in core/agents/common/answer_shape.py). This
+   is the half that makes the structure VISIBLE — without it a group heading is
+   just slightly bigger text and the answer still reads as a wall.
+
+   The first paragraph of an answer is the lead, so it is set larger: someone who
+   reads one line has been answered. */
+.gpt-message > p:first-of-type,
+.insight-card-body > p:first-of-type {
+    font-size: 15.5px;
+    font-weight: 600;
+    line-height: 1.55;
+    color: var(--va-navy);
+    margin-bottom: 14px;
+}
+
+/* Each group gets a rule above it and a coloured label, so where one idea stops
+   and the next starts is visible before a word is read. */
+.gpt-message h3,
+.insight-card-body h3 {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 18px 0 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--va-border-soft);
+    font-size: 11.5px !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--va-blue);
+}
+.gpt-message h3:first-child,
+.insight-card-body h3:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+/* Points, not paragraphs: a marker that reads as a bullet without the browser's
+   heavy dot, and room between them so each is a separate thought. */
+.gpt-message ul,
+.insight-card-body ul {
+    list-style: none;
+    padding-left: 2px;
+}
+.gpt-message ul > li,
+.insight-card-body ul > li {
+    position: relative;
+    padding-left: 18px;
+    margin-bottom: 8px;
+}
+.gpt-message ul > li::before,
+.insight-card-body ul > li::before {
+    content: "";
+    position: absolute;
+    left: 3px;
+    top: 0.62em;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--va-blue);
+    opacity: 0.55;
+}
+
+/* ── Editing an insight in place ──────────────────────────────────────────
+   A textarea over the Markdown SOURCE, not a contentEditable over the rendered
+   output: the structure (the headings, the points) is the thing worth keeping,
+   and contentEditable is where structure goes to die. */
+.answer-editing {
+    align-self: stretch;
+    max-width: 100%;
+    border-color: rgba(11, 75, 255, 0.35);
+    box-shadow: 0 0 0 3px rgba(11, 75, 255, 0.08);
+}
+
+.answer-edit-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 10px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--va-blue);
+}
+.answer-edit-hint {
+    margin-left: auto;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+    font-size: 11px;
+    color: var(--va-ink-300);
+}
+
+.answer-edit-text {
+    width: 100%;
+    min-height: 220px;
+    padding: 12px 14px;
+    border: 1px solid var(--va-border-mid);
+    border-radius: var(--va-radius-md);
+    background: var(--va-surface-1);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.65;
+    color: var(--va-ink-700);
+    resize: vertical;
+}
+.answer-edit-text:focus {
+    outline: none;
+    border-color: var(--va-blue);
+    box-shadow: 0 0 0 3px rgba(11, 75, 255, 0.12);
+}
+
+.answer-edit-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 10px;
+}
+.answer-edit-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 16px;
+    border-radius: var(--va-radius-pill);
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+    border: 1px solid transparent;
+}
+.answer-edit-btn.ghost {
+    background: transparent;
+    border-color: var(--va-border-mid);
+    color: var(--va-ink-500);
+}
+.answer-edit-btn.ghost:hover { color: var(--va-navy); border-color: var(--va-ink-300); }
+.answer-edit-btn.primary { background: var(--va-blue); color: #ffffff; }
+.answer-edit-btn.primary:hover { background: var(--va-navy); }

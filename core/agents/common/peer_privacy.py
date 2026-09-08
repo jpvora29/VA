@@ -1,9 +1,16 @@
 """Peer confidentiality, enforced in code rather than asked for in a prompt.
 
-The rule is a business one and it is absolute: a carrier-facing answer may
-describe peers only in aggregate. It may name the subject the question is about,
-and it may name Marsh (whose book is the market proxy). It may never name an
-individual peer.
+The rule is a business one: a carrier-facing answer may describe PEERS only in
+aggregate. It may name the subject the question is about, and it may name Marsh
+(whose book is the market proxy). It may never name an individual peer.
+
+**A peer only exists relative to a subject.** "How does Zurich compare?" has a
+subject, so every other carrier in the result is Zurich's peer and is labelled.
+"Which carriers lead Singapore premium growth?" names no subject — it is a
+market ranking, and a market ranking with the carriers blanked out to "Peer 1,
+Peer 2, Peer 3" is not confidential, it is useless. So redaction switches on the
+presence of a subject (see :attr:`PeerPolicy.redacts`), which is the same
+condition that makes the word "peer" mean anything at all.
 
 Until now that rule existed only as English, in two system prompts
 (``analyst.common._CONFIDENTIALITY`` and ``insight_writer._OUTPUT_CONTRACT``). A
@@ -82,18 +89,30 @@ class PeerPolicy:
 
     ``subjects`` are the names an answer may use verbatim: the carrier the
     question is about, plus ``ALWAYS_NAMEABLE``. Anything else found in an
-    identity column is a peer.
+    identity column is a peer — but only when there IS a subject; see
+    :attr:`redacts`.
     """
 
     identity_columns: FrozenSet[str] = frozenset()
     subjects: FrozenSet[str] = frozenset(ALWAYS_NAMEABLE)
+
+    @property
+    def redacts(self) -> bool:
+        """True when this turn has a subject, and therefore has peers.
+
+        Marsh alone is not a subject: it is the market proxy, nameable in every
+        answer. With nothing but Marsh in ``subjects`` the question is about the
+        market rather than about somebody's position in it, and the carriers in
+        the result are competitors in a ranking, not a disclosed peer set.
+        """
+        return bool(self.subjects - ALWAYS_NAMEABLE)
 
     def is_identity_column(self, column: Any) -> bool:
         name = str(column or "")
         return name in self.identity_columns or bool(_IDENTITY_COLUMN_RE.search(name))
 
     def may_name(self, value: Any) -> bool:
-        return _norm(value) in self.subjects
+        return not self.redacts or _norm(value) in self.subjects
 
 
 def registry_identity_columns(flow: str) -> FrozenSet[str]:
@@ -252,8 +271,11 @@ class PeerRedactor:
 
         Non-dict rows and non-identity columns pass through untouched, so a
         computed peer average -- which carries a peer COUNT and no name -- comes
-        out exactly as the primitive produced it.
+        out exactly as the primitive produced it. A turn with no subject
+        (``policy.redacts`` False) passes through whole: see the module docstring.
         """
+        if not self.policy.redacts:
+            return list(rows or [])
         out: List[Any] = []
         for row in rows or []:
             if not isinstance(row, dict):
@@ -269,4 +291,6 @@ class PeerRedactor:
         names, so this should find nothing. It covers the path where a name
         reaches the prose another way -- the user's own question, a schema note.
         """
+        if not self.policy.redacts:
+            return text
         return redact_text(text, self._originals.values(), self.policy, self._aliases)

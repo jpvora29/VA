@@ -195,12 +195,22 @@ def test_the_drawer_names_the_figures_it_could_not_find():
     assert "3 of 4 found in the result rows" in shown
 
 
-def test_the_drawer_shows_the_query_its_rows_and_its_definitions():
+def test_the_drawer_explains_the_calculation_in_plain_english():
+    """A business reader cannot check a SELECT, so the panel describes it."""
     shown = text_of(provenance_drawer(pv.build(state(), ANSWER).as_dict()))
-    assert "SUM(Premium)" in shown
-    assert "2 rows" in shown
-    assert "Where the numbers came from" in shown
+    assert "How the figures were worked out" in shown
+    assert "Read the gpr data" in shown
+    assert "Added up premium" in shown
+    assert "2 rows came back" in shown
     assert "What these terms mean" in shown
+
+
+def test_the_raw_query_is_available_but_demoted():
+    """Still there for whoever wants it — one more click down."""
+    drawer = provenance_drawer(pv.build(state(), ANSWER).as_dict())
+    assert "Show the query" in text_of(drawer)
+    assert "SUM(Premium)" in text_of(drawer)
+    assert any("prov-sql-drawer" in c for c in classes(drawer))
 
 
 def test_the_drawer_is_absent_when_there_is_nothing_to_show():
@@ -219,3 +229,81 @@ def test_an_answer_renders_its_drawer_between_the_prose_and_the_actions():
 def test_an_answer_without_provenance_renders_unchanged():
     message = ai_message(ANSWER, False, idx=1)
     assert not any("prov-drawer" in c for c in classes(message))
+
+# ── editing an insight ──────────────────────────────────────────────────────
+
+
+def test_an_answer_opens_as_its_own_markdown_source():
+    """The structure — the headings and the points — is what an edit must keep."""
+    from ui.components.chatbot import answer_editor
+
+    source = "### Lead" + chr(10) * 2 + "- Property leads at $8.2m."
+    editor = answer_editor(source, 1)
+    areas = [n for n in walk(editor) if type(n).__name__ == "Textarea"]
+    assert len(areas) == 1
+    assert areas[0].value.startswith("### Lead")
+
+
+def test_the_edit_control_is_not_one_of_the_next_steps():
+    """The next-steps row has a budget of four; edit acts on THIS answer."""
+    from ui.components.answer_actions import ACTIONS
+
+    assert len(ACTIONS) <= 4
+    assert "edit" not in [a.key for a in ACTIONS]
+
+
+def test_an_edited_answer_is_re_checked_against_the_same_rows():
+    base = pv.build(state(), ANSWER).as_dict()
+    assert base["state"] == pv.VERIFIED
+
+    rewritten = pv.reverify(base, ANSWER + " Peers average $4.4m.", ROWS)
+    assert rewritten["state"] == pv.PARTIAL
+    assert [f["text"] for f in rewritten["figures"] if not f["supported"] and f["checkable"]] == [
+        "$4.4m"
+    ]
+
+
+def test_an_edit_keeps_the_queries_and_definitions_it_did_not_touch():
+    base = pv.build(state(), ANSWER).as_dict()
+    rewritten = pv.reverify(base, "Property is the one to watch.", ROWS)
+    assert rewritten["queries"] == base["queries"]
+    assert rewritten["terms"] == base["terms"]
+
+
+def test_the_drawer_says_an_answer_was_rewritten():
+    """A badge earned by text somebody replaced would be the panel lying."""
+    rewritten = pv.reverify(pv.build(state(), ANSWER).as_dict(), ANSWER, ROWS)
+    assert "Rewritten by you" in text_of(provenance_drawer(rewritten))
+
+
+def test_saving_an_edit_replaces_the_answer_and_re_verifies(monkeypatch):
+    import ui.callbacks as cb
+
+    history = {
+        "thread_id": "t1",
+        "messages": [
+            {"type": "HumanMessage", "content": "premium by line"},
+            {
+                "type": "AIMessage",
+                "content": ANSWER,
+                "provenance": pv.build(state(), ANSWER).as_dict(),
+            },
+            {"type": "Evidence", "views": [{"rows": ROWS, "chart_data": {}}]},
+        ],
+    }
+    monkeypatch.setattr(
+        cb, "ctx",
+        type("C", (), {
+            "triggered_id": {"type": "answer-edit-save", "idx": 1},
+            "triggered": [{"value": 1}],
+            "states_list": [[{"id": {"type": "answer-edit-text", "idx": 1},
+                              "value": "Property leads. Peers average $4.4m."}]],
+        })(),
+    )
+    updated, editing = cb.save_answer_edit([1], ["ignored"], history)
+    answer = updated["messages"][1]
+    assert answer["content"] == "Property leads. Peers average $4.4m."
+    assert answer["edited"] is True
+    assert answer["provenance"]["state"] == pv.PARTIAL
+    assert editing is None, "the editor closes on save"
+

@@ -377,14 +377,21 @@ body {
     50% { box-shadow: 0 0 0 7px rgba(197, 53, 50, 0); }
 }
 
-/* ---------- Live "Running X agent… · Ns" status bar ---------- */
+/* ---------- Live "Running X agent… · Ns" status bar ----------
+   FIXED WIDTH, and that is the whole point. The bar was `width: fit-content`
+   and centred, so every tick of the elapsed clock ("9s" -> "10s") resized it and
+   it shifted outward on both sides — once a second, for the length of the turn.
+   Every change of stage label jumped it further. That is the "dancing title".
+
+   Now the box never changes size: the stage label takes the space that is left
+   and truncates, and the clock is pinned right with tabular numerals so its
+   digits cannot reflow either. */
 .thinking-bar {
     align-items: center;
     gap: 10px;
     margin: 0 auto 10px;
     padding: 8px 16px;
-    width: fit-content;
-    max-width: 100%;
+    width: min(380px, 100%);
     background: rgba(255, 255, 255, 0.94);
     border: 1px solid var(--border-soft);
     border-radius: var(--radius-pill);

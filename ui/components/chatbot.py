@@ -6,6 +6,8 @@ from core.answers.commands import COMMANDS
 from core.peers import MIN_CUSTOM_PEERS
 from document_builder.report_generator import PITCH_THEMES, theme_options
 from ui.components.answer_actions import AnswerContext, answer_footer, feedback_panel
+from ui.components.contribution import contribution_panel
+from ui.components.evidence import evidence_panel
 from ui.components.provenance import provenance_drawer
 from ui.components.scope_bar import scope_bar
 
@@ -286,6 +288,55 @@ def followup_suggestions(followups: list[str]):
     )
 
 
+def answer_editor(content: str, idx: int):
+    """The answer, open for rewriting — its own Markdown source in a textarea.
+
+    A textarea over the SOURCE rather than a contentEditable over the rendered
+    output, because the thing worth preserving is the structure: the headings and
+    the bullets that make an insight scannable. contentEditable turns a pasted
+    bullet into a `<div>` and the next render loses the list; editing the
+    Markdown keeps what the writer and the reader both rely on.
+    """
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.I(className="bi bi-pencil-square"),
+                    html.Span("Editing this insight"),
+                    html.Span(
+                        "Markdown — use ### for a heading and - for a point",
+                        className="answer-edit-hint",
+                    ),
+                ],
+                className="answer-edit-head",
+            ),
+            dcc.Textarea(
+                id={"type": "answer-edit-text", "idx": idx},
+                value=content,
+                className="answer-edit-text",
+            ),
+            html.Div(
+                [
+                    html.Button(
+                        "Cancel",
+                        id={"type": "answer-edit-cancel", "idx": idx},
+                        n_clicks=0,
+                        className="answer-edit-btn ghost",
+                    ),
+                    html.Button(
+                        [html.I(className="bi bi-check2"), "Save"],
+                        id={"type": "answer-edit-save", "idx": idx},
+                        n_clicks=0,
+                        className="answer-edit-btn primary",
+                    ),
+                ],
+                className="answer-edit-actions",
+            ),
+        ],
+        className="message gpt-message answer-editing",
+    )
+
+
 def answer_scope(scope: list | None):
     """The filters THIS answer was built from, stated on the answer itself.
 
@@ -310,16 +361,28 @@ def ai_message(
     has_rows: bool = False,
     scope: list | None = None,
     provenance: dict | None = None,
+    evidence: list | None = None,
+    contribution: dict | None = None,
+    card_idx: int | None = None,
+    pane_ids: list | None = None,
+    editing: bool = False,
 ):
-    """Render an assistant turn: the scope it used, the answer, then the actions.
+    """One answer, whole: everything the turn produced, in one card.
 
-    Copy, the next steps (explore drivers, export, decision, board) and the
-    thumbs live in ONE row at the foot of the message rather than as two floating
-    hover clusters — see :mod:`ui.components.answer_actions`. The feedback panel
-    is mounted hidden and revealed by a thumbs-down.
+    Reading order is the order an analyst works in — the scope it ran under, the
+    finding, the evidence for it, what drove it, how it was calculated, and only
+    then what to do next:
 
-    The insight variant keeps the consulting-card chrome; the base variant is a
-    plain bubble.
+        scope pills -> prose -> chart / table -> drivers -> calculation -> actions
+
+    The chart and table used to be a SEPARATE message below the answer, at a
+    different width, which read as two unrelated things and made the card look
+    broken. They are one card because they are one answer.
+
+    Copy, the next steps and the thumbs live in ONE row at the foot — see
+    :mod:`ui.components.answer_actions`. The feedback panel is mounted hidden and
+    revealed by a thumbs-down. The insight variant keeps the consulting-card
+    chrome; the base variant is a plain bubble.
     """
     ctx = AnswerContext(
         idx=idx,
@@ -329,12 +392,21 @@ def ai_message(
         has_rows=has_rows,
         is_insight=is_insight,
     )
+    if editing:
+        return answer_editor(content, idx)
+
     pills = answer_scope(scope)
+    views = evidence_panel(evidence or [], idx if card_idx is None else card_idx,
+                           pane_ids or []) if evidence else None
+    drivers = contribution_panel(contribution)
     # Between the prose and the actions: the answer states where it came from
     # before it offers you somewhere to take it.
     drawer = provenance_drawer(provenance)
     footer = answer_footer(ctx, content=content)
     panel = feedback_panel(idx)
+    # A card carrying a chart or a table needs the room; a bare paragraph does
+    # not, and stretching every answer to full width makes short ones look empty.
+    wide = " has-evidence" if (views is not None or drivers is not None) else ""
 
     if is_insight:
         return html.Div(
@@ -352,16 +424,18 @@ def ai_message(
                 dcc.Markdown(
                     content, className="insight-card-body", link_target="_blank"
                 ),
+                views,
+                drivers,
                 drawer,
                 footer,
                 panel,
             ],
-            className="message insight-card",
+            className="message insight-card" + wide,
         )
 
     return html.Div(
-        [pills, dcc.Markdown(content), drawer, footer, panel],
-        className="message gpt-message",
+        [pills, dcc.Markdown(content), views, drivers, drawer, footer, panel],
+        className="message gpt-message" + wide,
     )
 
 
@@ -424,6 +498,8 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
             dcc.Store(id="overflow_data", data={}),
             dcc.Store(id="feedback-sink", data={}),  # write-only sink for thumb clicks
             dcc.Store(id="persist-sink", data={}),  # write-only sink for edit persistence
+            # Which answer (if any) is open for rewriting. One at a time.
+            dcc.Store(id="answer-editing", data=None),
             # Polls the in-process streaming job for live status + completion;
             # enabled by launch_new_job / launch_resume_job. A short cadence makes
             # the answer flow in small increments (Claude-like) instead of landing

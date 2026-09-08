@@ -11,6 +11,7 @@ from dash import html
 
 from ui.boardroom.editor import all_modals as boardroom_modals
 from ui.components.chatbot import custom_peers_modal, pitch_builder_drawer
+from ui.components.tour import tour_dialog
 from ui.decisions.render import decision_modals
 from ui.shell.busy import SHELL_BUSY, busy_overlay
 from ui.shell.navbar import build_navbar
@@ -42,6 +43,7 @@ def app_shell(
             # viewport, and a pane that is display:none would take them with it.
             pitch_builder_drawer(),
             custom_peers_modal(),
+            tour_dialog(),
             boardroom_modals(),
             decision_modals(),
         ],

@@ -200,6 +200,39 @@ def verification_state(queries: Sequence[EvidenceQuery], checked: Sequence[fig.F
     return PARTIAL if fig.unsupported(checked) else VERIFIED
 
 
+def reverify(record: Mapping[str, Any], answer: str, rows: Sequence[Any]) -> Dict[str, Any]:
+    """Re-run the figure check over an EDITED answer, keeping the rest.
+
+    An answer a person rewrote must not keep a badge earned by the text it
+    replaced — a panel that says "verified" about words nobody checked is worse
+    than no panel. So the check runs again over what is now on screen: type a
+    figure the rows do not contain and the badge says so, and names it, exactly
+    as it would for the model.
+
+    The queries and the definitions are untouched: those describe how the data
+    was gathered, which an edit does not change.
+    """
+    record = dict(record or {})
+    checked = fig.check(answer, {"answer": list(rows or [])})
+    queries = [
+        EvidenceQuery(
+            lens=str(q.get("lens") or ""),
+            sql=str(q.get("sql") or ""),
+            row_count=int(q.get("row_count") or 0),
+            columns=list(q.get("columns") or []),
+        )
+        for q in (record.get("queries") or [])
+    ]
+    record["state"] = verification_state(queries, checked)
+    record["figures"] = [
+        {"text": f.text, "value": f.value, "supported": f.supported, "checkable": f.is_checkable}
+        for f in checked
+    ]
+    record["coverage"] = fig.coverage(checked)
+    record["edited"] = True
+    return record
+
+
 def build(state: Mapping[str, Any], answer: str, *, question: str = "") -> Provenance:
     """The provenance record for one finished answer."""
     sets = evidence_sets(state)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dash import html
 
+from ui.components.tour import tour_button
 from ui.shell.tabs import TABS, Tab
 
 
@@ -66,7 +67,13 @@ def build_navbar(active: str, username: str) -> html.Header:
                 [_tab_button(t, active) for t in TABS],
                 className="va-tabs",
             ),
-            _user_chip(username),
+            # The way in for someone who has just been handed the app. It sits
+            # beside the identity rather than inside a workspace, because it is
+            # about the whole product, not about the tab you happen to be on.
+            html.Div(
+                [tour_button(), _user_chip(username)],
+                className="va-navbar-end",
+            ),
         ],
         className="va-navbar",
     )

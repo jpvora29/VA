@@ -813,3 +813,161 @@ body {
     color: var(--va-ink-500);
     text-align: left;
 }
+
+/* ── Guided tour ──────────────────────────────────────────────────────────
+   Eight screens, each with a DRAWN illustration of the thing it describes —
+   inline boxes positioned on a fixed canvas rather than screenshots, so the
+   pictures cannot go stale when a button moves and no binaries enter the repo.
+   Moving between steps is clientside; a tour that waits for the server between
+   screens is a tour people abandon halfway. */
+.va-navbar-end {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.va-tour-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 13px;
+    border-radius: var(--va-radius-pill);
+    border: 1px solid var(--va-border-mid);
+    background: var(--va-surface-0);
+    color: var(--va-ink-600);
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: color var(--va-transition-fast), border-color var(--va-transition-fast),
+        background var(--va-transition-fast);
+}
+.va-tour-btn:hover {
+    color: var(--va-blue);
+    border-color: var(--va-blue);
+    background: var(--va-blue-soft);
+}
+.va-tour-btn .bi { font-size: 13px; }
+
+@media (max-width: 900px) {
+    .va-tour-label { display: none; }
+}
+
+.tour-modal .modal-content {
+    border: none;
+    border-radius: var(--va-radius-lg);
+    overflow: hidden;
+    box-shadow: 0 24px 64px rgba(10, 22, 54, 0.28);
+}
+
+.tour-body { position: relative; padding: 0; }
+
+.tour-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 3;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 255, 255, 0.86);
+    color: var(--va-ink-500);
+    cursor: pointer;
+}
+.tour-close:hover { background: #ffffff; color: var(--va-navy); }
+
+.tour-stage { min-height: 380px; }
+
+/* The illustration sits on a fixed 320x180 canvas so every shape can be placed
+   in absolute coordinates and the whole drawing scales as one. */
+.tour-art {
+    background: linear-gradient(160deg, var(--va-blue-soft) 0%, var(--va-surface-1) 100%);
+    padding: 26px 0;
+    display: flex;
+    justify-content: center;
+}
+.tour-canvas {
+    position: relative;
+    width: 320px;
+    height: 180px;
+}
+.tour-shape { position: absolute; box-sizing: border-box; }
+.tour-label {
+    position: absolute;
+    line-height: 1.35;
+    letter-spacing: 0.01em;
+}
+.tour-label.tour-center { text-align: center; }
+
+.tour-copy { padding: 22px 30px 6px; text-align: center; }
+
+.tour-step-count {
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--va-blue);
+    margin-bottom: 8px;
+}
+.tour-step-title {
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    color: var(--va-navy);
+    margin: 0 0 8px;
+}
+.tour-step-body {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--va-ink-600);
+    margin: 0 auto;
+    max-width: 52ch;
+}
+
+.tour-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 24px 20px;
+}
+
+.tour-dots { display: flex; gap: 6px; }
+.tour-dot {
+    width: 7px;
+    height: 7px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: var(--va-border-mid);
+    cursor: pointer;
+    transition: background var(--va-transition-fast), width var(--va-transition-fast);
+}
+.tour-dot:hover { background: var(--va-ink-300); }
+.tour-dot.active { background: var(--va-blue); width: 20px; border-radius: 999px; }
+
+.tour-nav { display: flex; gap: 8px; }
+.tour-btn {
+    padding: 8px 18px;
+    border-radius: var(--va-radius-pill);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background var(--va-transition-fast), color var(--va-transition-fast);
+}
+.tour-btn.ghost {
+    background: transparent;
+    border-color: var(--va-border-mid);
+    color: var(--va-ink-500);
+}
+.tour-btn.ghost:hover:not(:disabled) { color: var(--va-navy); border-color: var(--va-ink-300); }
+.tour-btn.ghost:disabled { opacity: 0.45; cursor: default; }
+.tour-btn.primary { background: var(--va-blue); color: #ffffff; }
+.tour-btn.primary:hover { background: var(--va-navy); }
+
+@media (max-width: 640px) {
+    .tour-canvas { transform: scale(0.82); }
+    .tour-step-title { font-size: 17px; }
+    .tour-copy { padding: 18px 18px 4px; }
+}

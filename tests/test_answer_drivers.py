@@ -258,9 +258,12 @@ def test_exploring_drivers_computes_instead_of_asking_when_it_can(monkeypatch):
     )
     updated, trigger, thinking, board = cb.ask_from_answer([1], [None], history)
     assert trigger is cb.no_update, "a computed decomposition must not spend a turn"
-    panel = updated["messages"][-1]
-    assert panel["type"] == "Contribution"
-    assert panel["contribution"]["total_move"] == -2_700_000
+    # It lands ON the answer, not as a message after it: the decomposition is
+    # part of that finding, and appending it would put it below the evidence
+    # card it explains.
+    answer = updated["messages"][1]
+    assert answer["type"] == "AIMessage"
+    assert answer["contribution"]["total_move"] == -2_700_000
 
 
 def test_it_falls_back_to_asking_when_the_rows_cannot_support_it(monkeypatch):
@@ -279,4 +282,18 @@ def test_it_falls_back_to_asking_when_the_rows_cannot_support_it(monkeypatch):
     updated, trigger, _thinking, _board = cb.ask_from_answer([1], [None], history)
     assert trigger is True, "with no decomposition available, ask the model"
     assert updated["messages"][-1]["type"] == "HumanMessage"
+
+def test_the_answer_its_evidence_and_its_drivers_are_one_card():
+    """A chart in a card of its own, at a different width, read as broken."""
+    from ui.callbacks import render_chat
+
+    history = transcript()
+    history["messages"][1]["contribution"] = decompose(TWO_PERIODS).as_dict()
+    items = render_chat(history, False, False, None, {})
+    assert len(items) == 2, "the user turn and ONE answer card"
+    card = items[-1]
+    rendered = classes(card)
+    assert "has-evidence" in card.className
+    assert any("ev-panel" in c for c in rendered)
+    assert any("contrib-panel" in c for c in rendered)
 

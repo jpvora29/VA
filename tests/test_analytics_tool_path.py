@@ -584,8 +584,14 @@ def test_an_explicitly_dated_turn_leaves_the_plan_alone(engine):
 # It therefore has to close the same confidentiality boundary.
 
 
-def test_a_carrier_cut_names_no_individual_carrier(engine):
-    """A market-wide cut used to hand the UI a list of real carrier names."""
+def test_a_market_ranking_names_its_carriers(engine):
+    """No subject named, so there is no peer set — only a market.
+
+    "Premium by carrier in Canada" asks who leads a market. Every carrier used
+    to come back as "Peer 1, Peer 2, Peer 3", which disclosed nothing and
+    answered nothing. Redaction is relative to a subject; see
+    `core.agents.common.peer_privacy`.
+    """
     plan = json.dumps({"metric": "premium", "filters": {"Country": "Canada"},
                        "timeframe": "2024"})
     update = run_analytics_tools(
@@ -596,9 +602,12 @@ def test_a_carrier_cut_names_no_individual_carrier(engine):
         ),
         engine=engine,
     )
-    shown = [row["Carrier_Group"] for row in update["gpr_query_result"]]
-    assert not ({"ZURICH GROUP", "AIG", "CHUBB"} & set(shown))
-    assert all(name.startswith("Peer ") for name in shown)
+    shown = {row["Carrier_Group"] for row in update["gpr_query_result"]}
+    assert {"ZURICH GROUP", "AIG", "CHUBB"} <= shown
+    assert not any(str(name).startswith("Peer ") for name in shown)
+    # The other half of the rule — a subject turning everyone else into a peer —
+    # is covered in tests/test_peer_privacy.py, where the policy can be exercised
+    # without a carrier filter narrowing the query to a single row.
 
 
 def test_redaction_does_not_disturb_the_figures(engine):

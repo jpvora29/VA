@@ -82,9 +82,52 @@ class Contribution:
     def is_supported(self) -> bool:
         return bool(self.drivers)
 
+    @property
+    def movers(self) -> List[Driver]:
+        """The slices that actually moved, biggest first."""
+        return [d for d in self.drivers if d.delta]
+
+    @property
+    def against(self) -> List[Driver]:
+        """The slices that moved AGAINST the total — the offset, if there is one."""
+        if not self.total_move:
+            return []
+        return [d for d in self.movers if (d.delta > 0) != (self.total_move > 0)]
+
+    def headline(self) -> str:
+        """The finding in one sentence, before any chart.
+
+        A panel that opens with a chart makes the reader derive the conclusion
+        from it. The conclusion is one sentence and it is computable, so it is
+        computed: which slice carried the movement, and what offset it.
+        """
+        movers = self.movers
+        if not movers:
+            return "Nothing moved between these periods."
+        lead = movers[0]
+        share = lead.share_of(self.total_move)
+        of_move = f" — {abs(share):.0f}% of the movement" if share is not None else ""
+        sentence = f"{lead.name} {'fell' if lead.delta < 0 else 'grew'} the most{of_move}."
+        offsets = self.against
+        if offsets:
+            names = " and ".join(d.name for d in offsets[:2])
+            # The noun, not the verb: "held the fall back", never "held the fell
+            # back". Which way the total went decides the word.
+            noun = "fall" if self.total_move < 0 else "rise"
+            sentence += f" {names} moved the other way, holding the overall {noun} back."
+        return sentence
+
+    @property
+    def dimension_label(self) -> str:
+        """The slice's name as a person says it: `Product_Line` -> "Product line"."""
+        text = str(self.dimension or "").replace("_", " ").strip()
+        return (text[:1].upper() + text[1:]) if text else "Slice"
+
     def as_dict(self) -> Dict[str, Any]:
         move = self.total_move
         return {
+            "headline": self.headline(),
+            "dimension_label": self.dimension_label,
             "measure": self.measure,
             "dimension": self.dimension,
             "prior_period": self.prior_period,

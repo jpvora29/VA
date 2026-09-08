@@ -219,6 +219,12 @@ def feedback_panel(idx: int):
 def answer_footer(ctx: AnswerContext, *, content: str):
     """The action row plus the (hidden) feedback panel, for one answer.
 
+    Two clusters, and the split is what keeps the row short. On the LEFT, the
+    next steps — things that start new work, capped at four (see
+    `test_the_row_stays_short`). On the RIGHT, the things you do TO this answer:
+    copy it, rewrite it, rate it. "Edit" belongs on the right for that reason —
+    it is not somewhere to go next, it is this answer in your own words.
+
     `content` is the answer text, handed to `dcc.Clipboard` so copy stays a
     native browser action with no callback behind it.
     """
@@ -234,6 +240,18 @@ def answer_footer(ctx: AnswerContext, *, content: str):
                     dcc.Clipboard(
                         content=content, title="Copy", className="answer-copy"
                     ),
+                    html.Button(
+                        html.I(className="bi bi-pencil"),
+                        # Its OWN id type, not an "answer-action": the next-steps
+                        # row is somewhere to go, this is something you do to the
+                        # answer in front of you.
+                        id={"type": "answer-edit-open", "idx": ctx.idx},
+                        n_clicks=0,
+                        className="answer-edit-toggle",
+                        title="Rewrite this insight in your own words",
+                    )
+                    if _is_analysis(ctx)
+                    else None,
                     _rating_button(
                         ctx.idx, "up", "bi bi-hand-thumbs-up", "Helpful"
                     ),
