@@ -27,6 +27,17 @@ from studio.dataset.model import (
     undescribed_unmapped,
 )
 from studio.dataset.repository import get_repository
+from studio.page.authoring.busy import BUSY_DATA
+from ui.shell.busy import busy_running
+
+# ``running=busy_running(BUSY_DATA)`` goes on the handlers that do real work for a
+# deliberate click — parsing an upload, saving a mapping, adding a derived column,
+# promoting a dataset. It is deliberately NOT on the three bound to pattern-matching
+# (``ALL``) Inputs: Dash re-fires those whenever the set of matching components changes,
+# so simply opening this page ran them all, and each answered ``no_update`` after a round
+# trip long enough to flash "Reading your data…" over a page that was only being opened.
+# They are the fastest actions here anyway, and their result is a re-render, which raises
+# the render flag on its own.
 
 log = get_logger(__name__)
 
@@ -255,6 +266,7 @@ def register_data(app):
         State("qs-data-upload", "filename"),
         State("qs-dataset", "data"),
         prevent_initial_call=True,
+        running=busy_running(BUSY_DATA),
     )
     def upload(contents, filename, store):
         if not contents:
@@ -324,6 +336,7 @@ def register_data(app):
         State({"type": "qs-primary", "field": ALL}, "id"),
         State("qs-dataset", "data"),
         prevent_initial_call=True,
+        running=busy_running(BUSY_DATA),
     )
     def submit_mapping(n, targets, target_ids, descriptions,
                        kpi_names, kpi_ids, kpi_aggs, kpi_fmts, kpi_descs,
@@ -362,6 +375,7 @@ def register_data(app):
         State("qs-col-formula", "value"),
         State("qs-dataset", "data"),
         prevent_initial_call=True,
+        running=busy_running(BUSY_DATA),
     )
     def add_column_cb(n, name, source, recipe, formula, store):
         active = (store or {}).get("active")
@@ -391,6 +405,7 @@ def register_data(app):
         Input("qs-col-undo", "n_clicks"),
         State("qs-dataset", "data"),
         prevent_initial_call=True,
+        running=busy_running(BUSY_DATA),
     )
     def undo_shape_cb(n, store):
         active = (store or {}).get("active")
@@ -431,6 +446,7 @@ def register_data(app):
         State("qs-dataset", "data"),
         State("qs-view", "data"),
         prevent_initial_call=True,
+        running=busy_running(BUSY_DATA),
     )
     def use_for_deck_cb(n, store, view):
         """Materialize + submit, flip the source to custom, return to Setup."""

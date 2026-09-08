@@ -20,8 +20,14 @@ from ui.shell.tabs import DEFAULT_TAB
 
 
 def shell_stores() -> List[Any]:
-    """Which workspace is on screen, and how wide the left rail is."""
+    """Which workspace is on screen, how wide the left rail is, and where the browser is."""
     return [
+        # The address bar. Two jobs, both about sign-in: its `pathname` is what fires
+        # the callback that adopts a server session on load (so a completed SSO round
+        # trip lands signed in rather than back on the card), and writing its `href` is
+        # the only way a Dash callback can navigate to another origin — which is what
+        # logging out of the identity provider requires.
+        dcc.Location(id="va-url", refresh=True),
         # Session storage, so a new browser tab lands on Studio.
         dcc.Store(id="active-tab", data=DEFAULT_TAB, storage_type="session"),
         # ONE rail width for all four workspaces (see ``ui.shell.rail``), collapsed by

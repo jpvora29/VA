@@ -21,28 +21,18 @@ from studio.page.layout import _filter_grid
 #
 # Every control on this page re-derives something server-side — the option cascade, the
 # peer panel, the scope figures, the deck-section list — and a single change is answered by
-# several callbacks at once. The overlay is raised while ANY of them is in flight and drops
-# when the last one settles.
+# several callbacks at once. Each of those callbacks raises its own flag and the ONE Studio
+# overlay follows all of them (:mod:`studio.page.authoring.busy`), so it never lifts early
+# on the fastest one.
 #
-# Each callback owns its own FLAG, and the overlay watches all of them (see the
-# ``:has(.qs-busy-flag.is-busy)`` rule). One shared flag would race: the fastest callback's
-# "finished" would lower the overlay while a slower sibling was still running.
+# The flags themselves are NOT rendered here any more: they live in the always-mounted
+# Studio chrome, because a mode switch replaces this whole body and a flag inside it would
+# be unmounted at exactly the moment the mode switch needs to raise one.
 #
-# `dcc.Loading` was the obvious tool and does not work here: it decides on its own whether a
-# subtree is loading, and it consistently missed the FIRST change after a page load — the
-# one a user is least sure about. `running` is declared per callback, so it always fires.
-BUSY_FLAG_CLASS = "qs-busy-flag"
-BUSY_FLAG_ON = f"{BUSY_FLAG_CLASS} is-busy"
-
-# The flag each Setup callback raises. Named for the panel it re-derives, so a new panel
-# adds a name here and a `running=` on its own callback — nothing else changes.
-BUSY_FORM = "qs-busy-form"              # option cascade + peer panel
-BUSY_PREVIEW = "qs-busy-preview"        # the live scope figures
-BUSY_SECTIONS = "qs-busy-sections"      # the deck-section list
-# Generating has no flag here. It is a background build rather than a callback, so a
-# `running=` would come down milliseconds in; and a full-page overlay is the wrong cue for
-# something that takes minutes — it would lock the author out of the app while they wait.
-# The build reports itself instead, through ``generate_progress`` in the Studio pane.
+# Generating has no flag. It is a background build rather than a callback, so a `running=`
+# would come down milliseconds in; and a full-page overlay is the wrong cue for something
+# that takes minutes — it would lock the author out of the app while they wait. The build
+# reports itself instead, through ``generate_progress`` in the Studio pane.
 
 
 def form_token() -> dcc.Store:
@@ -56,19 +46,6 @@ def form_token() -> dcc.Store:
     between "the form was rebuilt" and "here is what the form should show".
     """
     return dcc.Store(id="qs-form-token", data=uuid4().hex)
-
-
-def busy_overlay() -> html.Div:
-    """The full-page spinner, plus the per-callback flags that raise it."""
-    return html.Div(
-        [
-            *(html.Div(id=flag, className=BUSY_FLAG_CLASS)
-              for flag in (BUSY_FORM, BUSY_PREVIEW, BUSY_SECTIONS)),
-            html.Div(html.Div(className="qs-page-spinner"), className="qs-page-loader",
-                     id="qs-setup-busy"),
-        ],
-        className="qs-busy-host",
-    )
 
 
 def _elapsed(seconds: int) -> str:
@@ -962,4 +939,4 @@ def setup_body(
         ],
         className="qs-setup-card",
     )
-    return html.Div([busy_overlay(), form_token(), form], className="qs-setup-wrap")
+    return html.Div([form_token(), form], className="qs-setup-wrap")

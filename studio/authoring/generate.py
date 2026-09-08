@@ -282,11 +282,48 @@ def _assembled_export(selection: Optional[Dict[str, Any]]) -> Optional[str]:
     return path
 
 
+def _assembled_review(path: str, selection: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """What Review needs to describe the ASSEMBLED deck: leftovers, and the run's data.
+
+    Two halves, and neither is the editable plan:
+
+    ``manifest`` is slot detection run over the DELIVERED file. A slot is only detected
+    where a placeholder token survived, so this is exactly the list of boxes that are
+    still "xx.x" or "………" in the .pptx the author is about to send — the one question
+    worth asking at the point of sending.
+
+    ``values`` is the run's resolved role map, which is what says WHY: a blank
+    year-on-year box and a thin commentary column are the same fact about the data, and
+    that fact lives here (:mod:`studio.review.capability`).
+
+    Best-effort. Review is a description of the deck, and a description that cannot be
+    computed must never cost anybody the deck itself.
+    """
+    from studio.template_fill import roles as R
+    from studio.template_fill.analyze import analyze
+    from studio.template_fill.bindings import resolve_roles
+    from studio.template_fill.slots import detect
+
+    out: Dict[str, Any] = {"manifest": [], "values": {}}
+    try:
+        out["manifest"] = R.manifest_to_dicts(R.infer(detect(analyze(path))))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("review: could not read the assembled deck's leftovers: %s", exc)
+    try:
+        out["values"] = resolve_roles(_result_for(json.dumps(selection or {}, sort_keys=True)))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("review: could not resolve the run's roles: %s", exc)
+    return out
+
+
 def _assembled_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Wrap the assembled deck as a read-only preview doc (pages through ALL its slides).
 
-    The deck is already filled, so the doc carries no editable manifest — the preview just
+    The deck is already filled, so the doc carries no EDITABLE manifest — the preview just
     renders the merged slides (overall + product + country), and Export re-serves the file.
+    It does carry a manifest for Review to read, which is a different thing: the
+    placeholders that survived the fill, not the slots an author may edit
+    (:func:`_assembled_review`).
     """
     path = _assembled_export(selection)
     if not path:
@@ -314,10 +351,14 @@ def _assembled_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
         prune_cache([path])
     except Exception as exc:  # noqa: BLE001 — housekeeping must never cost us the deck
         log.warning("preview cache prune failed: %s", exc)
+    review = _assembled_review(path, selection)
     return {
         "template_path": path,
-        "values": {},
-        "manifest": [],
+        # NOT editable state: Review reads these to say what is still a placeholder in
+        # the delivered file and why. The preview and the fill engine both ignore them,
+        # because this document is already filled.
+        "values": review["values"],
+        "manifest": review["manifest"],
         "overrides": {},
         "map_overrides": {},
         "added": {},

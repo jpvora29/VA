@@ -59,7 +59,10 @@ from ui.boardroom import callbacks as boardroom_callbacks  # noqa: F401  (regist
 from ui.decisions import callbacks as decision_callbacks  # noqa: F401  (registers callbacks)
 from ui.shell.layout import app_shell
 from ui.shell.tabs import resolve_tab
+from core.auth import session as auth_session
+from core.auth.settings import LOGOUT_PATH, sso_enabled
 from ui.components.sidebar import login_screen, conversation_list_children
+from ui.shell.busy import BUSY_SIGNIN, busy_running
 from ui.draft_text import draft_text
 from ui.progress import advance as advance_progress, label_of
 from core.store.users import get_or_create_user
@@ -1062,6 +1065,10 @@ def _current_user(user_store: dict[str, Any] | None) -> tuple[Optional[int], str
     Input("user-store", "data"),
     State("active-tab", "data"),
     State("rail-collapsed", "data"),
+    # Signing in builds ALL FOUR workspaces at once — it lists the user's conversations,
+    # generates their starter questions and composes Studio's whole body — so the click
+    # used to sit on an unchanged sign-in card for as long as that took.
+    running=busy_running(BUSY_SIGNIN),
 )
 def render_app_root(
     user_store: dict[str, Any] | None,
@@ -1108,19 +1115,54 @@ def handle_login(
     # Seed semantic memory so the welcome hero can greet by name.
     semantic.set_fact(user["id"], "username", user["username"])
     semantic.set_fact(user["id"], "display_name", user["username"])
+    # Record it server-side too, so this path and the SSO one leave the app in the same
+    # state. A no-op where there is no server session to write (see core.auth.session).
+    auth_session.sign_in(user)
     return {"id": user["id"], "username": user["username"]}, None, ""
 
 
 @callback(
     Output("user-store", "data", allow_duplicate=True),
+    Input("va-url", "pathname"),
+    State("user-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def adopt_server_session(_pathname: str, store: dict[str, Any] | None) -> Any:
+    """Sign the page in from the server's session, when there is one.
+
+    This is how a completed SSO round trip becomes a signed-in app: ``/auth/callback``
+    writes the Flask session and redirects to ``/``, and the page that loads has an
+    empty browser store. Without this the user would land back on the sign-in card
+    having just signed in.
+
+    It also survives a refresh in a new tab, where session storage is empty but the
+    cookie is not — the server session is the authority, the store is its copy.
+    """
+    if _current_user(store)[0] is not None:
+        return no_update
+    user = auth_session.current_user()
+    return {"id": user["id"], "username": user["username"]} if user else no_update
+
+
+@callback(
+    Output("user-store", "data", allow_duplicate=True),
     Output("active-conversation", "data", allow_duplicate=True),
+    Output("va-url", "href"),
     Input("logout-btn", "n_clicks"),
     prevent_initial_call=True,
 )
-def handle_logout(n_clicks: int) -> tuple[Any, Any]:
+def handle_logout(n_clicks: int) -> tuple[Any, Any, Any]:
+    """Sign out of the app, and — under SSO — out of the identity provider too.
+
+    Clearing only the browser store is the bug people file as "logout does not log me
+    out": the server session would still be live, and the very next render would adopt
+    it straight back. So the session goes first, and where an IdP is configured the
+    browser is then sent to ``/auth/logout`` to end the session at the provider as well.
+    """
     if not n_clicks:
-        return no_update, no_update
-    return None, None
+        return no_update, no_update, no_update
+    auth_session.sign_out()
+    return None, None, (LOGOUT_PATH if sso_enabled() else no_update)
 
 
 # 1. -------------------------- SIDEBAR: LIST / NEW / OPEN / DELETE ---------------------------------------

@@ -86,6 +86,16 @@ from studio.page.authoring.review import (
     _unsupported_blocks,
     review_body,
 )
+from studio.page.authoring.busy import (
+    BUSY_DATA,
+    BUSY_EXPORT,
+    BUSY_FORM,
+    BUSY_PREVIEW,
+    BUSY_RENDER,
+    BUSY_REVIEW,
+    BUSY_SECTIONS,
+    STUDIO_BUSY,
+)
 from studio.page.authoring.setup import (
     _SECTION_META,
     _audience_length,
@@ -93,16 +103,10 @@ from studio.page.authoring.setup import (
     _peers_panel,
     _scope_preview,
     _setup_section,
-    BUSY_FLAG_CLASS,
-    BUSY_FLAG_ON,
-    BUSY_FORM,
-    BUSY_PREVIEW,
-    BUSY_SECTIONS,
     DATA_BASIS_DEFAULT,
     DATA_BASIS_OPTIONS,
     MIN_CUSTOM_PEERS,
     MIN_PEERS_MESSAGE,
-    busy_overlay,
     generate_progress,
     custom_peer_picker,
     info_tip,
@@ -129,12 +133,14 @@ __all__ = [
     "mode_rail", "top_bar",
     # setup
     "scope_preview_empty", "scope_preview_card", "template_sections_panel", "setup_body",
-    "peer_set_body", "survey_note", "deck_axes", "registered_axes", "busy_overlay",
+    "peer_set_body", "survey_note", "deck_axes", "registered_axes",
     "info_tip",
     "generate_progress",
     "custom_peer_picker", "survey_peer_picker", "peer_min_note",
     "DATA_BASIS_DEFAULT", "DATA_BASIS_OPTIONS", "MIN_CUSTOM_PEERS", "MIN_PEERS_MESSAGE",
-    "BUSY_FLAG_CLASS", "BUSY_FLAG_ON", "BUSY_FORM", "BUSY_PREVIEW", "BUSY_SECTIONS",
+    # busy overlay (one scope for the whole Studio pane)
+    "STUDIO_BUSY", "BUSY_FORM", "BUSY_PREVIEW", "BUSY_SECTIONS",
+    "BUSY_RENDER", "BUSY_DATA", "BUSY_REVIEW", "BUSY_EXPORT",
     # canvas
     "normalized_zoom", "adjusted_zoom", "zoom_scale", "canvas_body",
     # data / review (review hosts the export card)

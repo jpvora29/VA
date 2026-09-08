@@ -52,7 +52,16 @@ users = Table(
     "users",
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
+    # The ACCOUNT KEY, not a display name. Under SSO this is the person's email
+    # address (or the provider's opaque subject id when the IdP sends no address);
+    # in local mode it is whatever they typed. Unique either way, which is what
+    # makes a returning user find their own conversations.
     Column("username", String, nullable=False, unique=True),
+    # Who they are, as the identity provider describes them. Both are nullable
+    # because every row written before SSO existed has neither, and a local sign-in
+    # still has neither.
+    Column("display_name", String, nullable=True),
+    Column("subject", String, nullable=True, index=True),
     Column("created_at", DateTime, server_default=func.now()),
 )
 
@@ -151,9 +160,32 @@ decision_revisions = Table(
 )
 
 
+#: Columns added to `users` after the table shipped. ``create_all`` only creates
+#: missing TABLES, so a database written before SSO existed keeps the old three
+#: columns and every query naming a new one fails — on an app whose whole state
+#: lives in one long-lived SQLite file, that is a crash on upgrade rather than a
+#: theoretical one. SQLite's ADD COLUMN is cheap and idempotent here.
+_USER_COLUMNS_ADDED = (("display_name", "TEXT"), ("subject", "TEXT"))
+
+
+def _add_missing_user_columns() -> None:
+    """Bring an existing ``users`` table up to the current schema."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(app_engine)
+    if "users" not in inspector.get_table_names():
+        return
+    present = {c["name"] for c in inspector.get_columns("users")}
+    with app_engine.begin() as conn:
+        for name, sql_type in _USER_COLUMNS_ADDED:
+            if name not in present:
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN {name} {sql_type}"))
+
+
 def init_db() -> None:
     """Create all app-state tables if they don't yet exist (idempotent)."""
     metadata.create_all(app_engine)
+    _add_missing_user_columns()
 
 
 # Create tables eagerly on import so any first caller finds a ready schema.

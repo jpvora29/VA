@@ -14,18 +14,25 @@ from typing import Any, List, Tuple
 
 from dash import ALL, Input, Output, State, ctx, no_update
 
+from ui.shell.busy import BUSY_TAB, SHELL_BUSY, busy_running, register_busy
 from ui.shell.navbar import tab_class
 from ui.shell.tabs import TABS, pane_class, pane_id, resolve_tab
 
 
 def register_router(app) -> None:
-    """Wire the navbar tabs to the pane visibility on ``app``."""
+    """Wire the navbar tabs to the pane visibility on ``app``.
+
+    Also registers the shell's busy overlay, because this is the module that owns the
+    shorter of the two waits it covers (the other is the sign-in gate itself).
+    """
+    register_busy(app, SHELL_BUSY)
 
     @app.callback(
         Output("active-tab", "data"),
         Input({"type": "va-tab", "tab": ALL}, "n_clicks"),
         State("active-tab", "data"),
         prevent_initial_call=True,
+        running=busy_running(BUSY_TAB),
     )
     def select_tab(clicks: List[int], current: str | None) -> Any:
         """Record which workspace the user asked for."""

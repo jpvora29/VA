@@ -1004,26 +1004,38 @@ def test_pinned_custom_peers_reach_the_deck():
 # ── the busy overlay: every filter/selection change is acknowledged ───────────
 
 
-def test_the_form_carries_the_busy_overlay_and_one_flag_per_callback():
-    from studio.page.authoring import setup as P
+def test_the_studio_chrome_carries_the_overlay_and_one_flag_per_callback():
+    """The flags live in the Studio chrome, NOT in the Setup form.
 
-    form = _form()
-    for flag in (P.BUSY_FORM, P.BUSY_PREVIEW, P.BUSY_SECTIONS):
-        assert flag in form, f"{flag} must exist for its callback's running= to target it"
-    assert "qs-page-loader" in form and "qs-page-spinner" in form
+    A mode switch replaces the whole body, so a flag rendered inside Setup would be
+    unmounted at exactly the moment the mode switch needed to raise one."""
+    from studio.authoring.layout import studio_chrome
+    from studio.page.authoring.busy import STUDIO_BUSY
+
+    chrome = str(studio_chrome())
+    for flag in STUDIO_BUSY.flag_ids():
+        assert flag in chrome, f"{flag} must exist for its callback's running= to target it"
+    assert "qs-page-loader" in chrome and "qs-page-spinner" in chrome
+    assert STUDIO_BUSY.overlay_id in chrome
+
+    assert STUDIO_BUSY.overlay_id not in str(_form()), "the overlay must outlive the body"
 
 
-def test_every_setup_callback_raises_a_flag_while_it_works():
+def test_every_studio_wait_raises_a_flag_while_it_works():
     """A change answered by several callbacks must stay covered until the LAST finishes,
     so each one owns its own flag rather than sharing one that races."""
     import inspect
 
+    from studio.authoring import data as D
     from studio.authoring import export as E
+    from studio.authoring import navigation as N
     from studio.authoring import setup as S
 
-    src = inspect.getsource(S.register_setup) + inspect.getsource(E.register_export)
+    src = "".join(inspect.getsource(fn) for fn in (
+        S.register_setup, E.register_export, D.register_data, N.register_navigation))
     assert src.count("running=") >= 3, "the option cascade, scope preview and deck sections"
-    for flag in ("BUSY_FORM", "BUSY_PREVIEW", "BUSY_SECTIONS"):
+    for flag in ("BUSY_FORM", "BUSY_PREVIEW", "BUSY_SECTIONS",
+                 "BUSY_RENDER", "BUSY_DATA", "BUSY_EXPORT", "BUSY_REVIEW"):
         assert flag in src, f"no callback raises {flag}"
 
 
@@ -1031,12 +1043,72 @@ def test_a_busy_flag_is_raised_for_the_call_and_dropped_after():
     from dash import Output
 
     from studio.authoring.setup import _busy
-    from studio.page.authoring import setup as P
+    from studio.page.authoring import busy as P
+    from ui.shell.busy import FLAG_CLASS
 
     [(target, during, after)] = _busy(P.BUSY_FORM)
     assert target == Output(P.BUSY_FORM, "className")
     assert "is-busy" in during and "is-busy" not in after
-    assert after == P.BUSY_FLAG_CLASS      # back to the resting class, not blank
+    assert after == FLAG_CLASS             # back to the resting class, not blank
+
+
+def test_every_flag_waits_long_enough_to_ignore_a_remount():
+    """Dash re-runs a callback whenever the component carrying its Input is MOUNTED, not
+    only when someone acts — and Studio renders its whole body from a callback, so one
+    mode switch re-fires the Data handlers, Export's and Setup's cascade. Measured on
+    the running app those answer in 33-90ms; without a grace, clicking Canvas announced
+    "Building your PowerPoint…".
+    """
+    from studio.page.authoring.busy import BUSY_RENDER, STUDIO_BUSY
+    from ui.shell.busy import SHELL_BUSY
+
+    for scope in (STUDIO_BUSY, SHELL_BUSY):
+        for flag in scope.flags:
+            assert flag.grace_ms >= 150, f"{flag.id} would flash on a remount"
+
+    by_id = {f.id: f for f in STUDIO_BUSY.flags}
+    assert by_id[BUSY_RENDER].grace_ms > 150, "render also re-runs on every search keystroke"
+
+
+def test_the_overlay_flags_and_the_tracker_inputs_share_one_order():
+    """The overlay's label comes from the flag that STARTED the wait, matched by
+    POSITION between the tracker's arguments and the flag elements (assets/va_busy.js).
+    Build those two lists from different orders and a mode switch gets announced as
+    somebody else's work."""
+    from studio.page.authoring.busy import STUDIO_BUSY
+    from ui.shell.busy import busy_overlay
+
+    host = busy_overlay(STUDIO_BUSY)
+    rendered = [c.id for c in host.children[:-1]]
+    assert rendered == list(STUDIO_BUSY.flag_ids())
+
+
+def test_the_fastest_data_handlers_raise_nothing():
+    """Opening, deleting and undoing are a repository call and a re-render. The
+    re-render raises its own flag, so flagging these too would only add a second
+    reason to show the same overlay — and they are the three most likely to re-fire
+    for free, being bound to pattern-matching Inputs."""
+    import inspect
+
+    from studio.authoring import data as D
+
+    src = inspect.getsource(D.register_data)
+    for handler in ("def open_dataset(", "def delete_dataset(", "def delete_column_cb("):
+        before = src[: src.index(handler)]
+        decorator = before[before.rindex("@app.callback"):]
+        assert "busy_running" not in decorator, handler
+    # …while the deliberate ones still do.
+    assert src.count("running=busy_running(BUSY_DATA)") == 5
+
+
+def test_every_flag_says_what_it_is_waiting_for():
+    """A full-page overlay is worth it for "Reading your data…" and not for "Loading…"."""
+    from studio.page.authoring.busy import STUDIO_BUSY
+    from ui.shell.busy import SHELL_BUSY
+
+    for scope in (STUDIO_BUSY, SHELL_BUSY):
+        for flag in scope.flags:
+            assert flag.label.strip() and flag.label != "Loading…", flag.id
 
 
 def test_the_overlay_never_swallows_a_click():

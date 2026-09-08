@@ -13,6 +13,7 @@ from studio.page.sample import CUT_GROUPS
 
 from studio.authoring.config import DEFAULT_FILTERS
 from studio.authoring.generate import _deck, _friendly_options, usable_tdoc
+from ui.shell.busy import busy_running
 
 
 def register_navigation(app):
@@ -29,6 +30,11 @@ def register_navigation(app):
         # panel (``studio.authoring.setup.deck_slides``), never rebuild the whole shell
         # underneath the author's cursor.
         State("qs-slides", "data"),
+        # This is the longest wait in Studio that is not a build: a mode switch throws
+        # away the body on screen and composes the next one server-side (Setup's whole
+        # form, the Data page's tables, the canvas' slide previews). Without a cue, the
+        # click simply appeared to do nothing for a second or two.
+        running=busy_running(A.BUSY_RENDER),
     )
     def render(view, doc, tdoc, dataset, selection, slides):
         from studio.template_fill.deck_slides import DeckSlides

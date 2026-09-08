@@ -20,6 +20,8 @@ from studio.template_fill import validate as TV
 from studio.template_fill.model import add_element
 
 from studio.authoring.generate import _assembled_export
+from studio.page.authoring.busy import BUSY_EXPORT, BUSY_REVIEW
+from ui.shell.busy import busy_running
 
 log = get_logger(__name__)
 
@@ -34,6 +36,9 @@ def register_export(app):
         State("qs-tdoc", "data"),
         State("qs-doc", "data"),
         prevent_initial_call=True,
+        # Filling and assembling the deliverable takes seconds at best, and the click
+        # produces nothing on screen until the browser's download prompt appears.
+        running=busy_running(BUSY_EXPORT),
     )
     def export(clicks, selection, tdoc, doc):
         if not any(clicks or []):
@@ -120,6 +125,7 @@ def register_export(app):
         Input({"type": "qs-tf-autofix"}, "n_clicks"),
         State("qs-tdoc", "data"),
         prevent_initial_call=True,
+        running=busy_running(BUSY_REVIEW),
     )
     def autofix(n, tdoc):
         if not n or not tdoc:
@@ -134,6 +140,7 @@ def register_export(app):
         Input({"type": "qs-tf-revalidate"}, "n_clicks"),
         State("qs-view", "data"),
         prevent_initial_call=True,
+        running=busy_running(BUSY_REVIEW),
     )
     def revalidate(n, view):
         # Validation is computed live on every render; bumping a nonce forces a re-run.

@@ -12,6 +12,7 @@ from dash import html
 from ui.boardroom.editor import all_modals as boardroom_modals
 from ui.components.chatbot import custom_peers_modal, pitch_builder_drawer
 from ui.decisions.render import decision_modals
+from ui.shell.busy import SHELL_BUSY, busy_overlay
 from ui.shell.navbar import build_navbar
 from ui.shell.panes import PANE_BUILDERS, build_panes
 from ui.shell.rail import rails_class
@@ -49,8 +50,13 @@ def app_shell(
 
 
 def root_layout() -> html.Div:
-    """The whole page: global state, then the login-gated shell mount."""
-    return html.Div([*global_stores(), html.Div(id="app-root")])
+    """The whole page: global state, the shell's busy overlay, then the gated mount.
+
+    The overlay sits OUTSIDE ``app-root`` on purpose: the wait it covers longest is the
+    sign-in itself, and ``app-root`` is the very thing that sign-in replaces — a spinner
+    mounted inside it would be swapped out at the moment it was needed.
+    """
+    return html.Div([*global_stores(), busy_overlay(SHELL_BUSY), html.Div(id="app-root")])
 
 
 __all__ = ["app_shell", "root_layout"]

@@ -6,6 +6,7 @@ shells; they are now one app, one sign-in, one left rail and one theme.
 
 The wiring is all this file does:
 
+    sign-in          core.auth.oidc.register_auth   (OIDC routes on the Flask server)
     stores + shell   ui.shell.layout.root_layout
     chat callbacks   ui.callbacks           (registered by import, via @callback)
     shell callbacks  ui.shell.router + ui.shell.collapse
@@ -48,7 +49,13 @@ app = dash.Dash(
     update_title=None,
 )
 
+from core.auth.oidc import register_auth  # noqa: E402
 from ui.shell.layout import root_layout  # noqa: E402  (after `app`, by Dash convention)
+
+# Sign-in, before the layout: the login screen asks whether an identity provider is
+# configured to decide which sign-in to draw. A no-op (and a logged one) where no
+# OIDC_ISSUER is set, which is what keeps a local run and the test suite working.
+register_auth(app.server)
 
 app.layout = root_layout()
 

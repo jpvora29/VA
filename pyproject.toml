@@ -38,6 +38,7 @@ dependencies = [
     # Legacy .xls uploads on the Studio Data page (pandas needs this engine; openpyxl
     # only handles the OOXML .xlsx/.xlsm formats).
     "xlrd>=2.0.1",
+    "authlib>=1.6",
 ]
 
 [dependency-groups]

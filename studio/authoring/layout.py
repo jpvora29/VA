@@ -136,8 +136,18 @@ def generate_progress_host() -> html.Div:
 
 
 def studio_chrome() -> list:
-    """The pane-scoped overlays: the start spinner and the build's progress card."""
-    return [generating_loader(), generate_progress_host()]
+    """The pane-scoped overlays: the busy spinner, the start spinner, the progress card.
+
+    The busy overlay's flags belong HERE rather than inside any one mode's body: a mode
+    switch replaces the whole body, and the flag the mode switch itself raises would be
+    unmounted at the moment it is needed. Mounted inside the Studio pane for the same
+    reason ``generating_loader`` is — it is ``position: fixed``, so from the root it would
+    cover the workspace you switched to.
+    """
+    from studio.page.authoring.busy import STUDIO_BUSY
+    from ui.shell.busy import busy_overlay
+
+    return [busy_overlay(STUDIO_BUSY), generating_loader(), generate_progress_host()]
 
 
 def build_layout() -> html.Div:

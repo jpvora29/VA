@@ -29,6 +29,7 @@ from studio.template_fill.deck_slides import DeckSlides
 from studio.authoring import jobs
 from studio.authoring.config import BLANK, BREAKDOWNS, engine
 from studio.content.report_plan import DEFAULT_AUDIENCE
+from ui.shell.busy import busy_running, register_busy
 
 log = get_logger(__name__)
 
@@ -615,11 +616,10 @@ def _listed(value) -> list:
 def _busy(flag: str):
     """``running=`` for a Setup callback: raise ``flag`` while it works, drop it after.
 
-    The full-page overlay watches every flag at once, so a change answered by several
-    callbacks stays covered until the last of them finishes
-    (:func:`studio.page.authoring.setup.busy_overlay`).
+    The Studio overlay watches every flag at once, so a change answered by several
+    callbacks stays covered until the last of them finishes (:mod:`ui.shell.busy`).
     """
-    return [(Output(flag, "className"), A.BUSY_FLAG_ON, A.BUSY_FLAG_CLASS)]
+    return busy_running(flag)
 
 
 def _generation_blocked(dataset_store, record):
@@ -631,21 +631,13 @@ def _generation_blocked(dataset_store, record):
 
 
 def _register_busy_overlay(app):
-    """Follow every Setup busy flag at once and drive the full-page spinner from them.
+    """Drive the ONE Studio overlay from every Studio busy flag at once.
 
-    Clientside because the only job is holding the overlay up for a minimum time
-    (``assets/studio_busy.js``); a round trip to the server to decide whether to show a
-    "we are talking to the server" spinner would be self-defeating.
+    Registered from here because Setup owns most of the flags, but the scope covers the
+    whole pane: a mode switch, a Data-page upload, Review's re-validate and Export raise
+    the same overlay (:mod:`studio.page.authoring.busy`).
     """
-    from dash import ClientsideFunction
-
-    app.clientside_callback(
-        ClientsideFunction(namespace="qsBusy", function_name="track"),
-        Output("qs-setup-busy", "data-busy"),
-        Input(A.BUSY_FORM, "className"),
-        Input(A.BUSY_PREVIEW, "className"),
-        Input(A.BUSY_SECTIONS, "className"),
-    )
+    register_busy(app, A.STUDIO_BUSY)
 
 
 # What ``start_generate`` returns when it will not start a build: no job, no poll, no
@@ -1076,7 +1068,7 @@ def register_setup(app):
         Input("studio-data-basis", "value"),
         # Same full-page cue as the other Setup controls: either input re-derives the
         # page list, and the author should see that it is happening.
-        running=[(Output(A.BUSY_SECTIONS, "className"), A.BUSY_FLAG_ON, A.BUSY_FLAG_CLASS)],
+        running=_busy(A.BUSY_SECTIONS),
         prevent_initial_call=True,
     )
     def deck_pages(stored, basis):

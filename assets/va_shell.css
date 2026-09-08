@@ -747,3 +747,69 @@ body {
     .qs-mode-rail .qs-mode-btn,
     .va-logout-btn { transition: none; }
 }
+
+/* ── the busy overlay, wherever the app makes you wait ─────────────────────────
+   One overlay per area (the shell above the workspaces; Studio inside its pane),
+   raised by whichever callback is working — see ui/shell/busy.py and
+   assets/va_busy.js. The frosted-glass plate and the spinner itself are the ones
+   Setup already proved out (.qs-page-loader / .qs-page-spinner in
+   studio_authoring.css); what is added here is the flag marker and the label, so
+   the overlay can say WHAT it is waiting for rather than only that it is. */
+.va-busy-flag { display: none; }
+
+/* The Studio pane is `position: relative` for its own fixed children, so the
+   overlay must span the viewport from wherever its host happens to sit. */
+.va-busy-overlay {
+    flex-direction: column;
+    gap: 14px;
+}
+
+.va-busy-label {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--va-ink-600, #46506a);
+    /* Empty until the tracker fills it in; an empty box must not add a gap. */
+    min-height: 0;
+}
+.va-busy-label:empty { display: none; }
+
+/* ── the sign-in card's two bodies ────────────────────────────────────────────
+   SSO where an identity provider is configured, the username box where none is
+   (ui/components/sidebar.py). The SSO control is an <a>, not a <button>, because
+   the flow is a full-page redirect to another origin — so it needs the button's
+   look given to it explicitly. */
+.login-sso {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    width: 100%;
+    padding: 12px 18px;
+    border-radius: var(--va-radius-md, 10px);
+    color: #fff !important;
+    font-weight: 700;
+    text-decoration: none;
+}
+.login-sso:hover { color: #fff !important; text-decoration: none; }
+
+/* The username field stays in the DOM under SSO — `handle_login` is registered
+   unconditionally, and Dash refuses a callback whose Input the app can never
+   render — but it must not be reachable, by pointer or by keyboard. */
+.login-local-hidden {
+    display: none !important;
+}
+
+.login-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 18px;
+    padding: 10px 12px;
+    border-radius: var(--va-radius-sm, 8px);
+    background: var(--va-surface-2, #eef2f8);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--va-ink-500);
+    text-align: left;
+}

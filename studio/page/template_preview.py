@@ -7,8 +7,8 @@ parity). Filled slots are editable inputs; unmapped slots show a placeholder chi
 non-slot shapes render read-only for context. A per-slide "add note" appends a free
 text element that the fill engine also lays down.
 
-Also hosts the template Review (live validation + Re-validate / Auto-fix) and the
-Export panel.
+Also hosts the template Review — the diagnosis of why the deck is not finished
+(:mod:`studio.review`), the live validation with Re-validate / Auto-fix, and Export.
 """
 import re
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -507,13 +507,41 @@ def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> h
 
 
 def template_review_body(tdoc: Mapping[str, Any]) -> html.Div:
-    issues = TV.validate_doc(dict(tdoc))
-    counts = TV.summary(dict(tdoc))
-    fields = materialize_fields(dict(tdoc))
-    filled = sum(1 for f in fields.values() if f["filled"])
-    mapped = sum(1 for f in fields.values() if f["role"])
-    clean = counts["total"] == 0
+    """Review: what is not finished about this deck, why, and how to resolve it.
 
+    Three layers, in the order an author reads them. The DIAGNOSIS answers "why is this
+    box still the template's own placeholder" by grouping every unfilled slot under the
+    one fact about the data that explains it (:mod:`studio.review`). The VALIDATION card
+    below it is the mechanical check — a value an edit emptied, a placeholder that
+    survived a fill — and is the only part with buttons, because it is the only part this
+    screen can repair. EXPORT is last, so the deck is handed over after the reasons have
+    been read rather than before.
+    """
+    from studio.page.authoring.review_report import review_report_view
+    from studio.review import build_review_report
+
+    doc = dict(tdoc)
+    report = build_review_report(doc)
+    return html.Div(
+        [
+            review_report_view(report),
+            _validation_card(doc),
+            _export_card(doc, report),
+        ],
+        className="qs-review",
+    )
+
+
+def _validation_card(doc: Mapping[str, Any]) -> html.Div:
+    """The mechanical checks, and the two buttons that fix them.
+
+    Kept separate from the diagnosis above deliberately: these are the issues the app can
+    repair on its own, and mixing them with the data gaps it cannot repair is what made
+    the old page read as "ten errors that never go away".
+    """
+    issues = TV.validate_doc(dict(doc))
+    counts = TV.summary(dict(doc))
+    clean = counts["total"] == 0
     rows = [
         html.Div(
             [
@@ -530,49 +558,60 @@ def template_review_body(tdoc: Mapping[str, Any]) -> html.Div:
     ]
     if clean:
         rows = [html.Div([html.I(className="bi bi-check-circle-fill qs-chk-icon ok"),
-                          html.Div([html.Div("All mapped values resolved", className="qs-chk-label"),
-                                    html.Div(f"{filled} filled · {mapped} mapped · no validation errors", className="qs-chk-detail")])],
+                          html.Div([html.Div("Nothing to repair", className="qs-chk-label"),
+                                    html.Div("No cleared values and no surviving placeholder tokens.",
+                                             className="qs-chk-detail")])],
                          className="qs-chk-row")]
 
     return html.Div(
         [
             html.Div(
                 [
-                    html.Div(
-                        [
-                            html.Div([html.I(className="bi bi-patch-check"), "Validation"], className="qs-panel-title"),
-                            html.Div(f"{counts['total']} issue(s) · {counts['auto_fixable']} auto-fixable",
-                                     className="qs-review-score" + (" ok" if clean else "")),
-                        ],
-                        className="qs-review-head",
-                    ),
-                    html.Div(rows, className="qs-chk-list"),
-                    html.Div(
-                        [
-                            html.Button([html.I(className="bi bi-arrow-repeat"), " Re-validate"],
-                                        id={"type": "qs-tf-revalidate"}, className="qs-tf-addbtn"),
-                            html.Button([html.I(className="bi bi-magic"), " Auto-fix & re-run"],
-                                        id={"type": "qs-tf-autofix"}, className="qs-review-cta",
-                                        disabled=counts["auto_fixable"] == 0),
-                        ],
-                        className="qs-tf-actions",
-                    ),
+                    html.Div([html.I(className="bi bi-patch-check"), "Validation"], className="qs-panel-title"),
+                    html.Div(f"{counts['total']} issue(s) · {counts['auto_fixable']} auto-fixable",
+                             className="qs-review-score" + (" ok" if clean else "")),
                 ],
-                className="qs-review-card",
+                className="qs-review-head",
             ),
-            # Export folded into Review (Export is no longer its own mode): the
-            # summary + download button, served by the same ``qs-export`` callback.
+            html.Div(rows, className="qs-chk-list"),
             html.Div(
                 [
-                    html.Div([html.I(className="bi bi-filetype-pptx"), "Export"], className="qs-panel-title"),
-                    html.P(f"The exported deck IS your template, filled in: {filled} values mapped, "
-                           f"{counts['total']} open validation issue(s). Placeholders you didn't map "
-                           f"are preserved exactly as authored.", className="qs-preview-note"),
-                    html.Button([html.I(className="bi bi-download"), " Export PPTX"],
-                                id={"type": "qs-export", "loc": "panel"}, className="qs-review-cta"),
+                    html.Button([html.I(className="bi bi-arrow-repeat"), " Re-validate"],
+                                id={"type": "qs-tf-revalidate"}, className="qs-tf-addbtn"),
+                    html.Button([html.I(className="bi bi-magic"), " Auto-fix & re-run"],
+                                id={"type": "qs-tf-autofix"}, className="qs-review-cta",
+                                disabled=counts["auto_fixable"] == 0),
                 ],
-                className="qs-review-card qs-export-card",
+                className="qs-tf-actions",
             ),
         ],
-        className="qs-review",
+        className="qs-review-card",
+    )
+
+
+def _export_card(doc: Mapping[str, Any], report) -> html.Div:
+    """Export, told honestly: what the file will contain, including what it will not.
+
+    Export is not gated on the report. A deck with an unresolved year-on-year figure is
+    still the deck the author asked for, and blocking it would only teach them to ignore
+    the page — but the button says what they are about to send.
+    """
+    unwritten = sum(1 for c in report.commentary if not c.filled)
+    warning = (
+        f"{unwritten} commentary box(es) still carry the template's example text."
+        if unwritten else ""
+    )
+    return html.Div(
+        [
+            html.Div([html.I(className="bi bi-filetype-pptx"), "Export"], className="qs-panel-title"),
+            html.P(f"The exported deck IS your template, filled in: "
+                   f"{report.slots_filled} of {report.slots_total} values carry this run's data. "
+                   f"Placeholders that did not resolve are preserved exactly as authored.",
+                   className="qs-preview-note"),
+            html.Div([html.I(className="bi bi-exclamation-triangle-fill"), html.Span(warning)],
+                     className="qs-rv-fix err") if warning else html.Span(),
+            html.Button([html.I(className="bi bi-download"), " Export PPTX"],
+                        id={"type": "qs-export", "loc": "panel"}, className="qs-review-cta"),
+        ],
+        className="qs-review-card qs-export-card",
     )

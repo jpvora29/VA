@@ -1,0 +1,206 @@
+/* ── Review: the diagnosis ────────────────────────────────────────────────────
+   Renders studio/page/authoring/review_report.py. Sits on top of the Review-mode
+   base in studio_authoring.css (.qs-review / .qs-review-card supply the column and
+   the card); everything here is the report's own vocabulary.
+
+   The tone words are the report's, not the CSS's: `ok` resolved, `warn` an honest
+   data gap, `err` something to fix before sending, `idle` a capability this deck
+   never asked for. Nothing is red unless the author can act on it — a deck missing
+   a survey score it does not use must not look broken. */
+
+.qs-rv {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+/* ── readiness ─────────────────────────────────────────────────────────────── */
+
+.qs-rv-scope {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    margin: -8px 0 14px;
+}
+
+.qs-rv-meter {
+    height: 8px;
+    border-radius: 999px;
+    background: var(--va-surface-2, #eef2f8);
+    overflow: hidden;
+}
+.qs-rv-meter-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--blue), var(--va-cyan, #00a8e0));
+    transition: width 240ms ease;
+}
+
+.qs-rv-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 18px;
+}
+.qs-rv-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--va-surface-1, #fbfcfe);
+}
+.qs-rv-stat-num { font-size: 22px; font-weight: 800; line-height: 1.1; color: var(--navy); }
+.qs-rv-stat-num.ok { color: var(--good); }
+.qs-rv-stat-num.warn { color: var(--warn); }
+.qs-rv-stat-num.err { color: var(--danger); }
+.qs-rv-stat-lbl { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+
+.qs-rv-note {
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--muted);
+    margin: 14px 0 0;
+}
+.qs-rv-note.err { color: var(--danger); font-weight: 600; }
+
+/* ── what the data supports ────────────────────────────────────────────────── */
+
+.qs-rv-caps { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
+
+.qs-rv-cap {
+    display: grid;
+    grid-template-columns: 20px 1fr auto;
+    align-items: start;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: var(--r-sm);
+    border: 1px solid transparent;
+}
+.qs-rv-cap.warn { background: #fffaf0; border-color: rgba(185, 129, 10, 0.2); }
+/* A capability this template never asks for is stated, not alarmed — it is context,
+   and colouring it would drown the ones that actually cost the deck something. */
+.qs-rv-cap.idle { opacity: 0.62; }
+
+.qs-rv-cap-icon { font-size: 15px; line-height: 1.5; }
+.qs-rv-cap-icon.ok { color: var(--good); }
+.qs-rv-cap-icon.warn { color: var(--warn); }
+.qs-rv-cap-icon.idle { color: var(--muted); }
+
+.qs-rv-cap-label { font-size: 13px; font-weight: 700; color: var(--navy); }
+.qs-rv-cap-detail { font-size: 12px; line-height: 1.5; color: var(--muted); margin-top: 2px; }
+
+/* ── one card per reason ───────────────────────────────────────────────────── */
+
+.qs-rv-reason { border-left: 3px solid var(--warn); }
+.qs-rv-reason.err { border-left-color: var(--danger); }
+
+.qs-rv-reason-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+.qs-rv-reason-icon { font-size: 17px; }
+.qs-rv-reason-icon.warn { color: var(--warn); }
+.qs-rv-reason-icon.err { color: var(--danger); }
+.qs-rv-reason-title {
+    flex: 1;
+    font-size: 14px;
+    font-weight: 800;
+    color: var(--navy);
+    line-height: 1.35;
+}
+
+.qs-rv-why {
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--ink);
+    margin: 0 0 12px;
+}
+
+.qs-rv-line { font-size: 12px; margin-bottom: 10px; }
+.qs-rv-k { font-weight: 700; color: var(--muted); }
+.qs-rv-v { font-weight: 600; color: var(--navy); }
+
+.qs-rv-slots {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border-radius: var(--r-sm);
+    background: var(--va-surface-1, #fbfcfe);
+    border: 1px solid var(--line);
+}
+.qs-rv-slot {
+    display: grid;
+    grid-template-columns: 30px auto 1fr;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 11.5px;
+    line-height: 1.5;
+}
+.qs-rv-slot.more { display: block; color: var(--muted); font-style: italic; }
+.qs-rv-slot-page { font-weight: 800; color: var(--blue); }
+.qs-rv-slot-token {
+    font-family: var(--va-font-mono, ui-monospace, "SF Mono", Consolas, monospace);
+    font-size: 11px;
+    color: var(--navy);
+    background: rgba(11, 75, 255, 0.07);
+    border-radius: 4px;
+    padding: 1px 6px;
+}
+.qs-rv-slot-ctx {
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.qs-rv-fix {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 12.5px;
+    line-height: 1.55;
+    font-weight: 600;
+    color: #1d5c8f;
+    background: rgba(0, 168, 224, 0.08);
+    border-radius: var(--r-sm);
+    padding: 10px 12px;
+}
+.qs-rv-fix.idle { color: var(--muted); background: var(--va-surface-2, #eef2f8); font-weight: 500; }
+.qs-rv-fix.err { color: var(--danger); background: rgba(197, 53, 50, 0.08); margin: 12px 0; }
+.qs-rv-fix i { margin-top: 2px; }
+
+.qs-rv-clear { border-left: 3px solid var(--good); }
+
+/* ── commentary ────────────────────────────────────────────────────────────── */
+
+.qs-rv-sub {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 18px;
+}
+.qs-rv-lostwrap { border-top: 1px solid var(--line); margin-top: 4px; }
+.qs-rv-lost {
+    margin: 10px 0 0;
+    padding-left: 20px;
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: var(--ink);
+}
+
+/* The pill vocabulary gains an error tone here; ok/warn live in studio_authoring.css. */
+.qs-tf-pill.err { background: rgba(197, 53, 50, 0.1); color: #8f2b28; }
+
+@media (max-width: 900px) {
+    .qs-rv-stats { grid-template-columns: 1fr; }
+    .qs-rv-slot { grid-template-columns: 30px auto; }
+    .qs-rv-slot-ctx { grid-column: 1 / -1; }
+}
