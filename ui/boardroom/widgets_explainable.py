@@ -1,16 +1,19 @@
 """Renderers for the explainable Boardroom widgets.
 
 Roadmap phase 1: every widget here shows a business measure a person can defend
-— premium in currency, share of wallet, a named comparison, the threshold that
-was crossed — and never a normalised 0-100 score.
+— premium in currency, share of wallet, a named comparison — and never a rating.
+That means no normalised 0-100 score AND no High/Medium/Low: both were labels a
+reader could not check, and two readers never agreed what one meant. Where a
+rating used to sit, the money does, and the rows are ordered by it.
 
 Two conventions run through the whole module:
 
 * **Actual measures.** A value is drawn from its ``*_display`` string when the
   extractor gave one, and formatted from ``*_value`` when it did not, so the
-  screen and the exported slide read identically.
-* **Explain in place.** The "why" of a classification lives beside it in a
-  native ``<details>`` drawer, so opening it costs no callback and no re-render.
+  screen and the exported slide read identically. What the extractor left out is
+  computed first by :mod:`core.boardroom.derive`, never guessed at here.
+* **Explain in place.** How a figure was arrived at lives beside it in a native
+  ``<details>`` drawer, so opening it costs no callback and no re-render.
 
 Rows carry ``data-*`` attributes that ``assets/boardroom_ui.js`` uses to filter
 and sort client-side; nothing here depends on that script running.
@@ -21,7 +24,8 @@ from typing import Any, Dict, List, Optional
 
 from dash import html
 
-from core.boardroom.priority import format_money
+from core.boardroom import opportunity
+from core.boardroom.money import format_money
 
 _TONES = ("good", "warn", "danger", "neutral")
 
@@ -38,7 +42,9 @@ _STATUS_TONE = {
     "established": "good",
     "unknown": "neutral",
 }
-_PRIORITY_TONE = {"high": "danger", "medium": "warn", "low": "neutral", "unrated": "neutral"}
+# What replaced the severity label: the list is ordered by money at risk, and it
+# says so where the "why this priority?" drawer used to be.
+_WATCH_ORDER_NOTE = "Ordered by the premium exposed. No severity is assigned — each row states the movement and the periods it was measured over."
 
 
 def tone(value: Optional[str]) -> str:
@@ -106,6 +112,21 @@ def _number(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _move_tone(pct: Any) -> str:
+    """Green up, red down, neutral when there is no comparable movement."""
+    value = _to_number(pct)
+    if value is None:
+        return ""
+    return "good" if value >= 0 else "danger"
+
+
+def _to_number(value: Any) -> Optional[float]:
+    try:
+        return None if value in (None, "") else float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _status_pill(status: str):
@@ -183,7 +204,13 @@ def _paired_bar(carrier_value: Any, total_value: Any, *, carrier_text: str, whit
             ),
             html.Div(
                 [
-                    html.Span([html.I(className="bi bi-shield-check"), carrier_text], className="bm-x-bar-tag held"),
+                    # Both halves are named. The written half used to be a bare
+                    # amount next to a labelled "whitespace" amount, so which
+                    # premium a product line was showing had to be inferred.
+                    html.Span(
+                        [html.I(className="bi bi-shield-check"), f"{carrier_text} written"],
+                        className="bm-x-bar-tag held",
+                    ),
                     html.Span(
                         [html.I(className="bi bi-slash-square"), f"{whitespace_text} whitespace"],
                         className="bm-x-bar-tag gap",
@@ -199,52 +226,18 @@ def _paired_bar(carrier_value: Any, total_value: Any, *, carrier_text: str, whit
 # ───────────────────────── 1. Risk & Watchlist ─────────────────────────
 
 
-def _priority_pill(item: Dict[str, Any]):
-    label = (item.get("priority") or "").strip()
-    if not label:
-        return None
-    approved = bool(item.get("priority_approved"))
-    return html.Span(
-        [
-            html.Span(label),
-            None if approved else html.I(className="bi bi-asterisk", title="Default thresholds, pending business sign-off"),
-        ],
-        className=f"bm-x-priority {_PRIORITY_TONE.get(label.lower(), 'neutral')}",
-    )
+def _exposure_tag(item: Dict[str, Any]):
+    """The premium at stake, printed where a severity label used to sit.
 
-
-def _priority_drawer(item: Dict[str, Any]):
-    """`Why High?` — the exact rule and inputs, per the roadmap's interaction spec."""
-    tests = item.get("priority_tests") or []
-    label = (item.get("priority") or "").strip()
-    if not tests:
+    High/Medium/Low was the last unexplained rating on the board: two readers
+    never agreed what "Medium" meant, and the label carried no number. The
+    amount exposed IS the ranking — the rows are ordered by it — and it needs no
+    key to read.
+    """
+    exposed = _money(item.get("premium_exposed"), item.get("premium_exposed_value"))
+    if exposed == "—":
         return None
-    rows = [
-        html.Div(
-            [
-                html.I(className="bi bi-check-circle-fill" if t.get("passed") else "bi bi-circle"),
-                html.Span(t.get("name", ""), className="bm-x-test-name"),
-                html.Span(t.get("detail", ""), className="bm-x-test-detail"),
-            ],
-            className="bm-x-test" + (" passed" if t.get("passed") else ""),
-        )
-        for t in tests
-    ]
-    thresholds = (item.get("priority_thresholds") or "").strip()
-    if thresholds:
-        rows.append(html.Div(f"Thresholds in force — {thresholds}", className="bm-x-test-note"))
-    if not item.get("priority_approved"):
-        rows.append(
-            html.Div(
-                "These are default thresholds; the business has not signed them off yet.",
-                className="bm-x-test-note warn",
-            )
-        )
-    return html.Details(
-        [html.Summary([html.I(className="bi bi-question-circle"), html.Span(f"Why {label or 'this priority'}?")])]
-        + rows,
-        className="bm-x-drawer",
-    )
+    return html.Span(exposed, className="bm-x-headline-value", title="Premium exposed")
 
 
 def _watch_field(label: str, value: str, icon: str = "", value_tone: str = ""):
@@ -291,7 +284,7 @@ def _watch_item(item: Dict[str, Any]):
             html.Div(
                 [
                     html.Span(item.get("risk", ""), className="bm-x-row-title"),
-                    _priority_pill(item),
+                    _exposure_tag(item),
                 ],
                 className="bm-x-row-head",
             ),
@@ -302,13 +295,9 @@ def _watch_item(item: Dict[str, Any]):
             html.Div([html.I(className="bi bi-bullseye"), html.Span(breach)], className="bm-x-trigger breach")
             if breach
             else None,
-            _priority_drawer(item),
         ],
         className=f"bm-x-row watch {tone(item.get('tone'))}",
-        **{
-            "data-premium": str(_number(item.get("premium_exposed_value"))),
-            "data-priority": (item.get("priority") or "").lower(),
-        },
+        **{"data-premium": str(_number(item.get("premium_exposed_value")))},
     )
 
 
@@ -325,7 +314,7 @@ def render_watchlist(data: Dict[str, Any]):
         "Risk & watchlist",
         "bi bi-exclamation-diamond",
         body,
-        meta=[_basis(watchlist.get("basis", "")), _definition(watchlist.get("thresholds", ""), "How priority is decided")],
+        meta=[_basis(watchlist.get("basis", "")), _definition(_WATCH_ORDER_NOTE, "How this list is ordered")],
         cls="bm-x-watchlist",
     )
 
@@ -398,15 +387,29 @@ def render_headroom(data: Dict[str, Any]):
 # ───────────────────── 3. Industry Whitespace ─────────────────────
 
 
+def _band_pill(band: str):
+    """The opportunity band, coloured. Absent when the growth rates cannot say."""
+    label = opportunity.band_label(band)
+    if not label:
+        return None
+    return html.Span(
+        label,
+        className=f"bm-x-band {opportunity.band_tone(band)}",
+        title=opportunity.band_reason(band),
+    )
+
+
 def _whitespace_row(row: Dict[str, Any]):
     marsh = _money(row.get("marsh_premium"), row.get("marsh_premium_value"))
     carrier = _money(row.get("carrier_premium"), row.get("carrier_premium_value"))
     gap = _money(row.get("whitespace_premium"), row.get("whitespace_premium_value"))
+    band = (row.get("opportunity") or "").strip()
     return html.Div(
         [
             html.Div(
                 [
                     html.Span(row.get("industry", ""), className="bm-x-row-title"),
+                    _band_pill(band),
                     _status_pill(row.get("status", "unknown")),
                     html.Span(gap, className="bm-x-headline-value", title="Whitespace premium"),
                 ],
@@ -438,7 +441,18 @@ def _whitespace_row(row: Dict[str, Any]):
                         )
                         if row.get("peer_share_of_wallet_pct") is not None
                         else None,
-                        _watch_field("Marsh movement", row.get("marsh_change", ""), "bi bi-graph-up-arrow"),
+                        _watch_field(
+                            "Market movement",
+                            row.get("marsh_change", ""),
+                            "bi bi-graph-up-arrow",
+                            _move_tone(row.get("marsh_change_pct")),
+                        ),
+                        _watch_field(
+                            "Carrier movement",
+                            row.get("carrier_change", ""),
+                            "bi bi-arrow-up-right",
+                            _move_tone(row.get("carrier_change_pct")),
+                        ),
                     )
                     if f is not None
                 ],
@@ -451,10 +465,11 @@ def _whitespace_row(row: Dict[str, Any]):
             if (row.get("focus_reason") or "").strip()
             else None,
         ],
-        className="bm-x-row whitespace",
+        className=f"bm-x-row whitespace band-{band}" if band else "bm-x-row whitespace",
         **{
             "data-product": (row.get("product_line") or "").strip().lower(),
             "data-whitespace": str(_number(row.get("whitespace_premium_value"))),
+            "data-band": band,
         },
     )
 
@@ -519,6 +534,7 @@ def render_whitespace(data: Dict[str, Any]):
             _product_filter(whitespace, rows) if rows else None,
             _basis(whitespace.get("basis", "")),
             _definition(whitespace.get("definition", ""), "How whitespace is calculated"),
+            _definition(opportunity.rule_summary(), "What the colours mean"),
         ],
         cls="bm-x-whitespace",
     )
@@ -672,63 +688,41 @@ def _bubble(bubble: Dict[str, Any], *, x_low, x_high, y_low, y_high, largest, x_
     )
 
 
-def _bubble_legend(bubbles: List[Dict[str, Any]], x_bench: Any, y_bench: Any):
-    """A row per line: both shares, the premium, growth, and the quadrant read.
+# How many lines the plot draws. A book with fourteen product lines drew fourteen
+# overlapping bubbles and became unreadable — which is the opposite of what a map
+# is for. The seven biggest by premium are the book; the rest are named in the
+# footnote so nothing is silently hidden, and Product Line Headroom below lists
+# every one of them with its numbers.
+_MAX_BUBBLES = 7
 
-    The plot shows the shape of the book; this is the part a reader can quote.
-    """
-    rows = []
-    for b in sorted(bubbles, key=lambda b: _number(b.get("premium_value")), reverse=True):
-        quadrant = _quadrant_of(b, x_bench, y_bench)
-        rows.append(
-            html.Div(
-                [
-                    html.Div(
-                        [
-                            html.Span(b.get("product_line", ""), className="bm-x-row-title"),
-                            html.Span(quadrant.split(" — ")[0], className="bm-x-status neutral")
-                            if quadrant
-                            else None,
-                            html.Span(
-                                _money(b.get("premium"), b.get("premium_value")),
-                                className="bm-x-headline-value",
-                                title="Carrier premium in this line",
-                            ),
-                        ],
-                        className="bm-x-row-head",
-                    ),
-                    html.Div(
-                        [
-                            f
-                            for f in (
-                                _watch_field("Share of wallet", _pct(b.get("share_of_wallet_pct")), "bi bi-pie-chart"),
-                                _watch_field(
-                                    "Share of portfolio",
-                                    _pct(b.get("share_of_portfolio_pct")),
-                                    "bi bi-diagram-3",
-                                ),
-                                _watch_field("Growth", b.get("growth", ""), "bi bi-graph-up-arrow"),
-                                _watch_field(
-                                    "Peers hold",
-                                    _pct(b.get("peer_share_of_wallet_pct")),
-                                    "bi bi-people-fill",
-                                )
-                                if b.get("peer_share_of_wallet_pct") is not None
-                                else None,
-                            )
-                            if f is not None
-                        ],
-                        className="bm-x-fields",
-                    ),
-                ],
-                className="bm-x-row bubble",
-            )
-        )
-    return html.Div(rows, className="bm-x-rows")
+
+def _bubble_footnote(hidden: List[Dict[str, Any]]):
+    """Names the lines the plot did not draw, so "top 7" is never a silent cut."""
+    if not hidden:
+        return None
+    names = ", ".join(str(b.get("product_line") or "").strip() for b in hidden if b.get("product_line"))
+    return html.Div(
+        [
+            html.I(className="bi bi-three-dots"),
+            html.Span(
+                f"{len(hidden)} smaller line{'s' if len(hidden) > 1 else ''} not plotted"
+                + (f": {names}" if names else "")
+                + ". Every line is listed under Product line headroom."
+            ),
+        ],
+        className="bm-x-note",
+    )
 
 
 def render_portfolio_map(data: Dict[str, Any]):
-    """Share of wallet against share of portfolio, one bubble per product line."""
+    """Share of wallet against share of portfolio, one bubble per product line.
+
+    The plot is the POSITION of the book — where each line sits against the two
+    benchmarks. The numbers behind each line (Marsh premium, the whitespace, the
+    suggested focus) are stated once, by Product Line Headroom on the same page.
+    This widget used to repeat them underneath the plot as a second row list, so
+    the page said the same thing about the same products twice.
+    """
     portfolio = (data or {}).get("portfolio_map") or {}
     bubbles = [b for b in (portfolio.get("bubbles") or []) if b]
     if not bubbles:
@@ -738,6 +732,11 @@ def render_portfolio_map(data: Dict[str, Any]):
             _empty(portfolio.get("note"), "Premium is not split by product line in this data."),
             cls="bm-x-portfolio",
         )
+
+    # Biggest premium first, then the cut: the plot is the shape of the book, so
+    # the lines that carry it are the ones that have to be legible.
+    bubbles.sort(key=lambda b: _number(b.get("premium_value")), reverse=True)
+    bubbles, hidden = bubbles[:_MAX_BUBBLES], bubbles[_MAX_BUBBLES:]
 
     x_bench = portfolio.get("wallet_benchmark_pct")
     y_bench = portfolio.get("portfolio_benchmark_pct")
@@ -750,21 +749,42 @@ def render_portfolio_map(data: Dict[str, Any]):
     )
     largest = max((_number(b.get("premium_value")) for b in bubbles), default=0.0)
 
+    # Both axes are drawn AND named. An unlabelled dashed line is a line; a
+    # labelled one turns the plot into four quadrants a reader can name — left of
+    # the vertical is "below the carrier's average wallet share", above the
+    # horizontal is "a bigger part of the book than an even split".
+    label = str(portfolio.get("benchmark_label") or "Carrier average").strip()
     lines = []
     if x_bench not in (None, ""):
+        at = _position_pct(x_bench, x_low, x_high)
         lines.append(
             html.Div(
                 className="bm-x-benchline v",
-                style={"left": f"{_position_pct(x_bench, x_low, x_high):.1f}%"},
-                title=f"{portfolio.get('benchmark_label', 'Benchmark')}: {_pct(x_bench)} share of wallet",
+                style={"left": f"{at:.1f}%"},
+                title=f"{label}: {_pct(x_bench)} share of wallet",
+            )
+        )
+        lines.append(
+            html.Div(
+                f"Avg share of wallet {_pct(x_bench)}",
+                className="bm-x-benchlabel v",
+                style={"left": f"{at:.1f}%"},
             )
         )
     if y_bench not in (None, ""):
+        at = _position_pct(y_bench, y_low, y_high)
         lines.append(
             html.Div(
                 className="bm-x-benchline h",
-                style={"bottom": f"{_position_pct(y_bench, y_low, y_high):.1f}%"},
-                title=f"{portfolio.get('benchmark_label', 'Benchmark')}: {_pct(y_bench)} share of portfolio",
+                style={"bottom": f"{at:.1f}%"},
+                title=f"{label}: {_pct(y_bench)} share of portfolio",
+            )
+        )
+        lines.append(
+            html.Div(
+                f"Avg share of portfolio {_pct(y_bench)}",
+                className="bm-x-benchlabel h",
+                style={"bottom": f"{at:.1f}%"},
             )
         )
 
@@ -794,8 +814,8 @@ def render_portfolio_map(data: Dict[str, Any]):
                 [html.I(className="bi bi-circle-fill"), html.Span("Bubble size = premium in the line")],
                 className="bm-x-note",
             ),
+            _bubble_footnote(hidden),
             html.Div(portfolio.get("note", ""), className="bm-x-note") if portfolio.get("note") else None,
-            _bubble_legend(bubbles, x_bench, y_bench),
         ],
         className="bm-x-poswrap",
     )

@@ -60,12 +60,20 @@ def test_progress_does_not_go_backwards():
     assert advance(writing, "gpr_execute_sql") is writing
 
 
-def test_same_phase_steps_still_swap():
-    """Charts and prose share a phase because their order differs per path."""
+def test_the_line_never_moves_sideways_within_a_phase():
+    """Two parallel lenses trading the line back and forth is what flickered.
+
+    Charts and prose share a phase, so the line used to swap between them (and
+    between the premium and survey lenses) several times a second. It now moves
+    forward only, in the order the steps are declared.
+    """
     writing = STEPS["writer_node"]
-    charting = advance(writing, "chart_picker_node")
-    assert charting is STEPS["chart_picker_node"]
-    assert charting.phase == writing.phase == PRESENT
+    assert advance(writing, "chart_picker_node") is writing
+    assert STEPS["chart_picker_node"].phase == writing.phase == PRESENT
+
+    reviewing = advance(None, "gpr_agent")
+    assert advance(reviewing, "survey_agent") is reviewing
+    assert advance(reviewing, "gpr_execute_sql") is STEPS["gpr_execute_sql"]
 
 
 def test_a_turn_walks_forward_through_its_phases():

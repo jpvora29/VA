@@ -13,7 +13,7 @@ from langchain_core.messages import HumanMessage
 
 import core.graph.hitl as hitl
 from core.schemas.hitl import ClarifyDecision, ClarifyOption, ClarifyQuestion
-from core.schemas.routing import RoutingContext, UnresolvedTerm
+from core.schemas.routing import QueryEntities, RoutingContext, UnresolvedTerm
 
 
 # A premium turn whose mandatory filters (Carrier + Country) are both already
@@ -149,6 +149,7 @@ def test_fallback_and_clean_turns_ask_nothing(monkeypatch):
 
 
 def test_missing_carrier_and_country_both_asked(monkeypatch):
+    """A turn scoped by NOTHING is the only one the filter gate stops."""
     monkeypatch.setattr(hitl, "_CLARIFY_DECIDER", _StubDecider(_NO_ASK))
     # A premium turn with neither carrier nor country resolved/inherited.
     state = {
@@ -161,15 +162,53 @@ def test_missing_carrier_and_country_both_asked(monkeypatch):
     assert all(q["allow_free_text"] for q in questions)
 
 
-def test_missing_country_only_when_carrier_resolved(monkeypatch):
+def test_a_carrier_alone_is_enough_to_run(monkeypatch):
+    """Naming ANY of carrier / country / year scopes the turn.
+
+    Requiring both carrier AND country stopped a question that had already said
+    what it was about, to ask for something the analyst could answer without.
+    """
     monkeypatch.setattr(hitl, "_CLARIFY_DECIDER", _StubDecider(_NO_ASK))
     state = {
         "messages": [HumanMessage(content="Zurich premium", id="m1")],
         "routing_context": _ctx(resolved={"Carrier_Group": ["ZURICH GROUP"]}),
     }
+    assert hitl.clarify_decide(state)["clarify_questions"] is None
+
+
+def test_a_country_alone_is_enough_to_run(monkeypatch):
+    monkeypatch.setattr(hitl, "_CLARIFY_DECIDER", _StubDecider(_NO_ASK))
+    state = {
+        "messages": [HumanMessage(content="premium in Canada", id="m1")],
+        "routing_context": _ctx(resolved={"Country": ["Canada"]}),
+    }
+    assert hitl.clarify_decide(state)["clarify_questions"] is None
+
+
+def test_a_year_alone_is_enough_to_run(monkeypatch):
+    """A year has no clarify question of its own, but it still scopes a turn."""
+    monkeypatch.setattr(hitl, "_CLARIFY_DECIDER", _StubDecider(_NO_ASK))
+    rc = _ctx(resolved={})
+    rc.timeframe_hint = "2024"
+    state = {
+        "messages": [HumanMessage(content="premium in 2024", id="m1")],
+        "routing_context": rc,
+    }
+    assert hitl.clarify_decide(state)["clarify_questions"] is None
+
+
+def test_a_named_but_unresolved_carrier_still_scopes_the_turn(monkeypatch):
+    """The mismatch is asked about ONCE, by "did you mean...?" — not twice."""
+    _suggestions(monkeypatch, {"zurrich": ["ZURICH GROUP"]})
+    monkeypatch.setattr(hitl, "_CLARIFY_DECIDER", _StubDecider(_NO_ASK))
+    rc = _ctx(
+        resolved={},
+        unresolved=[UnresolvedTerm(kind="carrier", term="Zurrich", column="Carrier_Group", flow="gpr")],
+    )
+    rc.entities = QueryEntities(carriers=["Zurrich"])
+    state = {"messages": [HumanMessage(content="Zurrich premium", id="m1")], "routing_context": rc}
     questions = hitl.clarify_decide(state)["clarify_questions"]
-    assert [q["id"] for q in questions] == ["mandatory:country"]
-    assert questions[0]["column"] == "Country"
+    assert [q["kind"] for q in questions] == ["unresolved_entity"]
 
 
 def test_inherited_carrier_satisfies_mandatory(monkeypatch):

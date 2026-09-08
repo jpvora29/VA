@@ -14,6 +14,7 @@ from uuid import uuid4
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
+from core.peers import MIN_CUSTOM_PEERS, MIN_PEERS_MESSAGE, peer_min_note  # noqa: F401
 from studio.compute import DATA_BASIS_PREMIUM, DATA_BASIS_WITH_SURVEY
 from studio.page.layout import _filter_grid
 
@@ -230,17 +231,9 @@ def _audience_length() -> html.Div:  # pragma: no cover - legacy shim
 # the existing groups are listed under their own country, and the custom picker is one
 # dropdown per country rather than one flat set silently applied to every page.
 
-# A benchmark of one or two carriers is not an aggregate — it is close enough to naming
-# them, which carrier-facing output may not do. Five is the floor the disclosure rule needs
-# and the smallest set an average means anything over.
-MIN_CUSTOM_PEERS = 5
-MIN_PEERS_MESSAGE = "Please select atleast 5 peers"
-
-
-def peer_min_note(values: Sequence[str]) -> str:
-    """The red under-minimum warning for one market's custom peer set (``""`` when fine)."""
-    chosen = [v for v in (values or []) if v]
-    return MIN_PEERS_MESSAGE if len(chosen) < MIN_CUSTOM_PEERS else ""
+# The "at least five peers" floor is a product rule, not a Studio one — the chatbot's
+# Custom Peers dialog enforces the same minimum — so it lives in `core.peers`, and this
+# module re-exports it because the form and its callbacks read it as part of this API.
 
 
 # ``[(country, options, chosen)]`` — what both market pickers below are built from.

@@ -1,9 +1,13 @@
 from datetime import datetime
 
-from dash import html, dcc, dash_table
+from dash import html, dcc
 import dash_bootstrap_components as dbc
+from core.answers.commands import COMMANDS
+from core.peers import MIN_CUSTOM_PEERS
 from document_builder.report_generator import PITCH_THEMES, theme_options
 from ui.components.answer_actions import AnswerContext, answer_footer, feedback_panel
+from ui.components.provenance import provenance_drawer
+from ui.components.scope_bar import scope_bar
 
 
 # Example questions surfaced on the welcome screen and (mirrored) in the
@@ -57,8 +61,26 @@ def clarify_questions_of(payload: dict) -> list[dict]:
     return [flat]
 
 
-def _clarify_question_block(question: dict, answered: str | None) -> "html.Div":
-    """One question's badge + prompt + options + free-text row."""
+def _clarify_answered(question: dict, answer: str) -> "html.Div":
+    """A settled question, collapsed to one line: what was asked, what was picked.
+
+    Its options are GONE, not disabled — a row of dead buttons above the question
+    you are actually being asked is noise, and re-reading a settled choice is not
+    what the card is for. The full prompt stays in the tooltip.
+    """
+    return html.Div(
+        [
+            html.I(className="bi bi-check-circle-fill clarify-done-icon"),
+            html.Span(question.get("header") or "Answered", className="clarify-done-label"),
+            html.Span(answer, className="clarify-done-value"),
+        ],
+        className="clarify-answered",
+        title=question.get("question") or "",
+    )
+
+
+def _clarify_question_block(question: dict) -> "html.Div":
+    """The OPEN question: badge, prompt, options, free-text row."""
     qid = str(question.get("id") or "q0")
     prompt = question.get("question") or "Could you clarify what you mean?"
     header = question.get("header") or "Quick check"
@@ -76,12 +98,7 @@ def _clarify_question_block(question: dict, answered: str | None) -> "html.Div":
             ],
             id={"type": "clarify-option", "qid": qid, "value": opt.get("label", "")},
             n_clicks=0,
-            className=(
-                "clarify-option selected"
-                if answered and opt.get("label") == answered
-                else "clarify-option"
-            ),
-            disabled=bool(answered),
+            className="clarify-option",
         )
         for opt in options
         if opt.get("label")
@@ -90,13 +107,7 @@ def _clarify_question_block(question: dict, answered: str | None) -> "html.Div":
     children = [
         html.Div(
             [
-                html.I(
-                    className=(
-                        "bi bi-check-circle-fill clarify-card-icon answered"
-                        if answered
-                        else "bi bi-question-circle clarify-card-icon"
-                    )
-                ),
+                html.I(className="bi bi-question-lg clarify-card-icon"),
                 html.Span(header, className="clarify-card-header"),
             ],
             className="clarify-card-badge",
@@ -105,20 +116,15 @@ def _clarify_question_block(question: dict, answered: str | None) -> "html.Div":
     ]
     if option_buttons:
         children.append(html.Div(option_buttons, className="clarify-option-grid"))
-    # A free-text answer was typed (not one of the options) — show it back.
-    if answered and not any(o.get("label") == answered for o in options):
-        children.append(html.Div(f"You answered: {answered}", className="clarify-hint"))
-    if question.get("allow_free_text", True) and not answered:
-        if option_buttons:
-            children.append(
-                html.Div("Pick one, or type your own answer below.", className="clarify-hint")
-            )
+    if question.get("allow_free_text", True):
         children.append(
             dbc.InputGroup(
                 [
                     dbc.Input(
                         id={"type": "clarify-free-text", "qid": qid},
-                        placeholder="Or type your answer…",
+                        placeholder=(
+                            "…or type your own answer" if option_buttons else "Type your answer"
+                        ),
                         debounce=True,
                         className="clarify-free-input",
                     ),
@@ -136,33 +142,61 @@ def _clarify_question_block(question: dict, answered: str | None) -> "html.Div":
 
 
 def clarify_card(payload: dict):
-    """Inline Claude-style clarification card — one or SEVERAL questions.
+    """Inline clarification card — ONE open question at a time.
 
     `payload` is the interrupt value: either `{"kind": "clarify", "questions":
     [...], "answers": {...}}` from the clarify gate, or one flat ClarifyQuestion
-    dict (custom-peer gate). Each question renders its own option grid +
-    free-text row; pattern-matching ids carry the question id so one callback
-    handles every question. Answered questions show their selection and lock;
-    the turn resumes once every question is answered.
+    dict (custom-peer gate).
+
+    Two questions used to arrive side by side, which reads as a form to fill in
+    rather than a conversation — and the second question is often only worth
+    asking once the first is answered. So the card shows the questions already
+    answered as one settled line each, then the FIRST unanswered one, and nothing
+    below it. The graph still interrupts once with the whole list and resumes
+    with every answer (`submit_clarification` holds the partial ones), so this is
+    a change of pace, not of contract.
     """
     payload = payload or {}
     questions = clarify_questions_of(payload)
     answers = payload.get("answers") or {}
 
-    blocks = [
-        _clarify_question_block(q, answers.get(str(q.get("id") or "q0")))
-        for q in questions
-    ]
+    def qid_of(q: dict) -> str:
+        return str(q.get("id") or "q0")
+
+    done = [q for q in questions if answers.get(qid_of(q))]
+    remaining = [q for q in questions if not answers.get(qid_of(q))]
+    open_question = remaining[0] if remaining else None
+
     children: list = []
     if len(questions) > 1:
-        children.append(
-            html.Div(
-                f"A couple of quick checks ({len(answers)}/{len(questions)} answered)",
-                className="clarify-card-progress",
-            )
-        )
-    children.extend(blocks)
+        children.append(_clarify_steps(len(done), len(questions)))
+    children.extend(_clarify_answered(q, answers[qid_of(q)]) for q in done)
+    if open_question is not None:
+        children.append(_clarify_question_block(open_question))
     return html.Div(children, className="message clarify-card")
+
+
+def _clarify_steps(done: int, total: int):
+    """Where the reader is in the sequence: "Question 2 of 2", plus a pip each."""
+    return html.Div(
+        [
+            html.Span(
+                f"Question {min(done + 1, total)} of {total}",
+                className="clarify-step-label",
+            ),
+            html.Div(
+                [
+                    html.Span(
+                        className="clarify-pip" + (" done" if i < done else
+                                                   " current" if i == done else ""),
+                    )
+                    for i in range(total)
+                ],
+                className="clarify-pips",
+            ),
+        ],
+        className="clarify-steps",
+    )
 
 
 # A small rotation of icons for LLM-tailored starter questions (which arrive as
@@ -252,6 +286,19 @@ def followup_suggestions(followups: list[str]):
     )
 
 
+def answer_scope(scope: list | None):
+    """The filters THIS answer was built from, stated on the answer itself.
+
+    Scope used to be a bar above the composer. That bar described the most recent
+    turn wherever you were in the transcript, so scrolling back to an older answer
+    told you the scope of a different one — and it sat directly above the input,
+    where it competed with the question being typed. On the answer, each set of
+    pills belongs to the answer it is printed under, and scrolls away with it.
+    """
+    bar = scope_bar(scope, compact=True)
+    return html.Div(bar, className="answer-scope") if bar is not None else None
+
+
 def ai_message(
     content: str,
     is_insight: bool,
@@ -261,8 +308,10 @@ def ai_message(
     route: str = "",
     shape: str = "",
     has_rows: bool = False,
+    scope: list | None = None,
+    provenance: dict | None = None,
 ):
-    """Render an assistant turn with the answer-actions footer beneath it.
+    """Render an assistant turn: the scope it used, the answer, then the actions.
 
     Copy, the next steps (explore drivers, export, decision, board) and the
     thumbs live in ONE row at the foot of the message rather than as two floating
@@ -280,6 +329,10 @@ def ai_message(
         has_rows=has_rows,
         is_insight=is_insight,
     )
+    pills = answer_scope(scope)
+    # Between the prose and the actions: the answer states where it came from
+    # before it offers you somewhere to take it.
+    drawer = provenance_drawer(provenance)
     footer = answer_footer(ctx, content=content)
     panel = feedback_panel(idx)
 
@@ -295,9 +348,11 @@ def ai_message(
                     ],
                     className="insight-card-badge",
                 ),
+                pills,
                 dcc.Markdown(
                     content, className="insight-card-body", link_target="_blank"
                 ),
+                drawer,
                 footer,
                 panel,
             ],
@@ -305,7 +360,7 @@ def ai_message(
         )
 
     return html.Div(
-        [dcc.Markdown(content), footer, panel],
+        [pills, dcc.Markdown(content), drawer, footer, panel],
         className="message gpt-message",
     )
 
@@ -326,69 +381,34 @@ def user_message(content: str):
     )
 
 
-def chart_block(figure, columns: list[str], records: list[dict], idx: int):
-    """A chart with a Chart/Data switch that flips to the underlying rows.
+def command_menu():
+    """The task list, revealed the moment the user types "/".
 
-    The graph and the data table are both rendered; a clientside callback
-    (see ui.callbacks) toggles their visibility off the switch buttons. `idx`
-    must be unique per chart within a turn so the MATCH callback pairs them.
+    A blank prompt box asks people to guess what the product can do, and most
+    guess low — they type a lookup, get a number, and never learn the same box
+    will brief them or decompose a movement. This is that capability list, made
+    typeable.
+
+    Every row is rendered once and shown/hidden by a clientside filter, so the
+    menu costs no round trip per keystroke.
     """
-    table = dash_table.DataTable(
-        columns=[{"name": str(c), "id": str(c)} for c in columns],
-        data=records,
-        page_size=10,
-        sort_action="native",
-        style_as_list_view=True,
-        style_table={"overflowX": "auto", "maxHeight": "440px", "overflowY": "auto"},
-        style_cell={
-            "fontFamily": "'Inter', sans-serif",
-            "fontSize": "13px",
-            "padding": "8px 12px",
-            "textAlign": "left",
-            "border": "none",
-            "borderBottom": "1px solid rgba(12, 25, 58, 0.06)",
-        },
-        style_header={
-            "fontWeight": "600",
-            "fontSize": "12px",
-            "textTransform": "uppercase",
-            "letterSpacing": "0.04em",
-            "backgroundColor": "#f5f7fb",
-            "borderBottom": "1px solid rgba(12, 25, 58, 0.12)",
-        },
-    )
-
     return html.Div(
         [
             html.Div(
                 [
-                    html.Button(
-                        [html.I(className="bi bi-bar-chart-line"), "Chart"],
-                        id={"type": "chart-toggle-chart", "idx": idx},
-                        n_clicks=0,
-                        className="chart-view-btn active",
-                    ),
-                    html.Button(
-                        [html.I(className="bi bi-table"), "Data"],
-                        id={"type": "chart-toggle-data", "idx": idx},
-                        n_clicks=0,
-                        className="chart-view-btn",
-                    ),
+                    html.I(className=f"{command.icon} cmd-icon"),
+                    html.Span(command.label, className="cmd-name"),
+                    html.Span(command.hint, className="cmd-hint"),
                 ],
-                className="chart-view-switch",
-            ),
-            html.Div(
-                dcc.Graph(figure=figure, className="gpt-chart-display"),
-                id={"type": "chart-fig", "idx": idx},
-            ),
-            html.Div(
-                table,
-                id={"type": "chart-table", "idx": idx},
-                className="chart-data-wrap",
-                style={"display": "none"},
-            ),
+                id={"type": "cmd-item", "name": command.name},
+                n_clicks=0,
+                className="cmd-item",
+            )
+            for command in COMMANDS
         ],
-        className="chart-block",
+        id="command-menu",
+        className="command-menu",
+        style={"display": "none"},
     )
 
 
@@ -416,15 +436,27 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                         [
                             dbc.Col(
                                 [
+                                    # ONE scroll viewport holds the transcript AND
+                                    # the streaming draft. They used to be siblings
+                                    # of the scroller, so a growing draft was laid
+                                    # out over the answer above it and the reader
+                                    # lost the message they were still reading.
                                     html.Div(
-                                        id="chat-box",
-                                        className="chat-bot-text-area",
-                                        children=[welcome_hero(username, starters)],
+                                        [
+                                            html.Div(
+                                                id="chat-box",
+                                                className="chat-bot-text-area",
+                                                children=[welcome_hero(username, starters)],
+                                            ),
+                                            # The final answer streams here token by
+                                            # token while the turn runs; poll_job
+                                            # clears it once the committed answer
+                                            # lands in chat-box.
+                                            html.Div(id="live-draft", className="live-draft"),
+                                        ],
+                                        id="chat-viewport",
+                                        className="chat-viewport",
                                     ),
-                                    # The final answer streams here token-by-token
-                                    # while the turn runs; poll_job clears it once
-                                    # the committed answer lands in chat-box.
-                                    html.Div(id="live-draft", className="live-draft"),
                                     dcc.Download(id="download-excel"),
                                 ],
                                 lg=12,
@@ -432,35 +464,19 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                 xs=12,
                             )
                         ],
-                        className="flex-grow-1 overflow-auto",
+                        className="chat-row",
                     ),
                     dbc.Row(
                         [
                             dbc.Col(
                                 [
-                                    # Named context pills stating the scope of the
-                                    # last answer (country, product, period,
-                                    # carrier) plus the custom-peers control, so
-                                    # the analytical scope is always visible.
-                                    # Filled by `render_scope_bar` in ui.callbacks.
-                                    html.Div(
-                                        [
-                                            html.Div(
-                                                id="chat-scope-pills",
-                                                className="chat-scope-pills",
-                                            ),
-                                            # The peer set is scope too, but it is
-                                            # the one the user can edit or clear, so
-                                            # its interactive pill sits on the same
-                                            # row instead of a second, static chip.
-                                            html.Div(
-                                                id="custom-peers-cue",
-                                                className="custom-peers-cue",
-                                            ),
-                                        ],
-                                        id="chat-scope-bar",
-                                        className="chat-scope-bar",
-                                    ),
+                                    # The scope of an answer is stated ON that
+                                    # answer (see `ai_message`), not above the
+                                    # composer: a bar here sat between the last
+                                    # message and the input, described a turn that
+                                    # had scrolled away, and pushed the question
+                                    # under the status bar as it grew.
+                                    #
                                     # Live status bar — shown only while a turn is
                                     # streaming. poll_job updates the stage label +
                                     # elapsed time; a clientside callback toggles
@@ -486,6 +502,7 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                         className="thinking-bar",
                                         style={"display": "none"},
                                     ),
+                                    command_menu(),
                                     html.Div(
                                         [
                                             # Top row: the (growable) text field with
@@ -574,6 +591,15 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                                     html.Div(
                                                         id="boardroom-mode-cue",
                                                         className="boardroom-mode-cue",
+                                                    ),
+                                                    # The peer set is scope the user
+                                                    # can edit, so it belongs with
+                                                    # the other armed-state controls
+                                                    # rather than with the read-only
+                                                    # pills on the answer.
+                                                    html.Div(
+                                                        id="custom-peers-cue",
+                                                        className="custom-peers-cue",
                                                     ),
                                                 ],
                                                 className="composer-toolbar",
@@ -1554,7 +1580,9 @@ def custom_peers_modal():
                 [
                     html.Div(
                         "Pin a peer set for this conversation. Peer comparisons "
-                        "will use exactly these instead of the default peer group.",
+                        "will use exactly these instead of the default peer group. "
+                        f"Pick at least {MIN_CUSTOM_PEERS} peers — a benchmark of "
+                        "one or two carriers is close enough to naming them.",
                         className="custom-peers-subtitle",
                     ),
                     html.Div(
@@ -1618,6 +1646,9 @@ def custom_peers_modal():
                                 multi=True,
                                 className="pitch-dropdown",
                             ),
+                            # The under-minimum line, filled by
+                            # `toggle_custom_peers_apply` while Apply stays disabled.
+                            html.Div(id="custom-peers-min", className="custom-peers-min"),
                         ],
                         className="custom-peers-field",
                     ),

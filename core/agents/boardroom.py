@@ -31,7 +31,7 @@ import logging
 import re
 from typing import Any, Dict, List, Set, Tuple
 
-from core.boardroom import priority
+from core.boardroom.derive import complete_widget
 from core.llm import Predictor
 from core.observability import log_event
 from core.schemas.boardroom import (
@@ -312,7 +312,11 @@ def detect_widget_signals(
         # portfolio map shows where the book sits against where it wins.
         signals.add("headroom")
         signals.add("portfolio_map")
-    if has_premium and _has_column(row_sets, _INDUSTRY_COLS):
+    # An industry COLUMN is not an industry view. A result set that carries
+    # `Industry` with one value in it (every row is Manufacturing, because the
+    # question was about Manufacturing) cannot be ranked BY industry, and asking
+    # for the widget anyway produced an Industry Focus page with nothing on it.
+    if has_premium and len(_distinct_values(row_sets, _INDUSTRY_COLS)) >= 2:
         signals.add("whitespace")
 
     carriers = _distinct_values(row_sets, _CARRIER_COLS)
@@ -325,55 +329,42 @@ def detect_widget_signals(
     return signals
 
 
-def _nullify_empty(name: str, widget: Any) -> Any:
-    """Collapse a structurally-empty widget model to the None/[] the UI expects.
-
-    An explainable widget with no content but a `note` survives on purpose: "no
-    comparable quarters in this data" is a result the board should see, not a
-    silently missing panel.
-    """
-    if widget is None:
-        return None
-    if name == "comparison" and not getattr(widget, "subjects", None):
-        return None
-    if name == "portfolio_map" and not (
-        getattr(widget, "bubbles", None) or getattr(widget, "note", "")
-    ):
-        return None
-    if name == "top_carriers" and not (
-        getattr(widget, "carriers", None) or getattr(widget, "note", "")
-    ):
-        return None
-    if name == "watchlist" and not (getattr(widget, "items", None) or getattr(widget, "note", "")):
-        return None
-    if name in ("headroom", "whitespace", "quarterly") and not (
-        getattr(widget, "rows", None) or getattr(widget, "note", "")
-    ):
-        return None
-    return widget
+# widget name -> the key holding its content. A widget with an EMPTY content key
+# is dropped: an "explaining" panel that says the data cannot support it is still
+# a panel the reader has to work past, and a page of them is a page the board
+# should never have shown. Nothing is manufactured to fill the gap either — the
+# page simply narrows to the steps the data does support.
+_WIDGET_CONTENT_KEY: Dict[str, str] = {
+    "comparison": "subjects",
+    "portfolio_map": "bubbles",
+    "top_carriers": "carriers",
+    "watchlist": "items",
+    "headroom": "rows",
+    "whitespace": "rows",
+    "quarterly": "rows",
+}
 
 
-def _rate_watchlist(watchlist: Any) -> Any:
-    """Apply the approved priority rules to an extracted watchlist.
-
-    The model reported facts; the label, its reason and the tests behind it come
-    from `core.boardroom.priority`, so a `High` on the card can always name the
-    threshold it crossed.
-    """
-    if watchlist is None:
+def _nullify_empty(name: str, payload: Any) -> Any:
+    """Drop a widget whose content is empty, whatever note came with it."""
+    if not isinstance(payload, dict):
+        return payload or None
+    key = _WIDGET_CONTENT_KEY.get(name)
+    if key is not None and not payload.get(key):
         return None
-    payload = watchlist.model_dump()
-    payload["items"] = priority.rate_items(payload.get("items") or [])
-    payload["thresholds"] = priority.get_thresholds().summary()
-    payload["thresholds_approved"] = priority.get_thresholds().approved
     return payload
 
 
 def _fill_widgets(
     signals: "Set[str]", *, user_query: str, commentary: str, rows: Dict[str, str]
 ) -> Dict[str, Any]:
-    """Run one small fill call per detected widget. Best-effort: a failed or
-    structurally-empty widget is dropped, never fatal."""
+    """Run one small fill call per detected widget, then complete its numbers.
+
+    Three steps per widget, in order: extract (the model), complete (arithmetic
+    the model should not be trusted with — see `core.boardroom.derive`), drop if
+    it ended up with nothing to show. Best-effort: a failed widget is skipped,
+    never fatal.
+    """
     widgets: Dict[str, Any] = {}
     for name in sorted(signals):
         predictor, field = _WIDGET_PREDICTORS[name]
@@ -381,7 +372,9 @@ def _fill_widgets(
             result = predictor(
                 user_query=user_query, commentary=commentary, sql_output=rows
             )
-            widgets[name] = _nullify_empty(name, getattr(result, field, None))
+            extracted = getattr(result, field, None)
+            payload = extracted.model_dump() if hasattr(extracted, "model_dump") else extracted
+            widgets[name] = _nullify_empty(name, complete_widget(name, payload))
         except Exception as exc:  # noqa: BLE001 - one widget must never sink the dashboard
             log_event(
                 logger,
@@ -473,7 +466,7 @@ def boardroom_node(state: AgentState) -> Dict[str, Any]:
         comparison=widgets.get("comparison"),
         battlecards=widgets.get("battlecards") or [],
         timeline=widgets.get("timeline") or [],
-        watchlist=_rate_watchlist(widgets.get("watchlist")),
+        watchlist=widgets.get("watchlist"),
         headroom=widgets.get("headroom"),
         whitespace=widgets.get("whitespace"),
         quarterly=widgets.get("quarterly"),

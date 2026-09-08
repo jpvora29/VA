@@ -70,11 +70,20 @@ conversation history before any clarification.
 
 **New: deterministic mandatory-filter gate.** HITL fires only when a **mandatory
 filter is still missing** after history inheritance + fuzzy resolution + context.
-The mandatory set is **Carrier + Country** — timeframe is excluded because it
-always auto-defaults to the latest years.
 
-- New `MandatoryFilterGate` (SRP: only decides which mandatory filters are
-  missing): `missing_mandatory_filters(routing_context) -> list[FilterRequirement]`.
+> **Revised 2026-09-08.** The bar is **any ONE of carrier, country or year**, not
+> Carrier AND Country. Requiring both stopped a question that had already said
+> what it was about — "Zurich premium" was held to be asked for a country the
+> analyst could answer without. Presence is enough: resolved, inherited, or
+> merely mentioned (an unmatched mention is owned by the "did you mean…?"
+> source, so it is not asked about twice). Only a turn naming none of the three
+> is stopped. This makes the filter gate deliberately quiet — the other two
+> clarify sources, which are about MEANING rather than scope, are unaffected and
+> still fire on fully-filtered turns.
+
+- New `MandatoryFilterGate` (SRP: decides whether a turn is scoped at all, and
+  what to ask when it is not): `has_scope(routing_context) -> bool` and
+  `missing_mandatory_filters(routing_context) -> list[FilterRequirement]`.
 - Family→required-columns as a **dispatch dict** (family-aware on the Country
   column):
   ```python

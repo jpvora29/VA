@@ -291,7 +291,10 @@ def _page_heading(page, page_index, total):
 
 
 def _render_page(page, figures, edit_mode, card_idx, page_index, active_page=0, total=1):
-    widgets = page.get("widgets", [])
+    # Filtered to dicts: an empty board saved before `build()` was fixed holds an
+    # icon STRING where its widget list belongs, and iterating that hands each
+    # character to `_render_widget` — which takes the whole transcript down.
+    widgets = [w for w in (page.get("widgets") or []) if isinstance(w, dict)]
     n = len(widgets)
     grid_items = [
         _render_widget(w, figures, edit_mode, card_idx, page["id"], i, n) for i, w in enumerate(widgets)

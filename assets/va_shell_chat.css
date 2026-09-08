@@ -8,21 +8,18 @@
    Built on the shared --va-* tokens (assets/theme_tokens.css).
    ========================================================================== */
 
-/* ── Scope bar: the named context pills above the composer ────────────────
+/* ── Scope pills: the named context stated ON the answer ──────────────────
    The rule the roadmap sets is "preserve scope everywhere": the user should
    never have to reconstruct which carrier, country, product and period an
-   answer covered. The bar is quiet by default and only ever states facts the
-   turn actually resolved. */
-.chat-scope-bar {
+   answer covered. These pills sit at the head of the answer they describe, so
+   scrolling back to an older answer shows the scope THAT answer used — and
+   nothing sits between the last message and the input. */
+.answer-scope {
     display: flex;
-    align-items: center;
     flex-wrap: wrap;
-    gap: 8px;
-    margin: 0 auto 8px;
-    max-width: 100%;
+    margin-bottom: 10px;
 }
-.chat-scope-bar:empty { display: none; }
-.chat-scope-pills:empty { display: none; }
+.answer-scope:empty { display: none; }
 
 .scope-bar {
     display: flex;
@@ -194,15 +191,15 @@
 }
 
 /* A slim, unobtrusive scrollbar in the transcript. */
-.chat-bot-text-area { scrollbar-width: thin; scrollbar-color: var(--va-border-mid) transparent; }
-.chat-bot-text-area::-webkit-scrollbar { width: 10px; }
-.chat-bot-text-area::-webkit-scrollbar-thumb {
+.chat-viewport { scrollbar-width: thin; scrollbar-color: var(--va-border-mid) transparent; }
+.chat-viewport::-webkit-scrollbar { width: 10px; }
+.chat-viewport::-webkit-scrollbar-thumb {
     background: var(--va-border-mid);
     border-radius: var(--va-radius-pill);
     border: 3px solid transparent;
     background-clip: content-box;
 }
-.chat-bot-text-area::-webkit-scrollbar-thumb:hover { background-clip: content-box; background-color: var(--va-ink-300); }
+.chat-viewport::-webkit-scrollbar-thumb:hover { background-clip: content-box; background-color: var(--va-ink-300); }
 
 @media (max-width: 640px) {
     .scope-bar-eyebrow { display: none; }
@@ -216,29 +213,27 @@
 }
 
 
-/* ── Quiet scope bar ──────────────────────────────────────────────────────
-   The chips above the composer state the scope of the last answer, and they
-   were reading as a second toolbar: an uppercase SCOPE eyebrow, then four to
-   six white boxes with borders, shadows, uppercase labels and a hover lift,
-   stacked directly on top of the input the user is trying to reach.
+/* ── Scope as a caption on the answer ─────────────────────────────────────
+   Scope is a caption, not a control: the value carries the meaning, the icon
+   says which dimension, and a hairline separates one from the next instead of
+   six outlined boxes. Sitting at the head of the answer it describes, it has
+   room for the dimension name — which it did not, stacked on the composer.
 
-   Scope is a caption, not a control. Below the composer's own weight it can be
-   plain text: the value carries the meaning, the icon says which dimension, and
-   the label stays in the tooltip where it is available without occupying the
-   line. Everything past the fourth chip folds behind a "+N" (see
-   `scope_bar(max_visible=...)`).
+   Scoped to `.answer-scope` so the Boardroom header and the exported slide keep
+   the chip treatment, where they read as a header rather than a caption. */
+.answer-scope .scope-bar {
+    gap: 2px;
+    row-gap: 4px;
+    animation: none;
+}
 
-   Scoped to `.chat-scope-bar` so the Boardroom header and the exported slide
-   keep the chip treatment, where they have the room and no input to compete
-   with. */
-.chat-scope-bar { gap: 6px; margin-bottom: 6px; }
+.answer-scope .scope-bar-eyebrow {
+    color: var(--va-ink-300);
+    padding-right: 6px;
+}
 
-.chat-scope-bar .scope-bar { gap: 2px; }
-
-.chat-scope-bar .scope-bar-eyebrow { display: none; }
-
-.chat-scope-bar .scope-pill {
-    padding: 1px 7px;
+.answer-scope .scope-pill {
+    padding: 1px 8px;
     background: transparent;
     border: none;
     box-shadow: none;
@@ -246,71 +241,35 @@
     font-size: 11.5px;
     gap: 5px;
     align-items: center;
-    max-width: 210px;
+    max-width: 240px;
 }
 
 /* Hairline separators instead of six outlines: the same grouping, a fraction
    of the ink. A border on the pill itself, NOT a ::before — the pill is an
    inline-flex box, so a pseudo-element would become its first flex child and
    draw the rule inside the chip rather than between two of them. */
-.chat-scope-bar .scope-pill + .scope-pill {
+.answer-scope .scope-pill + .scope-pill {
     border-left: 1px solid var(--va-border-mid);
     padding-left: 13px;
-    margin-left: 1px;
 }
 
-/* A folded chip is display:none, so it must not leave its separator behind on
-   the visible chip that follows it. */
-.chat-scope-bar .scope-pill-folded + .scope-pill:not(.scope-pill-folded),
-.chat-scope-bar .scope-pill-folded:first-of-type {
-    border-left: none;
-    padding-left: 7px;
-}
-
-.chat-scope-bar .scope-pill:hover {
+.answer-scope .scope-pill:hover {
     background: var(--va-surface-1);
-    border-color: transparent;
     box-shadow: none;
     transform: none;
 }
 
-/* The dimension name lives in the tooltip; on the line it is redundant with the
-   icon that already says which dimension this is. */
-.chat-scope-bar .scope-pill-label { display: none; }
-
-.chat-scope-bar .scope-pill-icon { color: var(--va-ink-400); font-size: 10.5px; }
-
-.chat-scope-bar .scope-pill-value {
+.answer-scope .scope-pill-icon { color: var(--va-ink-400); font-size: 10.5px; }
+.answer-scope .scope-pill-label { color: var(--va-ink-300); }
+.answer-scope .scope-pill-value {
     color: var(--va-ink-600);
     font-weight: 600;
 }
 
-.chat-scope-bar .scope-pill.scope-peers {
-    background: var(--va-blue-soft);
-    padding: 1px 9px;
-}
-.chat-scope-bar .scope-pill.scope-peers .scope-pill-value { color: var(--va-blue); }
+/* The peer set reads as the one piece of scope the user chose. */
+.answer-scope .scope-pill.scope-peers { background: var(--va-blue-soft); padding: 1px 9px; }
+.answer-scope .scope-pill.scope-peers .scope-pill-value { color: var(--va-blue); }
 
-/* Folded chips: present in the DOM (and in the +N tooltip) but off the line
-   until the button is pressed. */
-.chat-scope-bar .scope-pill-folded { display: none; }
-.chat-scope-bar .scope-bar.scope-expanded .scope-pill-folded { display: inline-flex; }
-.chat-scope-bar .scope-bar.scope-expanded .scope-pill-folded + .scope-pill-folded {
-    border-left: 1px solid var(--va-border-mid);
-    padding-left: 13px;
-}
-.chat-scope-bar .scope-bar.scope-expanded .scope-overflow { display: none; }
-
-.scope-overflow {
-    border: 1px solid var(--va-border-mid);
-    background: transparent;
-    color: var(--va-ink-400);
-    font-size: 10.5px;
-    font-weight: 700;
-    padding: 1px 8px;
-    cursor: pointer;
-}
-.scope-overflow:hover { color: var(--va-blue); border-color: var(--va-blue); }
 
 
 /* ── Answer footer: what you can do with an answer, and what was wrong ─────
@@ -497,9 +456,426 @@
        tooltip carries the rest. */
     .answer-action-btn span { display: none; }
     .answer-action-btn { padding: 5px 8px; }
-    .chat-scope-bar .scope-pill { max-width: 40vw; }
+    .answer-scope .scope-pill { max-width: 40vw; }
 }
 
 @media (prefers-reduced-motion: reduce) {
     .fb-panel { animation: none; }
+}
+
+
+/* ── Custom Peers: the minimum-set rule, stated where it is enforced ──────
+   Apply stays disabled below `core.peers.MIN_CUSTOM_PEERS`; this line says how
+   many more carriers the benchmark needs, so a disabled button is never a
+   mystery. */
+.custom-peers-min {
+    margin-top: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--va-danger, #b42318);
+    min-height: 16px;
+}
+.custom-peers-min:empty { display: none; }
+
+
+/* ── Evidence panel: one panel, one view per result set ───────────────────
+   A turn's result sets used to be a chart block each, stacked down the
+   transcript — three plots to scroll past before the next message. Here they
+   are tabs of one panel: the reader switches cut in place, and every view can
+   be read as a chart or as its rows. A view with nothing chartable still shows
+   its table, which is how an answer keeps its evidence when no chart fits. */
+.ev-panel {
+    align-self: stretch;
+    width: 100%;
+    margin: 10px 0;
+    padding: 12px 14px 14px;
+    background: var(--va-surface-0);
+    border: 1px solid var(--va-border-soft);
+    border-radius: var(--va-radius-lg);
+    box-shadow: var(--va-shadow-sm);
+}
+
+.ev-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--va-border-soft);
+}
+
+.ev-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--va-ink-500);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--va-radius-pill);
+    padding: 5px 13px;
+    cursor: pointer;
+    transition: color var(--va-transition-fast), background var(--va-transition-fast),
+        border-color var(--va-transition-fast);
+}
+.ev-tab .bi { font-size: 11.5px; opacity: 0.8; }
+.ev-tab:hover { color: var(--va-navy); background: var(--va-surface-1); }
+.ev-tab.active {
+    color: var(--va-blue);
+    background: var(--va-blue-soft);
+    border-color: rgba(11, 75, 255, 0.22);
+}
+
+.ev-pane { min-width: 0; }
+
+/* Says what you are looking at when there is no chart to switch away from. */
+.ev-note {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--va-ink-400);
+}
+.ev-note .bi { font-size: 12px; }
+
+/* The table scrolls inside the panel; the page never scrolls sideways. */
+.ev-table { overflow-x: auto; }
+
+@media (max-width: 640px) {
+    .ev-panel { padding: 10px; }
+    .ev-tab { padding: 5px 10px; font-size: 12px; }
+}
+
+/* ── "How this was calculated": the trust drawer under an answer ──────────
+   A native <details>, so the state is readable without opening it and opening
+   costs no callback. The badge lives IN the summary rather than beside it:
+   one row that both states the verification and is the way to inspect it.
+
+   Deliberately quiet when closed. A trust layer that shouts is a disclaimer;
+   this one is a door. */
+.prov-drawer {
+    margin: 10px 0 2px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: var(--va-radius-md);
+    background: var(--va-surface-1);
+    overflow: hidden;
+}
+
+.prov-summary {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 12px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+}
+.prov-summary::-webkit-details-marker { display: none; }
+.prov-summary:hover { background: var(--va-surface-2); }
+
+.prov-summary-text {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--va-ink-500);
+}
+
+.prov-chevron {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--va-ink-300);
+    transition: transform var(--va-transition-fast);
+}
+.prov-drawer[open] .prov-chevron { transform: rotate(180deg); }
+
+/* The badge says what was checked, in three states that must not look alike. */
+.prov-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 9px;
+    border-radius: var(--va-radius-pill);
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    border: 1px solid transparent;
+}
+.prov-badge .bi { font-size: 10px; }
+.prov-badge.good {
+    background: rgba(31, 157, 85, 0.13);
+    color: var(--va-good);
+    border-color: rgba(31, 157, 85, 0.24);
+}
+.prov-badge.warn {
+    background: rgba(185, 129, 10, 0.14);
+    color: var(--va-warn);
+    border-color: rgba(185, 129, 10, 0.26);
+}
+.prov-badge.neutral {
+    background: var(--va-surface-2);
+    color: var(--va-ink-500);
+    border-color: var(--va-border-mid);
+}
+
+.prov-body {
+    padding: 4px 12px 12px;
+    border-top: 1px solid var(--va-border-soft);
+    font-size: 12.5px;
+    color: var(--va-ink-600);
+}
+
+.prov-section + .prov-section { margin-top: 12px; }
+
+.prov-heading {
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--va-ink-300);
+    margin: 10px 0 6px;
+}
+
+.prov-line { display: flex; gap: 8px; margin-top: 8px; line-height: 1.5; }
+.prov-label { flex: 0 0 auto; font-weight: 700; color: var(--va-ink-400); }
+.prov-value { color: var(--va-ink-700); }
+
+/* The half of the panel that earns it: what the rows did NOT contain. */
+.prov-missing {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 6px 10px;
+    border-radius: var(--va-radius-sm);
+    background: rgba(185, 129, 10, 0.10);
+    color: var(--va-warn);
+    font-weight: 600;
+}
+.prov-missing-values { font-variant-numeric: tabular-nums; }
+
+.prov-term { margin-bottom: 8px; line-height: 1.5; }
+.prov-term-label { font-weight: 700; color: var(--va-navy); margin-right: 6px; }
+.prov-term-def { color: var(--va-ink-600); }
+.prov-term-formula {
+    display: block;
+    margin-top: 2px;
+    font-size: 11.5px;
+    color: var(--va-ink-400);
+    font-style: italic;
+}
+
+.prov-query + .prov-query { margin-top: 10px; }
+
+.prov-query-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+.prov-lens {
+    font-weight: 800;
+    font-size: 10.5px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--va-blue);
+}
+.prov-rows { font-weight: 700; color: var(--va-ink-600); font-size: 11.5px; }
+.prov-columns { font-size: 11px; color: var(--va-ink-300); }
+
+.prov-sql {
+    margin: 0;
+    padding: 8px 10px;
+    max-height: 220px;
+    overflow: auto;
+    border-radius: var(--va-radius-sm);
+    background: var(--va-surface-2);
+    border: 1px solid var(--va-border-soft);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--va-ink-600);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* ── Contribution: what drove the movement ────────────────────────────────
+   Bars either side of a centre line, because the SIGN is the finding. A ranked
+   table makes the reader work out which slices pushed the total down and which
+   pulled it back up; this says it at a glance, and the bar that reaches
+   furthest is the story. */
+.contrib-panel {
+    align-self: stretch;
+    width: 100%;
+    margin: 10px 0;
+    padding: 14px 16px;
+    background: var(--va-surface-0);
+    border: 1px solid var(--va-border-soft);
+    border-radius: var(--va-radius-lg);
+    box-shadow: var(--va-shadow-sm);
+}
+.contrib-panel.is-empty {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--va-ink-500);
+}
+
+.contrib-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+.contrib-heading { display: inline-flex; align-items: center; gap: 7px; }
+.contrib-icon { color: var(--va-blue); font-size: 13px; }
+.contrib-title { font-size: 13.5px; font-weight: 800; color: var(--va-navy); }
+.contrib-basis { font-size: 11.5px; color: var(--va-ink-400); font-weight: 600; }
+
+.contrib-total {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding-bottom: 10px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--va-border-soft);
+    font-variant-numeric: tabular-nums;
+}
+.contrib-total .bi { color: var(--va-ink-300); font-size: 11px; }
+.contrib-total-from { color: var(--va-ink-400); font-weight: 700; }
+.contrib-total-to { color: var(--va-navy); font-weight: 800; font-size: 15px; }
+.contrib-total-move { margin-left: auto; font-weight: 800; }
+.contrib-total-move.up { color: var(--va-good); }
+.contrib-total-move.down { color: var(--va-danger); }
+
+.contrib-rows { display: flex; flex-direction: column; gap: 6px; }
+
+.contrib-row {
+    display: grid;
+    grid-template-columns: minmax(90px, 1.1fr) 3fr minmax(72px, auto) minmax(48px, auto);
+    align-items: center;
+    gap: 10px;
+    font-size: 12.5px;
+}
+
+.contrib-name {
+    font-weight: 700;
+    color: var(--va-ink-700);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The centre line is zero; a bar grows from it in the direction of its sign. */
+.contrib-bar-track {
+    position: relative;
+    height: 16px;
+    border-radius: var(--va-radius-sm);
+    background: var(--va-surface-1);
+}
+.contrib-bar-track::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: -1px;
+    bottom: -1px;
+    width: 1px;
+    background: var(--va-border-mid);
+}
+.contrib-bar-fill {
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    border-radius: 3px;
+}
+.contrib-bar-fill.up { background: var(--va-good); }
+.contrib-bar-fill.down { background: var(--va-danger); }
+
+.contrib-delta { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
+.contrib-delta.up { color: var(--va-good); }
+.contrib-delta.down { color: var(--va-danger); }
+.contrib-share {
+    text-align: right;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--va-ink-400);
+    font-variant-numeric: tabular-nums;
+}
+
+.contrib-more { font-size: 11.5px; color: var(--va-ink-300); padding-top: 2px; }
+
+.contrib-foot {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--va-border-soft);
+    font-size: 11px;
+    color: var(--va-ink-400);
+    line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+    .contrib-row { grid-template-columns: minmax(70px, 1fr) 2fr auto; }
+    .contrib-share { display: none; }
+}
+
+/* ── Slash commands: the task list, above the composer ────────────────────
+   Shown only while the line starts with "/", and hidden again the moment a
+   subject is being typed — the menu names the tasks, it does not stay in the
+   way of writing one. Filtering is clientside, so it keeps up with typing. */
+.command-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 8px;
+    padding: 6px;
+    background: var(--va-surface-0);
+    border: 1px solid var(--va-border-mid);
+    border-radius: var(--va-radius-lg);
+    box-shadow: 0 12px 32px rgba(10, 22, 54, 0.12);
+    max-height: 250px;
+    overflow-y: auto;
+}
+
+.cmd-item {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: var(--va-radius-md);
+    cursor: pointer;
+    transition: background var(--va-transition-fast);
+}
+.cmd-item:hover { background: var(--va-blue-soft); }
+
+.cmd-icon { color: var(--va-blue); font-size: 12px; align-self: center; }
+
+.cmd-name {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--va-navy);
+    flex: 0 0 auto;
+    min-width: 96px;
+}
+
+.cmd-hint {
+    font-size: 12px;
+    color: var(--va-ink-400);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+    .cmd-hint { display: none; }
 }

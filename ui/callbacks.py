@@ -31,16 +31,18 @@ from dash import dash_table
 import dash_bootstrap_components as dbc
 from dash.development.base_component import Component
 
+from core.answers import commands as slash_commands
+from core.answers import contribution as answer_contribution
+from core.answers import provenance as answer_provenance
+from core.peers import count_peers, peer_shortfall_note, peers_are_enough
 from core.scope import chips_from_state, chips_to_dicts
 from ui.components.answer_actions import feedback_ack, is_finding
-from ui.components.scope_bar import scope_bar
 from ui.components.chatbot import (
     clarify_card,
     clarify_questions_of,
     followup_suggestions,
     ai_message,
     user_message,
-    chart_block,
     welcome_hero,
     boardroom_mode_cue,
     custom_peers_cue,
@@ -86,7 +88,9 @@ from core.backend import (
     Initialization,
     PitchBuilderWorkflow,
 )
-from ui.chart_functions import generate_chart
+from ui.components.contribution import contribution_panel
+from ui.components.evidence import evidence_panel
+from ui.evidence import build_views
 from core.agents.common.chart_spec import normalize_chart_spec
 from core.agents.common.directives import answer_shape
 from core.memory.feedback_reasons import (
@@ -146,7 +150,7 @@ clientside_callback(
         if (editMode) {
             return window.dash_clientside.no_update;
         }
-        const el = document.getElementById('chat-box');
+        const el = document.getElementById('chat-viewport');
         if (!el) {
             return window.dash_clientside.no_update;
         }
@@ -171,14 +175,12 @@ clientside_callback(
         if (trig.indexOf('chat-box') !== -1) {
             el.__stick = true;
         }
+        // Auto-follow is INSTANT. With `scroll-behavior: smooth` on the
+        // viewport, a new smooth scroll started every streaming tick (~8 a
+        // second) interrupts the one before it, and the transcript shivers in
+        // place instead of following the text. One assignment, no animation.
         if (el.__stick) {
-            setTimeout(() => {
-                const draftEl = document.getElementById('live-draft');
-                if (draftEl && draftEl.textContent && draftEl.scrollIntoView) {
-                    draftEl.scrollIntoView({block: 'end'});
-                }
-                el.scrollTop = el.scrollHeight;
-            }, 30);
+            requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
         }
         return window.dash_clientside.no_update;
     }
@@ -189,6 +191,56 @@ clientside_callback(
     State("boardroom-edit-mode", "data"),
     prevent_initial_call=True,
 )
+
+# ── SLASH COMMANDS: FILTER THE MENU, INSERT ON CLICK  ──────────────────────────────────────────────
+# Both clientside. The menu is filtered on every keystroke, so a server round
+# trip per character would make typing feel heavy — which is exactly the thing a
+# shortcut is supposed to fix.
+clientside_callback(
+    """
+    function(value, ids) {
+        const text = (value || '').replace(/^\s+/, '');
+        const open = text.startsWith('/');
+        const typed = open ? text.slice(1).split(' ')[0].toLowerCase() : '';
+        // Once a space is typed the command is settled; the menu has served its
+        // purpose and gets out of the way of the subject being written.
+        const settled = open && text.includes(' ');
+        const shown = ids.map(function (id) {
+            const name = String(id.name || '');
+            const match = name.indexOf(typed) === 0;
+            return (open && !settled && match) ? {} : {display: 'none'};
+        });
+        const any = shown.some(function (s) { return !s.display; });
+        return [any ? {} : {display: 'none'}, shown];
+    }
+    """,
+    Output("command-menu", "style"),
+    Output({"type": "cmd-item", "name": ALL}, "style"),
+    Input("user-input", "value"),
+    State({"type": "cmd-item", "name": ALL}, "id"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(clicks, ids) {
+        const ctx = window.dash_clientside.callback_context;
+        const trig = ctx.triggered.length ? ctx.triggered[0] : null;
+        if (!trig || !trig.value) { return window.dash_clientside.no_update; }
+        let name = '';
+        try { name = JSON.parse(trig.prop_id.split('.')[0]).name; }
+        catch (e) { return window.dash_clientside.no_update; }
+        const box = document.getElementById('user-input');
+        if (box) { setTimeout(function () { box.focus(); }, 0); }
+        return '/' + name + ' ';
+    }
+    """,
+    Output("user-input", "value", allow_duplicate=True),
+    Input({"type": "cmd-item", "name": ALL}, "n_clicks"),
+    State({"type": "cmd-item", "name": ALL}, "id"),
+    prevent_initial_call=True,
+)
+
 
 # ── TOGGLE THINKING BAR + SEND/STOP BUTTON  ─────────────────────────────────────────────────────────────
 # Instant, clientside: while a turn is streaming we reveal the status bar and the
@@ -235,6 +287,35 @@ clientside_callback(
     Input({"type": "chart-toggle-data", "idx": MATCH}, "n_clicks"),
     prevent_initial_call=True,
 )
+
+# ── EVIDENCE PANEL: SWITCH VIEW  ───────────────────────────────────────────────────────────────────
+# Instant, clientside: move between a turn's result sets (premium / survey / each
+# analyst cut) inside ONE panel. Which pane is showing is derived from which tab
+# was clicked, so there is no store to keep in sync and no server round trip.
+clientside_callback(
+    """
+    function(clicks, tabIds) {
+        const ctx = window.dash_clientside.callback_context;
+        const trig = ctx.triggered.length ? ctx.triggered[0].prop_id : '';
+        let active = 0;
+        try {
+            active = JSON.parse(trig.split('.')[0]).view;
+        } catch (e) {
+            return window.dash_clientside.no_update;
+        }
+        return [
+            tabIds.map((_, i) => (i === active ? {} : {display: 'none'})),
+            tabIds.map((_, i) => 'ev-tab' + (i === active ? ' active' : '')),
+        ];
+    }
+    """,
+    Output({"type": "ev-pane", "idx": MATCH, "view": ALL}, "style"),
+    Output({"type": "ev-tab", "idx": MATCH, "view": ALL}, "className"),
+    Input({"type": "ev-tab", "idx": MATCH, "view": ALL}, "n_clicks"),
+    State({"type": "ev-tab", "idx": MATCH, "view": ALL}, "id"),
+    prevent_initial_call=True,
+)
+
 
 # ── PITCH BUILDER CALLBACKS  ───────────────────────────────────────────────────────────────────────────
 
@@ -533,14 +614,24 @@ def load_custom_peer_list(
 @callback(
     Output("custom-peers-apply", "disabled"),
     Output("custom-peers-count", "children"),
+    Output("custom-peers-min", "children"),
     Input("custom-peers-carrier", "value"),
     Input("custom-peers-list", "value"),
 )
-def toggle_custom_peers_apply(carrier: str | None, peers: list[str] | None) -> tuple[bool, str]:
-    """Enable Apply only once a subject carrier and at least one peer are chosen."""
+def toggle_custom_peers_apply(
+    carrier: str | None, peers: list[str] | None
+) -> tuple[bool, str, str]:
+    """Enable Apply only once a subject carrier and a full peer set are chosen.
+
+    The floor is `core.peers.MIN_CUSTOM_PEERS`, the same rule Studio's setup form
+    enforces: a benchmark of one or two carriers is close enough to naming them,
+    which carrier-facing output may not do. Apply stays disabled below it and the
+    dialog says how many more are needed.
+    """
     peers = peers or []
-    count = f" ({len(peers)} selected)" if peers else ""
-    return (not (carrier and peers)), count
+    count = f" ({count_peers(peers)} selected)" if peers else ""
+    shortfall = peer_shortfall_note(peers)
+    return (not (carrier and peers_are_enough(peers))), count, shortfall
 
 
 @callback(
@@ -620,48 +711,6 @@ def apply_custom_peers(
 def render_custom_peers_cue(chat_history: dict[str, Any]):
     """Show the composer pill whenever a custom peer set is pinned."""
     return custom_peers_cue((chat_history or {}).get("custom_peers"))
-
-
-#: How many scope chips the composer bar shows before folding the rest behind
-#: a "+N". Four fits one line at the composer width on a laptop screen.
-_SCOPE_CHIPS_BEFORE_FOLD = 4
-
-
-# Expand the folded chips in place; no server round-trip for a disclosure.
-clientside_callback(
-    """
-    function(n) {
-        const bar = document.querySelector('.chat-scope-pills .scope-bar');
-        if (bar && n) { bar.classList.toggle('scope-expanded'); }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("chat-scope-pills", "className"),
-    # The button exists only while chips are actually folded.
-    Input("scope-overflow-toggle", "n_clicks", allow_optional=True),
-    prevent_initial_call=True,
-)
-
-
-@callback(
-    Output("chat-scope-pills", "children"),
-    Input("chat-store", "data"),
-)
-def render_scope_bar(chat_history: dict[str, Any]):
-    """The named context pills above the composer — the turn's analytical scope.
-
-    The peer set is scope as well, but it has its own editable pill on the same
-    row (``render_custom_peers_cue``), so it is dropped here rather than stated
-    twice.
-
-    Folded past four chips: this bar sits directly above the input, so it has to
-    read as a caption on the composer, not as a second toolbar competing with it.
-    """
-    scope = (chat_history or {}).get("scope") or []
-    return scope_bar(
-        [chip for chip in scope if chip.get("key") != "peers"],
-        max_visible=_SCOPE_CHIPS_BEFORE_FOLD,
-    )
 
 
 @callback(
@@ -1301,82 +1350,70 @@ def _update_last_chat_message(
     return chat_history
 
 
-def _append_chart_messages(
-    chat_history: dict[str, Any], charts: list[dict[str, Any]]
-) -> None:
-    """Append one `SQLOutputForCharts` message per analyst chart spec."""
-    logger.info("append_chart_messages: received %d analyst chart(s)", len(charts or []))
-    for i, chart in enumerate(charts or []):
-        rows = chart.get("rows")
-        # Coerce a ChartOutput model / list-of-specs into a plain dict. A pydantic
-        # model here is NOT JSON-serializable and would break the chat-store write
-        # (and was being dropped by the dict-only checks downstream).
-        chart_data = normalize_chart_spec(chart.get("chart_data"))
-        logger.info(
-            "append_chart_messages[%d]: rows=%s chart_type=%r keys=%s",
-            i,
-            (len(rows) if isinstance(rows, list) else type(rows).__name__),
-            (chart_data or {}).get("chart_type") if isinstance(chart_data, dict) else type(chart_data).__name__,
-            list(chart.keys()),
-        )
-        chat_history["messages"].append(
-            {
-                "type": "SQLOutputForCharts",
-                "updated_query": rows,
-                "chart_data": chart_data,
-            }
-        )
+def _evidence_specs(state: dict[str, Any], table: str) -> list[dict[str, Any]]:
+    """Every result set this turn should show, in reading order.
 
-
-def _collect_dashboard_charts(
-    updated_state: dict[str, Any], table: str
-) -> list[dict[str, Any]]:
-    """Gather the turn's chart specs as a flat [{rows, chart_data}] list.
-
-    Mirrors the per-route chart selection used for the inline chat rendering, but
-    returns the specs so the Boardroom card can lay them out inside the dashboard
-    instead of appending separate chart blocks.
+    One entry per lens (or per analyst chart), each carrying its rows, its chart
+    spec and the lens it came from. They become the VIEWS of a single panel
+    rather than a chart block each — see :mod:`ui.evidence`.
     """
-    analyst_charts = updated_state.get("analyst_charts") or []
+    analyst_charts = state.get("analyst_charts") or []
     if analyst_charts:
         return [
             {
                 "rows": chart.get("rows"),
                 "chart_data": normalize_chart_spec(chart.get("chart_data")),
+                "lens": chart.get("lens") or "",
             }
             for chart in analyst_charts
         ]
 
-    specs: list[dict[str, Any]] = []
-    if table == "survey":
-        specs.append(
-            {
-                "rows": updated_state.get("survey_query_result"),
-                "chart_data": normalize_chart_spec(updated_state.get("survey_chart")),
-            }
-        )
-    elif table == "premium":
-        specs.append(
-            {
-                "rows": updated_state.get("gpr_query_result"),
-                "chart_data": normalize_chart_spec(updated_state.get("gpr_chart")),
-            }
-        )
-    elif table == "both":
-        specs.append(
-            {
-                "rows": updated_state.get("survey_query_result"),
-                "chart_data": normalize_chart_spec(updated_state.get("survey_chart")),
-            }
-        )
-        specs.append(
-            {
-                "rows": updated_state.get("gpr_query_result"),
-                "chart_data": normalize_chart_spec(updated_state.get("gpr_chart")),
-            }
-        )
-    # Keep only specs that have both a chart and rows to draw it from.
-    return [s for s in specs if s.get("rows") and s.get("chart_data")]
+    lenses = {
+        "survey": [("survey", "survey_query_result", "survey_chart")],
+        "premium": [("premium", "gpr_query_result", "gpr_chart")],
+        "both": [
+            ("premium", "gpr_query_result", "gpr_chart"),
+            ("survey", "survey_query_result", "survey_chart"),
+        ],
+    }.get(table, [])
+
+    specs = []
+    for lens, rows_key, chart_key in lenses:
+        rows = state.get(rows_key)
+        if isinstance(rows, list) and rows:
+            specs.append(
+                {
+                    "rows": rows,
+                    "chart_data": normalize_chart_spec(state.get(chart_key)),
+                    "lens": lens,
+                }
+            )
+    return specs
+
+
+def _append_evidence_message(
+    chat_history: dict[str, Any], state: dict[str, Any], table: str
+) -> None:
+    """Append the turn's evidence as ONE message, when it produced any."""
+    specs = _evidence_specs(state, table)
+    if specs:
+        chat_history["messages"].append({"type": "Evidence", "views": specs})
+
+
+def _collect_dashboard_charts(
+    updated_state: dict[str, Any], table: str
+) -> list[dict[str, Any]]:
+    """The turn's chart specs, for the Boardroom card to lay out inside itself.
+
+    The same evidence the chat panel shows, narrowed to the specs that can
+    actually draw — a board slots figures into chart widgets, so a result set
+    with no chart has nowhere to go there. One lens map, read by both surfaces.
+    """
+    return [
+        spec
+        for spec in _evidence_specs(updated_state, table)
+        if spec.get("rows") and (spec.get("chart_data") or {}).get("chart_type")
+    ]
 
 
 def _update_chat_history(
@@ -1409,9 +1446,10 @@ def _update_chat_history(
     # The analyst agent produces its own list of up to 3 charts (each with its own
     # rows). When present, render those instead of the single per-flow chart that
     # the deterministic rails attach.
-    analyst_charts = updated_state.get("analyst_charts") or []
     logger.info(
-        "update_chat_history: table=%r analyst_charts=%d", table, len(analyst_charts)
+        "update_chat_history: table=%r analyst_charts=%d",
+        table,
+        len(updated_state.get("analyst_charts") or []),
     )
 
     if table == "survey":
@@ -1429,9 +1467,6 @@ def _update_chat_history(
 
         else:
             survey_response = updated_state.get("survey_response", "")
-            sql_output = updated_state.get("survey_query_result")
-            sql_output_updated_for_charts = sql_output
-            survey_chart_data = normalize_chart_spec(updated_state.get("survey_chart"))
 
             chat_history["messages"].append(
                 {
@@ -1440,22 +1475,10 @@ def _update_chat_history(
                     "has_data_overflow": False,
                 }
             )
-            if analyst_charts:
-                _append_chart_messages(chat_history, analyst_charts)
-            else:
-                chat_history["messages"].append(
-                    {
-                        "type": "SQLOutputForCharts",
-                        "updated_query": sql_output_updated_for_charts,
-                        "chart_data": survey_chart_data,
-                    }
-                )
+            _append_evidence_message(chat_history, updated_state, table)
 
     elif table == "premium":
         gpr_response = updated_state.get("gpr_response", "")
-        sql_output = updated_state.get("gpr_query_result", [])
-        sql_output_updated_for_charts = sql_output
-        gpr_chart_data = normalize_chart_spec(updated_state.get("gpr_chart"))
 
         chat_history["messages"].append(
             {
@@ -1465,16 +1488,7 @@ def _update_chat_history(
             }
         )
 
-        if analyst_charts:
-            _append_chart_messages(chat_history, analyst_charts)
-        else:
-            chat_history["messages"].append(
-                {
-                    "type": "SQLOutputForCharts",
-                    "updated_query": sql_output_updated_for_charts,
-                    "chart_data": gpr_chart_data,
-                }
-            )
+        _append_evidence_message(chat_history, updated_state, table)
 
         gimmi_response = updated_state.get("gimmi_response", "")
         if gimmi_response:
@@ -1492,11 +1506,6 @@ def _update_chat_history(
             or updated_state.get("combined_result")
             or ""
         )
-        survey_chart_data = normalize_chart_spec(updated_state.get("survey_chart"))
-        gpr_chart_data = normalize_chart_spec(updated_state.get("gpr_chart"))
-        survey_rows = updated_state.get("survey_query_result") or []
-        gpr_rows = updated_state.get("gpr_query_result") or []
-
         chat_history["messages"].append(
             {
                 "type": "AIMessage",
@@ -1505,26 +1514,8 @@ def _update_chat_history(
             }
         )
 
-        # Attach charts for each lens when data is present.
-        if analyst_charts:
-            _append_chart_messages(chat_history, analyst_charts)
-        else:
-            if survey_rows and survey_chart_data:
-                chat_history["messages"].append(
-                    {
-                        "type": "SQLOutputForCharts",
-                        "updated_query": survey_rows,
-                        "chart_data": survey_chart_data,
-                    }
-                )
-            if gpr_rows and gpr_chart_data:
-                chat_history["messages"].append(
-                    {
-                        "type": "SQLOutputForCharts",
-                        "updated_query": gpr_rows,
-                        "chart_data": gpr_chart_data,
-                    }
-                )
+        # Both lenses become two VIEWS of one panel, not two chart blocks.
+        _append_evidence_message(chat_history, updated_state, table)
 
     elif table == "fallback":
         fallback = updated_state.get("out_of_scope_answer", None)
@@ -1544,6 +1535,7 @@ def _stamp_answer_context(
     state: dict[str, Any],
     question: str | None,
     first_new: int,
+    scope: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Record on each of this turn's answers what its action row needs to know.
 
@@ -1563,12 +1555,22 @@ def _stamp_answer_context(
         "question": question or "",
         "route": state.get("current_route") or "",
         "shape": answer_shape(state.get("routing_context")),
+        # Provenance is built HERE because the graph state — the queries, their
+        # rows — is in hand at commit and gone afterwards. Per answer, because
+        # each one is checked against the evidence for its own prose.
+        # The scope is stamped per answer, not held once for the conversation,
+        # because the answer states its own filters and an older answer must keep
+        # stating the scope IT was built from.
+        "scope": list(scope or []),
     }
     messages = chat_history.get("messages", [])
     for idx, message in enumerate(messages):
         if idx < first_new or message.get("type") != "AIMessage":
             continue
         message.update(context)
+        message["provenance"] = answer_provenance.build(
+            state, message.get("content") or "", question=question or ""
+        ).as_dict()
         # Asked of the transcript, not of the graph state: `_rows_for_answer` is
         # what the Export action will actually read, so deriving the flag from
         # anywhere else risks offering a download that then finds nothing.
@@ -1594,14 +1596,14 @@ def _commit_turn(
         chat_history = _update_last_chat_message(chat_history, last_human, rephrased_query)
     first_new = len(chat_history.get("messages", []))
     chat_history = _update_chat_history(chat_history, state, table)
-    chat_history = _stamp_answer_context(chat_history, state, last_human, first_new)
-    chat_history["followups"] = state.get("followup_questions") or []
-    # The scope this turn actually resolved to, for the composer's context pills.
-    # Derived from the same routing context the Boardroom digest uses, so the two
-    # surfaces always state the same scope.
-    chat_history["scope"] = chips_to_dicts(
-        chips_from_state(state, chat_history.get("custom_peers"))
+    # The scope this turn actually resolved to. Derived from the same routing
+    # context the Boardroom digest uses, so the answer, the board and the
+    # exported slide always state the same scope.
+    scope = chips_to_dicts(chips_from_state(state, chat_history.get("custom_peers")))
+    chat_history = _stamp_answer_context(
+        chat_history, state, last_human, first_new, scope
     )
+    chat_history["followups"] = state.get("followup_questions") or []
     return chat_history
 
 
@@ -2068,48 +2070,24 @@ def render_chat(
                     )
                 )
 
-            elif msg["type"] == "SQLOutputForCharts":
-                # Skip entirely when there is no chart spec or no rows (e.g. an
-                # analyst turn whose route had no per-flow chart attached).
-                if not msg.get("chart_data") or not msg.get("updated_query"):
-                    logger.info(
-                        "render_chat: skipping chart msg (chart_data=%s updated_query=%s)",
-                        bool(msg.get("chart_data")),
-                        bool(msg.get("updated_query")),
-                    )
+            elif msg["type"] in ("Evidence", "SQLOutputForCharts"):
+                # One panel per turn, one view per result set. `SQLOutputForCharts`
+                # is the pre-panel shape — a conversation saved then holds one
+                # message per chart, and each still opens as a single-view panel.
+                specs = msg.get("views") or [
+                    {"rows": msg.get("updated_query"), "chart_data": msg.get("chart_data")}
+                ]
+                views = build_views(specs)
+                if not views:
                     continue
-                try:
-                    df = pd.DataFrame(msg["updated_query"])
-                    fig, chart_message = generate_chart(
-                        df=df,
-                        chart_outputs=msg["chart_data"],
-                    )
-                    logger.info(
-                        "render_chat: chart_type=%r df_shape=%s -> fig=%s msg=%r",
-                        msg["chart_data"].get("chart_type") if isinstance(msg["chart_data"], dict) else type(msg["chart_data"]).__name__,
-                        df.shape,
-                        fig is not None,
-                        chart_message,
-                    )
+                pane_ids = list(range(chart_idx, chart_idx + len(views)))
+                chart_idx += len(views)
+                chat_items.append(evidence_panel(views, msg_idx, pane_ids))
 
-                    if fig is not None:
-                        chat_items.append(
-                            chart_block(
-                                fig,
-                                list(df.columns),
-                                df.to_dict("records"),
-                                chart_idx,
-                            )
-                        )
-                        chart_idx += 1
-                    elif chart_message:
-                        # Only surface a flag for a genuine reason (e.g. scalar);
-                        # an empty message means "nothing to draw" — stay silent.
-                        chat_items.append(
-                            html.Div(chart_message, className="message gpt-chart-flag")
-                        )
-                except Exception:
-                    logger.exception("Exception in Output")
+            elif msg["type"] == "Contribution":
+                panel = contribution_panel(msg.get("contribution"))
+                if panel is not None:
+                    chat_items.append(panel)
 
             elif msg["type"] == "HumanMessage":
                 chat_items.append(user_message(msg["content"]))
@@ -2141,6 +2119,14 @@ def render_chat(
                         route=msg.get("route") or "",
                         shape=msg.get("shape") or "",
                         has_rows=bool(msg.get("has_rows")),
+                        # The peer set has its own editable pill on the composer,
+                        # so it is not restated as a read-only chip here.
+                        scope=[
+                            chip
+                            for chip in (msg.get("scope") or [])
+                            if chip.get("key") != "peers"
+                        ],
+                        provenance=msg.get("provenance"),
                     )
                 )
 
@@ -2197,10 +2183,17 @@ def update_chat(
     if not (user_input or "").strip():
         return chat_history, no_update, no_update, no_update
 
+    # A slash command becomes an ordinary question here and takes the normal
+    # path — `/brief Zurich` and "brief me on Zurich" cannot drift apart,
+    # because after this line they are the same string. The wording of each
+    # expansion is what makes its answer shape detect (see
+    # `core.answers.commands`), so nothing else has to carry the intent.
+    question, _shape = slash_commands.expand(user_input)
+
     chat_history.setdefault("messages", []).append(
         {
             "type": "HumanMessage",
-            "content": user_input.strip(),
+            "content": question,
             "rephrased_content": None,
         }
     )
@@ -2611,6 +2604,10 @@ def _rows_for_answer(chat_history: dict[str, Any], idx: Any) -> list[dict[str, A
     for message in messages[idx + 1:]:
         if message.get("type") in ("HumanMessage", "AIMessage", "Boardroom"):
             break
+        # An Evidence message holds one entry per result set; the older shapes
+        # hold a single list. Both are the rows this answer was written from.
+        for view in message.get("views") or []:
+            rows.extend(view.get("rows") or [])
         rows.extend(message.get("updated_query") or message.get("query_result") or [])
     return rows
 
@@ -2645,6 +2642,19 @@ def ask_from_answer(
     answer = _answer_at(chat_history, triggered.get("idx"))
     question = (answer.get("question") or "").strip()
     if action == "drivers":
+        # Try the arithmetic first. When the rows behind the answer carry two
+        # periods and a dimension, the decomposition IS the answer — instant,
+        # free, and incapable of disagreeing with the figures above it. Only when
+        # they do not do we spend a turn asking the model.
+        broken_down = answer_contribution.decompose(
+            _rows_for_answer(chat_history, triggered.get("idx"))
+        )
+        if broken_down.is_supported:
+            chat_history = chat_history or {}
+            chat_history.setdefault("messages", []).append(
+                {"type": "Contribution", "contribution": broken_down.as_dict()}
+            )
+            return chat_history, no_update, no_update, no_update
         question = _driver_followup(question)
     elif not question:
         # An answer from before this shipped carries no question to re-ask.

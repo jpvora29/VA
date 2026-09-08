@@ -50,12 +50,32 @@ _VARIETY = """[DO NOT SOUND LIKE A TEMPLATE]
   a good answer, not a lazy one."""
 
 
+# Applies to every shape that asks for a table — which is most of them. The
+# shapes said "a compact table" and left the mechanics open, so a table came back
+# as bullets, as an ASCII block, or fenced in ``` (which renders as monospace
+# text, not a table). A table the reader can scan is the single biggest
+# readability win in an answer, so the mechanics are pinned here once.
+_TABLES = """[WHEN YOU WRITE A TABLE]
+- Use a GitHub Markdown pipe table with a header row AND a separator row. Never
+  put a table inside a code fence — fenced text does not render as a table.
+- Right-align every numeric column by writing the separator cell as `---:`. Left
+  align the label column. A column of figures that is not aligned cannot be
+  compared down the page, which is the only reason to use a table.
+- At most 6 columns and 10 rows. A table is the shape of the finding, not a data
+  dump — the reader has the full result set beside the answer.
+- Format consistently down a column: currency as $12.4M, shares and changes as
+  19.5% / +6.4pp, and one dash (-) for a value the data does not have. Never mix
+  units in one column.
+- Say it once. Do not restate a table's numbers in the prose around it — lead
+  into the table with what it shows, and follow it with what it means."""
+
+
 @dataclass(frozen=True)
 class AnswerShape:
     """One way of answering, and the phrasings that call for it.
 
     `contract` is the body of the OUTPUT CONTRACT the writer is handed; the
-    shared confidentiality and anti-template blocks are appended by
+    shared table, confidentiality and anti-template blocks are appended by
     :func:`shape_contract`, so a shape never restates them.
 
     `patterns` are matched against the RAW user question, in registry order, so a
@@ -69,6 +89,16 @@ class AnswerShape:
 
     def matches(self, question: str) -> bool:
         return any(p.search(question) for p in self.patterns)
+
+    @property
+    def allows_table(self) -> bool:
+        """True when this shape's own contract asks for a table.
+
+        Read off the contract rather than declared twice: a shape that says "NO
+        supporting-data table" must not then be handed the table style guide.
+        """
+        text = self.contract.lower()
+        return "table" in text and "no supporting-data table" not in text
 
 
 # ── the shapes ───────────────────────────────────────────────────────────────
@@ -323,16 +353,21 @@ def get_shape(key: Optional[str]) -> AnswerShape:
 
 
 def shape_contract(key: Optional[str]) -> str:
-    """The full OUTPUT CONTRACT for a shape: its body plus the shared blocks."""
+    """The full OUTPUT CONTRACT for a shape: its body plus the shared blocks.
+
+    The table block is included only for shapes that actually ask for a table —
+    handing table mechanics to a shape that forbids one (a direct lookup, a
+    stand-up briefing) is an invitation to write one anyway.
+    """
     shape = get_shape(key)
-    return "\n\n".join(
-        [
-            "[OUTPUT CONTRACT — your reply is a single Markdown string.]",
-            shape.contract,
-            _VARIETY,
-            _CONFIDENTIALITY,
-        ]
-    )
+    blocks = [
+        "[OUTPUT CONTRACT — your reply is a single Markdown string.]",
+        shape.contract,
+    ]
+    if shape.allows_table:
+        blocks.append(_TABLES)
+    blocks += [_VARIETY, _CONFIDENTIALITY]
+    return "\n\n".join(blocks)
 
 
 def shape_label(key: Optional[str]) -> str:

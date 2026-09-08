@@ -9,21 +9,29 @@ them onto `clarify_questions` (persisted by the checkpointer). Questions come
 from an ordered sequence of `ClarifyQuestionSource`s, deterministic first
 (extend the list to add a source — OCP, no new branch):
 
-  1. **Missing mandatory filter** (new, deterministic) — Carrier + Country are
-     required; when one is still absent after history inheritance + fuzzy
-     resolution, ask for it. Timeframe is excluded (it auto-defaults).
+  1. **No scope at all** (deterministic) — a turn that names NONE of carrier,
+     country or year has nothing to run, so it is asked for a carrier and a
+     country. Naming ANY ONE of the three is enough to proceed; see
+     `core.agents.common.mandatory_filters`. This source is deliberately quiet.
   2. **Unresolved contract terms** — entity mentions the query contract could
      not match to any stored value ("Did you mean…?" MCQs with fuzzy-suggested
      options). Zero LLM cost; these are the turns that would otherwise become
      wrong filters and false "no data" answers.
-  3. **The conservative LLM ambiguity classifier** (existing) — skipped when
-     its question merely repeats an entity already covered by (1)/(2).
+  3. **The conservative LLM ambiguity classifier** — a question that is unclear
+     in MEANING rather than in scope. It runs on every turn, including a fully
+     filtered one, and is skipped only when its question merely repeats an
+     entity already covered by (1)/(2).
 
-`clarify_gate` interrupts ONCE with the whole list; the UI collects an answer
-per question and resumes with `{question_id: answer}`. On resume the gate folds
-every answer into the current query and, for entity questions, writes the
-chosen value straight into `routing_context.resolved_filters` — so the
-rephraser and SQL agents act on the disambiguated, canonically-filtered turn.
+Sources 2 and 3 are why clarification is not a filter check: a turn can be
+perfectly scoped and still be worth one question.
+
+`clarify_gate` interrupts ONCE with the whole list; the UI asks them ONE AT A
+TIME (`ui.components.chatbot.clarify_card` reveals the next question as each is
+answered) and resumes with `{question_id: answer}` once the last one is in. On
+resume the gate folds every answer into the current query and, for entity
+questions, writes the chosen value straight into
+`routing_context.resolved_filters` — so the rephraser and SQL agents act on the
+disambiguated, canonically-filtered turn.
 
 Splitting decide (LLM, runs once) from gate (interrupt, re-runs on resume) keeps
 the classifier from re-firing on resume — the standard "deterministic code

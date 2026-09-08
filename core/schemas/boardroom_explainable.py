@@ -22,9 +22,10 @@ Every model here follows the same two rules:
 1. **Actual measures only.** Each quantity is carried twice — a `*_display`
    string exactly as it should read on screen and in PowerPoint, and a `*_value`
    float the deterministic layer can sort, threshold and total. No 0-100 scores.
-2. **The model never classifies.** Priority comes from
-   :mod:`core.boardroom.priority`; the extractor reports the facts those rules
-   need (movement, persistence, comparability) and nothing else.
+2. **The model never classifies, and never ranks by opinion.** There is no
+   severity label — no 0-100 score and no High/Medium/Low. A watch item earns
+   its place by the premium it puts at risk, and says what moved and against
+   what; :mod:`core.boardroom.derive` completes and orders the rows.
 
 The legacy models in :mod:`core.schemas.boardroom` stay as they are: saved
 conversations still render through them.
@@ -109,7 +110,7 @@ class WatchItem(BaseModel):
     )
     periods_comparable: bool = Field(
         default=True,
-        description="False when the periods compared are incomplete or not like-for-like — then no priority is assigned.",
+        description="False when the periods compared are incomplete or not like-for-like — the row then says so instead of implying a trend.",
     )
     owner_action: str = Field(
         default="",
@@ -117,18 +118,6 @@ class WatchItem(BaseModel):
     )
     tone: Tone = Field(default="warn", description="Sentiment from the carrier's perspective.")
 
-    # ── computed downstream by `core.boardroom.priority` — LEAVE EMPTY ──
-    priority: str = Field(default="", description="LEAVE EMPTY. Assigned by the approved threshold rules.")
-    priority_reason: str = Field(default="", description="LEAVE EMPTY. The rule sentence behind the label.")
-    priority_tests: List[Dict[str, Any]] = Field(
-        default_factory=list, description="LEAVE EMPTY. Every rule test and whether this item passed it."
-    )
-    priority_approved: bool = Field(
-        default=False, description="LEAVE EMPTY. Whether the thresholds used are business-approved."
-    )
-    priority_thresholds: str = Field(
-        default="", description="LEAVE EMPTY. The thresholds in force when the label was assigned."
-    )
 
 
 class Watchlist(BaseModel):
@@ -142,12 +131,6 @@ class Watchlist(BaseModel):
     note: str = Field(
         default="",
         description="When `items` is empty, one honest line saying why (e.g. 'No comparable prior period in the data').",
-    )
-    thresholds: str = Field(
-        default="", description="LEAVE EMPTY. The approved thresholds, filled downstream for the 'why' drawer."
-    )
-    thresholds_approved: bool = Field(
-        default=False, description="LEAVE EMPTY. Whether the business has signed those thresholds off."
     )
 
 
@@ -241,7 +224,34 @@ class WhitespaceRow(BaseModel):
     whitespace_premium: str = Field(default="", description="Marsh premium the carrier does not hold, displayed.")
     whitespace_premium_value: Optional[float] = Field(default=None, description="Whitespace premium as a number.")
     marsh_change: str = Field(default="", description="Marsh movement with its basis, e.g. '+8.2% QoQ'.")
+    marsh_change_pct: Optional[float] = Field(
+        default=None,
+        description=(
+            "The same Marsh movement as a signed number (8.2, -3.1) — how fast the "
+            "MARKET for this industry is growing. Null when no comparable period exists."
+        ),
+    )
+    carrier_change: str = Field(
+        default="",
+        description="The CARRIER's own movement in this industry, with its basis, e.g. '+11.4% YoY'.",
+    )
+    carrier_change_pct: Optional[float] = Field(
+        default=None,
+        description=(
+            "The carrier's own movement as a signed number. Read with "
+            "`marsh_change_pct` and `share_of_wallet_pct` it says whether a gap is "
+            "worth chasing: a growing market the carrier is small in but already "
+            "growing into is a different prospect from one it is losing ground in. "
+            "Null when no comparable period exists — never guess it."
+        ),
+    )
     status: PresenceStatus = Field(default="unknown", description="'no_premium' / 'low_presence' / 'established'.")
+
+    # ── computed downstream by `core.boardroom.derive` — LEAVE EMPTY ──
+    opportunity: str = Field(
+        default="",
+        description="LEAVE EMPTY. The opportunity band, derived from the two growth rates and the share.",
+    )
 
 
 class IndustryWhitespace(BaseModel):
@@ -427,12 +437,11 @@ class BoardroomWatchlistSignature(Signature):
     exposed, how far the measure moved, WHICH periods were compared, and what
     the data shows (the trigger).
 
-    NEVER write a severity, priority, or 'High/Med/Low' anywhere. Priority is
-    computed downstream from approved business thresholds using the facts you
-    report — so instead report them faithfully: `premium_exposed_value`,
-    `movement_pct` with its sign, `consecutive_periods`, any `breached_kpi`, and
-    `periods_comparable` (set it FALSE when the periods compared are partial or
-    not like-for-like).
+    NEVER write a severity, a priority, a 'High/Med/Low' or a score anywhere.
+    The board ranks these rows by the premium they put at risk, so report the
+    facts faithfully instead: `premium_exposed_value`, `movement_pct` with its
+    sign, `consecutive_periods`, any `breached_kpi`, and `periods_comparable`
+    (set it FALSE when the periods compared are partial or not like-for-like).
 
     Name the comparison explicitly ('Q2 2026 vs Q1 2026', 'YTD vs prior YTD').
     Never write an unspecified change. Peers stay aggregated.
@@ -497,6 +506,15 @@ class BoardroomWhitespaceSignature(Signature):
     and whitespace premium for every row, and set `status` to 'no_premium' when
     the carrier writes nothing and 'low_presence' when it writes very little.
     Never output an intensity or a 0-100 score.
+
+    Report BOTH movements as signed numbers wherever the rows support them:
+    `marsh_change_pct` (how fast the MARKET for that industry is moving) and
+    `carrier_change_pct` (how fast the CARRIER is moving in it). They answer
+    different questions and the board reads them together — a growing market the
+    carrier is small in but already growing into is the best gap on the list, and
+    a growing market it is shrinking in is the most urgent. Leave either null when
+    no comparable period exists; never estimate one.
+    Do NOT write `opportunity` — that is derived from these facts downstream.
 
     Where the rows show it, also set `peer_share_of_wallet_pct`: whether the
     premium the carrier does not write is unplaced or simply written by the peer

@@ -108,21 +108,11 @@
 .bm-x-drawer > summary:hover { background: var(--va-surface-2); color: var(--va-navy); }
 .bm-x-drawer[open] > summary { color: var(--va-navy); border-bottom: 1px dashed var(--va-border-mid); }
 
-.bm-x-drawer-body,
-.bm-x-test,
-.bm-x-test-note {
+.bm-x-drawer-body {
     padding: 6px 12px;
     line-height: 1.5;
     color: var(--va-ink-600);
 }
-
-.bm-x-test { display: flex; align-items: baseline; gap: 8px; }
-.bm-x-test .bi { color: var(--va-ink-300); font-size: 11px; }
-.bm-x-test.passed .bi { color: var(--va-good); }
-.bm-x-test-name { font-weight: 700; color: var(--va-ink-700); min-width: 108px; }
-.bm-x-test-detail { color: var(--va-ink-600); }
-.bm-x-test-note { font-style: italic; color: var(--va-ink-500); }
-.bm-x-test-note.warn { color: var(--va-warn); }
 
 /* ── rows ────────────────────────────────────────────────────────────────── */
 .bm-x-rows { display: flex; flex-direction: column; gap: 10px; }
@@ -165,7 +155,10 @@
     font-variant-numeric: tabular-nums;
 }
 
-.bm-x-priority,
+/* The severity pill that sat beside a watch item's name is gone: the premium
+   exposed took its place, and the rows are ordered by it. Only the presence
+   status (No current premium / Low presence / Established) still wears a pill,
+   and that one states a fact rather than a rating. */
 .bm-x-status {
     display: inline-flex;
     align-items: center;
@@ -179,10 +172,6 @@
     border: 1px solid transparent;
     white-space: nowrap;
 }
-.bm-x-priority .bi { font-size: 7px; opacity: 0.7; }
-.bm-x-priority.danger { background: rgba(197, 53, 50, 0.12); color: var(--va-danger); border-color: rgba(197, 53, 50, 0.22); }
-.bm-x-priority.warn   { background: rgba(185, 129, 10, 0.14); color: var(--va-warn);   border-color: rgba(185, 129, 10, 0.24); }
-.bm-x-priority.neutral{ background: var(--va-surface-2);      color: var(--va-ink-600); border-color: var(--va-border-mid); }
 .bm-x-status.warn     { background: rgba(185, 129, 10, 0.12); color: var(--va-warn); }
 .bm-x-status.good     { background: rgba(31, 157, 85, 0.12);  color: var(--va-good); }
 .bm-x-status.neutral  { background: var(--va-surface-2);      color: var(--va-ink-600); }
@@ -325,16 +314,39 @@
     max-height: 400px;
     border: 1px solid var(--va-border-soft);
     border-radius: var(--va-radius-md);
+    /* Horizontal rules only, and spaced to be read rather than to fill. A 24px
+       grid in both directions was graph paper behind the data: it competed with
+       the bubbles for attention and made the panel look busier than its content.
+       Horizontals earn their place — they carry the y position across the plot. */
     background:
         linear-gradient(var(--va-surface-1) 0 0) padding-box,
-        repeating-linear-gradient(0deg, transparent 0 24px, var(--va-border-soft) 24px 25px),
-        repeating-linear-gradient(90deg, transparent 0 24px, var(--va-border-soft) 24px 25px);
+        repeating-linear-gradient(0deg, transparent 0 47px, var(--va-border-soft) 47px 48px);
     overflow: hidden;
 }
 
 .bm-x-benchline { position: absolute; background: rgba(11, 75, 255, 0.35); }
 .bm-x-benchline.v { top: 4%; bottom: 4%; width: 2px; border-left: 2px dashed rgba(11, 75, 255, 0.45); background: none; }
 .bm-x-benchline.h { left: 4%; right: 4%; height: 2px; border-top: 2px dashed rgba(11, 75, 255, 0.45); background: none; }
+
+/* Each benchmark line is NAMED on the plot. An unlabelled dashed line is just a
+   line; labelled, the pair turns the scatter into four quadrants the reader can
+   say out loud — left of the vertical is below the carrier's average share of
+   wallet, above the horizontal is a bigger slice of its own book than an even
+   split. The label is the whole reason the axes are worth drawing. */
+.bm-x-benchlabel {
+    position: absolute;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--va-blue);
+    background: var(--va-surface-1);
+    padding: 1px 5px;
+    border-radius: var(--va-radius-sm);
+    white-space: nowrap;
+    pointer-events: none;
+}
+.bm-x-benchlabel.v { top: 2px; transform: translateX(-50%); }
+.bm-x-benchlabel.h { left: 6px; transform: translateY(50%); }
 
 .bm-x-point {
     position: absolute;
@@ -399,31 +411,33 @@
 }
 
 /* Area-proportional, sized inline by the renderer. The premium is printed
-   inside the bubble so its size is never the only carrier of the number. */
+   inside the bubble so its size is never the only carrier of the number.
+
+   FLAT. A bubble used to wear a radial "lit sphere" gradient, a white ring and a
+   drop shadow — three decorations that made a 2-D position look like a 3-D
+   object, and a shaded sphere reads as bigger than the flat circle of the same
+   area it is meant to encode. One solid fill per tone, no border, no shadow. */
 .bm-x-bubble {
     display: flex;
     align-items: center;
     justify-content: center;
     border-radius: 50%;
-    background: radial-gradient(circle at 32% 28%, rgba(11, 75, 255, 0.85), rgba(0, 15, 71, 0.92));
+    background: rgba(11, 75, 255, 0.82);
     color: #ffffff;
     font-size: 10px;
     font-weight: 700;
     letter-spacing: -0.01em;
-    box-shadow: 0 4px 14px rgba(0, 15, 71, 0.28);
-    border: 2px solid rgba(255, 255, 255, 0.85);
-    transition: transform var(--va-transition-fast);
+    border: none;
+    box-shadow: none;
+    transition: opacity var(--va-transition-fast);
 }
-.bm-x-bubble-point:hover .bm-x-bubble { transform: scale(1.06); }
-.bm-x-bubble-point.good .bm-x-bubble {
-    background: radial-gradient(circle at 32% 28%, rgba(31, 157, 85, 0.85), rgba(14, 92, 48, 0.92));
-}
-.bm-x-bubble-point.warn .bm-x-bubble {
-    background: radial-gradient(circle at 32% 28%, rgba(185, 129, 10, 0.88), rgba(120, 82, 4, 0.92));
-}
-.bm-x-bubble-point.danger .bm-x-bubble {
-    background: radial-gradient(circle at 32% 28%, rgba(197, 53, 50, 0.88), rgba(124, 28, 26, 0.92));
-}
+/* Overlap is inevitable on a scatter; hovering brings one line forward without
+   resizing it, so the bubble never lies about its area. */
+.bm-x-bubble-point:hover { z-index: 2; }
+.bm-x-bubble-point:hover .bm-x-bubble { opacity: 0.95; }
+.bm-x-bubble-point.good .bm-x-bubble { background: rgba(31, 157, 85, 0.82); }
+.bm-x-bubble-point.warn .bm-x-bubble { background: rgba(185, 129, 10, 0.85); }
+.bm-x-bubble-point.danger .bm-x-bubble { background: rgba(197, 53, 50, 0.85); }
 
 .bm-x-bubble-label { font-size: 11.5px; font-weight: 700; color: var(--va-ink-800); }
 
@@ -526,3 +540,53 @@
 .bm-x-field-value.good { color: var(--va-good); font-weight: 700; }
 .bm-x-field-value.danger { color: var(--va-danger); font-weight: 700; }
 .bm-x-field-value.warn { color: var(--va-warn); font-weight: 700; }
+
+
+/* ── Industry whitespace: the opportunity band ────────────────────────────
+   A ranked list of unwritten premium says where the money is, not where to go.
+   The band reads the market's growth and the carrier's own growth against the
+   share it holds (`core.boardroom.opportunity`), so the colour is a reading of
+   the two numbers printed on the same row — never a score. The pill carries the
+   test in its tooltip and the widget states the whole rule under "What the
+   colours mean", because a colour nobody can check is decoration. */
+.bm-x-band {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 9px;
+    border-radius: var(--va-radius-pill);
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    border: 1px solid transparent;
+}
+.bm-x-band.good {
+    background: rgba(31, 157, 85, 0.14);
+    color: var(--va-good);
+    border-color: rgba(31, 157, 85, 0.26);
+}
+.bm-x-band.warn {
+    background: rgba(185, 129, 10, 0.14);
+    color: var(--va-warn);
+    border-color: rgba(185, 129, 10, 0.26);
+}
+.bm-x-band.danger {
+    background: rgba(197, 53, 50, 0.12);
+    color: var(--va-danger);
+    border-color: rgba(197, 53, 50, 0.24);
+}
+.bm-x-band.neutral {
+    background: var(--va-surface-2);
+    color: var(--va-ink-600);
+    border-color: var(--va-border-mid);
+}
+
+/* A left edge per row: the list is scannable at a glance without the colour
+   swamping the numbers, which is what a full-row fill would do. */
+.bm-x-row.whitespace[data-band] { border-left: 3px solid transparent; }
+.bm-x-row.whitespace.band-prime { border-left-color: var(--va-good); }
+.bm-x-row.whitespace.band-open { border-left-color: var(--va-warn); }
+.bm-x-row.whitespace.band-losing { border-left-color: var(--va-danger); }
+.bm-x-row.whitespace.band-held,
+.bm-x-row.whitespace.band-flat { border-left-color: var(--va-border-mid); }

@@ -11,16 +11,21 @@ middleware. The old fallback turned any unrecognised name into
 is an **allowlist**: a node we have not deliberately named leaves the status line
 exactly as it is.
 
-**The status line jumped backwards.** Independent lenses fan out in parallel, so
-node events arrive interleaved — the line could read "Writing the insight" and
-then fall back to "Running the query". Every named step therefore carries a
-`phase`, and `advance` only ever moves forward. Steps that share a phase (the
-chart step runs before the writer on the deterministic rails and after it in the
-analyst subgraph) are free to swap in either order.
+**The status line jumped, and jumped backwards.** Independent lenses fan out in
+parallel, so node events arrive interleaved: the line could read "Writing the
+insight" and fall back to "Running the query", and — worse to watch — two
+same-phase lenses ("Reviewing premium data" / "Reviewing broker-survey data")
+could trade the line back and forth several times a second. That thrash is what
+read as a flickering title.
+
+So every step has a rank (its position in `STEPS`) and `advance` moves the line
+FORWARD ONLY, never sideways. Steps declared in pipeline order therefore play in
+pipeline order whichever lens reports first, and a lens that is behind cannot
+pull the line back.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Dict, Optional
 
 from core.charts.agent import AGENT_NAME as CHART_AGENT_NAME
@@ -39,10 +44,16 @@ DEFAULT_LABEL = "Thinking"
 
 @dataclass(frozen=True)
 class Step:
-    """One named point in a turn: what to show, and how far along it is."""
+    """One named point in a turn: what to show, and how far along it is.
+
+    ``rank`` is filled in from the step's position in :data:`STEPS` once that
+    table is built — declaration order inside a phase IS the pipeline order, so
+    the ordering is derived rather than hand-numbered.
+    """
 
     phase: int
     label: str
+    rank: int = 0
 
 
 # Node name -> Step. Keys are graph node names (main graph and subgraphs, since
@@ -108,6 +119,10 @@ STEPS: Dict[str, Step] = {
 }
 
 
+# Stamp each step with its position in the table above.
+STEPS = {name: replace(step, rank=i) for i, (name, step) in enumerate(STEPS.items())}
+
+
 def step_for(node: Optional[str]) -> Optional[Step]:
     """The named step for a graph node, or None when the node is an internal."""
     return STEPS.get(node) if node else None
@@ -117,13 +132,13 @@ def advance(current: Optional[Step], node: Optional[str]) -> Optional[Step]:
     """The step to show after entering `node`, given what is showing now.
 
     Unnamed node -> `current` unchanged (an internal never takes over the line).
-    A named node in an earlier phase -> `current` unchanged (no going backwards).
-    Otherwise the new step, so same-phase steps still swap in arrival order.
+    A step at or behind the one showing -> `current` unchanged. That is what
+    keeps two parallel lenses from trading the line back and forth.
     """
     nxt = step_for(node)
     if nxt is None:
         return current
-    if current is not None and nxt.phase < current.phase:
+    if current is not None and nxt.rank <= current.rank:
         return current
     return nxt
 

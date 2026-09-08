@@ -4,7 +4,7 @@ Parity is the point: the roadmap requires that "PowerPoint shows the same values
 and definitions as the app". So each renderer here draws the same fields, in the
 same order, with the same wording as its counterpart in
 :mod:`ui.boardroom.widgets_explainable` — including the comparison basis, the
-whitespace definition, and the rule sentence behind a priority label.
+whitespace definition, and the ordering rule under the watchlist.
 
 Each renderer has the export's standard signature
 ``(slide, x, y, w, h, widget, ctx)`` and draws in inches.
@@ -16,7 +16,8 @@ from typing import Any, Callable, Dict, List, Tuple
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches
 
-from core.boardroom.priority import format_money
+from core.boardroom import opportunity
+from core.boardroom.money import format_money
 from ui.boardroom.ppt_kit import (
     GRAY,
     LIGHT_BORDER,
@@ -38,7 +39,6 @@ _STATUS_LABEL = {
     "low_presence": "Low presence",
     "established": "Established",
 }
-_PRIORITY_TONE = {"high": "danger", "medium": "warn", "low": "neutral", "unrated": "neutral"}
 
 
 def _num(value: Any) -> float:
@@ -104,8 +104,11 @@ def render_watchlist(slide, x, y, w, h, widget, ctx):
         return
 
     # A table keeps the slide editable and the columns aligned with the card.
-    cols = ["Risk", "Scope", "Premium exposed", "Movement", "Comparison", "Priority"]
-    widths = [0.22, 0.18, 0.15, 0.13, 0.17, 0.15]
+    # There is no Priority column: the board stopped rating these rows High /
+    # Medium / Low, so the slide states the exposure and the movement and lets
+    # the order (biggest exposure first) carry the ranking.
+    cols = ["Risk", "Scope", "Premium exposed", "Movement", "Comparison"]
+    widths = [0.26, 0.21, 0.17, 0.15, 0.21]
     shape = slide.shapes.add_table(
         len(items) + 1, len(cols), Inches(x), Inches(top), Inches(w), Inches(min(h - 0.5, 0.34 * (len(items) + 1)))
     )
@@ -114,33 +117,20 @@ def render_watchlist(slide, x, y, w, h, widget, ctx):
         table.columns[j].width = Inches(w * frac)
         _set_cell(table.cell(0, j), col, size=9, bold=True, fill=SOFT_BG)
     for i, item in enumerate(items, start=1):
-        priority = (item.get("priority") or "").strip()
         cells = [
             item.get("risk", ""),
             item.get("scope", ""),
             _money(item.get("premium_exposed"), item.get("premium_exposed_value")),
             item.get("movement", ""),
             item.get("comparison", "") or watchlist.get("basis", ""),
-            priority or "Unrated",
         ]
         for j, text in enumerate(cells):
-            _set_cell(
-                table.cell(i, j), text, size=8.5,
-                bold=(j == 0 or j == len(cells) - 1),
-                color=_tone_color(_PRIORITY_TONE.get(priority.lower(), "neutral")) if j == len(cells) - 1 else NAVY,
-                fill=WHITE,
-            )
-    # The trigger + rule sentence go in the notes so the slide can be defended
-    # without reprinting a paragraph per row.
-    reasons = [
-        f"{item.get('risk', '')}: {item.get('trigger', '')} — {item.get('priority', 'Unrated')} "
-        f"({item.get('priority_reason', 'no rule recorded')})"
-        for item in items
-    ]
-    thresholds = (watchlist.get("thresholds") or "").strip()
-    if thresholds:
-        reasons.append(f"Thresholds in force — {thresholds}")
-    _note(slide, "Risk & watchlist\n" + "\n".join(reasons))
+            _set_cell(table.cell(i, j), text, size=8.5, bold=(j == 0), color=NAVY, fill=WHITE)
+    # The trigger sentence goes in the notes so the slide can be defended without
+    # reprinting a paragraph per row.
+    triggers = [f"{item.get('risk', '')}: {item.get('trigger', '')}" for item in items]
+    triggers.append("Ordered by premium exposed; no severity is assigned.")
+    _note(slide, "Risk & watchlist\n" + "\n".join(triggers))
 
 
 # ───────────────────── 2. Product Line Headroom ─────────────────────
@@ -174,6 +164,9 @@ def _headroom_like_rows(slide, x, y, w, h, rows, *, name_key: str, change_key: s
         status = _STATUS_LABEL.get(row.get("status") or "", "")
         if status:
             detail.append(status)
+        band = opportunity.band_label((row.get("opportunity") or "").strip())
+        if band:
+            detail.append(band)
         _, tf = _textbox(slide, x, ry + 0.38, w, 0.2)
         _para(tf, "  |  ".join(detail), size=8.5, color=GRAY, first=True)
     if footer:
@@ -208,7 +201,14 @@ def render_whitespace(slide, x, y, w, h, widget, ctx):
         _empty(slide, x, y, w, whitespace.get("note"), "No industry dimension is present in this data.")
         return
     shown = [r for r in rows if not product or (r.get("product_line") or product).lower() == product.lower()]
-    footer = " · ".join(p for p in (whitespace.get("basis", ""), whitespace.get("definition", "")) if p)
+    # The band is a colour on screen and a word on the slide, but it is the same
+    # reading of the same two movements, so the rule travels with it.
+    footer = " · ".join(
+        p
+        for p in (whitespace.get("basis", ""), whitespace.get("definition", ""),
+                  opportunity.rule_summary())
+        if p
+    )
     _headroom_like_rows(slide, x, y, w, h, shown or rows, name_key="industry",
                         change_key="marsh_change", footer=footer)
 
@@ -276,6 +276,10 @@ def _bounds(values: List[Any], benchmark: Any, *, floor_at_zero: bool = False) -
     return (max(0.0, low), high) if floor_at_zero else (low, high)
 
 
+# Matches `_MAX_BUBBLES` on screen — the slide and the board plot the same lines.
+MAX_BUBBLES = 7
+
+
 def render_portfolio_map(slide, x, y, w, h, widget, ctx):
     """Share of wallet (x) against share of portfolio (y), bubble area = premium.
 
@@ -288,6 +292,11 @@ def render_portfolio_map(slide, x, y, w, h, widget, ctx):
         _empty(slide, x, y, w, portfolio.get("note"),
                "Premium is not split by product line in this data.")
         return
+
+    # The same cut the screen makes, for the same reason: fourteen overlapping
+    # bubbles is not a map. Every line is listed by Product line headroom.
+    bubbles.sort(key=lambda b: _num(b.get("premium_value")), reverse=True)
+    bubbles, hidden = bubbles[:MAX_BUBBLES], bubbles[MAX_BUBBLES:]
 
     x_bench = portfolio.get("wallet_benchmark_pct")
     y_bench = portfolio.get("portfolio_benchmark_pct")
@@ -312,10 +321,19 @@ def render_portfolio_map(slide, x, y, w, h, widget, ctx):
         span = y_high - y_low or 1.0
         return py0 + 0.25 + (plot_h - 0.5) * (1 - (_num(value) - y_low) / span)
 
+    # Both benchmark axes, NAMED — the same two lines the board draws, and for
+    # the same reason: unlabelled, they are decoration; labelled, they make the
+    # plot four quadrants a reader can say out loud.
     if x_bench not in (None, ""):
         _rect(slide, px(x_bench), py0 + 0.04, 0.012, plot_h - 0.08, LIGHT_BORDER)
+        _, tf = _textbox(slide, px(x_bench) - 0.6, py0 + 0.02, 1.2, 0.18)
+        _para(tf, f"Avg share of wallet {_pct(x_bench)}", size=7, bold=True,
+              color=GRAY, first=True, align=PP_ALIGN.CENTER)
     if y_bench not in (None, ""):
         _rect(slide, px0 + 0.04, py(y_bench), plot_w - 0.08, 0.012, LIGHT_BORDER)
+        _, tf = _textbox(slide, px0 + 0.08, py(y_bench) - 0.19, 1.5, 0.18)
+        _para(tf, f"Avg share of portfolio {_pct(y_bench)}", size=7, bold=True,
+              color=GRAY, first=True)
 
     for bubble in sorted(bubbles, key=lambda b: _num(b.get("premium_value")), reverse=True):
         premium = _num(bubble.get("premium_value"))
@@ -328,34 +346,16 @@ def render_portfolio_map(slide, x, y, w, h, widget, ctx):
         _, tf = _textbox(slide, cx + d + 0.04, cy + d / 2 - 0.1, 1.9, 0.2)
         _para(tf, bubble.get("product_line", ""), size=8.5, bold=True, color=NAVY, first=True)
 
+    caption = "Share of wallet % →   (↑ share of portfolio %)   ·   bubble size = premium"
+    if hidden:
+        caption += f"   ·   top {MAX_BUBBLES} lines by premium ({len(hidden)} smaller not plotted)"
     _, tf = _textbox(slide, px0, py0 + plot_h + 0.04, plot_w, 0.2)
-    _para(
-        tf,
-        "Share of wallet % →   (↑ share of portfolio %)   ·   bubble size = premium",
-        size=8, italic=True, color=GRAY, first=True, align=PP_ALIGN.CENTER,
-    )
+    _para(tf, caption, size=8, italic=True, color=GRAY, first=True, align=PP_ALIGN.CENTER)
 
-    # The readable half: both shares and the premium, per line.
-    table_y = py0 + plot_h + 0.3
-    cols = ["Product line", "Share of wallet", "Share of portfolio", "Premium", "Growth"]
-    rows = sorted(bubbles, key=lambda b: _num(b.get("premium_value")), reverse=True)
-    shape = slide.shapes.add_table(
-        len(rows) + 1, len(cols), Inches(x), Inches(table_y), Inches(w),
-        Inches(min(max(h - (table_y - y) - 0.05, 0.4), 0.3 * (len(rows) + 1))),
-    )
-    table = shape.table
-    for j, col in enumerate(cols):
-        _set_cell(table.cell(0, j), col, size=9, bold=True, fill=SOFT_BG)
-    for i, b in enumerate(rows, start=1):
-        values = [
-            b.get("product_line", ""),
-            _pct(b.get("share_of_wallet_pct")),
-            _pct(b.get("share_of_portfolio_pct")),
-            _money(b.get("premium"), b.get("premium_value")),
-            b.get("growth") or "—",
-        ]
-        for j, text in enumerate(values):
-            _set_cell(table.cell(i, j), text, size=8.5, bold=(j == 0), fill=WHITE)
+    # No per-line table here. It listed product line, both shares, premium and
+    # growth — which is Product Line Headroom's slide, on the same deck, saying
+    # the same thing about the same products. The plot is the position; the
+    # numbers are stated once.
 
 
 def render_top_carriers(slide, x, y, w, h, widget, ctx):

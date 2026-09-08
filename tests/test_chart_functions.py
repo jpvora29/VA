@@ -106,6 +106,16 @@ def test_combo_dual_axis():
 
 def test_none_type_returns_no_figure():
     fig, msg = generate_chart(_bar_df(), {"chart_type": "none", "x": "", "y": [], "series": [], "bar_mode": []})
+    assert fig is None
+    # A multi-row, multi-column frame is not scalar, so the message must not say
+    # it is. That claim over a real result set was the reported defect.
+    assert "scalar" not in msg.lower()
+
+
+def test_only_a_real_scalar_is_called_scalar():
+    import pandas as pd
+
+    fig, msg = generate_chart(pd.DataFrame([{"Premium": 8.2}]), {"chart_type": "none"})
     assert fig is None and "scalar" in msg.lower()
 
 

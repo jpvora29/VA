@@ -1,0 +1,6 @@
+# How the Boardroom prints premium, on screen and on the exported slide.
+#
+# Read by `core.boardroom.money`. The board never converts — this states the
+# currency the premium figures in the warehouse are already reported in.
+
+currency: "GBP"

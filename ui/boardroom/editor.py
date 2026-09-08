@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
-from core.boardroom import priority
+from core.boardroom.derive import recompute_widget
 from ui.boardroom import catalog, icons, model, themes
 
 SIZE_OPTS = [
@@ -179,8 +179,9 @@ LIST_SPECS: Dict[str, Dict[str, Any]] = {
         ],
     },
     # ── explainable widgets: actual measures, and no severity field anywhere ──
-    # Priority is derived from `core.boardroom.priority`, so the form collects the
-    # facts the rules need and never offers a High/Med/Low picker.
+    # There is no priority to edit: the board ranks watch items by the premium
+    # they expose, so the form collects that premium and never offers a
+    # High/Med/Low picker.
     "watch_items": {
         "path": "watchlist.items", "singular": "Watch item", "key_field": "risk",
         "template": {"risk": "", "scope": "", "premium_exposed": "", "premium_exposed_value": None,
@@ -234,7 +235,9 @@ LIST_SPECS: Dict[str, Dict[str, Any]] = {
         "template": {"industry": "", "product_line": "", "marsh_premium": "", "marsh_premium_value": None,
                      "carrier_premium": "", "carrier_premium_value": None, "share_of_wallet_pct": None,
                      "share_of_portfolio_pct": None, "peer_share_of_wallet_pct": None,
-                     "whitespace_premium": "", "whitespace_premium_value": None, "marsh_change": "",
+                     "whitespace_premium": "", "whitespace_premium_value": None,
+                     "marsh_change": "", "marsh_change_pct": None,
+                     "carrier_change": "", "carrier_change_pct": None,
                      "status": "unknown", "focus_reason": ""},
         "fields": [
             {"key": "industry", "label": "Industry", "type": "text"},
@@ -248,7 +251,10 @@ LIST_SPECS: Dict[str, Dict[str, Any]] = {
             {"key": "peer_share_of_wallet_pct", "label": "Peers hold - share of wallet (%)", "type": "decimal"},
             {"key": "whitespace_premium", "label": "Whitespace premium (as shown)", "type": "text"},
             {"key": "whitespace_premium_value", "label": "Whitespace premium (number)", "type": "decimal"},
-            {"key": "marsh_change", "label": "Marsh movement (with basis)", "type": "text"},
+            {"key": "marsh_change", "label": "Market movement (with basis)", "type": "text"},
+            {"key": "marsh_change_pct", "label": "Market movement (%)", "type": "decimal"},
+            {"key": "carrier_change", "label": "Carrier movement (with basis)", "type": "text"},
+            {"key": "carrier_change_pct", "label": "Carrier movement (%)", "type": "decimal"},
             {"key": "status", "label": "Presence", "type": "select", "options": STATUS_OPTS},
             {"key": "focus_reason", "label": "Why focus here", "type": "textarea"},
         ],
@@ -825,15 +831,16 @@ def _apply_generic(content: str, data: Dict[str, Any], meta: Dict[str, Any], val
         meta["sort"] = values.get("sort") or None
 
 
-def _rerate_watchlist(data: Dict[str, Any]) -> None:
-    """Recompute every watch item's priority from the approved thresholds."""
-    watchlist = data.get("watchlist")
-    if not isinstance(watchlist, dict):
-        return
-    thresholds = priority.get_thresholds()
-    watchlist["items"] = priority.rate_items(watchlist.get("items") or [])
-    watchlist["thresholds"] = thresholds.summary()
-    watchlist["thresholds_approved"] = thresholds.approved
+def _recomplete(kind: str, data: Dict[str, Any]) -> None:
+    """Re-derive a widget's computed measures after a hand edit, in place.
+
+    An author who corrects a carrier premium has also changed the whitespace,
+    the share of wallet and the row order that follow from it. Recomputing here
+    is what keeps an edited card arithmetically true instead of half-updated.
+    """
+    payload = data.get(kind)
+    if isinstance(payload, dict):
+        data[kind] = recompute_widget(kind, payload)
 
 
 def _materialize(widget: Dict[str, Any], values: Dict[str, Any], keep_empty: bool = False) -> None:
@@ -864,11 +871,10 @@ def _materialize(widget: Dict[str, Any], values: Dict[str, Any], keep_empty: boo
     else:
         _apply_generic(catalog.content_of(kind), data, meta, values)
 
-    # A priority is derived, not stored: re-run the approved rules over whatever
-    # the user just changed, so an edited exposure or movement cannot leave a
-    # stale "High" (or its explanation) on the card.
-    if kind == "watchlist":
-        _rerate_watchlist(data)
+    # Derived measures are derived, not stored: recompute them over whatever the
+    # user just changed, so an edited premium cannot leave a stale share of
+    # wallet or a stale whitespace beside it.
+    _recomplete(kind, data)
 
     if "theme" in values:
         meta["theme"] = values["theme"]

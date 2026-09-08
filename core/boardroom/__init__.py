@@ -1,6 +1,7 @@
-"""Deterministic rules behind the explainable Boardroom.
+"""Deterministic Boardroom rules — everything the model is not allowed to decide.
 
-The language model extracts *facts* (premium exposed, movement, comparison
-basis); everything that classifies or ranks those facts lives here, so a
-``High`` priority can always be traced to an approved threshold.
+The language model extracts *facts* (a premium, a movement, the periods being
+compared). Completing those facts into the measures they imply
+(:mod:`core.boardroom.derive`) and printing them (:mod:`core.boardroom.money`)
+happens here, so two widgets built from the same rows can never disagree.
 """

@@ -312,8 +312,8 @@ class BoardroomDigest(BaseModel):
     #
     # These REPLACE the score-based widgets above for every new digest; the old
     # fields stay so saved conversations keep rendering. All are assembled by
-    # `core.agents.boardroom`, and `watchlist` carries priorities that came from
-    # `core.boardroom.priority`, never from a model.
+    # `core.agents.boardroom`, whose numbers are completed and ordered by
+    # `core.boardroom.derive` — the model reports figures, never a rating.
     watchlist: Optional[Watchlist] = Field(
         default=None,
         description="Risk & Watchlist: one evidence-backed row per issue, with premium exposed and the trigger.",

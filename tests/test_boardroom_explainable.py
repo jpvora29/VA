@@ -6,9 +6,9 @@ describe:
     digest -> editable document -> rendered board -> edited widget -> PPTX
 
 with the invariants that make the board defensible checked at each hop: no
-primary widget shows an unexplained score, every priority can name its trigger,
-every comparison names its basis, a missing period produces an honest empty
-state, and the exported slide states the same scope and the same values as the
+widget shows a score or a severity, every comparison names its basis, a widget
+the data cannot support is dropped rather than explained, no panel appears
+twice, and the exported slide states the same scope and the same values as the
 screen.
 
 Run:  pytest tests/test_boardroom_explainable.py -q -o pythonpath=.
@@ -20,7 +20,7 @@ import copy
 import pytest
 from dash.development.base_component import Component
 
-from core.boardroom import priority
+from core.boardroom import derive, opportunity
 from ui.boardroom import builder, catalog, editor, model, ppt_export, widgets_generated
 from ui.boardroom.render import render_document
 
@@ -52,28 +52,24 @@ def digest() -> dict:
              "source": "asked in this question"},
         ],
         "watchlist": {
-            "items": priority.rate_items(
-                [
-                    {
-                        "risk": "Property premium contraction",
-                        "scope": "Canada / Property / Zurich",
-                        "premium_exposed": "£12.4m",
-                        "premium_exposed_value": 12_400_000,
-                        "movement": "-14.2% QoQ",
-                        "movement_pct": -14.2,
-                        "adverse": True,
-                        "comparison": "Q2 2026 vs Q1 2026",
-                        "trigger": "Premium fell 14.2% between Q1 and Q2 2026",
-                        "consecutive_periods": 2,
-                        "periods_comparable": True,
-                        "owner_action": "Review top-lost industries with Placement",
-                        "tone": "danger",
-                    }
-                ]
-            ),
+            "items": [
+                {
+                    "risk": "Property premium contraction",
+                    "scope": "Canada / Property / Zurich",
+                    "premium_exposed": "£12.4m",
+                    "premium_exposed_value": 12_400_000,
+                    "movement": "-14.2% QoQ",
+                    "movement_pct": -14.2,
+                    "adverse": True,
+                    "comparison": "Q2 2026 vs Q1 2026",
+                    "trigger": "Premium fell 14.2% between Q1 and Q2 2026",
+                    "consecutive_periods": 2,
+                    "periods_comparable": True,
+                    "owner_action": "Review top-lost industries with Placement",
+                    "tone": "danger",
+                }
+            ],
             "basis": "Q2 2026 vs Q1 2026",
-            "thresholds": priority.get_thresholds().summary(),
-            "thresholds_approved": priority.get_thresholds().approved,
         },
         "headroom": {
             "rows": [
@@ -280,12 +276,28 @@ def test_the_board_states_its_scope_and_every_comparison_basis():
     assert "Q2 2026 vs Q1 2026" in shown, "a comparison with no named basis is not defensible"
 
 
-def test_a_priority_ships_with_the_rule_that_produced_it():
+def test_the_watchlist_states_money_at_risk_instead_of_a_severity():
+    """High/Medium/Low was the last unexplained rating on the board."""
     rendered = render_document(builder.build_document_from_digest(digest(), 0), [])
     shown = text_of(rendered)
-    assert "High" in shown
-    assert "Why High?" in shown
-    assert "Materiality" in shown and "Magnitude" in shown
+    assert "£12.4m" in shown, "the premium exposed is what ranks a watch item now"
+    assert "Premium fell 14.2%" in shown
+    for banned in ("Why High?", "Medium priority", "Unrated"):
+        assert banned not in shown, f"the board still shows a severity: {banned}"
+
+
+def test_watch_items_are_ordered_by_the_premium_they_expose():
+    payload = digest()
+    payload["watchlist"]["items"] = [
+        {"risk": "Small", "premium_exposed_value": 1_000_000, "trigger": "small"},
+        {"risk": "Large", "premium_exposed_value": 40_000_000, "trigger": "large"},
+    ]
+    doc = builder.build_document_from_digest(payload, 0)
+    widget = next(w for p in doc["pages"] for w in p["widgets"] if w["kind"] == "watchlist")
+    # The renderer takes the order it is given, so ordering has to be applied by
+    # the completion layer that the digest and the editor both run.
+    completed = derive.complete_watchlist(widget["data"]["watchlist"])
+    assert [i["risk"] for i in completed["items"]] == ["Large", "Small"]
 
 
 def test_the_board_shows_money_where_the_old_widgets_showed_a_score():
@@ -317,54 +329,54 @@ def test_rows_carry_the_data_attributes_the_client_side_filter_reads():
     assert products == {"property", "cyber"}
 
 
-def test_a_missing_period_produces_an_honest_empty_state():
+def test_a_widget_the_data_cannot_support_is_dropped_not_explained():
+    """A panel that only says "not available here" is a panel to leave out."""
     payload = digest()
     payload["quarterly"] = {"rows": [], "note": "No comparable quarters in this scope."}
-    rendered = render_document(builder.build_document_from_digest(payload, 0), [])
-    assert "No comparable quarters in this scope." in text_of(rendered)
+    doc = builder.build_document_from_digest(payload, 0)
+    kinds = [w["kind"] for page in doc["pages"] for w in page["widgets"]]
+    assert "quarterly" not in kinds
+    assert "No comparable quarters in this scope." not in text_of(render_document(doc, []))
 
 
-def test_an_unrated_item_shows_its_facts_without_a_priority():
+def test_a_page_whose_every_widget_is_empty_is_dropped_whole():
     payload = digest()
-    payload["watchlist"]["items"] = priority.rate_items(
-        [
-            {
-                "risk": "Partial-quarter movement",
-                "premium_exposed_value": 12_400_000,
-                "movement_pct": -14.2,
-                "periods_comparable": False,
-            }
-        ]
-    )
-    rendered = render_document(builder.build_document_from_digest(payload, 0), [])
-    shown = text_of(rendered)
-    assert "Unrated" in shown
-    assert "not comparable" in shown
+    payload["whitespace"] = {"rows": [], "note": "No industry split in this data."}
+    payload.pop("opportunities", None)
+    payload.pop("opportunity_map", None)
+    doc = builder.build_document_from_digest(payload, 0)
+    assert "Industry focus" not in [p["title"] for p in doc["pages"]]
+
+
+def test_no_widget_kind_is_laid_out_twice():
+    doc = builder.build_document_from_digest(digest(), n_charts=2)
+    kinds = [
+        w["kind"] for page in doc["pages"] for w in page["widgets"] if w["kind"] != "charts"
+    ]
+    assert len(kinds) == len(set(kinds)), f"a panel is repeated: {kinds}"
 
 
 # ── editing keeps the derived label true ─────────────────────────────────────
 
 
-def test_editing_the_exposure_re_runs_the_priority_rules():
+def test_editing_a_premium_re_derives_the_measures_that_follow_from_it():
+    """An edited carrier premium changes the whitespace and the share of wallet."""
     doc = builder.build_document_from_digest(digest(), 0)
-    widget = next(w for p in doc["pages"] for w in p["widgets"] if w["kind"] == "watchlist")
-    assert widget["data"]["watchlist"]["items"][0]["priority"] == "High"
-
+    widget = next(w for p in doc["pages"] for w in p["widgets"] if w["kind"] == "headroom")
     editor.apply_editor(
         widget,
         {
-            "watchlist.items.0.risk": "Property premium contraction",
-            "watchlist.items.0.premium_exposed_value": "100000",
-            "watchlist.items.0.movement_pct": "-2.0",
-            "watchlist.items.0.consecutive_periods": "1",
-            "watchlist.items.0.adverse": True,
-            "watchlist.items.0.periods_comparable": True,
+            "headroom.rows.0.product_line": "Property",
+            "headroom.rows.0.carrier_premium_value": "21000000",
+            "headroom.rows.0.marsh_premium_value": "42000000",
+            "headroom.rows.0.whitespace_premium_value": "",
+            "headroom.rows.0.share_of_wallet_pct": "",
         },
         "tester",
     )
-    item = widget["data"]["watchlist"]["items"][0]
-    assert item["priority"] == "Low", "a smaller exposure must re-rate, not keep the old label"
-    assert item["priority_reason"]
+    row = widget["data"]["headroom"]["rows"][0]
+    assert row["whitespace_premium_value"] == 21_000_000
+    assert row["share_of_wallet_pct"] == 50.0
 
 
 def test_editing_keeps_percentages_intact():
@@ -411,7 +423,7 @@ def test_the_slide_states_the_same_scope_and_values_as_the_screen():
     assert "Country: Canada | Product: Property" in deck
     assert "£12.4m" in deck, "the exposure on screen must be the exposure on the slide"
     assert "Q2 2026 vs Q1 2026" in deck
-    assert "High" in deck
+    assert "High" not in deck, "the slide must not print a severity the board dropped"
 
 
 # ── the two share measures ───────────────────────────────────────────────────
@@ -471,7 +483,7 @@ def test_top_carriers_keeps_peers_anonymous():
     assert "Peer 1" in text_of(rendered)
 
 
-def test_the_slide_notes_carry_the_rule_behind_a_priority():
+def test_the_slide_notes_carry_the_trigger_behind_a_watch_item():
     from pptx import Presentation
     import io
 
@@ -481,4 +493,353 @@ def test_the_slide_notes_carry_the_rule_behind_a_priority():
         s.notes_slide.notes_text_frame.text for s in prs.slides if s.has_notes_slide
     )
     assert "Premium fell 14.2%" in notes
-    assert "threshold" in notes.lower()
+    assert "no severity" in notes.lower()
+
+
+# ── the numbers the model left out ───────────────────────────────────────────
+
+
+def test_a_product_row_gets_the_shares_its_own_premiums_imply():
+    """The model reports what it finds; the arithmetic is not left to it."""
+    completed = derive.complete_headroom(
+        {
+            "rows": [
+                {"product_line": "Property", "carrier_premium_value": 8_200_000,
+                 "marsh_premium_value": 42_000_000},
+                {"product_line": "Cyber", "carrier_premium_value": 1_800_000,
+                 "marsh_premium_value": 6_000_000},
+            ]
+        }
+    )
+    prop = next(r for r in completed["rows"] if r["product_line"] == "Property")
+    assert prop["share_of_wallet_pct"] == 19.5      # 8.2 / 42.0
+    assert prop["share_of_portfolio_pct"] == 82.0   # 8.2 / (8.2 + 1.8)
+    assert prop["whitespace_premium_value"] == 33_800_000
+    assert prop["carrier_premium"] == "£8.2m", "a number must arrive with its display text"
+
+
+def test_a_row_with_no_premium_at_all_is_dropped():
+    completed = derive.complete_headroom(
+        {"rows": [{"product_line": "Property", "carrier_premium_value": 8_200_000},
+                  {"product_line": "Marine"}]}
+    )
+    assert [r["product_line"] for r in completed["rows"]] == ["Property"]
+
+
+def test_the_shares_are_never_derived_from_each_other():
+    """Wallet and portfolio have different denominators — a governed distinction."""
+    completed = derive.complete_headroom(
+        {"rows": [{"product_line": "Property", "carrier_premium_value": 5_000_000}]}
+    )
+    row = completed["rows"][0]
+    assert row["share_of_wallet_pct"] is None, "no Marsh premium means no share of wallet"
+    assert row["share_of_portfolio_pct"] == 100.0
+
+
+def test_a_reported_figure_is_never_overwritten():
+    completed = derive.complete_headroom(
+        {"rows": [{"product_line": "Property", "carrier_premium_value": 8_200_000,
+                   "marsh_premium_value": 42_000_000, "share_of_wallet_pct": 21.0}]}
+    )
+    assert completed["rows"][0]["share_of_wallet_pct"] == 21.0
+
+
+def test_the_board_prints_the_share_of_wallet_the_model_omitted():
+    payload = digest()
+    for row in payload["headroom"]["rows"]:
+        row.pop("share_of_wallet_pct", None)
+        row.pop("whitespace_premium", None)
+        row.pop("whitespace_premium_value", None)
+    payload["headroom"] = derive.complete_headroom(payload["headroom"])
+    shown = text_of(render_document(builder.build_document_from_digest(payload, 0), []))
+    assert "19.5%" in shown
+    assert "£33.8m" in shown
+
+
+# ── the product page says each thing once ───────────────────────────────────
+
+
+def test_the_product_page_lists_its_lines_once():
+    """The map's legend used to repeat Product Line Headroom under the plot."""
+    rendered = render_document(builder.build_document_from_digest(digest(), 0), [])
+    titles = [
+        str(n.children)
+        for n in walk(rendered)
+        if (getattr(n, "className", "") or "") == "bm-x-row-title"
+    ]
+    assert titles.count("Property") == 1, f"a product line is listed twice: {titles}"
+
+
+def test_the_map_keeps_the_plot_and_headroom_keeps_the_numbers():
+    rendered = render_document(builder.build_document_from_digest(digest(), 0), [])
+    shown = text_of(rendered)
+    assert "Product portfolio map" in shown and "Product line headroom" in shown
+    # The whitespace money is stated by headroom, not by the map.
+    assert "£33.8m" in shown
+
+
+# ── the bubble plot ─────────────────────────────────────────────────────────
+
+
+def _bubbles(n: int) -> list:
+    return [
+        {
+            "product_line": f"Line {i}",
+            "share_of_wallet_pct": 10.0 + i,
+            "share_of_portfolio_pct": 5.0 + i,
+            "premium": f"£{10 - i}.0m",
+            "premium_value": (10 - i) * 1_000_000,
+        }
+        for i in range(n)
+    ]
+
+
+def test_the_map_plots_only_the_seven_biggest_lines():
+    payload = digest()
+    payload["portfolio_map"] = {"bubbles": _bubbles(11), "benchmark_label": "Peer average"}
+    rendered = render_document(builder.build_document_from_digest(payload, 0), [])
+    plotted = [
+        n for n in walk(rendered)
+        if (getattr(n, "className", "") or "").startswith("bm-x-bubble-point")
+    ]
+    assert len(plotted) == 7
+
+
+def test_the_lines_it_did_not_plot_are_named_not_hidden():
+    payload = digest()
+    payload["portfolio_map"] = {"bubbles": _bubbles(11), "benchmark_label": "Peer average"}
+    shown = text_of(render_document(builder.build_document_from_digest(payload, 0), []))
+    assert "4 smaller lines not plotted" in shown
+    assert "Line 10" in shown
+
+
+def test_a_small_book_is_plotted_whole():
+    payload = digest()
+    payload["portfolio_map"] = {"bubbles": _bubbles(4), "benchmark_label": "Peer average"}
+    rendered = render_document(builder.build_document_from_digest(payload, 0), [])
+    plotted = [
+        n for n in walk(rendered)
+        if (getattr(n, "className", "") or "").startswith("bm-x-bubble-point")
+    ]
+    assert len(plotted) == 4
+    assert "not plotted" not in text_of(rendered)
+
+
+# ── whitespace colour ───────────────────────────────────────────────────────
+
+
+def test_a_growing_market_the_carrier_is_growing_into_is_the_prime_gap():
+    assert opportunity.classify(
+        marsh_change_pct=8.2, carrier_change_pct=11.4, share_of_wallet_pct=0.0
+    ) == "prime"
+
+
+def test_a_growing_market_the_carrier_is_losing_reads_differently():
+    assert opportunity.classify(
+        marsh_change_pct=8.2, carrier_change_pct=-4.0, share_of_wallet_pct=5.9
+    ) == "losing"
+    assert opportunity.classify(
+        marsh_change_pct=8.2, carrier_change_pct=None, share_of_wallet_pct=5.9
+    ) == "open"
+
+
+def test_a_flat_market_or_a_held_wallet_is_not_a_gap():
+    assert opportunity.classify(
+        marsh_change_pct=0.4, carrier_change_pct=9.0, share_of_wallet_pct=1.0
+    ) == "flat"
+    assert opportunity.classify(
+        marsh_change_pct=8.0, carrier_change_pct=9.0, share_of_wallet_pct=50.0
+    ) == "held"
+
+
+def test_a_row_with_no_market_movement_is_left_uncoloured():
+    """A colour nobody can check is decoration; no movement, no band."""
+    assert opportunity.classify(
+        marsh_change_pct=None, carrier_change_pct=9.0, share_of_wallet_pct=1.0
+    ) == ""
+
+
+def test_the_band_travels_from_the_facts_to_the_row():
+    completed = derive.complete_whitespace(
+        {
+            "rows": [
+                {"industry": "Manufacturing", "marsh_premium_value": 18_600_000,
+                 "carrier_premium_value": 0.0, "marsh_change_pct": 8.2,
+                 "carrier_change_pct": 11.4},
+            ]
+        }
+    )
+    row = completed["rows"][0]
+    assert row["opportunity"] == "prime"
+    # A carrier premium of ZERO is the point of a whitespace row, not a blank.
+    assert row["share_of_wallet_pct"] == 0.0
+    assert row["whitespace_premium_value"] == 18_600_000
+
+
+def test_the_board_colours_the_row_and_says_what_the_colour_means():
+    payload = digest()
+    payload["whitespace"] = derive.complete_whitespace(
+        {
+            "rows": [
+                {"industry": "Manufacturing", "product_line": "Property",
+                 "marsh_premium_value": 18_600_000, "carrier_premium_value": 0.0,
+                 "marsh_change": "+8.2% QoQ", "marsh_change_pct": 8.2,
+                 "carrier_change": "+11.4% QoQ", "carrier_change_pct": 11.4},
+            ],
+            "product_line": "Property",
+            "product_lines": ["Property"],
+        }
+    )
+    rendered = render_document(builder.build_document_from_digest(payload, 0), [])
+    bands = [
+        n for n in walk(rendered)
+        if (getattr(n, "className", "") or "").startswith("bm-x-band")
+    ]
+    assert bands and "good" in bands[0].className
+    shown = text_of(rendered)
+    assert "Prime gap" in shown
+    assert "What the colours mean" in shown
+    # The two numbers the colour is read from are printed beside it.
+    assert "+8.2% QoQ" in shown and "+11.4% QoQ" in shown
+
+
+def test_the_slide_carries_the_same_band_and_the_same_rule():
+    from pptx import Presentation
+    import io
+
+    payload = digest()
+    payload["whitespace"] = derive.complete_whitespace(
+        {
+            "rows": [
+                {"industry": "Manufacturing", "product_line": "Property",
+                 "marsh_premium_value": 18_600_000, "carrier_premium_value": 0.0,
+                 "marsh_change": "+8.2% QoQ", "marsh_change_pct": 8.2,
+                 "carrier_change_pct": 11.4},
+            ],
+            "product_line": "Property",
+        }
+    )
+    doc = builder.build_document_from_digest(payload, 0)
+    prs = Presentation(io.BytesIO(ppt_export.export_pptx(doc, [])))
+    text = []
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                text.append(shape.text_frame.text)
+    deck = " ".join(text)
+    assert "Prime gap" in deck
+    assert "Colour reads the two growth rates" in deck
+
+def test_editing_a_movement_re_colours_the_row():
+    """The band is derived, so an edited growth rate must re-band, not go stale."""
+    payload = digest()
+    payload["whitespace"] = derive.complete_whitespace(
+        {
+            "rows": [
+                {"industry": "Manufacturing", "product_line": "Property",
+                 "marsh_premium_value": 18_600_000, "carrier_premium_value": 0.0,
+                 "marsh_change_pct": 8.2, "carrier_change_pct": 11.4},
+            ],
+            "product_line": "Property",
+        }
+    )
+    doc = builder.build_document_from_digest(payload, 0)
+    widget = next(w for p in doc["pages"] for w in p["widgets"] if w["kind"] == "whitespace")
+    assert widget["data"]["whitespace"]["rows"][0]["opportunity"] == "prime"
+
+    editor.apply_editor(
+        widget,
+        {
+            "whitespace.rows.0.industry": "Manufacturing",
+            "whitespace.rows.0.marsh_change_pct": "8.2",
+            "whitespace.rows.0.carrier_change_pct": "-4.0",
+        },
+        "tester",
+    )
+    assert widget["data"]["whitespace"]["rows"][0]["opportunity"] == "losing"
+
+
+def test_the_editor_collects_both_movements_and_never_the_band():
+    cfg = editor.KIND_EDITORS["whitespace"]
+    keys = {f["key"] for lk in cfg["lists"] for f in editor.LIST_SPECS[lk]["fields"]}
+    assert {"marsh_change_pct", "carrier_change_pct"} <= keys
+    assert "opportunity" not in keys, "a derived band is not an author's to type"
+
+def test_the_map_always_has_both_benchmark_axes():
+    """Without them the plot is dots with nothing to read them against."""
+    completed = derive.complete_portfolio_map(
+        {
+            "bubbles": [
+                {"product_line": "Property", "carrier_premium_value": 8_200_000,
+                 "marsh_premium_value": 42_000_000},
+                {"product_line": "Cyber", "carrier_premium_value": 1_800_000,
+                 "marsh_premium_value": 6_000_000},
+            ]
+        }
+    )
+    # Premium-weighted, not a mean of percentages: 10.0m of 48.0m.
+    assert completed["wallet_benchmark_pct"] == 20.8
+    # An even split of the carrier's own book across its lines.
+    assert completed["portfolio_benchmark_pct"] == 50.0
+
+
+def test_a_reported_benchmark_is_never_overwritten():
+    completed = derive.complete_portfolio_map(
+        {
+            "bubbles": [
+                {"product_line": "Property", "carrier_premium_value": 8_200_000,
+                 "marsh_premium_value": 42_000_000},
+            ],
+            "wallet_benchmark_pct": 17.0,
+        }
+    )
+    assert completed["wallet_benchmark_pct"] == 17.0
+
+
+def test_both_axes_are_drawn_and_named_on_the_board():
+    payload = digest()
+    payload["portfolio_map"] = derive.complete_portfolio_map(
+        {
+            "bubbles": [
+                {"product_line": "Property", "carrier_premium_value": 8_200_000,
+                 "marsh_premium_value": 42_000_000},
+                {"product_line": "Cyber", "carrier_premium_value": 1_800_000,
+                 "marsh_premium_value": 6_000_000},
+            ]
+        }
+    )
+    rendered = render_document(builder.build_document_from_digest(payload, 0), [])
+    axes = {
+        (getattr(n, "className", "") or "")
+        for n in walk(rendered)
+        if (getattr(n, "className", "") or "").startswith("bm-x-benchline")
+    }
+    assert axes == {"bm-x-benchline v", "bm-x-benchline h"}
+    shown = text_of(rendered)
+    assert "Avg share of wallet 20.8%" in shown
+    assert "Avg share of portfolio 50.0%" in shown
+
+
+def test_the_slide_names_the_same_two_axes():
+    from pptx import Presentation
+    import io
+
+    payload = digest()
+    payload["portfolio_map"] = derive.complete_portfolio_map(
+        {
+            "bubbles": [
+                {"product_line": "Property", "carrier_premium_value": 8_200_000,
+                 "marsh_premium_value": 42_000_000},
+                {"product_line": "Cyber", "carrier_premium_value": 1_800_000,
+                 "marsh_premium_value": 6_000_000},
+            ]
+        }
+    )
+    doc = builder.build_document_from_digest(payload, 0)
+    prs = Presentation(io.BytesIO(ppt_export.export_pptx(doc, [])))
+    deck = " ".join(
+        s.text_frame.text for slide in prs.slides for s in slide.shapes if s.has_text_frame
+    )
+    assert "Avg share of wallet 20.8%" in deck
+    assert "Avg share of portfolio 50.0%" in deck
+

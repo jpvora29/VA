@@ -132,6 +132,8 @@ Suggested classification behavior:
 
 The numeric thresholds must be configurable by the business. Until those thresholds are approved, show the raw facts and omit the priority label.
 
+> **Status (2026-09-08).** The thresholds were never signed off, so under the rule above the label had to go — and it has. The rule engine (`core/boardroom/priority.py`) and its `thresholds.yaml` are deleted rather than left running to produce a label nothing prints. The watchlist now shows the premium exposed where the severity pill sat and is ordered by it, on screen and on the slide. Reinstating a priority means restoring that module behind approved numbers, not re-adding a label to the card.
+
 ### Interaction
 
 - Hover or click `Why High?` to see the exact rule and inputs.

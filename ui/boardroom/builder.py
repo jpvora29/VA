@@ -13,8 +13,12 @@ follows, each answering one question:
     3 Product         Which lines carry the book, and where is the headroom?
     4 Industry focus  Inside the priority line, which industries to go after?
 
-Nothing is manufactured to fill a step: a page with no supported widget is
-dropped, and a widget the data cannot support says so in its own empty state.
+Nothing is manufactured to fill a step, and nothing empty is laid out to explain
+itself: a widget with no content is dropped, and a page left with no widgets is
+dropped with it. A board therefore only ever shows the steps this data can
+actually answer — a page of "not available in this data" panels is a page the
+reader has to work past for nothing.
+
 Explainable widgets take precedence over the score-based ones they replaced, so
 a digest carrying a watchlist does not also print the legacy severity bars, and
 quarterly performance supersedes the annual timeline.
@@ -22,7 +26,7 @@ quarterly performance supersedes the annual timeline.
 from __future__ import annotations
 
 import copy
-from typing import Any, Callable, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ui.boardroom import model
 from ui.boardroom.catalog import LIBRARY_BY_KIND
@@ -33,6 +37,39 @@ PAIN_POINTS = ("Pain points", "bi bi-exclamation-diamond", "Where is it losing g
 PRODUCT = ("Product deep dive", "bi bi-boxes", "Which lines carry the book, and where is the headroom?")
 INDUSTRY = ("Industry focus", "bi bi-buildings", "Inside the priority line, which industries to go after?")
 BATTLECARDS = ("Battlecards", "bi bi-clipboard-data", "How do the carriers compare head to head?")
+
+
+# The key that carries a widget's content, per digest section. A section whose
+# key is empty has nothing to show, whatever note came with it. A section mapped
+# to None (or not listed) is a plain list — being non-empty IS its content.
+_CONTENT_KEY: Dict[str, Optional[str]] = {
+    "kpis": None,
+    "insights": None,
+    "watchlist": "items",
+    "headroom": "rows",
+    "whitespace": "rows",
+    "quarterly": "rows",
+    "portfolio_map": "bubbles",
+    "top_carriers": "carriers",
+    "comparison": "subjects",
+    "opportunity_map": "cells",
+    "positioning": "points",
+    "positioning_actual": "points",
+    "battlecards": None,
+    "opportunities": None,
+    "timeline": None,
+}
+
+
+def section_has_content(digest: Dict[str, Any], name: str) -> bool:
+    """True when a digest section carries something worth a panel."""
+    section = (digest or {}).get(name)
+    if not section:
+        return False
+    key = _CONTENT_KEY.get(name)
+    if key is None:
+        return True
+    return bool(isinstance(section, dict) and section.get(key))
 
 
 class BoardroomDocumentBuilder:
@@ -47,89 +84,64 @@ class BoardroomDocumentBuilder:
         self._digest = digest or {}
         self._n_charts = n_charts
         self._pages: List[Dict[str, Any]] = []
+        self._placed: set[str] = set()
 
     # ── steps ──
 
     def add_overview(self) -> "BoardroomDocumentBuilder":
         """The headline numbers, the written read, and the trend behind them."""
-        digest = self._digest
-        widgets: List[Dict[str, Any]] = []
-        if digest.get("kpis"):
-            widgets.append(self._widget("kpi", {"kpis": digest["kpis"]}, size="full"))
-        if digest.get("insights"):
-            widgets.append(self._widget("insights", {"insights": digest["insights"]}, size="full"))
-        # The watchlist IS the risk presentation now; the legacy severity bars
-        # ride along in the commentary only when nothing replaced them.
-        risks = [] if digest.get("watchlist") else (digest.get("risks") or [])
-        if digest.get("headline") or digest.get("commentary") or risks:
-            widgets.append(
-                self._widget(
-                    "commentary",
-                    {
-                        "headline": digest.get("headline", ""),
-                        "sections": digest.get("commentary", []),
-                        "risks": risks,
-                    },
-                    size="full",
-                )
-            )
-        if digest.get("quarterly"):
-            widgets.append(self._widget("quarterly", {"quarterly": digest["quarterly"]}, size="full"))
-        elif digest.get("timeline"):
-            widgets.append(self._widget("timeline", {"timeline": digest["timeline"]}, size="full"))
+        widgets = [
+            self._section("kpis", kind="kpi"),
+            self._section("insights"),
+            self._commentary(),
+            # Quarterly performance supersedes the annual timeline when the data
+            # carries comparable quarters.
+            self._section("quarterly") or self._timeline(),
+        ]
         return self._add_page(OVERVIEW, widgets)
 
     def add_pain_points(self) -> "BoardroomDocumentBuilder":
         """What needs attention, and how the field is moving around it."""
-        digest = self._digest
-        widgets: List[Dict[str, Any]] = []
-        if digest.get("watchlist"):
-            widgets.append(self._widget("watchlist", {"watchlist": digest["watchlist"]}, size="full"))
-        if digest.get("top_carriers"):
-            widgets.append(self._widget("top_carriers", {"top_carriers": digest["top_carriers"]}, size="full"))
-        if digest.get("comparison"):
-            widgets.append(self._widget("comparison", {"comparison": digest["comparison"]}, size="full"))
+        widgets = [
+            self._section("watchlist"),
+            self._section("top_carriers"),
+            self._section("comparison"),
+        ]
         return self._add_page(PAIN_POINTS, widgets)
 
     def add_product_deep_dive(self) -> "BoardroomDocumentBuilder":
         """Where the book sits against where it wins, and the money left over."""
-        digest = self._digest
-        widgets: List[Dict[str, Any]] = []
-        if digest.get("portfolio_map"):
-            widgets.append(self._widget("portfolio_map", {"portfolio_map": digest["portfolio_map"]}, size="full"))
-        elif digest.get("positioning_actual"):
-            widgets.append(
-                self._widget("positioning_actual", {"positioning_actual": digest["positioning_actual"]}, size="lg")
-            )
-        elif digest.get("positioning"):
-            widgets.append(self._widget("positioning", {"positioning": digest["positioning"]}, size="lg"))
-        if digest.get("headroom"):
-            widgets.append(self._widget("headroom", {"headroom": digest["headroom"]}, size="full"))
-        for i in range(self._n_charts):
-            widgets.append(self._widget("charts", {"spec_index": i}, size="lg", title=f"Chart {i + 1}"))
+        widgets = [
+            # One positioning view, in preference order — the bubble map first,
+            # the retired plots only for a saved board that still carries one.
+            self._section("portfolio_map")
+            or self._section("positioning_actual", size="lg")
+            or self._section("positioning", size="lg"),
+            self._section("headroom"),
+        ]
+        widgets.extend(self._charts())
         return self._add_page(PRODUCT, widgets)
 
     def add_industry_focus(self) -> "BoardroomDocumentBuilder":
         """The narrowest step: which industries to go after inside a product line."""
-        digest = self._digest
-        widgets: List[Dict[str, Any]] = []
-        if digest.get("whitespace"):
-            widgets.append(self._widget("whitespace", {"whitespace": digest["whitespace"]}, size="full"))
-        if digest.get("opportunities"):
-            widgets.append(self._widget("opportunity_radar", {"opportunities": digest["opportunities"]}, size="lg"))
-        if digest.get("opportunity_map"):
-            widgets.append(self._widget("opportunity_map", {"opportunity_map": digest["opportunity_map"]}, size="full"))
+        widgets = [
+            self._section("whitespace"),
+            self._section("opportunities", kind="opportunity_radar", size="lg"),
+            self._section("opportunity_map"),
+        ]
         return self._add_page(INDUSTRY, widgets)
 
     def add_battlecards(self) -> "BoardroomDocumentBuilder":
-        digest = self._digest
-        widgets: List[Dict[str, Any]] = []
-        if digest.get("battlecards"):
-            widgets.append(self._widget("battlecards", {"battlecards": digest["battlecards"]}, size="full"))
-        return self._add_page(BATTLECARDS, widgets)
+        """The head-to-head cards, when the turn compared named carriers."""
+        return self._add_page(BATTLECARDS, [self._section("battlecards")])
 
     def build(self) -> Dict[str, Any]:
-        pages = self._pages or [model.make_page(*OVERVIEW[:2])]
+        # A board with no supported step still has to render as a card, so it
+        # keeps one empty Overview page rather than no page at all. (This used to
+        # pass the icon positionally, where `widgets` goes — the page then held a
+        # string and the renderer iterated its characters.)
+        title, icon, caption = OVERVIEW
+        pages = self._pages or [model.make_page(title, [], icon=icon, caption=caption)]
         document = model.make_document(
             title=self._digest.get("title", "Boardroom"),
             subtitle=self._digest.get("subtitle", ""),
@@ -142,13 +154,58 @@ class BoardroomDocumentBuilder:
 
     # ── helpers ──
 
+    def _commentary(self):
+        """The written read. The watchlist IS the risk presentation now, so the
+        legacy severity bars ride along only when nothing replaced them."""
+        digest = self._digest
+        risks = [] if section_has_content(digest, "watchlist") else (digest.get("risks") or [])
+        if not (digest.get("headline") or digest.get("commentary") or risks):
+            return None
+        return self._widget(
+            "commentary",
+            {
+                "headline": digest.get("headline", ""),
+                "sections": digest.get("commentary", []),
+                "risks": risks,
+            },
+            size="full",
+        )
+
+    def _timeline(self):
+        """The annual timeline — a list, not a keyed section, so it has its own test."""
+        if "timeline" in self._placed or not self._digest.get("timeline"):
+            return None
+        return self._widget("timeline", {"timeline": self._digest["timeline"]}, size="full")
+
+    def _charts(self) -> List[Dict[str, Any]]:
+        return [
+            self._widget("charts", {"spec_index": i}, size="lg", title=f"Chart {i + 1}")
+            for i in range(self._n_charts)
+        ]
+
     def _widget(self, kind: str, data: Dict[str, Any], *, size: str = "md", title: str = ""):
+        self._placed.add(kind)
         return model.make_widget(kind, data, origin="generated", size=size, title=title)
 
-    def _add_page(self, spec, widgets: List[Dict[str, Any]]) -> "BoardroomDocumentBuilder":
+    def _section(self, name: str, *, size: str = "full", kind: str = ""):
+        """The widget for one digest section, or ``None`` when it has no place.
+
+        Two reasons it has none: the section is empty, or this kind is already on
+        the board. Both checks live here so no ``add_*`` can forget one — the
+        same panel appearing on two steps of the funnel reads as a bug, and it
+        was one.
+        """
+        kind = kind or name
+        if kind in self._placed or not section_has_content(self._digest, name):
+            return None
+        return self._widget(kind, {name: self._digest[name]}, size=size)
+
+    def _add_page(self, spec, widgets: List[Any]) -> "BoardroomDocumentBuilder":
+        """Add the step, unless every widget on it came back empty."""
         title, icon, caption = spec
-        if widgets:
-            self._pages.append(model.make_page(title, widgets, icon=icon, caption=caption))
+        kept = [w for w in widgets if w is not None]
+        if kept:
+            self._pages.append(model.make_page(title, kept, icon=icon, caption=caption))
         return self
 
 

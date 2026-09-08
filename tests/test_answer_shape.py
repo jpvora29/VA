@@ -195,3 +195,23 @@ def test_explicit_direct_depth_overrides_a_stored_shape():
 
 def test_answer_shape_tolerates_no_context_at_all():
     assert answer_shape(None) == DEFAULT_SHAPE
+
+# ── tables: the shapes ask for them, so the mechanics are pinned ────────────
+
+
+def test_a_shape_that_asks_for_a_table_gets_the_table_style_guide():
+    for key in ("ranking", "comparison", "trend", "analyst", "advisory", "driver"):
+        contract = shape_contract(key)
+        assert "WHEN YOU WRITE A TABLE" in contract, key
+        assert "pipe table" in contract, key
+        assert "`---:`" in contract, key
+
+
+def test_a_shape_that_forbids_a_table_is_not_told_how_to_write_one():
+    """Handing table mechanics to a lookup invites a table it must not write."""
+    for key in ("direct", "briefing"):
+        assert "WHEN YOU WRITE A TABLE" not in shape_contract(key), key
+
+
+def test_the_table_guide_bans_the_fence_that_stops_a_table_rendering():
+    assert "code fence" in shape_contract("ranking")

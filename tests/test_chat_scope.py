@@ -1,8 +1,8 @@
 """The analytical scope shown as context pills.
 
-Three surfaces state the scope of an answer — the pills above the chat composer,
-the Boardroom header, and every exported slide — and all three read
-`core.scope`. These tests pin what a chip is allowed to claim: the resolved
+Three surfaces state the scope of an answer — the pills at the head of the
+answer itself, the Boardroom header, and every exported slide — and all three
+read `core.scope`. These tests pin what a chip is allowed to claim: the resolved
 filter wins over the raw mention, an inherited filter says so, and nothing shows
 a scope the turn never resolved.
 

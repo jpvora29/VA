@@ -59,8 +59,15 @@ def stamp_intent(spec: Dict[str, Any], user_query: str) -> Dict[str, Any]:
 
     Mutates and returns `spec`. A missing/blank query is left unstamped so legacy
     and override specs degrade to the title-only heuristic.
+
+    An EMPTY spec is returned untouched. `{}` is the contract for "there is no
+    chart here" — Chartwright declining, or the selector answering `none` — and
+    stamping an intent onto it turned that into `{"intent": "..."}`, a truthy
+    dict with no `chart_type`. Every downstream reader then treated it as a real
+    spec and the renderer reported "Chart can not be generated as the data is
+    scalar" for result sets that were nothing of the kind.
     """
-    if not isinstance(spec, dict):
+    if not spec or not isinstance(spec, dict):
         return spec
     text = (user_query or "").strip()
     if text and not spec.get("intent"):

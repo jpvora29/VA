@@ -162,6 +162,18 @@ def _is_numeric(df: pd.DataFrame, col: str) -> bool:
     return pd.api.types.is_numeric_dtype(df[col])
 
 
+def _no_chart_reason(df: pd.DataFrame) -> str:
+    """Why this result has no chart, stated about THIS result.
+
+    A single value has no chart and saying so is useful. Anything wider does have
+    a shape, so the honest line is that none was drawn — and the panel shows the
+    rows, which is the evidence either way.
+    """
+    if df.shape == (1, 1):
+        return "Chart can not be generated as the data is scalar."
+    return "Underlying data"
+
+
 def _sanitize_spec(
     df: pd.DataFrame, raw: Dict[str, Any]
 ) -> Tuple[Optional[_Spec], pd.DataFrame, str]:
@@ -170,11 +182,16 @@ def _sanitize_spec(
     `spec is None` means "do not draw" — `message` explains why (e.g. scalar).
     Never raises.
     """
-    chart = str(raw.get("chart_type") or "none").strip().lower()
-    if chart == "none":
-        return None, df, "Chart can not be generated as the data is scalar."
     if df is None or df.empty:
         return None, df, "No data to chart."
+
+    # "No chart type" means no chart was designed for this result — which is only
+    # ever ABOUT the data when the data really is a single value. Saying "the data
+    # is scalar" over a full result set was a lie the reader could see through, so
+    # the message now describes the frame in front of us.
+    chart = str(raw.get("chart_type") or "none").strip().lower()
+    if chart == "none":
+        return None, df, _no_chart_reason(df)
 
     resolve = _resolver(df)
 

@@ -120,13 +120,17 @@ body {
 }
 
 /* ---------- Chatbot area ---------- */
+/* The chat is a two-band column: a viewport that scrolls, and a composer that
+   does not. Both bands are laid out — neither is positioned over the other — so
+   the composer can grow (a status bar, a taller textarea, a wrapped cue) without
+   ever covering the message above it. */
 .chatbot-area {
     display: flex;
     flex-direction: column;
     height: 100%;
+    min-height: 0;
     font-family: 'Inter', 'Segoe UI', sans-serif;
     overflow: hidden;
-    justify-content: space-around;
 }
 
 .chatbot-area>.container-fluid,
@@ -137,74 +141,76 @@ body {
     flex-direction: column;
 }
 
-.chatbot-area .container-fluid>.row.flex-grow-1 {
+.chatbot-area .container-fluid>.row.chat-row {
     flex: 1 1 auto;
     min-height: 0;
     overflow: hidden;
 }
 
-.chatbot-area .container-fluid>.row.flex-grow-1>[class*="col"] {
+.chatbot-area .container-fluid>.row.chat-row>[class*="col"] {
     display: flex;
     flex-direction: column;
     min-height: 0;
     height: 100%;
 }
 
-.chat-bot-text-area {
+/* THE scroll container. The transcript and the streaming draft are both inside
+   it, so a draft that grows pushes the conversation up instead of being laid out
+   on top of it, and one scrollbar covers the whole conversation. */
+.chat-viewport {
     flex: 1 1 auto;
+    min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 20px 0 24px;
+}
+
+.chat-bot-text-area {
     display: flex;
     flex-direction: column;
     align-items: stretch;
     justify-content: flex-start;
-    padding: 20px clamp(12px, 4vw, 48px);
-    padding-bottom: 9rem;
-    height: auto;
-    max-height: none;
+    padding: 0 clamp(12px, 4vw, 48px);
     gap: 14px;
-    scroll-behavior: smooth;
+}
+
+/* Before the first question the transcript is only the welcome hero, which
+   centres itself with `margin: auto` — and auto margins need free space. So the
+   empty state (and only the empty state) fills the viewport; once there are
+   messages, they start at the top and grow downwards. */
+.chat-bot-text-area:has(.welcome-hero) {
+    min-height: 100%;
 }
 
 /* Custom scrollbar */
-.chat-bot-text-area::-webkit-scrollbar {
+.chat-viewport::-webkit-scrollbar {
     width: 10px;
 }
 
-.chat-bot-text-area::-webkit-scrollbar-thumb {
+.chat-viewport::-webkit-scrollbar-thumb {
     background: rgba(0, 44, 119, 0.18);
     border-radius: 10px;
 }
 
-.chat-bot-text-area::-webkit-scrollbar-thumb:hover {
+.chat-viewport::-webkit-scrollbar-thumb:hover {
     background: rgba(0, 44, 119, 0.32);
 }
 
-/* ---------- Input bar (sticky, glass) ---------- */
+/* ---------- Input bar ----------
+   Laid out, not positioned. It was `position: fixed` (later overridden to
+   `absolute`) with the scroller carrying a hard-coded `padding-bottom` to make
+   room for it. Any time the bar was taller than that guess — the status bar
+   appears, the textarea grows, a cue wraps — it covered the last message, which
+   is why a question could end up underneath the status bar with no way to
+   scroll to it. A flex row cannot overlap its sibling, so the guess is gone. */
 .input-area {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    padding: 0.75rem clamp(12px, 4vw, 48px) 1rem;
+    flex: 0 0 auto;
+    padding: 0.5rem clamp(12px, 4vw, 48px) 0.85rem;
     width: 100%;
     display: flex;
-    z-index: 50;
-    background: linear-gradient(180deg, rgba(245, 247, 251, 0) 0%, rgba(245, 247, 251, 0.85) 35%, rgba(245, 247, 251, 0.98)) 100%;
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-    pointer-events: none;
-    /* padding: 1rem clamp(12px, 4vw, 48px); */
-    /* flex: 1; */
-    /* position: sticky;
-    padding-bottom: 0;
-    width: 100%;
-    bottom: 0;
-    display: flex; */
-}
-
-.input-area>* {
-    pointer-events: auto;
+    background: var(--surface-1);
+    border-top: 1px solid rgba(12, 25, 58, 0.06);
 }
 
 .type-area {
@@ -1738,8 +1744,9 @@ body {
     flex-direction: column;
     align-items: stretch;
     /* Match .chat-bot-text-area's horizontal padding so the draft bubble lines
-       up exactly with the committed messages above it. */
-    padding: 0 clamp(12px, 4vw, 48px);
+       up exactly with the committed messages above it. Inside the same scroll
+       viewport, it appends BELOW them rather than over them. */
+    padding: 14px clamp(12px, 4vw, 48px) 0;
 }
 
 .live-draft:empty {
@@ -1787,18 +1794,6 @@ body {
 
 .bm-building-label {
     letter-spacing: 0.01em;
-}
-
-.gpt-chart-flag {
-    align-self: flex-start;
-    font-family: 'Inter', sans-serif;
-    white-space: pre-wrap;
-    font-size: 15px;
-    color: var(--marsh-red);
-    padding: 12px 16px;
-    background: rgba(197, 53, 50, 0.06);
-    border-left: 3px solid var(--marsh-red);
-    border-radius: 8px;
 }
 
 .gpt-chart-display {
@@ -1849,18 +1844,6 @@ body {
 }
 
 /* ---------- Chart / Data toggle ---------- */
-.chart-block {
-    align-self: stretch;
-    width: 100%;
-    margin: 8px 0;
-    animation: messageIn 320ms cubic-bezier(.2, .7, .2, 1) both;
-}
-
-.chart-block .gpt-chart-display {
-    margin: 0;
-    animation: none;
-}
-
 .chart-view-switch {
     display: flex;
     gap: 4px;
@@ -1994,6 +1977,7 @@ body {
     margin: 18px 0 8px 0;
 }
 
+.gpt-message p,
 .insight-card-body p {
     font-size: 14.5px;
     line-height: 1.6;
@@ -2001,12 +1985,15 @@ body {
     margin: 6px 0 10px 0;
 }
 
+.gpt-message ul,
+.gpt-message ol,
 .insight-card-body ul,
 .insight-card-body ol {
     padding-left: 22px;
     margin: 6px 0 12px 0;
 }
 
+.gpt-message li,
 .insight-card-body li {
     font-size: 14.5px;
     line-height: 1.6;
@@ -2014,6 +2001,7 @@ body {
     margin-bottom: 6px;
 }
 
+.gpt-message strong,
 .insight-card-body strong {
     color: var(--ink-900);
     font-weight: 700;
@@ -2025,6 +2013,7 @@ body {
     color: var(--ink-500);
 }
 
+.gpt-message table,
 .insight-card-body table {
     border-collapse: separate;
     border-spacing: 0;
@@ -2037,6 +2026,7 @@ body {
     box-shadow: var(--shadow-sm);
 }
 
+.gpt-message th,
 .insight-card-body th {
     background: linear-gradient(180deg, #f3f6fc 0%, #e9eff8 100%);
     color: var(--marsh-blue);
@@ -2046,16 +2036,19 @@ body {
     border-bottom: 1px solid var(--border-mid);
 }
 
+.gpt-message td,
 .insight-card-body td {
     padding: 9px 12px;
     border-bottom: 1px solid var(--border-soft);
     color: var(--ink-700);
 }
 
+.gpt-message tr:last-child td,
 .insight-card-body tr:last-child td {
     border-bottom: none;
 }
 
+.gpt-message tr:nth-child(even) td,
 .insight-card-body tr:nth-child(even) td {
     background: #fafbfd;
 }
@@ -2423,8 +2416,8 @@ body {
 /* ---------- Mobile refinements ---------- */
 @media (max-width: 768px) {
     .chat-bot-text-area {
-        padding: 14px;
-        padding-bottom: 9rem;
+        padding-left: 14px;
+        padding-right: 14px;
     }
 
     .suggestion-grid {
@@ -2455,53 +2448,130 @@ body {
 
 /* ── HITL clarification card ──────────────────────────────────────────────── */
 
+/* ---------- HITL clarification ----------
+   The card asks ONE question at a time (`ui.components.chatbot.clarify_card`),
+   so it is designed as a question and not as a form: the ask is the biggest
+   thing on it, the options are a grid you can scan across rather than a column
+   of outlined rows, and a settled answer collapses to one line.
+
+   It is deliberately the most present surface in the transcript — it is the one
+   place the assistant needs something back before it can continue. */
 .clarify-card {
     align-self: stretch;
     max-width: 100%;
+    position: relative;
+    overflow: hidden;
     background:
-        linear-gradient(180deg, rgba(11, 75, 255, 0.04), transparent 55%),
+        radial-gradient(120% 100% at 0% 0%, rgba(11, 75, 255, 0.10), transparent 62%),
         var(--surface-0);
-    border: 1px solid var(--border-soft);
-    border-left: 4px solid var(--marsh-blue-2);
+    border: 1px solid rgba(11, 75, 255, 0.18);
     border-radius: var(--radius-lg);
-    padding: 18px 22px 16px 22px;
-    margin: 8px 0;
-    box-shadow: var(--shadow-md);
+    padding: 18px 22px 18px;
+    margin: 10px 0;
+    box-shadow: 0 10px 30px rgba(11, 75, 255, 0.10), 0 1px 2px rgba(10, 22, 54, 0.05);
     animation: cardIn 360ms cubic-bezier(.2, .7, .2, 1) both;
 }
 
+/* A single accent rail rather than a heavy left border, so the card reads as
+   raised rather than as a blockquote. */
+.clarify-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: linear-gradient(180deg, var(--marsh-blue-2), rgba(11, 75, 255, 0.25));
+}
+
+/* ── where you are in the sequence ── */
+.clarify-steps {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.clarify-step-label {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--marsh-blue-2);
+}
+
+.clarify-pips { display: inline-flex; gap: 5px; }
+
+.clarify-pip {
+    width: 16px;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(11, 75, 255, 0.16);
+    transition: background var(--transition-med), width var(--transition-med);
+}
+.clarify-pip.done { background: var(--marsh-blue-2); }
+.clarify-pip.current { background: var(--marsh-blue-2); width: 26px; }
+
+/* ── a settled answer ── */
+.clarify-answered {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    margin-bottom: 10px;
+    background: var(--surface-1, #f5f7fb);
+    border-radius: var(--radius-pill);
+    font-size: 12.5px;
+}
+.clarify-done-icon { color: var(--marsh-blue-2); font-size: 13px; }
+.clarify-done-label {
+    font-weight: 700;
+    color: var(--text-muted, #5a6478);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 10.5px;
+}
+.clarify-done-value { font-weight: 700; color: var(--marsh-blue); }
+
+/* ── the open question ── */
 .clarify-card-badge {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 10px;
-    margin-bottom: 8px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.6px;
+    margin-bottom: 6px;
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.07em;
     text-transform: uppercase;
     color: var(--marsh-blue-2);
-    background: rgba(11, 75, 255, 0.08);
-    border: 1px solid rgba(11, 75, 255, 0.14);
-    border-radius: var(--radius-pill);
 }
 
 .clarify-card-icon {
-    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: rgba(11, 75, 255, 0.12);
+    font-size: 10px;
 }
 
 .clarify-card-question {
-    font-size: 14px;
-    font-weight: 600;
+    font-size: 16.5px;
+    font-weight: 700;
+    line-height: 1.35;
+    letter-spacing: -0.01em;
     color: var(--marsh-blue);
-    margin: 4px 0 12px 0;
+    margin: 0 0 14px 0;
 }
 
+/* A grid, not a stack: short options sit side by side and read as a set of
+   choices, which is what they are. Long ones fall back to full width. */
 .clarify-option-grid {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
     gap: 8px;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
 }
 
 .clarify-option {
@@ -2511,25 +2581,25 @@ body {
     align-items: flex-start;
     gap: 2px;
     text-align: left;
-    padding: 11px 38px 11px 16px;
+    padding: 11px 34px 11px 14px;
     background: var(--surface-0);
     border: 1px solid var(--border-soft);
     border-radius: var(--radius-md, 10px);
     cursor: pointer;
-    transition: border-color var(--transition-med), background var(--transition-med),
-        transform var(--transition-med), box-shadow var(--transition-med);
+    transition: border-color var(--transition-fast), background var(--transition-fast),
+        transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 /* Chevron affordance so the option clearly reads as clickable. */
 .clarify-option::after {
     content: "\2192"; /* → */
     position: absolute;
-    right: 14px;
+    right: 13px;
     top: 50%;
     transform: translateY(-50%);
-    font-size: 15px;
+    font-size: 14px;
     color: var(--border-strong, #b8c0cf);
-    transition: color var(--transition-med), transform var(--transition-med);
+    transition: color var(--transition-fast), transform var(--transition-fast);
 }
 
 .clarify-option:hover,
@@ -2537,7 +2607,7 @@ body {
     border-color: var(--marsh-blue-2);
     background: rgba(11, 75, 255, 0.06);
     transform: translateY(-1px);
-    box-shadow: 0 2px 10px rgba(11, 75, 255, 0.10);
+    box-shadow: 0 4px 14px rgba(11, 75, 255, 0.14);
     outline: none;
 }
 
@@ -2547,87 +2617,41 @@ body {
     transform: translateY(-50%) translateX(3px);
 }
 
-.clarify-option:active {
-    transform: translateY(0);
-    background: rgba(11, 75, 255, 0.10);
-}
+.clarify-option:active { transform: translateY(0); background: rgba(11, 75, 255, 0.10); }
 
-/* Multi-question card: an answered question locks with its choice highlighted. */
-.clarify-option.selected {
-    border-color: var(--marsh-blue-2);
-    background: rgba(11, 75, 255, 0.10);
-    box-shadow: 0 1px 6px rgba(11, 75, 255, 0.12);
-}
+.clarify-option-label { font-size: 13px; font-weight: 700; color: var(--marsh-blue); }
+.clarify-option-desc { font-size: 11.5px; line-height: 1.4; color: var(--text-muted, #5a6478); }
 
-.clarify-option.selected::after {
-    content: "\2713"; /* ✓ */
-    color: var(--marsh-blue-2);
-}
+.clarify-free-group { margin-top: 2px; }
 
-.clarify-option:disabled {
-    cursor: default;
-    opacity: 0.75;
-    transform: none;
+.clarify-free-input {
+    border-radius: var(--radius-pill) 0 0 var(--radius-pill) !important;
+    font-size: 13px !important;
 }
-
-.clarify-option.selected:disabled {
-    opacity: 1;
-}
-
-.clarify-question-block + .clarify-question-block {
-    margin-top: 14px;
-    padding-top: 12px;
-    border-top: 1px dashed var(--border-soft);
-}
-
-.clarify-card-progress {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-muted, #5a6478);
-    margin-bottom: 8px;
-}
-
-.clarify-card-icon.answered {
-    color: var(--marsh-blue-2);
-}
-
-.clarify-option-label {
-    font-size: 13px;
-    font-weight: 700;
-    color: var(--marsh-blue);
-}
-
-.clarify-option-desc {
-    font-size: 12px;
-    color: var(--text-muted, #5a6478);
-}
-
-/* "Pick one or type your own" affordance under the options. */
-.clarify-hint {
-    font-size: 11px;
-    color: var(--text-muted, #5a6478);
-    margin: 2px 0 8px 0;
-}
-
-.clarify-free-group {
-    margin-top: 4px;
-}
-
 .clarify-free-input:focus {
     border-color: var(--marsh-blue-2) !important;
-    box-shadow: 0 0 0 2px rgba(11, 75, 255, 0.12) !important;
+    box-shadow: 0 0 0 3px rgba(11, 75, 255, 0.12) !important;
 }
 
 .clarify-free-submit {
     background: var(--marsh-blue) !important;
     border-color: var(--marsh-blue) !important;
     color: #fff !important;
+    border-radius: 0 var(--radius-pill) var(--radius-pill) 0 !important;
+    padding-inline: 16px !important;
 }
 
 .clarify-free-submit:hover {
     background: var(--marsh-blue-2) !important;
     border-color: var(--marsh-blue-2) !important;
 }
+
+@media (max-width: 640px) {
+    .clarify-card { padding: 14px 16px; }
+    .clarify-card-question { font-size: 15px; }
+    .clarify-option-grid { grid-template-columns: 1fr; }
+}
+
 /* ====================================================================
    Login screen + collapsible sidebar + feedback (memory feature)
    ==================================================================== */
@@ -4039,12 +4063,12 @@ body {
 .decision-col-body::-webkit-scrollbar,
 .decision-board::-webkit-scrollbar,
 .decision-detail-scroll::-webkit-scrollbar,
-.chat-bot-text-area::-webkit-scrollbar { width: 9px; height: 9px; }
+.chat-viewport::-webkit-scrollbar { width: 9px; height: 9px; }
 .conversation-list::-webkit-scrollbar-thumb,
 .decision-col-body::-webkit-scrollbar-thumb,
 .decision-board::-webkit-scrollbar-thumb,
 .decision-detail-scroll::-webkit-scrollbar-thumb,
-.chat-bot-text-area::-webkit-scrollbar-thumb {
+.chat-viewport::-webkit-scrollbar-thumb {
     background: rgba(12, 25, 58, 0.18);
     border-radius: 999px;
     border: 2px solid transparent;
@@ -4054,7 +4078,7 @@ body {
 .decision-col-body::-webkit-scrollbar-thumb:hover,
 .decision-board::-webkit-scrollbar-thumb:hover,
 .decision-detail-scroll::-webkit-scrollbar-thumb:hover,
-.chat-bot-text-area::-webkit-scrollbar-thumb:hover { background: rgba(12, 25, 58, 0.32); background-clip: content-box; }
+.chat-viewport::-webkit-scrollbar-thumb:hover { background: rgba(12, 25, 58, 0.32); background-clip: content-box; }
 
 
 /* ── Chat area: bubbles + send to match the modern blue identity ─────────── */
@@ -4331,42 +4355,11 @@ html, body,
 .gpt-message h4, .insight-card-body h4 { font-size: 1em;    font-weight: 700; }
 .welcome-title { font-size: clamp(24px, 3vw, 34px); font-weight: 700; }
 
-/* ── HITL clarify card: calmer, tighter typographic scale ────────────────── */
-.clarify-card { padding: 16px 20px 14px; }
-.clarify-card-question { font-size: 14.5px; line-height: 1.45; }
-.clarify-option-label { font-size: 12.5px; }
-.clarify-option-desc { font-size: 11.5px; line-height: 1.4; }
-.clarify-card-badge { font-size: 10.5px; }
-
-/* ── Composer: anchor to the CHAT COLUMN, never the viewport ──────────────── */
-/* The composer used to be position:fixed with a hard-coded left offset equal to
-   the sidebar width (264px / 60px). Any time the real sidebar width differed —
-   collapsed/expanded race, a resized rail, a cached class — the offset no longer
-   matched and the bar slid under the sidebar. Anchoring it absolutely inside the
-   chat column makes it span exactly that column, whatever the sidebar is doing,
-   so it can never overlap the rail again. */
-.chatbot-area { position: relative; }
-.input-area {
-    position: absolute !important;
-    left: 0 !important;
-    right: 0 !important;
-    bottom: 0 !important;
-    width: auto !important;
-    background: linear-gradient(180deg,
-        rgba(245, 247, 251, 0) 0%,
-        rgba(245, 247, 251, 0.92) 42%,
-        var(--surface-1) 100%) !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    padding-top: 1.4rem;
-}
-/* Leave generous room so the last message (and a sent prompt) always clears
-   the composer instead of hiding under it. */
-.chat-bot-text-area { padding-bottom: 11.5rem; scroll-padding-bottom: 11.5rem; }
+/* ── Composer surface ─────────────────────────────────────────────────────
+   Positioning lives with the `.input-area` rule above (a flex band in the chat
+   column). All that is left here is the card's own finish. */
 .composer {
-    background: rgba(255, 255, 255, 0.96) !important;
-    backdrop-filter: blur(10px) saturate(150%);
-    -webkit-backdrop-filter: blur(10px) saturate(150%);
+    background: #ffffff !important;
 }
 
 /* ── Chat surfaces: a more refined, "stunning" finish ────────────────────── */
@@ -4474,4 +4467,30 @@ html, body,
 @media (max-width: 480px) {
     .bm-kpi-grid { grid-template-columns: 1fr 1fr; }
     .composer-disclaimer { font-size: 10px; }
+}
+
+
+/* ── Markdown tables in an answer ─────────────────────────────────────────
+   The styled table rules above were written for `.insight-card-body` only, so a
+   plain answer's table rendered as unstyled browser default — the same markup,
+   two different readabilities depending on which shape the turn happened to
+   take. They now share one treatment.
+
+   Numeric alignment comes from the Markdown itself (`---:` in the separator
+   row), which react-markdown turns into an inline text-align. */
+.gpt-message table th[style*="right"],
+.gpt-message table td[style*="right"],
+.insight-card-body table th[style*="right"],
+.insight-card-body table td[style*="right"] {
+    font-variant-numeric: tabular-nums;
+}
+
+/* A wide table scrolls inside the bubble; the transcript never scrolls sideways. */
+@media (max-width: 720px) {
+    .gpt-message table,
+    .insight-card-body table {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+    }
 }

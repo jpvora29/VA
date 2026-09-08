@@ -59,8 +59,27 @@ def test_products_without_a_premium_measure_fire_no_headroom():
 
 
 def test_industry_dimension_fires_whitespace():
-    rows = [("premium", [{"SIC_Major_Class": "Manufacturing", "Premium": 3}])]
+    rows = [
+        (
+            "premium",
+            [
+                {"SIC_Major_Class": "Manufacturing", "Premium": 3},
+                {"SIC_Major_Class": "Construction", "Premium": 2},
+            ],
+        )
+    ]
     assert "whitespace" in boardroom.detect_widget_signals(rows, "")
+
+
+def test_one_industry_is_not_an_industry_view():
+    """A column with a single value cannot be RANKED by industry.
+
+    The whole result set being Manufacturing (because that is what was asked
+    about) used to fire the widget anyway, and the board grew an Industry Focus
+    page with nothing on it.
+    """
+    rows = [("premium", [{"SIC_Major_Class": "Manufacturing", "Premium": 3}])]
+    assert "whitespace" not in boardroom.detect_widget_signals(rows, "")
 
 
 def test_retired_score_widgets_are_never_requested():
@@ -133,19 +152,22 @@ def test_scalar_lookup_fires_nothing():
 
 
 def test_nullify_empty_collapses_structurally_empty_widgets():
-    assert boardroom._nullify_empty("comparison", ComparisonView()) is None
-    assert boardroom._nullify_empty("portfolio_map", ProductPortfolioMap()) is None
-    assert boardroom._nullify_empty("top_carriers", TopCarriers()) is None
-    kept = ProductPortfolioMap(bubbles=[PortfolioBubble(product_line="Property")])
+    assert boardroom._nullify_empty("comparison", ComparisonView().model_dump()) is None
+    assert boardroom._nullify_empty("portfolio_map", ProductPortfolioMap().model_dump()) is None
+    assert boardroom._nullify_empty("top_carriers", TopCarriers().model_dump()) is None
+    kept = ProductPortfolioMap(bubbles=[PortfolioBubble(product_line="Property")]).model_dump()
     assert boardroom._nullify_empty("portfolio_map", kept) is kept
 
 
-def test_an_empty_widget_that_explains_itself_is_kept():
-    """"No comparable quarters in this data" is a result the board should see."""
-    silent = QuarterlyPerformance()
-    explained = QuarterlyPerformance(note="No comparable quarters in this scope.")
-    assert boardroom._nullify_empty("quarterly", silent) is None
-    assert boardroom._nullify_empty("quarterly", explained) is explained
+def test_an_empty_widget_is_dropped_even_when_it_explains_itself():
+    """A panel that only says "not available here" is a panel to leave out.
+
+    It used to survive on its note, and a board could end up with a whole page of
+    them — which is what the reader complained about.
+    """
+    explained = QuarterlyPerformance(note="No comparable quarters in this scope.").model_dump()
+    assert boardroom._nullify_empty("quarterly", QuarterlyPerformance().model_dump()) is None
+    assert boardroom._nullify_empty("quarterly", explained) is None
 
 
 # ── staged node assembly ─────────────────────────────────────────────────────
@@ -182,7 +204,11 @@ def test_staged_node_assembles_core_plus_detected_widgets(monkeypatch):
     timeline_stub = _StubPredictor(
         timeline=[TimelineEvent(period="2024", title="Premium +100%")]
     )
-    watchlist_stub = _StubPredictor(watchlist=Watchlist(items=[WatchItem(risk="Rank slipping")]))
+    watchlist_stub = _StubPredictor(
+        watchlist=Watchlist(
+            items=[WatchItem(risk="Rank slipping", premium_exposed_value=4_000_000)]
+        )
+    )
     never_stub = _StubPredictor()
     monkeypatch.setattr(boardroom, "_CORE_PREDICTOR", core_stub)
     monkeypatch.setattr(
@@ -211,9 +237,12 @@ def test_staged_node_assembles_core_plus_detected_widgets(monkeypatch):
     assert digest["timeline"][0]["title"] == "Premium +100%"
     assert digest["comparison"] is None
     assert digest["portfolio_map"] is None
-    # The model reported facts; the priority label came from the approved rules.
-    assert digest["watchlist"]["items"][0]["priority"]
-    assert digest["watchlist"]["items"][0]["priority_tests"]
+    # The model reported facts, and nothing rated them: the board ranks watch
+    # items by the premium they expose and prints no severity at all.
+    item = digest["watchlist"]["items"][0]
+    assert "priority" not in item
+    assert item["premium_exposed_value"] == 4_000_000
+    assert item["premium_exposed"] == "£4.0m", "a number arrives with its display text"
 
 
 def test_widget_failure_never_sinks_the_dashboard(monkeypatch):
