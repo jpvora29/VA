@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import pandas as pd
 
+from core.answers import lenses
 from logger import get_logger
 from ui.chart_functions import generate_chart
 
@@ -34,15 +35,12 @@ logger = get_logger(__name__)
 # the one that actually decides, and the two must stay equal.
 CHART_HEIGHT_PX = 360
 
-# Lens key -> what the tab calls it. A view the user is switching between needs a
-# business name, not a state key.
-LENS_LABELS = {
-    "premium": "Premium",
-    "gpr": "Premium",
-    "survey": "Broker survey",
-    "gimmi": "GIMMI",
-    "combined": "Combined",
-}
+# The tab name for each lens: a view the user is switching between needs a
+# business name, not a state key. Defined in `core.answers.lenses` because the same
+# source is named again in the calculation panel under this card, and the two
+# must not disagree — a tab reading "Premium" over steps reading "the gpr fact
+# data" is how that goes wrong.
+LENS_LABELS = lenses.LABELS
 
 
 @dataclass(frozen=True)

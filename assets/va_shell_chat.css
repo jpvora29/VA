@@ -582,6 +582,14 @@
     color: var(--va-ink-500);
 }
 
+/* "step by step" on the closed drawer: the promise that opening it gets you an
+   explanation rather than a query. */
+.prov-summary-hint {
+    font-size: 11px;
+    color: var(--va-ink-300);
+}
+@media (max-width: 560px) { .prov-summary-hint { display: none; } }
+
 .prov-chevron {
     margin-left: auto;
     font-size: 11px;
@@ -628,74 +636,188 @@
     color: var(--va-ink-600);
 }
 
-.prov-section + .prov-section { margin-top: 12px; }
+/* Sections are separated by a rule rather than by space alone: the panel holds
+   four different KINDS of thing, and whitespace alone let them read as one long
+   column of grey text. */
+.prov-section + .prov-section {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--va-border-soft);
+}
+
+.prov-heading-block { margin: 2px 0 8px; }
 
 .prov-heading {
     font-size: 10.5px;
     font-weight: 800;
     letter-spacing: 0.07em;
     text-transform: uppercase;
-    color: var(--va-ink-300);
-    margin: 10px 0 6px;
+    color: var(--va-ink-400);
 }
 
-.prov-line { display: flex; gap: 8px; margin-top: 8px; line-height: 1.5; }
-.prov-label { flex: 0 0 auto; font-weight: 700; color: var(--va-ink-400); }
-.prov-value { color: var(--va-ink-700); }
+/* One line under each heading saying what the section is for. A panel of bare
+   headings assumes the reader already knows why they are looking at it. */
+.prov-hint {
+    margin-top: 3px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--va-ink-400);
+}
 
-/* The half of the panel that earns it: what the rows did NOT contain. */
-.prov-missing {
+.prov-question {
+    padding: 7px 11px;
+    border-left: 3px solid var(--va-blue);
+    border-radius: 0 var(--va-radius-sm) var(--va-radius-sm) 0;
+    background: var(--va-surface-2);
+    color: var(--va-ink-700);
+    font-weight: 600;
+    line-height: 1.5;
+}
+
+.prov-edited {
     display: flex;
     align-items: baseline;
     gap: 6px;
-    margin-top: 6px;
-    padding: 6px 10px;
+    margin-top: 7px;
+    font-size: 12px;
+    color: var(--va-ink-400);
+}
+
+.prov-note {
+    line-height: 1.55;
+    color: var(--va-ink-600);
+}
+
+/* ── the steps ─────────────────────────────────────────────────────────── */
+
+.prov-query + .prov-query {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--va-border-soft);
+}
+
+/* The data a block of steps started from, named in business words — never a
+   lens code or a table name. */
+.prov-source {
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--va-navy);
+    margin-bottom: 4px;
+}
+
+.prov-steps {
+    margin: 4px 0 6px;
+    padding-left: 22px;
+    color: var(--va-ink-600);
+    line-height: 1.65;
+}
+.prov-step { font-size: 12.5px; padding-left: 2px; }
+.prov-step + .prov-step { margin-top: 4px; }
+.prov-step::marker { color: var(--va-blue); font-weight: 800; }
+
+/* The last step says what came OUT, which is the line the reader is looking for
+   — it earns weight the intermediate steps do not. */
+.prov-step.outcome {
+    margin-top: 7px;
+    font-weight: 700;
+    color: var(--va-ink-700);
+}
+.prov-step.outcome::marker { color: var(--va-good); }
+
+/* ── the figure check ──────────────────────────────────────────────────── */
+
+/* Every figure gets a row and a verdict, not just the failures. Naming only
+   what went wrong reads as an alarm; a full list reads as a receipt. */
+.prov-figures {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    border-radius: var(--va-radius-sm);
+    overflow: hidden;
+    background: var(--va-border-soft);
+    border: 1px solid var(--va-border-soft);
+}
+
+.prov-figure {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 11px;
+    background: var(--va-surface-0);
+}
+
+.prov-figure.more {
+    justify-content: flex-start;
+    font-size: 11.5px;
+    color: var(--va-ink-300);
+}
+
+.prov-figure-value {
+    font-weight: 800;
+    color: var(--va-ink-700);
+    font-variant-numeric: tabular-nums;
+}
+
+.prov-figure-verdict {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11.5px;
+    font-weight: 700;
+}
+.prov-figure-verdict .bi { font-size: 11px; }
+.prov-figure-verdict.ok { color: var(--va-good); }
+.prov-figure-verdict.missing { color: var(--va-warn); }
+
+/* What an absent figure MEANS, and what to do about it. The list above says
+   which; this says so what. */
+.prov-missing {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    margin-top: 9px;
+    padding: 8px 11px;
     border-radius: var(--va-radius-sm);
     background: rgba(185, 129, 10, 0.10);
     color: var(--va-warn);
     font-weight: 600;
+    line-height: 1.5;
 }
-.prov-missing-values { font-variant-numeric: tabular-nums; }
+.prov-missing .bi { flex: 0 0 auto; }
 
-.prov-term { margin-bottom: 8px; line-height: 1.5; }
-.prov-term-label { font-weight: 700; color: var(--va-navy); margin-right: 6px; }
-.prov-term-def { color: var(--va-ink-600); }
+/* ── the glossary ──────────────────────────────────────────────────────── */
+
+.prov-term { line-height: 1.5; }
+.prov-term + .prov-term {
+    margin-top: 9px;
+    padding-top: 9px;
+    border-top: 1px dashed var(--va-border-soft);
+}
+.prov-term-label { font-weight: 800; color: var(--va-navy); }
+.prov-term-def { color: var(--va-ink-500); font-size: 12px; }
+
+/* The formula IS the step-by-step for a measure, so it is set as a fact rather
+   than as an italic afterthought. */
 .prov-term-formula {
-    display: block;
-    margin-top: 2px;
-    font-size: 11.5px;
-    color: var(--va-ink-400);
-    font-style: italic;
-}
-
-.prov-query + .prov-query { margin-top: 10px; }
-
-.prov-query-head {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: 8px;
-    margin-bottom: 4px;
-}
-.prov-lens {
-    font-weight: 800;
-    font-size: 10.5px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--va-blue);
-}
-.prov-rows { font-weight: 700; color: var(--va-ink-600); font-size: 11.5px; }
-.prov-columns { font-size: 11px; color: var(--va-ink-300); }
-
-/* The steps ARE the explanation; the query is a technical footnote under them. */
-.prov-steps {
-    margin: 4px 0 6px;
-    padding-left: 20px;
+    gap: 6px;
+    margin-top: 4px;
+    padding: 4px 9px;
+    border-radius: var(--va-radius-sm);
+    background: var(--va-surface-2);
+    font-size: 11.5px;
     color: var(--va-ink-600);
-    line-height: 1.7;
 }
-.prov-step { font-size: 12.5px; }
-.prov-step::marker { color: var(--va-blue); font-weight: 700; }
+.prov-term-formula-label {
+    font-size: 9.5px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--va-ink-300);
+}
 
 .prov-sql-drawer { margin-top: 4px; }
 .prov-sql-summary {

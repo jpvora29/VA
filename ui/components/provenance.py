@@ -2,27 +2,55 @@
 
 One native ``<details>``: the summary line carries the verification badge, so the
 state is readable without opening it, and opening costs no callback and no
-re-render. Inside are the four things a reader needs to check a number —
+re-render.
 
-    how the question was interpreted
-    which figures were found in the data (and which were not)
-    what the business terms mean, from the governed glossary
-    how the figures were worked out, as steps in plain English
+The drawer is ordered as the reader's questions arrive, which is not the order it
+was originally built in:
 
-The unmatched figures are NAMED. A trust panel that only ever says "verified" is
-decoration; the moment it can say "I could not find $4.4m in the rows" it starts
-being worth opening.
+    1  what we understood you to ask
+    2  the steps we took            <- how the number was made
+    3  the numbers in this answer   <- whether each one is real
+    4  what the terms mean
 
-Pure presentation — :mod:`core.answers.provenance` builds the record.
+Steps come BEFORE the figure check because "how was this calculated" is the
+question on the summary line — leading with a coverage fraction answered a
+question nobody had opened the drawer to ask.
+
+Three things were wrong with the first version, all of them wording rather than
+structure, and all reported by a reader rather than found by a test:
+
+* it said "4 of 5 found in the result rows". "Result rows" is the machine's word
+  for evidence, and a fraction is a score, not an explanation.
+* it listed an unmatched figure under "Not found in the rows:" with nothing
+  beside it. A number named as a problem, with no verdict and no advice, leaves
+  the reader alarmed and no better informed.
+* it ended each block with "12 rows came back", which is the machine's unit. When
+  the query grouped by product line, twelve rows are twelve product lines —
+  :mod:`core.answers.steps` now says that instead.
+
+Pure presentation — :mod:`core.answers.provenance` builds the record and
+:mod:`core.answers.figures` supplies the wording of the check.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List
 
 from dash import html
 
-from core.answers.provenance import STATE_LABEL, STATE_TONE, UNVERIFIED
-from core.answers.steps import describe_all
+from core.answers import figures as fig
+from core.answers.provenance import (
+    NO_EVIDENCE_NOTE,
+    STATE_LABEL,
+    STATE_TONE,
+    UNVERIFIED,
+    checked_figures,
+)
+from core.answers.steps import Calculation, describe_all
+
+# A long answer can state twenty figures; past this many the receipt becomes the
+# wall it was meant to replace.
+_FIGURE_LIMIT = 12
 
 
 def verification_badge(state: str):
@@ -39,43 +67,201 @@ def verification_badge(state: str):
     )
 
 
-def _line(label: str, value: Any):
+def _heading(text: str, hint: str = ""):
+    """A section title, and one line saying what the section is for."""
     return html.Div(
-        [html.Span(label, className="prov-label"), html.Span(value, className="prov-value")],
-        className="prov-line",
+        [
+            html.Div(text, className="prov-heading"),
+            html.Div(hint, className="prov-hint") if hint else None,
+        ],
+        className="prov-heading-block",
+    )
+
+
+def _question_section(prov: Dict[str, Any]):
+    """What the answer understood the question to be."""
+    question = str(prov.get("question") or "").strip()
+    if not question:
+        return None
+    return html.Div(
+        [
+            _heading("What we understood you to ask"),
+            html.Div(f"“{question}”", className="prov-question"),
+            html.Div(
+                [
+                    html.I(className="bi bi-pencil-square"),
+                    html.Span("You rewrote this answer; its figures were checked again."),
+                ],
+                className="prov-edited",
+            )
+            if prov.get("edited")
+            else None,
+        ],
+        className="prov-section",
+    )
+
+
+def _step_list(calculation: Calculation):
+    """The steps as a numbered walk-through, ending in what came out.
+
+    The outcome is the LAST entry by construction, and it is marked by position
+    rather than by matching its text — the line the reader is looking for should
+    not depend on a string comparison holding.
+    """
+    steps = calculation.all_steps
+    last = len(steps) - 1 if calculation.outcome else -1
+    return html.Ol(
+        [
+            html.Li(step, className="prov-step" + (" outcome" if i == last else ""))
+            for i, step in enumerate(steps)
+        ],
+        className="prov-steps",
+    )
+
+
+def _calculation_block(calculation: Calculation):
+    """One query: its business name, its steps, and the SQL one click down."""
+    return html.Div(
+        [
+            html.Div(calculation.title, className="prov-source"),
+            _step_list(calculation),
+            html.Details(
+                [
+                    html.Summary("Show the technical query", className="prov-sql-summary"),
+                    html.Pre(calculation.sql, className="prov-sql"),
+                ],
+                className="prov-sql-drawer",
+            )
+            if calculation.sql
+            else None,
+        ],
+        className="prov-query",
+    )
+
+
+def _steps_section(queries: List[Dict[str, Any]]):
+    """How the figures were produced, step by step."""
+    if not queries:
+        return None
+    calculations = describe_all(queries)
+    hint = (
+        "Each step is one thing we did to the data, in the order we did it."
+        if len(calculations) == 1
+        else "We looked at more than one set of data. Here is what we did to each."
+    )
+    return html.Div(
+        [_heading("The steps we took", hint)]
+        + [_calculation_block(c) for c in calculations],
+        className="prov-section",
+    )
+
+
+def _figure_row(figure: fig.Figure):
+    found = figure.supported
+    return html.Div(
+        [
+            html.Span(figure.text, className="prov-figure-value"),
+            html.Span(
+                [
+                    html.I(className="bi bi-check-circle-fill" if found else "bi bi-question-circle-fill"),
+                    html.Span(fig.verdict(figure)),
+                ],
+                className="prov-figure-verdict " + ("ok" if found else "missing"),
+            ),
+        ],
+        className="prov-figure",
     )
 
 
 def _figures_section(prov: Dict[str, Any]):
-    """What was checked, and — the useful half — what was not found."""
-    coverage = prov.get("coverage") or {}
-    checkable = int(coverage.get("checkable") or 0)
-    supported = int(coverage.get("supported") or 0)
-    if not checkable:
-        return None
+    """Every figure the answer states, with a verdict beside it.
 
-    missing = [
-        f for f in (prov.get("figures") or [])
-        if f.get("checkable") and not f.get("supported")
-    ]
-    children = [
-        _line("Figures checked", f"{supported} of {checkable} found in the result rows")
-    ]
-    if missing:
-        children.append(
+    The list is the point. Naming only the failures made the check feel like a
+    warning system; showing every figure with its verdict makes it a receipt, and
+    the one line of advice underneath says what an absent figure actually means.
+    """
+    figures = checked_figures(prov)
+    state = str(prov.get("state") or UNVERIFIED)
+    if not figures:
+        # Two different silences. No evidence at all is the badge's reason;
+        # evidence but no checkable figure means the answer simply stated none,
+        # and saying "every figure was found" about nothing would be a lie.
+        note = NO_EVIDENCE_NOTE if state == UNVERIFIED else fig.summary([])
+        return html.Div([_heading("The numbers in this answer"),
+                         html.Div(note, className="prov-note")],
+                        className="prov-section")
+
+    guidance = fig.advice(figures)
+    # A long answer can state twenty figures, and twenty rows turn a receipt back
+    # into a wall. The ones that did not match are never dropped — they lead.
+    ranked = sorted(figures, key=lambda f: f.supported)
+    shown, hidden = ranked[:_FIGURE_LIMIT], ranked[_FIGURE_LIMIT:]
+    rest = (
+        f"and {len(hidden)} more, all found in the data"
+        if all(f.supported for f in hidden)
+        else f"and {len(hidden)} more"
+    )
+    return html.Div(
+        [
+            _heading("The numbers in this answer", fig.summary(figures)),
             html.Div(
-                [
-                    html.I(className="bi bi-search"),
-                    html.Span("Not found in the rows: "),
-                    html.Span(
-                        ", ".join(str(f.get("text")) for f in missing),
-                        className="prov-missing-values",
-                    ),
-                ],
+                [_figure_row(f) for f in shown]
+                + ([html.Div(rest, className="prov-figure more")] if hidden else []),
+                className="prov-figures",
+            ),
+            html.Div(
+                [html.I(className="bi bi-info-circle-fill"), html.Span(guidance)],
                 className="prov-missing",
             )
-        )
-    return html.Div(children, className="prov-section")
+            if guidance
+            else None,
+        ],
+        className="prov-section",
+    )
+
+
+def _term(term: Dict[str, Any]):
+    """One governed term: what it means, and how it is worked out."""
+    return html.Div(
+        [
+            html.Div(term.get("label", ""), className="prov-term-label"),
+            html.Div(term.get("definition", ""), className="prov-term-def"),
+            html.Div(
+                [
+                    html.Span("Worked out as", className="prov-term-formula-label"),
+                    html.Span(_arithmetic(term["formula"])),
+                ],
+                className="prov-term-formula",
+            )
+            if term.get("formula")
+            else None,
+        ],
+        className="prov-term",
+    )
+
+
+_AGG_IN_FORMULA = re.compile(r"(?i)\b(sum|avg|mean|count|max|min)\s*\(\s*([^()]*?)\s*\)")
+_AGG_WORDS = {
+    "sum": "total {}", "avg": "average {}", "mean": "average {}",
+    "count": "count of {}", "max": "highest {}", "min": "lowest {}",
+}
+
+
+def _arithmetic(formula: str) -> str:
+    """A formula in the symbols and words a business reader reads.
+
+    The glossary writes a formula the way an analyst would — `SUM(Premium) over
+    the selected filters` — which is exactly the SQL vocabulary the rest of this
+    panel exists to keep out. The definition is governed and stays as written;
+    only its rendering changes here.
+    """
+    text = _AGG_IN_FORMULA.sub(
+        lambda m: _AGG_WORDS[m.group(1).lower()].format(m.group(2).lower()),
+        str(formula or ""),
+    )
+    for source, target in (("/", " ÷ "), ("*", " × ")):
+        text = text.replace(source, target)
+    return " ".join(text.split())
 
 
 def _terms_section(terms: List[Dict[str, Any]]):
@@ -83,78 +269,13 @@ def _terms_section(terms: List[Dict[str, Any]]):
     if not terms:
         return None
     return html.Div(
-        [html.Div("What these terms mean", className="prov-heading")]
-        + [
-            html.Div(
-                [
-                    html.Span(term.get("label", ""), className="prov-term-label"),
-                    html.Span(term.get("definition", ""), className="prov-term-def"),
-                    html.Span(f"Computed as {term['formula']}", className="prov-term-formula")
-                    if term.get("formula")
-                    else None,
-                ],
-                className="prov-term",
+        [
+            _heading(
+                "What these terms mean",
+                "The agreed ICG definitions, so the words mean the same thing everywhere.",
             )
-            for term in terms
-        ],
-        className="prov-section",
-    )
-
-
-def _steps_list(steps: List[str]):
-    """The calculation as a numbered list a business reader can follow."""
-    return html.Ol(
-        [html.Li(step, className="prov-step") for step in steps],
-        className="prov-steps",
-    )
-
-
-def _queries_section(queries: List[Dict[str, Any]]):
-    """How each figure was arrived at, in steps — with the SQL demoted.
-
-    The panel used to lead with the raw query. That is the wrong artefact for the
-    person who needs it: someone asking "can I trust this number?" cannot read a
-    SELECT, and showing one says "here is proof you cannot check", which is worse
-    than showing nothing. `core.answers.steps` reads the query and describes it;
-    the SQL stays available for whoever wants it, one more click down, where a
-    technical detail belongs.
-    """
-    if not queries:
-        return None
-    blocks = []
-    for query in describe_all(queries):
-        rows = int(query.get("row_count") or 0)
-        steps = query.get("steps") or []
-        sql = str(query.get("sql") or "").strip()
-        blocks.append(
-            html.Div(
-                [
-                    html.Div(
-                        [
-                            html.Span(str(query.get("lens") or "query"), className="prov-lens"),
-                            html.Span(
-                                f"{rows:,} row{'s' if rows != 1 else ''}",
-                                className="prov-rows",
-                            ),
-                        ],
-                        className="prov-query-head",
-                    ),
-                    _steps_list(steps) if steps else None,
-                    html.Details(
-                        [
-                            html.Summary("Show the query", className="prov-sql-summary"),
-                            html.Pre(sql, className="prov-sql"),
-                        ],
-                        className="prov-sql-drawer",
-                    )
-                    if sql
-                    else None,
-                ],
-                className="prov-query",
-            )
-        )
-    return html.Div(
-        [html.Div("How the figures were worked out", className="prov-heading")] + blocks,
+        ]
+        + [_term(term) for term in terms],
         className="prov-section",
     )
 
@@ -164,15 +285,10 @@ def provenance_drawer(prov: Dict[str, Any] | None):
     if not prov:
         return None
     sections = [
-        _line("Interpreted as", prov["question"]) if prov.get("question") else None,
-        # An edited answer says so, and its figures were re-checked against the
-        # same rows — the badge describes what is on screen, not what was written.
-        _line("Edited", "Rewritten by you; figures re-checked against the data")
-        if prov.get("edited")
-        else None,
+        _question_section(prov),
+        _steps_section(prov.get("queries") or []),
         _figures_section(prov),
         _terms_section(prov.get("terms") or []),
-        _queries_section(prov.get("queries") or []),
     ]
     body = [s for s in sections if s is not None]
     if not body:
@@ -183,6 +299,7 @@ def provenance_drawer(prov: Dict[str, Any] | None):
                 [
                     verification_badge(str(prov.get("state") or UNVERIFIED)),
                     html.Span("How this was calculated", className="prov-summary-text"),
+                    html.Span("step by step", className="prov-summary-hint"),
                     html.I(className="bi bi-chevron-down prov-chevron"),
                 ],
                 className="prov-summary",

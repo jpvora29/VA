@@ -815,11 +815,15 @@ body {
 }
 
 /* ── Guided tour ──────────────────────────────────────────────────────────
-   Eight screens, each with a DRAWN illustration of the thing it describes —
-   inline boxes positioned on a fixed canvas rather than screenshots, so the
-   pictures cannot go stale when a button moves and no binaries enter the repo.
-   Moving between steps is clientside; a tour that waits for the server between
-   screens is a tour people abandon halfway. */
+   Twelve screens in four chapters, each with a DRAWN illustration of the thing
+   it describes — inline boxes positioned on a fixed canvas rather than
+   screenshots, so the pictures cannot go stale when a button moves and no
+   binaries enter the repo.
+
+   The rail down the left is what makes it a guide rather than a slideshow: it
+   shows the whole shape of the product on the first screen and lets a reader
+   jump to the chapter they came for. Moving between steps is clientside; a tour
+   that waits for the server between screens is a tour people abandon halfway. */
 .va-navbar-end {
     display: flex;
     align-items: center;
@@ -876,13 +880,100 @@ body {
 }
 .tour-close:hover { background: #ffffff; color: var(--va-navy); }
 
-.tour-stage { min-height: 380px; }
+/* Rail on the left, one step on stage to the right of it. */
+.tour-layout {
+    display: flex;
+    align-items: stretch;
+    min-height: 540px;
+}
+
+/* ── the chapter rail ─────────────────────────────────────────────────────
+   The map of the product, shown before any of it. Twelve identical dots say
+   how many screens are left; four named chapters say what the screens are. */
+.tour-rail {
+    flex: 0 0 236px;
+    padding: 26px 14px 20px;
+    background: var(--va-surface-1);
+    border-right: 1px solid var(--va-border-soft);
+}
+
+.tour-rail-title {
+    padding: 0 10px;
+    margin-bottom: 12px;
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--va-ink-300);
+}
+
+.tour-rail-list { display: flex; flex-direction: column; }
+
+.tour-rail-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+    width: 100%;
+    padding: 10px;
+    border: none;
+    border-radius: var(--va-radius-md);
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--va-transition-fast);
+}
+.tour-rail-item:hover { background: var(--va-surface-2); }
+.tour-rail-item.active { background: var(--va-surface-0); box-shadow: var(--va-shadow-sm); }
+
+/* The marks read as one connected path, so the rail looks like a route rather
+   than a list of unrelated buttons. */
+.tour-rail-mark {
+    position: relative;
+    flex: 0 0 auto;
+    width: 9px;
+    height: 9px;
+    margin-top: 4px;
+    border-radius: 50%;
+    background: var(--va-border-mid);
+    transition: background var(--va-transition-fast);
+}
+.tour-rail-item + .tour-rail-item .tour-rail-mark::before {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: -18px;
+    width: 1px;
+    height: 18px;
+    background: var(--va-border-mid);
+}
+.tour-rail-item.active .tour-rail-mark { background: var(--va-blue); }
+
+.tour-rail-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tour-rail-name {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--va-ink-500);
+    line-height: 1.35;
+}
+.tour-rail-item.active .tour-rail-name { color: var(--va-navy); }
+.tour-rail-count { font-size: 11px; color: var(--va-ink-300); }
+
+/* ── the stage ────────────────────────────────────────────────────────────  */
+
+.tour-main {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.tour-stage { flex: 1 1 auto; }
 
 /* The illustration sits on a fixed 320x180 canvas so every shape can be placed
    in absolute coordinates and the whole drawing scales as one. */
 .tour-art {
     background: linear-gradient(160deg, var(--va-blue-soft) 0%, var(--va-surface-1) 100%);
-    padding: 26px 0;
+    padding: 24px 0;
     display: flex;
     justify-content: center;
 }
@@ -890,6 +981,13 @@ body {
     position: relative;
     width: 320px;
     height: 180px;
+}
+/* The canvas is a fixed 320x180 so shapes can be placed in whole pixels; on a
+   wide dialog it is scaled up rather than redrawn, so one set of coordinates
+   serves every size. */
+@media (min-width: 1000px) {
+    .tour-art { padding: 30px 0; }
+    .tour-canvas { transform: scale(1.28); }
 }
 .tour-shape { position: absolute; box-sizing: border-box; }
 .tour-label {
@@ -899,16 +997,25 @@ body {
 }
 .tour-label.tour-center { text-align: center; }
 
-.tour-copy { padding: 22px 30px 6px; text-align: center; }
+/* Left-aligned, because the copy is now instructions to follow rather than a
+   caption to admire. */
+.tour-copy { padding: 20px 32px 10px; }
 
-.tour-step-count {
+.tour-step-meta {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 7px;
+}
+.tour-step-chapter {
     font-size: 10.5px;
     font-weight: 800;
     letter-spacing: 0.09em;
     text-transform: uppercase;
     color: var(--va-blue);
-    margin-bottom: 8px;
 }
+.tour-step-count { font-size: 11px; font-weight: 600; color: var(--va-ink-300); }
+
 .tour-step-title {
     font-size: 20px;
     font-weight: 800;
@@ -917,19 +1024,77 @@ body {
     margin: 0 0 8px;
 }
 .tour-step-body {
-    font-size: 14px;
+    font-size: 13.5px;
     line-height: 1.6;
     color: var(--va-ink-600);
-    margin: 0 auto;
-    max-width: 52ch;
+    margin: 0;
+    max-width: 66ch;
 }
 
-.tour-footer {
+/* What to actually do. A step that only says what a feature IS leaves the
+   reader to work out where it lives; these say which button and what happens. */
+.tour-points {
+    margin: 12px 0 0;
+    padding-left: 20px;
+    max-width: 66ch;
+}
+.tour-point {
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--va-ink-500);
+}
+.tour-point + .tour-point { margin-top: 6px; }
+.tour-point::marker { color: var(--va-blue); font-weight: 800; }
+
+/* The tour's one action: a real question, sent for you. */
+.tour-try {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 100%;
+    margin-top: 14px;
+    padding: 9px 15px;
+    border-radius: var(--va-radius-pill);
+    border: 1px solid var(--va-blue-soft);
+    background: var(--va-blue-soft);
+    color: var(--va-blue);
+    font-size: 12.5px;
+    cursor: pointer;
+    text-align: left;
+    transition: background var(--va-transition-fast), border-color var(--va-transition-fast);
+}
+.tour-try:hover { background: var(--va-surface-0); border-color: var(--va-blue); }
+.tour-try .bi { flex: 0 0 auto; font-size: 14px; }
+.tour-try-label { font-weight: 800; flex: 0 0 auto; }
+.tour-try-question {
+    font-weight: 600;
+    color: var(--va-ink-600);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── the footer ───────────────────────────────────────────────────────────  */
+
+.tour-footer { padding: 0; }
+
+/* How much is left, which a row of identical dots does not answer. */
+.tour-progress {
+    height: 3px;
+    background: var(--va-border-soft);
+}
+.tour-progress-fill {
+    height: 100%;
+    background: var(--va-blue);
+    transition: width 240ms cubic-bezier(.4, .0, .2, 1);
+}
+
+.tour-footer-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 16px 24px 20px;
+    padding: 14px 24px 18px;
 }
 
 .tour-dots { display: flex; gap: 6px; }
@@ -966,8 +1131,16 @@ body {
 .tour-btn.primary { background: var(--va-blue); color: #ffffff; }
 .tour-btn.primary:hover { background: var(--va-navy); }
 
+/* The rail is the first thing to go: on a narrow screen the dots and the
+   progress bar still say where you are, and the stage needs the width. */
+@media (max-width: 900px) {
+    .tour-rail { display: none; }
+    .tour-layout { min-height: 0; }
+}
+
 @media (max-width: 640px) {
     .tour-canvas { transform: scale(0.82); }
     .tour-step-title { font-size: 17px; }
-    .tour-copy { padding: 18px 18px 4px; }
+    .tour-copy { padding: 18px 18px 6px; }
+    .tour-try-question { display: none; }
 }

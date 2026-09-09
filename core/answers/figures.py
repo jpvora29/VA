@@ -188,3 +188,62 @@ def coverage(figures: Sequence[Figure]) -> Dict[str, int]:
         "checkable": len(checkable),
         "supported": len([f for f in checkable if f.supported]),
     }
+
+
+# ── saying it in words ──────────────────────────────────────────────────────
+# The panel used to report the check as "4 of 5 found in the result rows" and
+# then list the odd one out under "Not found in the rows:". Both are true and
+# neither is usable: "result rows" is the machine's word for evidence, and a
+# figure named with no verdict beside it and no advice under it leaves the reader
+# knowing something is wrong without knowing what to do. These give the check a
+# reading, so the panel can show a verdict per figure and one line of guidance.
+
+FOUND = "Found in the data"
+NOT_FOUND = "Not in the data we read"
+
+
+def verdict(figure: Figure) -> str:
+    """What to print beside one figure."""
+    return FOUND if figure.supported else NOT_FOUND
+
+
+def summary(figures: Sequence[Figure]) -> str:
+    """How the answer's numbers fared, as a sentence rather than a fraction."""
+    counts = coverage(figures)
+    total, found = counts["checkable"], counts["supported"]
+    if not total:
+        return "This answer doesn't state any figures that can be checked."
+    if found == total:
+        return (
+            f"All {total} figure{'s' if total != 1 else ''} in this answer "
+            "appear in the data we read."
+        )
+    missing = total - found
+    return (
+        f"{found} of the {total} figures in this answer appear in the data we read. "
+        f"{missing} do{'es' if missing == 1 else ''} not."
+    )
+
+
+def advice(figures: Sequence[Figure]) -> str:
+    """What an unmatched figure means, and what to do about it.
+
+    A figure can be absent from the rows for an innocent reason — a growth rate
+    or a difference is worked out FROM the values we read and is not itself one
+    of them — or because the writer got it wrong. The panel cannot tell those
+    apart, so it says so plainly instead of implying either.
+    """
+    missing = unsupported(figures)
+    if not missing:
+        return ""
+    names = ", ".join(f.text for f in missing[:4])
+    more = f" (and {len(missing) - 4} more)" if len(missing) > 4 else ""
+    one = len(missing) == 1
+    subject = "This figure is" if one else "These figures are"
+    pronoun = "It may have been" if one else "They may have been"
+    fault = "it may be wrong" if one else "they may be wrong"
+    return (
+        f"{names}{more} — {subject} not among the values we read back. "
+        f"{pronoun} worked out by comparing two of the figures above, "
+        f"or {fault}. Worth checking before you quote it."
+    )

@@ -42,6 +42,16 @@ STATE_LABEL = {
 }
 STATE_TONE = {VERIFIED: "good", PARTIAL: "warn", UNVERIFIED: "neutral"}
 
+# "Not verified" is the one badge that needs a sentence beside it: on its own it
+# reads as an accusation — the reader assumes the answer failed a check, when in
+# fact no check was possible. The other two states are explained by the figure
+# list itself (see `figures.summary`), which is more specific than a fixed line.
+NO_EVIDENCE_NOTE = (
+    "There was no data behind this answer to check it against, so none of its "
+    "figures have been confirmed."
+)
+
+
 @dataclass(frozen=True)
 class EvidenceQuery:
     """One query the turn ran, as the reader needs to see it."""
@@ -255,3 +265,27 @@ def build(state: Mapping[str, Any], answer: str, *, question: str = "") -> Prove
         terms=terms_used(answer, columns),
         figures=checked,
     )
+
+
+def checked_figures(record: Mapping[str, Any]) -> List[fig.Figure]:
+    """The figure check from a STORED record, back as `Figure`s.
+
+    A record makes the round trip through the transcript as plain JSON, so by the
+    time the drawer renders it the figures are dicts. Rehydrating them here keeps
+    the wording of the check in one place (`core.answers.figures`) instead of
+    re-deriving it from dict keys in the view.
+    """
+    out: List[fig.Figure] = []
+    for item in (record or {}).get("figures") or []:
+        if not isinstance(item, Mapping):
+            continue
+        if not item.get("checkable", True):
+            continue  # years and ordinals were never claims — see `figures._TRIVIAL`
+        out.append(
+            fig.Figure(
+                text=str(item.get("text") or ""),
+                value=str(item.get("value") or ""),
+                supported=bool(item.get("supported")),
+            )
+        )
+    return out

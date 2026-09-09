@@ -213,8 +213,17 @@ def toggle_answer_edit(_edit_clicks: list, _cancel_clicks: list) -> Any:
 # serialiser turns it back into Markdown and drops it in a store; the server then
 # commits it and re-checks the figures. Two hops because only the browser can see
 # what was typed, and only the server can persist it.
+#
+# A RAW string, and it has to be. The body below writes newlines as backslash-n,
+# and in a normal Python literal those become REAL line breaks before Dash sees the
+# source — so the JS reached the browser with a line break in the middle of a
+# string literal and died with "Invalid or unexpected token". A clientside
+# function that fails to parse takes every OTHER clientside callback on the page
+# down with it (the slash menu, the thinking bar, the chart/table toggle, the
+# tour), which is why one escape is worth a paragraph. See the sibling trap in
+# the tour navigation below: Dash also drops the backslash of an escaped QUOTE.
 clientside_callback(
-    """
+    r"""
     function(saveClicks, cancelClicks, ids) {
         const ctx = window.dash_clientside.callback_context;
         const trig = ctx.triggered.length ? ctx.triggered[0] : null;
@@ -339,7 +348,7 @@ def toggle_tour(open_clicks: int, close_clicks: int, is_open: bool) -> bool:
 
 clientside_callback(
     """
-    function(nextClicks, backClicks, dotClicks, styles, dotIds) {
+    function(nextClicks, backClicks, dotClicks, chapterClicks, styles, dotIds, chapterIds) {
         const ctx = window.dash_clientside.callback_context;
         const trig = ctx.triggered.length ? ctx.triggered[0] : null;
         const noUpdate = window.dash_clientside.no_update;
@@ -368,11 +377,22 @@ clientside_callback(
             try { target = JSON.parse(id).index; }
             catch (e) { return noUpdate; }
         }
+        // A chapter in the rail is the step it starts at, so a chapter jump and a
+        // dot jump are the same move with a different label on it.
+        const starts = (chapterIds || []).map(function (id) { return id.index; });
+        let chapter = 0;
+        for (let i = 0; i < starts.length; i++) {
+            if (starts[i] <= target) { chapter = i; }
+        }
         return [
             styles.map(function (_, i) { return i === target ? {} : {display: 'none'}; }),
             dotIds.map(function (_, i) {
                 return 'tour-dot' + (i === target ? ' active' : '');
             }),
+            starts.map(function (_, i) {
+                return 'tour-rail-item' + (i === chapter ? ' active' : '');
+            }),
+            {width: (100 * (target + 1) / total).toFixed(2) + '%'},
             target === 0,
             target === total - 1 ? 'Done' : 'Next',
             finishing ? false : noUpdate
@@ -381,14 +401,59 @@ clientside_callback(
     """,
     Output({"type": "tour-step", "index": ALL}, "style"),
     Output({"type": "tour-dot", "index": ALL}, "className"),
+    Output({"type": "tour-chapter", "index": ALL}, "className"),
+    Output("tour-progress", "style"),
     Output("tour-back", "disabled"),
     Output("tour-next", "children"),
     Output("tour-modal", "is_open", allow_duplicate=True),
     Input("tour-next", "n_clicks"),
     Input("tour-back", "n_clicks"),
     Input({"type": "tour-dot", "index": ALL}, "n_clicks"),
+    Input({"type": "tour-chapter", "index": ALL}, "n_clicks"),
     State({"type": "tour-step", "index": ALL}, "style"),
     State({"type": "tour-dot", "index": ALL}, "id"),
+    State({"type": "tour-chapter", "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+
+
+# A tour that ends in a working answer is a tour people finish. "Try it" writes
+# the question into the composer, switches to Chat (the router's `active-tab`
+# store is the supported way in) and closes the dialog — three outputs for one
+# click, so the reader lands on a filled prompt box with nothing left to do but
+# send it.
+clientside_callback(
+    """
+    function(clicks, ids, questions) {
+        const ctx = window.dash_clientside.callback_context;
+        const trig = ctx.triggered.length ? ctx.triggered[0] : null;
+        const noUpdate = window.dash_clientside.no_update;
+        const idle = [noUpdate, noUpdate, noUpdate];
+        if (!trig || !trig.value) { return idle; }
+        let index = -1;
+        try { index = JSON.parse(trig.prop_id.split('.')[0]).index; }
+        catch (e) { return idle; }
+        // Only steps that carry a question render a button, so the position in
+        // this list is NOT the step index -- it has to be looked up.
+        let at = -1;
+        for (let i = 0; i < (ids || []).length; i++) {
+            if (ids[i].index === index) { at = i; break; }
+        }
+        if (at < 0) { return idle; }
+        // After the modal closes it restores focus to whatever opened it, so the
+        // composer has to be focused AFTER that — a 0ms timeout lands too early
+        // and the caret never appears in the box the question was just put in.
+        const box = document.getElementById('user-input');
+        if (box) { setTimeout(function () { box.focus(); }, 260); }
+        return [questions[at] || '', 'chat', false];
+    }
+    """,
+    Output("user-input", "value", allow_duplicate=True),
+    Output("active-tab", "data", allow_duplicate=True),
+    Output("tour-modal", "is_open", allow_duplicate=True),
+    Input({"type": "tour-try", "index": ALL}, "n_clicks"),
+    State({"type": "tour-try", "index": ALL}, "id"),
+    State({"type": "tour-try", "index": ALL}, "title"),
     prevent_initial_call=True,
 )
 
@@ -398,7 +463,7 @@ clientside_callback(
 # trip per character would make typing feel heavy — which is exactly the thing a
 # shortcut is supposed to fix.
 clientside_callback(
-    """
+    r"""
     function(value, ids) {
         const text = (value || '').replace(/^\s+/, '');
         const open = text.startsWith('/');

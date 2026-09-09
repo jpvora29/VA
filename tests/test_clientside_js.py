@@ -2,13 +2,12 @@
 
 The bug this exists to prevent, in full, because it is not obvious:
 
-`clientside_callback` takes the function as a Python string. Dash inlines that
-string into the page, and the backslash of an escaped quote does NOT survive the
-trip — a body containing
+`clientside_callback` takes the function as a Python string, and **Python gets
+first go at the escapes**. A body containing
 
     document.querySelector('[id*=\\'"index":' + i + '\\']')
 
-reaches the browser as
+loses the backslashes on the way through the literal and reaches the browser as
 
     document.querySelector('[id*='"index":' + i + '']')
 
@@ -19,14 +18,29 @@ undefined (reading 'apply')", including the ones that were fine. A tour that
 would not open, a chart toggle that stopped working, and a scroll that never
 followed the stream were all the same single stray backslash.
 
-Two checks, cheap enough to run every time:
+**The hole this test used to have**, found when a second body hit the same trap
+from a different direction: it read the JS as WRITTEN IN THE FILE, where the
+escapes are still intact and everything parses. Python's mangling happens after
+that, and the check never saw it. So when the HTML-to-Markdown serialiser behind
+in-place answer editing wrote
 
-* no body carries an escaped quote (the hazard itself); and
-* every body parses as JavaScript — skipped when `node` is not installed, so the
-  suite still runs on a machine without it.
+    lines.join('\\n').replace(/\\n{3,}/g, '\\n\\n')
+
+the file looked fine, `node --check` passed, and the page shipped with a string
+literal split across two real lines — every clientside callback on the chat page
+dead, and a green suite. The bodies below are therefore `ast.literal_eval`'d
+first: this checks what Dash is HANDED, not what the author typed.
+
+Three checks, cheap enough to run every time:
+
+* no body carries an escaped quote (the original hazard);
+* a body that needs a backslash is written as a raw string, which is the fix;
+* every body parses as JavaScript AFTER Python has evaluated the literal —
+  skipped when `node` is not installed, so the suite still runs without it.
 """
 from __future__ import annotations
 
+import ast
 import re
 import shutil
 import subprocess
@@ -41,45 +55,70 @@ SOURCES = (
     Path("ui/decisions/callbacks.py"),
 )
 
-_CLIENTSIDE = re.compile(r'clientside_callback\(\s*"""(.*?)"""', re.S)
+# The WHOLE string literal, prefix included, so it can be evaluated the way
+# Python will. `r"""` has to be part of the match or a raw body is invisible.
+_CLIENTSIDE = re.compile(r'clientside_callback\(\s*((?:[rR]?)"{3}.*?"{3})', re.S)
 
 
-def bodies() -> list[tuple[str, int, str]]:
-    """(file, ordinal, js) for every inline clientside function in the app."""
-    found: list[tuple[str, int, str]] = []
+def bodies() -> list[tuple[str, int, str, str]]:
+    """(file, ordinal, source-as-written, js-as-Python-evaluates-it)."""
+    found: list[tuple[str, int, str, str]] = []
     for path in SOURCES:
         if not path.exists():
             continue
         text = path.read_text(encoding="utf-8")
-        for i, body in enumerate(_CLIENTSIDE.findall(text)):
-            found.append((str(path), i, body))
+        for i, literal in enumerate(_CLIENTSIDE.findall(text)):
+            found.append((str(path), i, literal, ast.literal_eval(literal)))
     return found
+
+
+# Whole function bodies as pytest ids run to thousands of characters and bury the
+# assertion message; the file and ordinal are what identifies the offender.
+CASES = bodies()
+IDS = [f"{Path(source).name}#{index}" for source, index, _, _ in CASES]
 
 
 def test_there_are_clientside_callbacks_to_check():
     """A guard on the guard: a changed decorator name would silently find none."""
-    assert len(bodies()) >= 5
+    assert len(CASES) >= 5
 
 
-@pytest.mark.parametrize("source,index,js", bodies())
-def test_no_clientside_body_escapes_a_quote(source: str, index: int, js: str):
-    """Dash drops the backslash, so an escaped quote becomes a syntax error."""
+@pytest.mark.parametrize("source,index,literal,js", CASES, ids=IDS)
+def test_no_clientside_body_escapes_a_quote(source: str, index: int, literal: str, js: str):
+    """An escaped quote does not survive the trip into the page."""
     offenders = [
         line.strip()
-        for line in js.splitlines()
+        for line in literal.splitlines()
         if "\\'" in line or '\\"' in line
     ]
     assert not offenders, (
-        f"{source} clientside #{index} escapes a quote; Dash will drop the "
-        f"backslash and break the page: {offenders[:2]}"
+        f"{source} clientside #{index} escapes a quote; the backslash will be "
+        f"dropped and break the page: {offenders[:2]}"
+    )
+
+
+@pytest.mark.parametrize("source,index,literal,js", CASES, ids=IDS)
+def test_a_body_that_needs_a_backslash_is_written_raw(
+    source: str, index: int, literal: str, js: str
+):
+    """A raw string is what keeps Python's hands off a JS escape.
+
+    Without it, `'\\n'` in the JS is a real line break by the time Dash sees it,
+    which splits the string literal across two lines and kills the page.
+    """
+    needs_raw = "\\" in literal and not literal.lstrip().lower().startswith("r")
+    assert not needs_raw, (
+        f"{source} clientside #{index} contains a backslash but is not a raw "
+        "string; prefix the triple-quoted body with r so the escape survives Python"
     )
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-@pytest.mark.parametrize("source,index,js", bodies())
+@pytest.mark.parametrize("source,index,literal,js", CASES, ids=IDS)
 def test_every_clientside_body_is_valid_javascript(
-    source: str, index: int, js: str, tmp_path: Path
+    source: str, index: int, literal: str, js: str, tmp_path: Path
 ):
+    """Checked on the EVALUATED string — what Dash is handed, not what was typed."""
     script = tmp_path / f"cb{index}.js"
     script.write_text(f"const fn = {js.strip()};\n", encoding="utf-8")
     result = subprocess.run(

@@ -192,23 +192,65 @@ def test_the_drawer_names_the_figures_it_could_not_find():
     shown = text_of(provenance_drawer(prov))
     assert "Partly verified" in shown
     assert "$4.4m" in shown
-    assert "3 of 4 found in the result rows" in shown
+    assert "3 of the 4 figures in this answer appear in the data we read" in shown
+
+
+def test_an_unmatched_figure_is_not_left_without_context():
+    """The report: "it just shows Not Rows" — a bare name and no verdict.
+
+    Naming a number as a problem and stopping there leaves the reader alarmed
+    and no better informed, so the panel says what an absent figure MEANS and
+    what to do about it.
+    """
+    prov = pv.build(state(), ANSWER + " Peers average $4.4m.").as_dict()
+    shown = text_of(provenance_drawer(prov))
+    assert "not among the values we read back" in shown
+    assert "Worth checking before you quote it" in shown
+    assert "rows" not in shown.replace("Rewritten", "")
+
+
+def test_every_figure_gets_a_verdict_not_just_the_failures():
+    """A list of what was checked reads as a receipt; only the failures, as an alarm."""
+    prov = pv.build(state(), ANSWER + " Peers average $4.4m.").as_dict()
+    shown = text_of(provenance_drawer(prov))
+    assert shown.count("Found in the data") == 3
+    assert "Not in the data we read" in shown
 
 
 def test_the_drawer_explains_the_calculation_in_plain_english():
     """A business reader cannot check a SELECT, so the panel describes it."""
     shown = text_of(provenance_drawer(pv.build(state(), ANSWER).as_dict()))
-    assert "How the figures were worked out" in shown
-    assert "Read the gpr data" in shown
+    assert "The steps we took" in shown
+    assert "Started with the Marsh-placed premium records" in shown
     assert "Added up premium" in shown
-    assert "2 rows came back" in shown
+    assert "That gave us 2 results" in shown
     assert "What these terms mean" in shown
+
+
+def test_the_steps_come_before_the_figure_check():
+    """"How was this calculated" is the question the summary line asks."""
+    shown = text_of(provenance_drawer(pv.build(state(), ANSWER).as_dict()))
+    assert shown.index("The steps we took") < shown.index("The numbers in this answer")
+
+
+def test_a_formula_is_shown_without_sql_vocabulary():
+    """The glossary writes `SUM(Premium)`; the reader is not an analyst."""
+    shown = text_of(provenance_drawer(pv.build(state(), ANSWER).as_dict()))
+    assert "total premium over the selected filters" in shown
+    assert "SUM(Premium) over" not in shown
+
+
+def test_an_answer_with_no_evidence_says_why_rather_than_only_not_verified():
+    """"Not verified" alone reads as an accusation the answer failed a check."""
+    prov = pv.build({"current_route": "fallback"}, "I can't cover that.").as_dict()
+    shown = text_of(provenance_drawer(prov))
+    assert "no data behind this answer to check it against" in shown
 
 
 def test_the_raw_query_is_available_but_demoted():
     """Still there for whoever wants it — one more click down."""
     drawer = provenance_drawer(pv.build(state(), ANSWER).as_dict())
-    assert "Show the query" in text_of(drawer)
+    assert "Show the technical query" in text_of(drawer)
     assert "SUM(Premium)" in text_of(drawer)
     assert any("prov-sql-drawer" in c for c in classes(drawer))
 
@@ -296,7 +338,7 @@ def test_an_edit_keeps_the_queries_and_definitions_it_did_not_touch():
 def test_the_drawer_says_an_answer_was_rewritten():
     """A badge earned by text somebody replaced would be the panel lying."""
     rewritten = pv.reverify(pv.build(state(), ANSWER).as_dict(), ANSWER, ROWS)
-    assert "Rewritten by you" in text_of(provenance_drawer(rewritten))
+    assert "You rewrote this answer" in text_of(provenance_drawer(rewritten))
 
 
 def _history() -> dict:
@@ -361,3 +403,11 @@ def test_a_small_number_never_gains_a_meaningless_scaled_form():
     rows = [{"Count": 5}]
     assert fig.unsupported(fig.check("The gap is $0.0m.", {"premium": rows}))
 
+
+
+def test_a_verified_answer_with_no_figures_does_not_claim_it_checked_any():
+    """"Every figure was found" about zero figures is the panel lying quietly."""
+    prov = pv.build(state(), "Property leads the book.").as_dict()
+    shown = text_of(provenance_drawer(prov))
+    assert "doesn't state any figures that can be checked" in shown
+    assert "Every figure in this answer was found" not in shown
