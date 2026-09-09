@@ -1,4 +1,4 @@
-"""Write a whole sub-deck's commentary in one call, verify it in one more.
+"""Write a whole BOOK's commentary in one call, verify it in one more.
 
 The per-column writer (:func:`studio.template_fill.commentary.write_column`) makes two model
 calls for every textbox on a slide: an author call and a verifier call. A six-product,
@@ -9,7 +9,7 @@ Nothing about those 27 calls needed to be 27 calls. Every column on a sub-deck a
 the SAME evidence pack and under the SAME voice rules; only the brief, the question set and
 the bullet count differ. So a section is written as a section:
 
-    group the deck's pending columns by (sub-deck, evidence pack)
+    group the deck's pending columns by the evidence pack they argue from
         -> one AUTHOR call per section        (all its fields, one answer)
         -> deterministic number checking      (free, per bullet, first)
         -> one VERIFIER call per section      (every surviving bullet, one verdict list)
@@ -27,8 +27,14 @@ checked against those facts before any model reads it, and still clears
 is held to the identical bar; if it were not, "batched" would quietly mean "cheaper because
 it checks less".
 
-**Order.** Results are written back by ROLE, never by position or completion, so which
-section a model answered first cannot change a deck.
+**The grouping key is the evidence, not the sub-deck.** Two sub-decks whose packs render
+byte-identically are describing one book — a single-country run's overall block and its
+country block do exactly that — and writing them as two concurrent calls is what let one
+finding reach both pages with nothing able to see it. One book, one call, one editorial
+plan (:mod:`studio.template_fill.editorial`) across every page of it.
+
+**Order.** Results are written back by TARGET — the value set and the role — never by
+position or completion, so which section a model answered first cannot change a deck.
 """
 from __future__ import annotations
 
@@ -42,7 +48,7 @@ logger = get_logger(__name__)
 #: Bumped when the prompt below changes in a way that should invalidate cached commentary.
 #: Read by :mod:`studio.template_fill.commentary_cache` — a better prompt must not be
 #: shadowed by yesterday's answer.
-PROMPT_VERSION = "section-v2"
+PROMPT_VERSION = "section-v3"
 
 #: How many repair rounds a section gets.
 #:
@@ -60,11 +66,25 @@ MAX_REPAIRS = 2
 
 
 @dataclass(frozen=True)
+class Target:
+    """Where one written column lands: which value set, and the role inside it.
+
+    The value set has to travel WITH the role now that a section can span sub-decks. A
+    role is only unique inside its own set — ``note:2:34:0`` names slide 2, shape 34 of
+    whichever template that sub-deck was built from, and two sub-decks built from
+    templates that share a page carry the identical string for two different boxes.
+    """
+
+    value_set: int
+    role: str
+
+
+@dataclass(frozen=True)
 class Column:
     """One commentary field inside a section: where it goes, and what it is for."""
 
     field_id: str                    # stable within the section; what the model echoes back
-    roles: Tuple[str, ...]           # every value-set key this column's text is written to
+    targets: Tuple[Target, ...]      # every place this column's text is written to
     topic: str
     node: str
     bullets: int                     # how many sentences the column wants
@@ -109,19 +129,32 @@ class Failure:
 
 @dataclass(frozen=True)
 class Section:
-    """One sub-deck's worth of columns, written from one evidence pack in one call."""
+    """One BOOK's worth of columns, written from one evidence pack in one call.
+
+    A book, not a sub-deck. A section used to be a sub-deck, and that boundary was wrong
+    in the one case where it mattered: on a single-country run the overall block and the
+    country block describe the SAME book down to the last figure, so the two pages both
+    reached for the peer gap and, being written by two concurrent calls, nothing could
+    see that both had. Identical evidence is the honest definition of one book — two
+    sub-decks whose packs render byte-identically are reporting the same thing — and once
+    they are one section the editorial plan allocates their findings between them and the
+    gate holds them to it.
+    """
 
     label: str
     subject: str
     style: str
     facts: Mapping[str, Any] = field(default_factory=dict, compare=False)
     columns: Tuple[Column, ...] = ()
-    #: Which value set this section's text belongs to — how a result finds its way home.
-    value_set: int = 0
 
     @property
     def field_ids(self) -> Tuple[str, ...]:
         return tuple(c.field_id for c in self.columns)
+
+    @property
+    def value_sets(self) -> Tuple[int, ...]:
+        """The sub-decks this section's columns land in, in order — for the log line."""
+        return tuple(dict.fromkeys(t.value_set for c in self.columns for t in c.targets))
 
 
 # ── grouping the deck's pending columns into sections ────────────────────────
@@ -130,12 +163,24 @@ class Section:
 def group_sections(value_sets: Sequence[Mapping[str, Any]]) -> List[Section]:
     """The deck's :class:`~studio.template_fill.rewrites.PendingRewrite` columns, batched.
 
-    Grouped by ``(value set, the evidence it renders to)``. The value set is the sub-deck;
-    the evidence is keyed by a digest of the rendered :class:`EvidencePack`, which is what
-    the model is actually shown. Keying on the facts dict's IDENTITY instead was nearly
-    right and cost a call per sub-deck: the two prose providers each build their own facts
-    for the same scope, so a page carrying both a commentary column and a feedback panel
-    produced two groups holding the same book and asked the same evidence twice.
+    Grouped by THE EVIDENCE ALONE — a digest of the rendered :class:`EvidencePack`, which
+    is what the model is actually shown. Keying on the facts dict's IDENTITY instead was
+    nearly right and cost a call per sub-deck: the two prose providers each build their own
+    facts for the same scope, so a page carrying both a commentary column and a feedback
+    panel produced two groups holding the same book and asked the same evidence twice.
+
+    **The value set is deliberately NOT part of the key.** It used to be, which made a
+    section a sub-deck, and that is how the same finding reached two pages of a shipped
+    deck: on a single-country run the overall block's ranking page and the country block's
+    SWOT page describe one book, they were written by two concurrent calls, and neither
+    could see what the other had said. Two sub-decks only land in one group when their
+    packs render byte-identically, which does not happen unless they really are reporting
+    the same book — a product or country whose figures differ at all keys differently and
+    is grouped on its own, exactly as before.
+
+    Groups come out in first-appearance order and their columns in deck order, so the
+    editorial plan (which reads "earlier in the deck" off that order) still sees the deck
+    the way a reader does.
 
     Columns are de-duplicated by pending identity on the way in. ``commentary.values``
     answers one question per topic and puts that one answer in every box asking it, so a
@@ -148,21 +193,22 @@ def group_sections(value_sets: Sequence[Mapping[str, Any]]) -> List[Section]:
     # Local to this call rather than a module global: it is a scratch pad for one deck, and
     # an ``id`` key only means anything while the objects behind it are alive.
     keys: Dict[int, str] = {}
-    sections: List[Section] = []
+    groups: Dict[str, List[Tuple[int, str, Any]]] = {}
     for index, values in enumerate(value_sets):
-        groups: Dict[str, List[Tuple[str, Any]]] = {}
         for role, pending in rewrites.pending_items(values):
-            groups.setdefault(_evidence_key(pending.facts, keys), []).append((role, pending))
-        for gi, items in enumerate(groups.values()):
-            columns = _columns_from(items)
-            if not columns:
-                continue
-            first = items[0][1]
-            sections.append(Section(
-                label=f"set{index}.{gi}", subject=first.subject,
-                style=first.style or "balanced", facts=first.facts or {}, columns=columns,
-                value_set=index,
-            ))
+            groups.setdefault(_evidence_key(pending.facts, keys), []).append(
+                (index, role, pending))
+
+    sections: List[Section] = []
+    for gi, items in enumerate(groups.values()):
+        columns = _columns_from(items)
+        if not columns:
+            continue
+        first = items[0][2]
+        sections.append(Section(
+            label=f"book{gi}", subject=first.subject, style=first.style or "balanced",
+            facts=first.facts or {}, columns=columns,
+        ))
     return sections
 
 
@@ -187,17 +233,24 @@ def _evidence_key(facts, keys: Dict[int, str]) -> str:
     return keys[marker]
 
 
-def _columns_from(items: Sequence[Tuple[str, Any]]) -> Tuple[Column, ...]:
-    """``(role, pending)`` pairs as columns, one per distinct pending, roles folded in."""
-    by_pending: Dict[int, Tuple[Any, List[str]]] = {}
-    for role, pending in items:
-        by_pending.setdefault(id(pending), (pending, []))[1].append(role)
+def _columns_from(items: Sequence[Tuple[int, str, Any]]) -> Tuple[Column, ...]:
+    """``(value set, role, pending)`` triples as columns, one per distinct pending.
+
+    Folding is by pending IDENTITY, which is what keeps "one answer in several boxes"
+    one column — and, just as deliberately, keeps two sub-decks' own copies of the same
+    question TWO columns even when they are now in one section. They are two boxes on two
+    pages, a reader sees both, and the whole point of merging them into one section is
+    that the plan can give them different findings to make.
+    """
+    by_pending: Dict[int, Tuple[Any, List[Target]]] = {}
+    for value_set, role, pending in items:
+        by_pending.setdefault(id(pending), (pending, []))[1].append(Target(value_set, role))
     out: List[Column] = []
-    for i, (pending, roles) in enumerate(by_pending.values()):
+    for i, (pending, targets) in enumerate(by_pending.values()):
         draft = tuple(ln for ln in pending.draft.splitlines() if ln.strip())
         if not draft:
             continue
-        out.append(Column(field_id=f"{pending.topic or 'column'}.{i}", roles=tuple(roles),
+        out.append(Column(field_id=f"{pending.topic or 'column'}.{i}", targets=tuple(targets),
                           topic=pending.topic, node=pending.node,
                           bullets=len(draft), draft=draft))
     return tuple(out)
@@ -207,13 +260,19 @@ def _columns_from(items: Sequence[Tuple[str, Any]]) -> Tuple[Column, ...]:
 
 
 def _column_block(column: Column, *, show_draft: bool, rejected: Sequence[str] = (),
-                  keep: Sequence[str] = ()) -> str:
+                  keep: Sequence[str] = (), editorial_brief: str = "") -> str:
     """One column's ask, inside the section request.
 
     ``keep`` turns the ask into a TOP-UP: the lines already verified are shown as final
     and the model writes only what is missing. Without it a repair re-asks for the whole
     field, which puts lines that already passed every check back at risk of a worse
     second answer.
+
+    ``editorial_brief`` is this field's job in the deck's argument
+    (:mod:`studio.template_fill.editorial`) — the findings it is the home for, and the
+    ones another field on the page owns. It sits directly under the topic brief because
+    the two are read together: the brief says what the column is FOR, and this says which
+    of the facts in front of it are its to spend.
     """
     from studio.template_fill import commentary as C
 
@@ -222,6 +281,7 @@ def _column_block(column: Column, *, show_draft: bool, rejected: Sequence[str] =
         f"--- FIELD {column.field_id} ---",
         C.top_up_rules(column.topic, remaining) if keep
         else C.column_rules(column.topic, column.bullets),
+        editorial_brief,
         "LEAD FROM these fact families: " + ", ".join(C.evidence_focus(column.topic))
         if C.evidence_focus(column.topic) else "",
     ]
@@ -248,8 +308,11 @@ def _column_block(column: Column, *, show_draft: bool, rejected: Sequence[str] =
 def section_payload(section: Section, pack, glossary_brief: str, *,
                     show_draft: bool = True,
                     rejected: Optional[Mapping[str, Sequence[str]]] = None,
-                    keep: Optional[Mapping[str, Sequence[str]]] = None) -> str:
+                    keep: Optional[Mapping[str, Sequence[str]]] = None,
+                    plan=None) -> str:
     """The user message: the evidence once, the definitions once, then each field's ask."""
+    from studio.template_fill import editorial
+
     blocks = [f"CARRIER: {section.subject}", "",
               "EVIDENCE — the only facts you may use across every field below. Every "
               "figure you write must appear here, and every line must cite the fact ids it "
@@ -266,9 +329,11 @@ def section_payload(section: Section, pack, glossary_brief: str, *,
                    "two fields may make the same point in different words. When one fact "
                    "could serve two fields, give it to the field whose brief owns it and "
                    "make the other earn its place on something else.", ""]
+    plan = plan if plan is not None else editorial.EMPTY_PLAN
     blocks += [_column_block(c, show_draft=show_draft,
                              rejected=(rejected or {}).get(c.field_id, ()),
-                             keep=(keep or {}).get(c.field_id, ()))
+                             keep=(keep or {}).get(c.field_id, ()),
+                             editorial_brief=plan.brief(c.field_id))
                for c in section.columns]
     return "\n".join(blocks)
 
@@ -297,7 +362,7 @@ def _glossary_brief(pack) -> str:
 
 def _author(section: Section, pack, glossary_brief: str, *, columns=None,
             rejected: Optional[Mapping[str, Sequence[str]]] = None,
-            keep: Optional[Mapping[str, Sequence[str]]] = None):
+            keep: Optional[Mapping[str, Sequence[str]]] = None, plan=None):
     """One author call over ``columns`` (default: the whole section). Returns the model's answer."""
     from studio.ai import client
     from studio.ai.models import CommentarySections
@@ -310,7 +375,7 @@ def _author(section: Section, pack, glossary_brief: str, *, columns=None,
         CommentarySections,
         C.deck_voice(section.style, section.subject),
         section_payload(ask, pack, glossary_brief, show_draft=show_draft_to_author(),
-                        rejected=rejected, keep=keep),
+                        rejected=rejected, keep=keep, plan=plan),
         tier=C._COMMENTARY_TIER, node=f"section-{section.label}",
         phase="author", fields=ask.field_ids,
     )
@@ -369,14 +434,24 @@ def _wants_action(field_id: str, columns: Sequence[Column]) -> bool:
 
 
 def _verify_section(by_field: Dict[str, List[Any]], pack, glossary_brief: str,
-                    *, label: str) -> Tuple[Dict[str, List[str]], Dict[str, List[str]]]:
-    """Both verifiers over a whole section: numbers per bullet, then ONE claim call.
+                    *, label: str, plan=None,
+                    ) -> Tuple[Dict[str, List[str]], Dict[str, List[str]]]:
+    """Three gates over a whole section: numbers, then claims, then repetition.
 
-    The deterministic pass stays per bullet because it is free and exact. The model pass —
-    the expensive one — sees every surviving bullet in the section at once and returns one
-    verdict list, which is the same judgement it made per column and one call instead of
-    however many columns there were.
+    The deterministic number pass stays per bullet because it is free and exact. The model
+    pass — the expensive one — sees every surviving bullet in the section at once and
+    returns one verdict list, which is the same judgement it made per column and one call
+    instead of however many columns there were.
+
+    The repetition gate runs LAST, on what survived both verifiers
+    (:func:`studio.template_fill.editorial.dedupe`). Last because a bullet dropped for an
+    unsupported figure must not consume its topic on the way out — the field that would
+    have been made to write about something else has then been made to write about
+    something else by a hallucination. Its drops are reasons like any other, so a field
+    emptied by it goes into the repair round and comes back on a point the page has not
+    made.
     """
+    from studio.template_fill import editorial
     from studio.template_fill import commentary_verify as V
 
     kept: Dict[str, List[str]] = {fid: [] for fid in by_field}
@@ -399,11 +474,20 @@ def _verify_section(by_field: Dict[str, List[Any]], pack, glossary_brief: str,
     claims = V.check_claims([j for _, j in survivors], pack, glossary_brief=glossary_brief,
                             node=f"section-{label}")
     claims.log(f"section-{label}")
-    for (fid, _), verdict in zip(survivors, claims.judged):
+    verified: List[Tuple[str, str, Tuple[str, ...]]] = []
+    for (fid, judged), verdict in zip(survivors, claims.judged):
         if verdict.kept:
-            kept[fid].append(verdict.text)
+            verified.append((fid, verdict.text, tuple(judged.fact_ids or ())))
         else:
             dropped[fid].append(verdict.reason or "unsupported claim")
+
+    unique, repeats = editorial.dedupe(verified, plan=plan or editorial.EMPTY_PLAN)
+    for fid, lines in unique.items():
+        kept.setdefault(fid, []).extend(lines)
+    for repeat in repeats:
+        dropped.setdefault(repeat.field_id, []).append(repeat.reason)
+        logger.info("commentary_batch: section %s dropped a repeat in %s — %.70r",
+                    label, repeat.field_id, repeat.text)
     return kept, dropped
 
 
@@ -433,15 +517,22 @@ def _accepted(kept: Mapping[str, Sequence[str]], columns: Sequence[Column],
     return text, failed
 
 
-def cache_key(section: Section, column: Column, pack):
-    """The key one column's written text is stored under. See :mod:`commentary_cache`."""
+def cache_key(section: Section, column: Column, pack, plan=None):
+    """The key one column's written text is stored under. See :mod:`commentary_cache`.
+
+    The editorial brief is part of the key. A field that owned the peer gap yesterday and
+    is asked to leave it to another field today is being asked a different question, and
+    serving it yesterday's answer would put the repetition straight back on the page.
+    """
     from studio.template_fill import commentary as C
     from studio.template_fill import commentary_cache as cache
+    from studio.template_fill import editorial
 
+    plan = plan if plan is not None else editorial.EMPTY_PLAN
     return cache.CacheKey(
         subject=section.subject, topic=column.topic, bullets=column.bullets,
         evidence=cache.evidence_digest(pack.rendered_values()),
-        brief=C.column_rules(column.topic, column.bullets),
+        brief=C.column_rules(column.topic, column.bullets) + plan.brief(column.field_id),
         style=section.style, prompt_version=PROMPT_VERSION, tier=C._COMMENTARY_TIER,
         deployment=_deployment(), draft=cache.evidence_digest(column.draft),
     )
@@ -455,7 +546,7 @@ def _deployment() -> str:
     return deployment_for(C._COMMENTARY_TIER)
 
 
-def _from_cache(section: Section, pack) -> Tuple[Dict[str, str], List[Column]]:
+def _from_cache(section: Section, pack, plan=None) -> Tuple[Dict[str, str], List[Column]]:
     """``({field_id: text}, [columns still to write])`` — the cache read, done once.
 
     A section whose columns are ALL cached makes no model call at all, which is the case
@@ -468,7 +559,7 @@ def _from_cache(section: Section, pack) -> Tuple[Dict[str, str], List[Column]]:
     hits: Dict[str, str] = {}
     misses: List[Column] = []
     for column in section.columns:
-        text = cache.get(cache_key(section, column, pack))
+        text = cache.get(cache_key(section, column, pack, plan))
         if text:
             hits[column.field_id] = text
         else:
@@ -478,7 +569,7 @@ def _from_cache(section: Section, pack) -> Tuple[Dict[str, str], List[Column]]:
     return hits, misses
 
 
-def _to_cache(section: Section, pack, written: Mapping[str, str]) -> None:
+def _to_cache(section: Section, pack, written: Mapping[str, str], plan=None) -> None:
     """Store what THIS run wrote, so the next run does not write it again.
 
     Only the newly written columns: re-storing a cache hit would refresh its TTL on every
@@ -489,11 +580,11 @@ def _to_cache(section: Section, pack, written: Mapping[str, str]) -> None:
     for column in section.columns:
         text = written.get(column.field_id)
         if text:
-            cache.put(cache_key(section, column, pack), text)
+            cache.put(cache_key(section, column, pack, plan), text)
 
 
-def write_section(section: Section) -> Dict[str, str]:
-    """One section's columns, written and verified — ``{role: text}``.
+def write_section(section: Section, plan=None) -> Dict[Target, str]:
+    """One section's columns, written and verified — ``{target: text}``.
 
     Every column that cannot be written by a model keeps its deterministic draft in ``auto``
     mode and raises in ``ai_required`` (:mod:`studio.commentary_mode`) — the decision lives
@@ -507,41 +598,64 @@ def write_section(section: Section) -> Dict[str, str]:
         refuse(f"section {section.label} has no citable evidence", retryable=False)
         return _drafts(section.columns)
 
-    text, pending = _from_cache(section, pack)
+    text, pending = _from_cache(section, pack, plan)
     if not pending:                        # wholly cached — not one model call
         logger.info("commentary_batch: section %s served entirely from cache (%d field(s))",
                     section.label, len(text))
-        return _text_by_role(section.columns, text)
+        return _placed(section.columns, text)
 
     glossary_brief = _glossary_brief(pack)
-    answer = _author(section, pack, glossary_brief, columns=pending)
+    answer = _author(section, pack, glossary_brief, columns=pending, plan=plan)
     if answer is None:
         refuse(f"the author returned nothing for section {section.label}", retryable=True)
-        return _text_by_role(section.columns, text)
+        return _placed(section.columns, text)
 
     kept, dropped = _verify_section(_judged_by_field(answer, pending), pack, glossary_brief,
-                                    label=section.label)
+                                    label=section.label, plan=plan)
     written, failed = _accepted(kept, pending, subject=section.subject, dropped=dropped)
     if failed:
-        repaired, failed = _repair(section, pack, glossary_brief, failed)
+        repaired, failed = _repair(section, pack, glossary_brief, failed, plan=plan)
         written.update(repaired)
     if failed:
         # Last resort, after every repair round: a verified line beats the draft.
         salvaged, failed = _salvage(failed, subject=section.subject, label=section.label)
         written.update(salvaged)
-    _to_cache(section, pack, written)
+    _to_cache(section, pack, written, plan)
     text.update(written)
     telemetry.count("commentary_fields_written", len(text))
     _log_section(section, text, failed, risks=_risk_flags(answer, pending))
+    _report_repeats(section, text)
     if failed:
         refuse(f"{len(failed)} field(s) in section {section.label} could not be written",
                retryable=True,
                detail="; ".join(f.brief() for f in failed))
-    return _text_by_role(section.columns, text)
+    return _placed(section.columns, text)
 
 
-def _repair(section: Section, pack, glossary_brief: str,
-            failed: Sequence[Failure]) -> Tuple[Dict[str, str], List[Failure]]:
+def _report_repeats(section: Section, text: Mapping[str, str]) -> None:
+    """Log any repetition still standing in this book's finished prose.
+
+    The gate has already run and this is the safety net behind it — a bullet that cited
+    nothing, or a finding the claim identity could not connect. Report-only, and scoped to
+    the BOOK rather than the sub-deck, which is the scope
+    :func:`studio.template_fill.commentary_qa.check` cannot reach: two pages of one book
+    can sit in two sub-decks, and that is precisely where the repetition was found.
+    """
+    from studio.template_fill import commentary_qa
+
+    nodes = {c.field_id: c.node for c in section.columns}
+    try:
+        issues = commentary_qa.check_book(
+            {nodes.get(fid, fid): body for fid, body in text.items()})
+    except Exception as exc:  # noqa: BLE001 — a report must never cost us the deck
+        logger.warning("commentary_batch: repeat report failed for %s: %s",
+                       section.label, exc)
+        return
+    commentary_qa.log_issues(issues, label=f"book {section.label}")
+
+
+def _repair(section: Section, pack, glossary_brief: str, failed: Sequence[Failure],
+            *, plan=None) -> Tuple[Dict[str, str], List[Failure]]:
     """Repair the failed fields ONLY — never the whole section, never the deck.
 
     Re-running the section would throw away the fields that passed and pay to write them
@@ -577,11 +691,12 @@ def _repair(section: Section, pack, glossary_brief: str,
         keep = {f.column.field_id: f.kept_lines for f in outstanding if f.kept_lines}
         answer = _author(section, pack, glossary_brief, columns=columns,
                          rejected={f.column.field_id: f.reasons for f in outstanding},
-                         keep=keep)
+                         keep=keep, plan=plan)
         if answer is None:
             break                      # keep whatever the earlier rounds repaired
         fresh, dropped = _verify_section(_judged_by_field(answer, columns), pack,
-                                         glossary_brief, label=f"{section.label}-repair")
+                                         glossary_brief, label=f"{section.label}-repair",
+                                         plan=plan)
         text, outstanding = _accepted(_merged(keep, fresh), columns,
                                       subject=section.subject, dropped=dropped)
         repaired.update(text)
@@ -654,15 +769,15 @@ def _salvage(failed: Sequence[Failure], *, subject: str,
     return text, outstanding
 
 
-def _drafts(columns: Sequence[Column]) -> Dict[str, str]:
-    """Every column as its deterministic draft, keyed by role — the ``auto`` fallback."""
-    return {role: column.draft_text for column in columns for role in column.roles}
+def _drafts(columns: Sequence[Column]) -> Dict[Target, str]:
+    """Every column as its deterministic draft, keyed by target — the ``auto`` fallback."""
+    return {target: column.draft_text for column in columns for target in column.targets}
 
 
-def _text_by_role(columns: Sequence[Column], text: Mapping[str, str]) -> Dict[str, str]:
-    """Written text where there is any, the draft where there is not — keyed by role."""
-    return {role: text.get(column.field_id) or column.draft_text
-            for column in columns for role in column.roles}
+def _placed(columns: Sequence[Column], text: Mapping[str, str]) -> Dict[Target, str]:
+    """Written text where there is any, the draft where there is not — keyed by target."""
+    return {target: text.get(column.field_id) or column.draft_text
+            for column in columns for target in column.targets}
 
 
 def _log_section(section: Section, text: Mapping[str, str], failed: Sequence[Failure],
@@ -700,13 +815,15 @@ def write_deck(value_sets: Sequence[Mapping[str, Any]]) -> List[Dict[str, str]]:
 
     The unit of concurrency is the SECTION rather than the column, which is the point: a
     section is one round trip that used to be six, and the sections that remain overlap.
-    Results are placed by ``value_set`` and by role, so completion order cannot reach the
-    deck.
+    Results are placed by ``Target`` — value set AND role — so completion order cannot
+    reach the deck, and a section spanning two sub-decks still lands each column in the
+    one it came from.
     """
     from studio import telemetry
     from studio.ai import client
     from studio.commentary_mode import refuse
     from studio.parallel import gather_list
+    from studio.template_fill import editorial
 
     out: List[Dict[str, str]] = [{} for _ in value_sets]
     if not client.llm_available():
@@ -719,10 +836,30 @@ def write_deck(value_sets: Sequence[Mapping[str, Any]]) -> List[Dict[str, str]]:
     sections = group_sections(value_sets)
     if not sections:
         return out
+    # The editorial plan is built over the WHOLE deck and built FIRST, before any section
+    # is written: which field is the home for the peer gap is a question about the deck,
+    # and the sections that would otherwise each answer it for themselves run
+    # concurrently. Deterministic and model-free, so it costs nothing and cannot reorder
+    # anything — see :mod:`studio.template_fill.editorial`.
+    plan = editorial.plan_deck([section.columns for section in sections])
     logger.info("commentary_batch: %d section(s), %d field(s) across %d value set(s)",
                 len(sections), sum(len(s.columns) for s in sections), len(value_sets))
+    _log_plan(plan, sections)
     with telemetry.phase("commentary"):
-        written = gather_list([lambda s=section: write_section(s) for section in sections])
-    for section, texts in zip(sections, written):
-        out[section.value_set].update(texts)
+        written = gather_list([lambda s=section: write_section(s, plan)
+                               for section in sections])
+    for texts in written:
+        for target, text in texts.items():
+            out[target.value_set][target.role] = text
     return out
+
+
+def _log_plan(plan, sections: Sequence[Section]) -> None:
+    """Who owns what, once per deck — the line to read when a page repeats another."""
+    for section in sections:
+        owned = [(c.node, plan.fields[c.field_id].owns) for c in section.columns
+                 if c.field_id in plan.fields]
+        if owned:
+            logger.info("editorial plan: section %s — %s", section.label,
+                        "; ".join(f"{node} owns {', '.join(topics) or 'nothing'}"
+                                  for node, topics in owned))

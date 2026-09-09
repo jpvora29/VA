@@ -64,9 +64,14 @@ def _no_cache(tmp_path, monkeypatch):
 
 
 #: What the stubbed model writes. Whole sentences, no figures, no phrase the reading gate
-#: refuses — so a failed assertion below is about the batching, not about the prose.
+#: refuses — and no phrase that names a CLAIM TOPIC, so the editorial gate
+#: (:func:`studio.template_fill.editorial.dedupe`) has nothing to recognise either. The
+#: stub answers every field with the same text, which is a repeated finding the moment one
+#: of these sentences is about something; keeping them topicless is what keeps a failed
+#: assertion below about the batching rather than about the prose. The gate has its own
+#: file, ``test_commentary_editorial.py``.
 _SENTENCES = (
-    "The book grew faster than the pool it was written in, and that gap is the story.",
+    "The year closed better than the one before it, and that is the story to tell.",
     "Defending that position now matters more than adding to it.",
     "Growth of this kind rarely survives a hard renewal season without a plan behind it.",
     "The team should treat the coming quarter as a test of whether the gain holds.",
@@ -117,10 +122,34 @@ def test_a_sub_decks_columns_are_grouped_into_one_section():
     assert sections[0].subject == "Zurich"
 
 
-def test_two_sub_decks_are_two_sections_and_keep_their_own_value_set():
-    first, second = _facts(), _facts()          # distinct objects: two scopes, two books
+def test_two_sub_decks_reporting_different_books_are_two_sections():
+    first, second = _facts(), _facts()
+    second["carrier"]["current"] = 51_000_000.0      # a different book, not a copy
     sections = B.group_sections([_value_set(first), _value_set(second)])
-    assert [s.value_set for s in sections] == [0, 1]
+    assert [s.value_sets for s in sections] == [(0,), (1,)]
+
+
+def test_two_sub_decks_reporting_THE_SAME_book_are_one_section():
+    """The slide 6 / slide 16 fix.
+
+    On a single-country run the overall block and the country block describe one book down
+    to the last figure. As two sections they were two concurrent calls, so neither could
+    see that both had made the peer-gap point — which is how one finding reached two pages
+    of a shipped deck. One book is one section, and then the editorial plan and the
+    repetition gate cover both pages.
+    """
+    facts = _facts()
+    sections = B.group_sections([_value_set(facts), _value_set(_facts())])
+    assert len(sections) == 1
+    assert sections[0].value_sets == (0, 1)
+
+
+def test_a_merged_section_still_lands_each_column_in_its_own_sub_deck(stub_model):
+    """Merging must not smear one sub-deck's prose onto another's roles."""
+    first, second = _value_set(_facts()), _value_set(_facts())
+    written = rewrites.write_all([first, second])
+    assert [set(w) for w in written] == [set(first), set(second)]
+    assert all(isinstance(v, str) and v.strip() for w in written for v in w.values())
 
 
 def test_columns_sharing_one_pending_are_written_once_and_land_on_every_role():
@@ -131,7 +160,7 @@ def test_columns_sharing_one_pending_are_written_once_and_land_on_every_role():
     shared = _pending("working", "one line.", facts)
     sections = B.group_sections([{"note:1:1:0": shared, "note:2:2:0": shared}])
     assert len(sections[0].columns) == 1
-    assert set(sections[0].columns[0].roles) == {"note:1:1:0", "note:2:2:0"}
+    assert {t.role for t in sections[0].columns[0].targets} == {"note:1:1:0", "note:2:2:0"}
 
 
 def test_every_requested_field_id_is_returned_exactly_once(stub_model):
@@ -310,7 +339,7 @@ def test_a_retry_after_a_partial_failure_only_rewrites_what_failed(monkeypatch):
     facts = _facts()
     topics = ("working", "challenges")
     first = rewrites.write_all([_value_set(facts, topics=topics)])[0]
-    written = [v for v in first.values() if v.startswith("The book grew")]
+    written = [v for v in first.values() if v.startswith(_SENTENCES[0])]
     assert len(written) == 1, "exactly one field was answerable on the first run"
 
     # Second run: the model can now answer both, but must only be ASKED the one that
@@ -319,7 +348,7 @@ def test_a_retry_after_a_partial_failure_only_rewrites_what_failed(monkeypatch):
     asked.clear()
     second = rewrites.write_all([_value_set(facts, topics=topics)])[0]
     assert all(len(fields) == 1 for fields in asked), asked
-    assert all(v.startswith("The book grew") for v in second.values())
+    assert all(v.startswith(_SENTENCES[0]) for v in second.values())
 
 
 def test_the_cache_can_be_turned_off(stub_model, monkeypatch):
@@ -871,10 +900,13 @@ def test_the_fields_that_were_written_are_cached_before_the_refusal(monkeypatch)
 
     from studio.template_fill import commentary_cache as cache
 
+    from studio.template_fill import editorial
+
     section = B.group_sections([_value_set(_facts())])[0]
     pack = B._pack_for(section)
+    plan = editorial.plan_deck([section.columns])
     cached = {column.topic for column in section.columns
-              if cache.get(B.cache_key(section, column, pack))}
+              if cache.get(B.cache_key(section, column, pack, plan))}
     assert {"working", "challenges"} <= cached, "the fields that were written survived"
     assert "growth" not in cached, "the one that failed did not"
 

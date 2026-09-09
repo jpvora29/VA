@@ -143,6 +143,45 @@ def _repeated_claims(cells: Mapping[str, str]) -> List[CommentaryIssue]:
     ]
 
 
+def _equivalent_claims(cells: Mapping[str, str]) -> List[CommentaryIssue]:
+    """One finding said twice in different WORDS — the repeat the string check cannot see.
+
+    :func:`_repeated_claims` compares normalised text, so it catches a sentence copied to
+    two cells and nothing else. What a reader actually notices is a page that states the
+    peer gap in percentage points, restates it in premium, and closes on "reaching peer
+    parity": three sentences, no shared string, no shared figure between two of the pairs,
+    and one finding printed three times.
+
+    :func:`studio.template_fill.editorial.claim_key` is what makes them comparable — the
+    finding, its named driver and its direction, with the figures deliberately dropped,
+    because the figures are exactly what a second rendering of one finding changes.
+
+    Reported, never rewritten, like every rule here. The gate that actually prevents this
+    runs before the text ships (:func:`studio.template_fill.editorial.dedupe`); this is
+    the sweep over the finished deck, and it is the one that sees ACROSS pages, where the
+    per-page gate by definition does not.
+    """
+    from studio.template_fill import editorial
+
+    seen: Dict[str, List[Tuple[str, str]]] = defaultdict(list)
+    for role, text in cells.items():
+        for claim in _claims(text):
+            key = editorial.claim_key(claim)
+            if key:
+                seen[key].append((role, claim))
+    issues: List[CommentaryIssue] = []
+    for key, found in sorted(seen.items()):
+        roles = {role for role, _ in found}
+        wordings = {" ".join(claim.lower().split()).rstrip(".") for _, claim in found}
+        if len(roles) > 1 and len(wordings) > 1:
+            issues.append(CommentaryIssue(
+                "equivalent_claim",
+                f"one finding ({key}) said {len(found)} ways: "
+                + " / ".join(claim[:60] for _, claim in found[:3]),
+                tuple(sorted(roles))))
+    return issues
+
+
 # ── the walker ───────────────────────────────────────────────────────────────
 
 
@@ -155,12 +194,31 @@ def _commentary_cells(values: Mapping[str, object]) -> Dict[str, str]:
     }
 
 
+def check_book(texts: Mapping[str, str]) -> List[CommentaryIssue]:
+    """Repetition across everything written from ONE evidence pack, whatever page it is on.
+
+    :func:`check` is called per sub-deck, which is the right scope for the per-cell rules
+    and the wrong one for repetition: a single-country run's overall block and country
+    block are two sub-decks reporting one book, and the finding said on both is invisible
+    to a check that only ever sees one of them.
+
+    So the writer calls this with a whole BOOK's finished text
+    (:func:`studio.template_fill.commentary_batch.write_section`), keyed by node rather
+    than by role — it is a report, and what a reader wants to know is which column said it
+    twice. Reports only; the gate that prevents it is
+    :func:`studio.template_fill.editorial.dedupe`, and this is what catches what the gate's
+    identity could not see.
+    """
+    cells = {label: text for label, text in texts.items() if (text or "").strip()}
+    return _repeated_claims(cells) + _equivalent_claims(cells) if cells else []
+
+
 def check(values: Mapping[str, object]) -> List[CommentaryIssue]:
     """Every issue in a sub-deck's fill payload, deck-level rules first."""
     cells = _commentary_cells(values)
     if not cells:
         return []
-    issues = _repeated_claims(cells)
+    issues = _repeated_claims(cells) + _equivalent_claims(cells)
     for role, text in sorted(cells.items()):
         for code, rule in _RULES.items():
             message = rule(text)
