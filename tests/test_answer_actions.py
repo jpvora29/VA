@@ -353,7 +353,9 @@ def test_a_committed_turn_renders_with_the_right_actions():
     assert answer["route"] == "premium"
     assert answer["has_rows"] is True
     assert _rows_for_answer(history, 1) == [{"country": "DE", "premium": 12}]
-    assert _rendered_actions(answer, 1) == ["drivers", "export", "decision", "board"]
+    # "Create decision" leads, because it is the promoted step and the promoted
+    # step is drawn first; the rest keep their declared order behind it.
+    assert _rendered_actions(answer, 1) == ["decision", "drivers", "export", "board"]
 
 
 def test_a_lookup_turn_renders_bare_even_though_it_returned_rows():

@@ -133,8 +133,8 @@ body {
     overflow: hidden;
 }
 
-.chatbot-area>.container-fluid,
-.chatbot-area>.container {
+.chat-column>.container-fluid,
+.chat-column>.container {
     flex: 1 1 auto;
     min-height: 0;
     display: flex;
@@ -181,6 +181,7 @@ body {
    messages, they start at the top and grow downwards. */
 .chat-bot-text-area:has(.welcome-hero) {
     min-height: 100%;
+    justify-content: flex-end;
 }
 
 /* Custom scrollbar */
@@ -1926,42 +1927,20 @@ body {
     transition: box-shadow var(--transition-med), transform var(--transition-med);
 }
 
-.insight-card::before {
-    /* Subtle left accent rail */
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 4px;
-    background: linear-gradient(180deg, var(--marsh-blue) 0%, var(--marsh-red) 100%);
-    opacity: 0.85;
-}
+/* The left accent rail is gone. It marked the card as "an insight" back when an
+   answer was one bubble among many; the turn header names the writer now, and
+   the finding is set large inside, so the rail was decoration competing with
+   both. Removed rather than overridden — an unused rule that has to be beaten
+   from another stylesheet is worse than no rule. */
 
 .insight-card:hover {
-    box-shadow: var(--shadow-lg);
-    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
 }
 
-.insight-card-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    margin-bottom: 10px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.6px;
-    text-transform: uppercase;
-    color: var(--marsh-blue);
-    background: rgba(0, 44, 119, 0.08);
-    border: 1px solid rgba(0, 44, 119, 0.12);
-    border-radius: var(--radius-pill);
-}
-
-.insight-card-badge-icon {
-    font-size: 13px;
-}
+/* The "Consulting Insight" badge is gone from the markup (see
+   ui.components.chatbot.ai_message): the turn header names the writer on every
+   answer, so a second label saying this one was an insight told the reader
+   something the card already looked like. Its rules go with it. */
 
 .insight-card-body h3 {
     font-size: 15px;
@@ -2243,7 +2222,10 @@ body {
 
 /* ---------- Welcome hero (empty state) ---------- */
 .welcome-hero {
-    margin: auto;
+    /* Bottom-LEFT, not bottom-centre: the greeting lines up with the composer
+       under it and with where the first answer will appear, so nothing shifts
+       sideways when the conversation starts. */
+    margin: auto auto 0 0;
     width: 100%;
     max-width: 760px;
     display: flex;
@@ -4089,15 +4071,15 @@ body {
 
 
 /* ── Chat area: bubbles + send to match the modern blue identity ─────────── */
+/* The question is context for the answer under it, not the loudest thing on the
+   page — so the bubble is a light wash, and the weight goes to the finding. The
+   navy fill and its `!important`s are gone rather than overridden (see
+   assets/va_shell_chat.css for what replaces them). */
 .user-message {
-    background: var(--marsh-blue) !important;
-    color: #ffffff !important;
-    border: none !important;
-    border-radius: 20px 20px 6px 20px !important;
-    box-shadow: 0 8px 20px rgba(0, 15, 71, 0.28) !important;
+    border-radius: 20px 20px 6px 20px;
     font-weight: 500;
 }
-.user-message a { color: #cfe0ff; text-decoration: underline; }
+.user-message a { color: var(--marsh-blue-2); text-decoration: underline; }
 
 .gpt-message {
     border-radius: 20px 20px 20px 6px;
@@ -4105,14 +4087,14 @@ body {
     box-shadow: 0 1px 2px rgba(10, 22, 54, 0.05), 0 8px 22px rgba(10, 22, 54, 0.05);
     transition: box-shadow var(--transition-med), transform var(--transition-med);
 }
-.gpt-message:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.gpt-message:hover { box-shadow: var(--shadow-md); }
 
-/* Send button: solid Marsh Navy with glow */
+/* Send button: the composer sizes it (assets/va_shell_chat.css); this only
+   says what colour it is. It used to pin 34px with `!important`, which is why a
+   taller composer left a button that looked like an afterthought beside it. */
 .send-btn {
-    width: 34px !important;
-    height: 34px !important;
-    background: var(--marsh-blue) !important;
-    box-shadow: 0 6px 16px rgba(0, 15, 71, 0.36) !important;
+    background: var(--marsh-blue);
+    box-shadow: 0 6px 16px rgba(0, 15, 71, 0.36);
 }
 .send-btn:hover { background: #0a2270 !important; box-shadow: 0 8px 18px rgba(0, 15, 71, 0.4) !important; }
 
@@ -4120,12 +4102,7 @@ body {
 .composer { border-radius: 26px; }
 .composer:focus-within { box-shadow: 0 16px 40px rgba(0, 15, 71, 0.20); }
 
-/* Consulting-insight card: refresh its accent to the brand gradient */
 .insight-card { border-radius: 20px 20px 20px 6px; }
-.insight-card-badge {
-    background: rgba(0, 15, 71, 0.10);
-    color: var(--marsh-blue);
-}
 
 
 
@@ -4336,6 +4313,11 @@ html, body,
 .clarify-card, .clarify-card-question, .clarify-option-label, .clarify-option-desc,
 .conv-item-title, .sidebar-nav-item, .new-chat-btn, .user-name,
 .welcome-subtitle, .suggestion-chip-text,
+.starter-chip-outcome, .starter-chip-question,
+/* The answer's headline is its first SENTENCE, set large — prose, not a title.
+   Titles are Georgia here; a sentence does not change face because of its size,
+   and without this line it would depend on which card variant it landed in. */
+.answer-headline, .answer-standfirst, .answer-figure-value,
 .bm-subtitle, .bm-commentary-list li, .bm-insight-detail, .bm-cmp-cell,
 .bm-kpi-value, .bm-kpi-label, .pitch-question-input, .pitch-dropdown {
     font-family: var(--font-sans) !important;
@@ -4347,7 +4329,6 @@ html, body,
 .login-title,
 .bm-title, .bm-bc-name, .bm-headline, .bm-insight-headline, .bm-tl-title,
 .pitch-builder-title, .pitch-drawer-title,
-.insight-card-badge-text,
 .clarify-card-question,
 .sidebar-section-label,
 .gpt-message h1, .gpt-message h2, .gpt-message h3, .gpt-message h4,
@@ -4376,11 +4357,7 @@ html, body,
     box-shadow: 0 1px 2px rgba(10, 22, 54, 0.04), 0 10px 28px rgba(10, 22, 54, 0.06) !important;
     line-height: 1.6;
 }
-.user-message {
-    background: linear-gradient(135deg, #0a2270 0%, var(--marsh-blue) 100%) !important;
-    box-shadow: 0 10px 24px rgba(0, 15, 71, 0.30) !important;
-    position: relative;
-}
+.user-message { position: relative; }
 .user-message-text { white-space: pre-wrap; word-break: break-word; }
 
 /* Copy chip on the user bubble (mirrors the assistant turn) */

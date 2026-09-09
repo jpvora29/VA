@@ -35,7 +35,19 @@ def app_shell(
             # `va-body` also carries the rail width, because collapsing is app-wide
             # rather than per-tab (see ``ui.shell.rail``).
             html.Div(
-                build_panes(user_id, username, active_tab),
+                [
+                    *build_panes(user_id, username, active_tab),
+                    # Below the drawer breakpoint the rail floats over the content,
+                    # so there has to be somewhere to click that means "put it
+                    # away". It carries a rail-toggle id, so closing it IS the
+                    # collapse state changing — there is no second way to be shut.
+                    html.Button(
+                        id={"type": "va-rail-toggle", "rail": "scrim"},
+                        n_clicks=0,
+                        className="va-rail-scrim",
+                        title="Close the sidebar",
+                    ),
+                ],
                 id="va-body",
                 className=rails_class(rails_collapsed),
             ),

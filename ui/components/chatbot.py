@@ -5,20 +5,38 @@ import dash_bootstrap_components as dbc
 from core.answers.commands import COMMANDS
 from core.peers import MIN_CUSTOM_PEERS
 from document_builder.report_generator import PITCH_THEMES, theme_options
-from ui.components.answer_actions import AnswerContext, answer_footer, feedback_panel
+from ui.components.analysis_dock import analysis_dock, dock_reopen_button, view_switch
+from ui.components.answer_actions import (
+    AnswerContext,
+    answer_footer,
+    feedback_panel,
+    next_question,
+)
+from ui.components.answer_lead import Lead, key_figures, split_lead
 from ui.components.contribution import contribution_panel
 from ui.components.evidence import evidence_panel
 from ui.components.provenance import provenance_drawer
 from ui.components.scope_bar import scope_bar
+from ui.components.turn import assistant_header, user_footer
 
 
 # Example questions surfaced on the welcome screen and (mirrored) in the
 # animated input placeholder. Keep these aligned with assets/typewriter.js.
+#
+# Each is (icon, OUTCOME, question). The outcome is what the reader is scanning
+# for — four full sentences of near-identical shape are four things to read
+# before choosing, and the reader is choosing a job, not a sentence. The question
+# stays underneath because it is what actually gets asked, and a starter that
+# hides the question it sends is a starter you cannot trust.
 STARTER_SUGGESTIONS = [
-    ("bi bi-pie-chart", "What is Zurich's Share of Wallet in Canada for Property?"),
-    ("bi bi-graph-up-arrow", "Show premium growth for Chubb across all product lines"),
-    ("bi bi-people", "How does AXA's broker score compare to peers this year?"),
-    ("bi bi-bar-chart-line", "What is the market composite rate change for Asia this quarter?"),
+    ("bi bi-pie-chart", "Share of wallet",
+     "What is Zurich's Share of Wallet in Canada for Property?"),
+    ("bi bi-graph-up-arrow", "Explain premium growth",
+     "Show premium growth for Chubb across all product lines"),
+    ("bi bi-people", "Compare peers",
+     "How does AXA's broker score compare to peers this year?"),
+    ("bi bi-bar-chart-line", "Explore market rates",
+     "What is the market composite rate change for Asia this quarter?"),
 ]
 
 
@@ -33,8 +51,12 @@ def _greeting() -> str:
 
 
 def suggestion_chip(question: str, icon: str | None = None, idx: int = 0):
-    """A clickable question chip. The question text rides in the id so a single
-    pattern-matching callback can handle both starter and follow-up chips."""
+    """A clickable question chip that ASKS the question.
+
+    The question text rides in the id so a single pattern-matching callback can
+    send it. Used for follow-ups, where the reader has already seen an answer and
+    the chip is a continuation of it.
+    """
     children = []
     if icon:
         children.append(html.I(className=f"{icon} suggestion-chip-icon"))
@@ -44,6 +66,33 @@ def suggestion_chip(question: str, icon: str | None = None, idx: int = 0):
         id={"type": "suggestion-chip", "idx": idx, "q": question},
         n_clicks=0,
         className="suggestion-chip",
+    )
+
+
+def starter_chip(outcome: str, question: str, icon: str, idx: int = 0):
+    """A starter, which LOADS the question into the composer rather than sending it.
+
+    A starter is an example, and an example the reader cannot adjust before it
+    runs is a coin flip: the scope is almost never quite theirs, and the only way
+    to fix it used to be to wait for the wrong answer and retype the question.
+    Loading it leaves the reader one edit away from their own question, with the
+    example still telling them what this box can be asked.
+    """
+    return html.Button(
+        [
+            html.I(className=f"{icon} starter-chip-icon"),
+            html.Span(
+                [
+                    html.Span(outcome, className="starter-chip-outcome"),
+                    html.Span(question, className="starter-chip-question"),
+                ],
+                className="starter-chip-text",
+            ),
+        ],
+        id={"type": "starter-chip", "idx": idx, "q": question},
+        n_clicks=0,
+        className="starter-chip",
+        title=question,
     )
 
 
@@ -211,31 +260,52 @@ _STARTER_ICONS = [
 ]
 
 
+def _outcome_for(question: str, index: int) -> str:
+    """An outcome label for a tailored starter, which arrives as a bare question.
+
+    The LLM writes the question; the label is the first few words of it, so the
+    grid still scans as a list of jobs rather than a wall of sentences, and the
+    label can never claim something the question does not.
+    """
+    words = str(question or "").strip().rstrip("?").split()
+    if not words:
+        return "Ask a question"
+    return " ".join(words[:4]) + ("…" if len(words) > 4 else "")
+
+
 def starter_chips(starters: list[str] | None = None) -> list:
     """Chips for the welcome hero — tailored strings if given, else the defaults."""
     if starters:
         return [
-            suggestion_chip(question, _STARTER_ICONS[index % len(_STARTER_ICONS)], index)
+            starter_chip(
+                _outcome_for(question, index),
+                question,
+                _STARTER_ICONS[index % len(_STARTER_ICONS)],
+                index,
+            )
             for index, question in enumerate(starters)
         ]
     return [
-        suggestion_chip(question, icon, index)
-        for index, (icon, question) in enumerate(STARTER_SUGGESTIONS)
+        starter_chip(outcome, question, icon, index)
+        for index, (icon, outcome, question) in enumerate(STARTER_SUGGESTIONS)
     ]
 
 
 def welcome_hero(name: str = "", starters: list[str] | None = None):
-    """Empty-state hero shown before the first message is sent."""
+    """Empty-state hero shown before the first message is sent.
+
+    Deliberately small. The hero used to fill the first screen — a floating
+    badge, a display-size greeting, a three-line explanation and four full
+    sentences — which put the composer at the bottom of a page about itself. The
+    first thing on this screen is the question, so the greeting is one line, the
+    explanation is one line, and the starters are labels.
+    """
     greeting = f"{_greeting()}, "
     accent = name.strip() if name and name.strip() else "let's dig into the data"
     return html.Div(
         [
             html.Div(
                 [
-                    html.Div(
-                        html.I(className="bi bi-stars"),
-                        className="welcome-badge",
-                    ),
                     html.H1(
                         [
                             greeting,
@@ -244,15 +314,14 @@ def welcome_hero(name: str = "", starters: list[str] | None = None):
                         className="welcome-title",
                     ),
                     html.P(
-                        "Your virtual insurance analyst. Ask about premium, Share of "
-                        "Wallet, broker sentiment, peer benchmarks, or market rates — "
-                        "all in plain English.",
+                        "Ask about premium, Share of Wallet, broker sentiment, peer "
+                        "benchmarks or market rates — in plain English.",
                         className="welcome-subtitle",
                     ),
                 ],
                 className="welcome-head",
             ),
-            html.Div("Try one of these", className="welcome-suggest-label"),
+            html.Div("Start with one of these", className="welcome-suggest-label"),
             html.Div(
                 starter_chips(starters),
                 id="starter-suggestions",
@@ -355,6 +424,46 @@ def answer_scope(scope: list | None):
     return html.Div(bar, className="answer-scope") if bar is not None else None
 
 
+def _period_of(scope: list | None) -> str:
+    """The timeframe this answer ran under, read off its own scope pills."""
+    for chip in scope or []:
+        if chip.get("key") in ("period", "timeframe", "year", "quarter"):
+            return str(chip.get("value") or "")
+    return ""
+
+
+def _lead_block(lead: Lead, figures: list):
+    """The finding, set as the finding: one line, its qualifier, its key numbers."""
+    if not lead.has_headline and not figures:
+        return None
+    return html.Div(
+        [
+            html.H2(lead.headline, className="answer-headline")
+            if lead.has_headline
+            else None,
+            html.P(lead.standfirst, className="answer-standfirst")
+            if lead.standfirst
+            else None,
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Div(figure.value, className="answer-figure-value"),
+                            html.Div(figure.label, className="answer-figure-label"),
+                        ],
+                        className="answer-figure",
+                    )
+                    for figure in figures
+                ],
+                className="answer-figures",
+            )
+            if figures
+            else None,
+        ],
+        className="answer-lead",
+    )
+
+
 def ai_message(
     content: str,
     is_insight: bool,
@@ -371,23 +480,44 @@ def ai_message(
     card_idx: int | None = None,
     pane_ids: list | None = None,
     editing: bool = False,
+    ts: str = "",
+    source: str = "",
+    followup: str = "",
 ):
-    """One answer, whole: everything the turn produced, in one card.
+    """One turn, whole: who answered, and everything that answer produced.
 
-    Reading order is the order an analyst works in — the scope it ran under, the
-    finding, the evidence for it, what drove it, how it was calculated, and only
-    then what to do next:
+    Reading order is the order an analyst works in — who wrote it and from what,
+    the scope it ran under, the finding, the numbers it turns on, the evidence,
+    what drove it, how it was calculated, and only then what to do next:
 
-        scope pills -> prose -> chart / table -> drivers -> calculation -> actions
+        header -> scope -> FINDING -> figures -> prose -> chart / table
+               -> drivers -> source & calculation -> actions -> next question
 
-    The chart and table used to be a SEPARATE message below the answer, at a
-    different width, which read as two unrelated things and made the card look
-    broken. They are one card because they are one answer.
+    Three things about that order are the point.
 
-    Copy, the next steps and the thumbs live in ONE row at the foot — see
-    :mod:`ui.components.answer_actions`. The feedback panel is mounted hidden and
-    revealed by a thumbs-down. The insight variant keeps the consulting-card
-    chrome; the base variant is a plain bubble.
+    *The header is outside the card.* An answer with no attribution reads as the
+    page talking to itself; the mark, the dataset and the time say who is
+    accountable for the number, and they belong above the thing they vouch for.
+
+    *The finding is set as the finding.* The answer's own first sentence is
+    lifted out and set large (:mod:`ui.components.answer_lead`) — nothing is
+    written or dropped, it is the same words at a size that matches their job.
+    While the prose is being REWRITTEN the split is suspended, because the
+    serialiser saves one editable region and would otherwise drop the headline.
+
+    *The chart is in the card.* It used to be a separate message below the
+    answer, at a different width, which read as two unrelated things and made the
+    card look broken. It is one card because it is one answer. (It is also in
+    the analysis panel, which is the copy that does not scroll away —
+    :mod:`ui.components.analysis_dock`.)
+
+    Copy, the pin, the next steps and the thumbs live in ONE row at the foot —
+    see :mod:`ui.components.answer_actions`. The feedback panel is mounted hidden
+    and revealed by a thumbs-down.
+
+    The "Consulting Insight" badge is gone: the turn header names the writer on
+    every answer, so a second label saying this one is an insight was telling the
+    reader something the card already looked like.
     """
     ctx = AnswerContext(
         idx=idx,
@@ -396,6 +526,7 @@ def ai_message(
         shape=shape,
         has_rows=has_rows,
         is_insight=is_insight,
+        has_analysis=bool(evidence) or bool((contribution or {}).get("drivers")),
     )
     pills = answer_scope(scope)
     views = evidence_panel(evidence or [], idx if card_idx is None else card_idx,
@@ -403,43 +534,40 @@ def ai_message(
     drivers = contribution_panel(contribution)
     # Between the prose and the actions: the answer states where it came from
     # before it offers you somewhere to take it.
-    drawer = provenance_drawer(provenance)
+    drawer = provenance_drawer(provenance, period=_period_of(scope))
     footer = answer_footer(ctx, content=content)
     panel = feedback_panel(idx)
+    # While the prose is being rewritten it must be ONE editable region, or the
+    # serialiser saves the body and silently drops the headline above it.
+    lead = Lead(body=content) if editing else split_lead(content)
+    head = _lead_block(lead, key_figures(contribution))
     # A card carrying a chart or a table needs the room; a bare paragraph does
     # not, and stretching every answer to full width makes short ones look empty.
     wide = " has-evidence" if (views is not None or drivers is not None) else ""
 
-    if is_insight:
-        return html.Div(
-            [
-                html.Div(
-                    [
-                        html.Span("✨", className="insight-card-badge-icon"),
-                        html.Span(
-                            "Consulting Insight", className="insight-card-badge-text"
-                        ),
-                    ],
-                    className="insight-card-badge",
-                ),
-                pills,
-                _answer_body(content, idx, editing, className="insight-card-body"),
-                views,
-                drivers,
-                drawer,
-                footer,
-                panel,
-            ],
-            className="message insight-card" + wide,
-        )
-
+    card_class = "message insight-card" if is_insight else "message gpt-message"
+    body_class = "insight-card-body" if is_insight else ""
+    card = html.Div(
+        [
+            pills,
+            head,
+            _answer_body(lead.body, idx, editing, className=body_class),
+            views,
+            drivers,
+            drawer,
+            footer,
+            next_question(followup, idx),
+            panel,
+        ],
+        className=card_class + wide,
+    )
     return html.Div(
-        [pills, _answer_body(content, idx, editing), views, drivers, drawer, footer, panel],
-        className="message gpt-message" + wide,
+        [assistant_header(source=source, ts=ts), card],
+        className="turn turn-assistant",
     )
 
 
-def user_message(content: str):
+def user_message(content: str, *, ts: str = "", initial: str = ""):
     """Render a user turn with a hover-reveal copy action.
 
     Mirrors `ai_message`'s native `dcc.Clipboard` copy so the human side of the
@@ -448,10 +576,16 @@ def user_message(content: str):
     """
     return html.Div(
         [
-            html.Span(content, className="user-message-text"),
-            dcc.Clipboard(content=content, title="Copy", className="msg-copy"),
+            html.Div(
+                [
+                    html.Span(content, className="user-message-text"),
+                    dcc.Clipboard(content=content, title="Copy", className="msg-copy"),
+                ],
+                className="message user-message",
+            ),
+            user_footer(initial=initial, ts=ts),
         ],
-        className="message user-message",
+        className="turn turn-user",
     )
 
 
@@ -486,6 +620,24 @@ def command_menu():
     )
 
 
+def _tool_item(item_id: str, icon: str, label: str, hint: str):
+    """One row of the Tools menu: what it is, and what it does for you."""
+    return dbc.DropdownMenuItem(
+        [
+            html.I(className=f"{icon} composer-menu-icon"),
+            html.Span(
+                [
+                    html.Span(label, className="composer-menu-name"),
+                    html.Span(hint, className="composer-menu-hint"),
+                ],
+                className="composer-menu-text",
+            ),
+        ],
+        id=item_id,
+        n_clicks=0,
+    )
+
+
 def chatbot_page(username: str = "", starters: list[str] | None = None):
 
     return html.Div(
@@ -508,198 +660,221 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
             # in chunky ~third-second bursts — the read is in-memory, so the cost
             # of polling more often is negligible.
             dcc.Interval(id="job-poll", interval=120, n_intervals=0, disabled=True),
-            dbc.Container(
+            # Which answer the analysis panel is holding open (None means it
+            # follows the newest), and how the two columns are arranged.
+            dcc.Store(id="analysis-pin", data=None),
+            dcc.Store(id="analysis-view", data={"open": True, "mode": "chat"}),
+            # Below the split breakpoint the two columns cannot both fit, so they
+            # become two views of one workspace. Hidden above it.
+            view_switch(),
+            html.Div(
                 [
-                    dbc.Row(
-                        [
-                            dbc.Col(
-                                [
-                                    # ONE scroll viewport holds the transcript AND
-                                    # the streaming draft. They used to be siblings
-                                    # of the scroller, so a growing draft was laid
-                                    # out over the answer above it and the reader
-                                    # lost the message they were still reading.
-                                    html.Div(
-                                        [
-                                            html.Div(
-                                                id="chat-box",
-                                                className="chat-bot-text-area",
-                                                children=[welcome_hero(username, starters)],
-                                            ),
-                                            # The final answer streams here token by
-                                            # token while the turn runs; poll_job
-                                            # clears it once the committed answer
-                                            # lands in chat-box.
-                                            html.Div(id="live-draft", className="live-draft"),
-                                        ],
-                                        id="chat-viewport",
-                                        className="chat-viewport",
-                                    ),
-                                    dcc.Download(id="download-excel"),
-                                ],
-                                lg=12,
-                                md=12,
-                                xs=12,
-                            )
-                        ],
-                        className="chat-row",
-                    ),
-                    dbc.Row(
-                        [
-                            dbc.Col(
-                                [
-                                    # The scope of an answer is stated ON that
-                                    # answer (see `ai_message`), not above the
-                                    # composer: a bar here sat between the last
-                                    # message and the input, described a turn that
-                                    # had scrolled away, and pushed the question
-                                    # under the status bar as it grew.
-                                    #
-                                    # Live status bar — shown only while a turn is
-                                    # streaming. poll_job updates the stage label +
-                                    # elapsed time; a clientside callback toggles
-                                    # its visibility off is-thinking. The bar keeps
-                                    # a shimmer track so a long turn still reads as
-                                    # progress rather than a frozen pill.
-                                    html.Div(
-                                        [
-                                            html.Span(className="thinking-dot"),
-                                            html.Span(
-                                                "Thinking",
-                                                id="thinking-agent",
-                                                className="thinking-agent",
-                                            ),
-                                            html.Span(
-                                                "",
-                                                id="thinking-elapsed",
-                                                className="thinking-elapsed",
-                                            ),
-                                            html.Span(className="thinking-track"),
-                                        ],
-                                        id="thinking-bar",
-                                        className="thinking-bar",
-                                        style={"display": "none"},
-                                    ),
-                                    command_menu(),
-                                    html.Div(
-                                        [
-                                            # Top row: the (growable) text field with
-                                            # the send/stop buttons aligned to it.
-                                            html.Div(
-                                                [
-                                                    dcc.Textarea(
-                                                        id="user-input",
-                                                        placeholder="Ask anything",
-                                                        className="composer-input",
-                                                        rows=1,
-                                                    ),
-                                                    html.Div(
-                                                        [
-                                                            dbc.Button(
-                                                                html.I(
-                                                                    className="bi bi-arrow-up"
-                                                                ),
-                                                                id="send-btn",
-                                                                n_clicks=0,
-                                                                className="send-btn",
-                                                            ),
-                                                            dbc.Button(
-                                                                html.I(
-                                                                    className="bi bi-stop-fill"
-                                                                ),
-                                                                id="stop-btn",
-                                                                n_clicks=0,
-                                                                className="stop-btn",
-                                                                style={"display": "none"},
-                                                            ),
-                                                        ],
-                                                        className="composer-actions",
-                                                    ),
-                                                ],
-                                                className="composer-input-row",
-                                            ),
-                                            # Bottom toolbar: + actions and cues only;
-                                            # send stays up beside the input.
-                                            html.Div(
-                                                [
-                                                    dbc.DropdownMenu(
-                                                        [
-                                                            dbc.DropdownMenuItem(
-                                                                [
-                                                                    html.I(
-                                                                        className="bi bi-easel2 composer-menu-icon"
-                                                                    ),
-                                                                    "Pitch Builder",
-                                                                ],
-                                                                id="menu-pitch-builder",
-                                                                n_clicks=0,
-                                                            ),
-                                                            dbc.DropdownMenuItem(
-                                                                [
-                                                                    html.I(
-                                                                        className="bi bi-grid-1x2 composer-menu-icon"
-                                                                    ),
-                                                                    "Boardroom Mode",
-                                                                ],
-                                                                id="menu-boardroom-mode",
-                                                                n_clicks=0,
-                                                            ),
-                                                            dbc.DropdownMenuItem(
-                                                                [
-                                                                    html.I(
-                                                                        className="bi bi-people composer-menu-icon"
-                                                                    ),
-                                                                    "Custom Peers",
-                                                                ],
-                                                                id="menu-custom-peers",
-                                                                n_clicks=0,
-                                                            ),
-                                                        ],
-                                                        id="composer-add-menu",
-                                                        label=html.I(
-                                                            className="bi bi-plus-lg"
+                    html.Div(
+                        dbc.Container(
+                            [
+                                dbc.Row(
+                                    [
+                                        dbc.Col(
+                                            [
+                                                # ONE scroll viewport holds the transcript AND
+                                                # the streaming draft. They used to be siblings
+                                                # of the scroller, so a growing draft was laid
+                                                # out over the answer above it and the reader
+                                                # lost the message they were still reading.
+                                                html.Div(
+                                                    [
+                                                        html.Div(
+                                                            id="chat-box",
+                                                            className="chat-bot-text-area",
+                                                            children=[welcome_hero(username, starters)],
                                                         ),
-                                                        direction="up",
-                                                        caret=False,
-                                                        toggleClassName="pitch-trigger-btn",
-                                                        className="composer-add-wrap",
-                                                    ),
-                                                    # Armed-state pill for Boardroom
-                                                    # Mode; next answer is a card.
-                                                    html.Div(
-                                                        id="boardroom-mode-cue",
-                                                        className="boardroom-mode-cue",
-                                                    ),
-                                                    # The peer set is scope the user
-                                                    # can edit, so it belongs with
-                                                    # the other armed-state controls
-                                                    # rather than with the read-only
-                                                    # pills on the answer.
-                                                    html.Div(
-                                                        id="custom-peers-cue",
-                                                        className="custom-peers-cue",
-                                                    ),
-                                                ],
-                                                className="composer-toolbar",
-                                            ),
-                                        ],
-                                        className="composer",
-                                    ),
-                                    html.Div(
-                                        "Virtual Analyst can make mistakes. Verify important figures.",
-                                        className="composer-disclaimer",
-                                    ),
-                                ],
-                                lg=12,
-                                md=12,
-                                xs=12,
-                                className="type-area",
-                            ),
-                        ],
-                        className="input-area",
+                                                        # The final answer streams here token by
+                                                        # token while the turn runs; poll_job
+                                                        # clears it once the committed answer
+                                                        # lands in chat-box.
+                                                        html.Div(id="live-draft", className="live-draft"),
+                                                    ],
+                                                    id="chat-viewport",
+                                                    className="chat-viewport",
+                                                ),
+                                                dcc.Download(id="download-excel"),
+                                            ],
+                                            lg=12,
+                                            md=12,
+                                            xs=12,
+                                        )
+                                    ],
+                                    className="chat-row",
+                                ),
+                                dbc.Row(
+                                    [
+                                        dbc.Col(
+                                            [
+                                                # The scope of an answer is stated ON that
+                                                # answer (see `ai_message`), not above the
+                                                # composer: a bar here sat between the last
+                                                # message and the input, described a turn that
+                                                # had scrolled away, and pushed the question
+                                                # under the status bar as it grew.
+                                                #
+                                                # Live status bar — shown only while a turn is
+                                                # streaming. poll_job updates the stage label +
+                                                # elapsed time; a clientside callback toggles
+                                                # its visibility off is-thinking. The bar keeps
+                                                # a shimmer track so a long turn still reads as
+                                                # progress rather than a frozen pill.
+                                                html.Div(
+                                                    [
+                                                        html.Span(className="thinking-dot"),
+                                                        html.Span(
+                                                            "Thinking",
+                                                            id="thinking-agent",
+                                                            className="thinking-agent",
+                                                        ),
+                                                        html.Span(
+                                                            "",
+                                                            id="thinking-elapsed",
+                                                            className="thinking-elapsed",
+                                                        ),
+                                                        html.Span(className="thinking-track"),
+                                                    ],
+                                                    id="thinking-bar",
+                                                    className="thinking-bar",
+                                                    style={"display": "none"},
+                                                ),
+                                                command_menu(),
+                                                html.Div(
+                                                    [
+                                                        # Top row: the (growable) text field with
+                                                        # the send/stop buttons aligned to it.
+                                                        html.Div(
+                                                            [
+                                                                dcc.Textarea(
+                                                                    id="user-input",
+                                                                    placeholder="Ask anything",
+                                                                    className="composer-input",
+                                                                    rows=1,
+                                                                ),
+                                                                html.Div(
+                                                                    [
+                                                                        dbc.Button(
+                                                                            html.I(
+                                                                                className="bi bi-arrow-up"
+                                                                            ),
+                                                                            id="send-btn",
+                                                                            n_clicks=0,
+                                                                            className="send-btn",
+                                                                        ),
+                                                                        dbc.Button(
+                                                                            html.I(
+                                                                                className="bi bi-stop-fill"
+                                                                            ),
+                                                                            id="stop-btn",
+                                                                            n_clicks=0,
+                                                                            className="stop-btn",
+                                                                            style={"display": "none"},
+                                                                        ),
+                                                                    ],
+                                                                    className="composer-actions",
+                                                                ),
+                                                            ],
+                                                            className="composer-input-row",
+                                                        ),
+                                                        # Bottom toolbar: + actions and cues only;
+                                                        # send stays up beside the input.
+                                                        html.Div(
+                                                            [
+                                                                # Named, not a "+". The plus
+                                                                # reads as "attach a file", so
+                                                                # the three analytical
+                                                                # workflows behind it were
+                                                                # found by accident or not at
+                                                                # all. Each item now says what
+                                                                # it is FOR under its name,
+                                                                # because "Boardroom Mode" is a
+                                                                # label, not an explanation.
+                                                                dbc.DropdownMenu(
+                                                                    [
+                                                                        _tool_item(
+                                                                            "menu-pitch-builder",
+                                                                            "bi bi-easel2",
+                                                                            "Pitch Builder",
+                                                                            "Build a themed one-page report",
+                                                                        ),
+                                                                        _tool_item(
+                                                                            "menu-boardroom-mode",
+                                                                            "bi bi-grid-1x2",
+                                                                            "Boardroom Mode",
+                                                                            "Answer the next question as a dashboard",
+                                                                        ),
+                                                                        _tool_item(
+                                                                            "menu-custom-peers",
+                                                                            "bi bi-people",
+                                                                            "Custom Peers",
+                                                                            "Pick the benchmark set by hand",
+                                                                        ),
+                                                                    ],
+                                                                    id="composer-add-menu",
+                                                                    label=[
+                                                                        html.I(className="bi bi-sliders2"),
+                                                                        html.Span(
+                                                                            "Tools",
+                                                                            className="composer-tool-label",
+                                                                        ),
+                                                                        html.I(
+                                                                            className="bi bi-chevron-up composer-tool-caret"
+                                                                        ),
+                                                                    ],
+                                                                    direction="up",
+                                                                    caret=False,
+                                                                    toggleClassName="composer-tool-btn",
+                                                                    className="composer-add-wrap",
+                                                                ),
+                                                                # Armed-state pill for Boardroom
+                                                                # Mode; next answer is a card.
+                                                                html.Div(
+                                                                    id="boardroom-mode-cue",
+                                                                    className="boardroom-mode-cue",
+                                                                ),
+                                                                # The peer set is scope the user
+                                                                # can edit, so it belongs with
+                                                                # the other armed-state controls
+                                                                # rather than with the read-only
+                                                                # pills on the answer.
+                                                                html.Div(
+                                                                    id="custom-peers-cue",
+                                                                    className="custom-peers-cue",
+                                                                ),
+                                                            ],
+                                                            className="composer-toolbar",
+                                                        ),
+                                                    ],
+                                                    className="composer",
+                                                ),
+                                                html.Div(
+                                                    "Virtual Analyst can make mistakes. Verify important figures.",
+                                                    className="composer-disclaimer",
+                                                ),
+                                            ],
+                                            lg=12,
+                                            md=12,
+                                            xs=12,
+                                            className="type-area",
+                                        ),
+                                    ],
+                                    className="input-area",
+                                ),
+                            ],
+                            fluid=True,
+                        ),
+                        className="chat-column",
                     ),
+                    # The evidence, kept in view while the conversation moves on.
+                    analysis_dock(),
+                    dock_reopen_button(),
                 ],
-                fluid=True,
+                id="chat-workspace",
+                className="chat-workspace show-chat",
             ),
         ],
         className="chatbot-area",
@@ -1759,28 +1934,52 @@ def custom_peers_modal():
 
 
 def custom_peers_cue(custom_peers: dict | None):
-    """The composer pill shown when a custom peer set is active (else nothing)."""
+    """The peer set, stated beside the question it will be answered against.
+
+    This used to appear only once a custom set was pinned, which meant the
+    default — every peer benchmark the app produced, all day — was never stated
+    anywhere. A benchmark whose comparison set is invisible is a number you
+    cannot check, so the control is always here: it says which set is in force
+    and it is the way to change it.
+
+    The ✕ exists only where there is something to clear; "Default" is not a state
+    you can undo.
+    """
     custom_peers = custom_peers or {}
     peers = custom_peers.get("peers") or []
     carrier = custom_peers.get("carrier")
-    if not peers or not carrier:
-        return None
-    flow_label = "GPR" if (custom_peers.get("flow") or "").lower() == "gpr" else "Survey"
+    active = bool(peers and carrier)
+
+    if active:
+        flow_label = (
+            "GPR" if (custom_peers.get("flow") or "").lower() == "gpr" else "Survey"
+        )
+        body = [
+            html.I(className="bi bi-people custom-peers-cue-icon"),
+            html.Span("Peers:", className="custom-peers-cue-key"),
+            html.Span(
+                f"{len(peers)} custom · {carrier}", className="custom-peers-cue-text"
+            ),
+            html.Span(flow_label, className="custom-peers-cue-flow"),
+        ]
+        title = f"{len(peers)} hand-picked peers for {carrier} — click to edit"
+    else:
+        body = [
+            html.I(className="bi bi-people custom-peers-cue-icon"),
+            html.Span("Peers:", className="custom-peers-cue-key"),
+            html.Span("Default", className="custom-peers-cue-text"),
+            html.I(className="bi bi-chevron-up composer-tool-caret"),
+        ]
+        title = "Benchmarking against the standard peer set — click to choose your own"
+
     return html.Div(
         [
             html.Button(
-                [
-                    html.I(className="bi bi-people custom-peers-cue-icon"),
-                    html.Span(
-                        f"{len(peers)} custom peers · {carrier}",
-                        className="custom-peers-cue-text",
-                    ),
-                    html.Span(flow_label, className="custom-peers-cue-flow"),
-                ],
+                body,
                 id="custom-peers-edit",
                 n_clicks=0,
                 className="custom-peers-cue-body",
-                title="Edit custom peers",
+                title=title,
             ),
             html.Button(
                 html.I(className="bi bi-x-lg"),
@@ -1788,9 +1987,11 @@ def custom_peers_cue(custom_peers: dict | None):
                 n_clicks=0,
                 className="custom-peers-cue-clear",
                 title="Clear custom peers",
-            ),
+            )
+            if active
+            else None,
         ],
-        className="custom-peers-cue-pill",
+        className="custom-peers-cue-pill" + ("" if active else " is-default"),
     )
 
 

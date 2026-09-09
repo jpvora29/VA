@@ -1,6 +1,13 @@
-# How the Boardroom prints premium, on screen and on the exported slide.
+# How premium is printed, on screen and on the exported slide.
 #
-# Read by `core.boardroom.money`. The board never converts — this states the
-# currency the premium figures in the warehouse are already reported in.
+# Read by `core.boardroom.money`, and through it by the Boardroom widgets, the
+# exported deck and the "What drove the movement" panel in chat. Nothing here
+# CONVERTS anything — this states the currency the premium figures in the
+# warehouse are already reported in, so the symbol matches the number.
+#
+# USD: the warehouse reports Marsh-placed premium in US dollars, and
+# `document_builder.helpers.number_formatter` has always printed "$". This file
+# said GBP, which is why the same figure could appear with two different symbols
+# depending on which surface you read it on.
 
-currency: "GBP"
+currency: "USD"

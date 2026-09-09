@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from langchain_core.messages import HumanMessage
 
 import core.agents.boardroom as boardroom
+from core.boardroom.money import format_money
 from core.schemas.boardroom import (
     BoardroomCore,
     ComparisonView,
@@ -242,7 +243,11 @@ def test_staged_node_assembles_core_plus_detected_widgets(monkeypatch):
     item = digest["watchlist"]["items"][0]
     assert "priority" not in item
     assert item["premium_exposed_value"] == 4_000_000
-    assert item["premium_exposed"] == "£4.0m", "a number arrives with its display text"
+    # Derived, so it carries whatever `core/boardroom/money.yaml` declares —
+    # asserting a literal symbol makes a currency change look like a bug.
+    assert item["premium_exposed"] == format_money(4_000_000), (
+        "a number arrives with its display text, in the reporting currency"
+    )
 
 
 def test_widget_failure_never_sinks_the_dashboard(monkeypatch):

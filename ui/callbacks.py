@@ -32,11 +32,13 @@ import dash_bootstrap_components as dbc
 from dash.development.base_component import Component
 
 from core.answers import commands as slash_commands
-from core.answers import contribution as answer_contribution
+from core.answers import drivers as answer_drivers
 from core.answers import provenance as answer_provenance
 from core.peers import count_peers, peer_shortfall_note, peers_are_enough
 from core.scope import chips_from_state, chips_to_dicts
 from ui.components.answer_actions import feedback_ack, is_finding
+from ui.components.provenance import dataset_label
+from ui.components.turn import now_stamp
 from ui.components.chatbot import (
     clarify_card,
     clarify_questions_of,
@@ -59,6 +61,10 @@ from ui.boardroom import callbacks as boardroom_callbacks  # noqa: F401  (regist
 # Decision Board package. Importing `decision_callbacks` registers its CRUD +
 # view-router callbacks (side effect). Separate from chat/agent memory by design.
 from ui.decisions import callbacks as decision_callbacks  # noqa: F401  (registers callbacks)
+
+# The analysis panel: which answer it holds, whether it is open, and which column
+# is on screen when the two do not fit side by side.
+from ui import analysis as analysis_callbacks  # noqa: F401  (registers callbacks)
 from ui.shell.layout import app_shell
 from ui.shell.tabs import resolve_tab
 from core.auth import session as auth_session
@@ -1821,6 +1827,10 @@ def _stamp_answer_context(
         "question": question or "",
         "route": state.get("current_route") or "",
         "shape": answer_shape(state.get("routing_context")),
+        # When this answer was written. Recorded here, at commit, because the
+        # renderer runs again on every store change and would otherwise stamp
+        # each answer with the time it was last looked at.
+        "ts": now_stamp(),
         # Provenance is built HERE because the graph state — the queries, their
         # rows — is in hand at commit and gone afterwards. Per answer, because
         # each one is checked against the evidence for its own prose.
@@ -2326,6 +2336,7 @@ def _evidence_after(messages: list[dict[str, Any]], idx: int) -> tuple[list[dict
     Input("boardroom-edit-mode", "data"),
     Input("answer-editing", "data"),
     State("boardroom-active-page", "data"),
+    State("user-store", "data"),
     prevent_initial_call=True,
 )
 def render_chat(
@@ -2334,10 +2345,21 @@ def render_chat(
     edit_mode: bool,
     editing_idx: Any,
     active_pages: dict[str, Any],
+    user: dict[str, Any] | None,
 ) -> list[Any] | NoUpdate:
 
     chat_items: list[Any] = []
     chart_idx = 0  # unique, stable per-chart id for the Chart/Data toggle
+    initial = ((user or {}).get("username") or "")
+    # The single follow-up promoted into the newest answer's card. The rest stay
+    # in the block below it, so the card offers ONE next move rather than a menu.
+    messages_all = (chat_history or {}).get("messages") or []
+    last_answer = max(
+        (i for i, m in enumerate(messages_all) if m.get("type") == "AIMessage"),
+        default=-1,
+    )
+    pending_followups = list((chat_history or {}).get("followups") or [])
+    lead_followup = pending_followups[0] if (pending_followups and not is_thinking) else ""
     absorbed: set = set()  # evidence messages already drawn inside their answer
 
     # Guard on messages presence: chat-store can hold side state (e.g. custom_peers)
@@ -2392,7 +2414,9 @@ def render_chat(
                     chat_items.append(panel)
 
             elif msg["type"] == "HumanMessage":
-                chat_items.append(user_message(msg["content"]))
+                chat_items.append(
+                    user_message(msg["content"], ts=msg.get("ts") or "", initial=initial)
+                )
 
             elif msg["type"] == "AIMessage":
                 content = msg.get("content") or ""
@@ -2439,6 +2463,9 @@ def render_chat(
                         card_idx=msg_idx,
                         pane_ids=pane_ids,
                         editing=(editing_idx == msg_idx),
+                        ts=msg.get("ts") or "",
+                        source=dataset_label(msg.get("provenance")),
+                        followup=lead_followup if msg_idx == last_answer else "",
                     )
                 )
 
@@ -2462,8 +2489,10 @@ def render_chat(
         # The live "Running X agent… · Ns" status renders in the dedicated
         # thinking-bar above the input (updated by poll_job), not inline here.
         if not is_thinking:
-            followups = (chat_history or {}).get("followups") or []
-            block = followup_suggestions(followups)
+            # The first one is already promoted inside the newest card; showing it
+            # twice makes the same suggestion read as two.
+            rest = pending_followups[1:] if lead_followup else pending_followups
+            block = followup_suggestions(rest)
             if block is not None:
                 chat_items.append(block)
 
@@ -2507,6 +2536,7 @@ def update_chat(
             "type": "HumanMessage",
             "content": question,
             "rephrased_content": None,
+            "ts": now_stamp(),
         }
     )
     chat_history["followups"] = []  # drop previous-turn suggestions
@@ -2548,11 +2578,35 @@ def ask_suggested_question(
             "type": "HumanMessage",
             "content": question,
             "rephrased_content": None,
+            "ts": now_stamp(),
         }
     )
     chat_history["followups"] = []  # drop previous-turn suggestions
 
     return chat_history, True, True
+
+
+# 4b-ii. ------------------------ STARTER CHIP CLICK ---------------------------------------
+
+
+@callback(
+    Output("user-input", "value", allow_duplicate=True),
+    Input({"type": "starter-chip", "idx": ALL, "q": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def load_starter_question(_clicks: list[int | None]) -> str | NoUpdate:
+    """Put a starter in the box instead of sending it.
+
+    A starter is an example, and its scope is almost never quite the reader's —
+    they want Zurich in the UK, not in Canada. Sending it on click meant the only
+    way to fix that was to wait for the wrong answer and retype the question.
+    Loading it leaves them one edit from their own, with the cursor already in
+    the right place.
+    """
+    triggered = ctx.triggered_id
+    if not isinstance(triggered, dict) or not (ctx.triggered and ctx.triggered[0]["value"]):
+        return no_update
+    return (triggered.get("q") or "").strip() or no_update
 
 
 # 4c. -------------------------- HITL CLARIFICATION SUBMIT + RESUME ---------------------------------------
@@ -2955,16 +3009,16 @@ def ask_from_answer(
     question = (answer.get("question") or "").strip()
     if action == "drivers":
         # Try the arithmetic first. When the rows behind the answer carry two
-        # periods and a dimension, the decomposition IS the answer — instant,
-        # free, and incapable of disagreeing with the figures above it. Only when
-        # they do not do we spend a turn asking the model.
-        broken_down = answer_contribution.decompose(
+        # periods and a dimension, the analysis IS the answer — instant, free,
+        # and incapable of disagreeing with the figures above it. Only when they
+        # do not do we spend a turn asking the model.
+        analysis = answer_drivers.analyse(
             _rows_for_answer(chat_history, triggered.get("idx"))
         )
-        if broken_down.is_supported:
+        if answer_drivers.is_supported(analysis):
             # Stored ON the answer: it is part of that finding, and appending it
             # as its own message would put it below the evidence card it explains.
-            answer["contribution"] = broken_down.as_dict()
+            answer["contribution"] = analysis
             return chat_history, no_update, no_update, no_update
         question = _driver_followup(question)
     elif not question:

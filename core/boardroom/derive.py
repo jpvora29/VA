@@ -106,14 +106,28 @@ def carrier_total(rows: List[Dict[str, Any]]) -> Optional[float]:
 
 
 def spell_out_money(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Give every numeric amount on a row its display string, where it lacks one."""
+    """Give every numeric amount on a row the display string its VALUE implies.
+
+    Always derived, never merely filled in where missing. The number is the fact;
+    the string is a rendering of it, and the only thing that knows the reporting
+    currency is `core.boardroom.money`. A model-authored "£33.8m" used to survive
+    into the board because a display string was left alone whenever one was
+    present — so a board could print a model's pounds beside a derived figure in
+    the configured currency, on the same row. Two currencies on one board is
+    worse than either currency alone.
+
+    A display string carrying no digits is PROSE, not a rendering — "No current
+    premium" says something the number 0 does not, and rewriting it to "$0" would
+    lose the point of the sentence. Only amounts are re-rendered.
+    """
     row = dict(row)
     for value_key, display_key in _MONEY_FIELDS:
         value = as_number(row.get(value_key))
         if value is None:
             continue
         row[value_key] = value
-        if not str(row.get(display_key) or "").strip():
+        shown = str(row.get(display_key) or "").strip()
+        if not shown or any(character.isdigit() for character in shown):
             row[display_key] = format_money(value)
     return row
 

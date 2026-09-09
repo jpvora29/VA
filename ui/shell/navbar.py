@@ -56,6 +56,17 @@ def build_navbar(active: str, username: str) -> html.Header:
             # A drawn mark, not an <img>: the old navbar pointed at
             # /assets/MarshLogo.png, which is not in the repo and rendered as a
             # broken-image glyph on every page.
+            # Below the drawer breakpoint the rail slides off-screen, taking its
+            # own collapse toggle with it. This is the way back in. It carries the
+            # SAME pattern id as every rail toggle, so it needs no wiring of its
+            # own (see ui.shell.collapse).
+            html.Button(
+                html.I(className="bi bi-list"),
+                id={"type": "va-rail-toggle", "rail": "navbar"},
+                n_clicks=0,
+                className="va-rail-open",
+                title="Show the sidebar",
+            ),
             html.Div(
                 [
                     html.Div("VA", className="va-brand-mark"),

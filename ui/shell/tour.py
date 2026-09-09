@@ -168,7 +168,7 @@ def art_answer():
         _box(20, 14, 280, 150, fill="#ffffff"),
         _box(32, 24, 52, 14, fill=_SURFACE, radius=7),
         _box(88, 24, 62, 14, fill=_SURFACE, radius=7),
-        _text(32, 46, 210, "Property leads at £8.2m,", size=10, weight=700),
+        _text(32, 46, 210, "Property leads at $8.2m,", size=10, weight=700),
         _text(32, 60, 240, "a 19.5% share of wallet.", size=10, weight=700),
         _bar(32, 84, 120, 8),
         _bar(32, 98, 84, 8, fill="#9db4f5"),
@@ -192,11 +192,11 @@ def art_evidence():
         _text(32, 58, 120, "Product line", size=8.5, weight=800, color=_MUTED),
         _text(200, 58, 88, "Premium", size=8.5, weight=800, color=_MUTED),
         _text(32, 76, 120, "Property", size=9),
-        _text(200, 76, 88, "£8.2m", size=9, weight=700),
+        _text(200, 76, 88, "$8.2m", size=9, weight=700),
         _text(32, 94, 120, "Casualty", size=9),
-        _text(200, 94, 88, "£5.1m", size=9, weight=700),
+        _text(200, 94, 88, "$5.1m", size=9, weight=700),
         _text(32, 112, 120, "Cyber", size=9),
-        _text(200, 112, 88, "£1.8m", size=9, weight=700),
+        _text(200, 112, 88, "$1.8m", size=9, weight=700),
         _text(32, 136, 256, "The exact rows the answer was written from.",
               size=9, color=_MUTED),
     )
@@ -208,7 +208,7 @@ def art_verify():
         _box(18, 14, 284, 28, fill=_SURFACE),
         _box(28, 21, 92, 14, fill="#dff3e6", stroke="#bfe6cf", radius=7),
         _text(28, 24, 92, "VERIFIED", size=8, weight=800, color=_GOOD, cls="tour-center"),
-        _text(128, 24, 160, "How this was calculated", size=9, weight=700),
+        _text(128, 24, 160, "Source & calculation", size=9, weight=700),
         _box(18, 48, 284, 116, fill="#ffffff"),
         _text(30, 56, 264, "1  Started with the premium records", size=8.5),
         _text(30, 72, 264, "2  Narrowed it to Canada and 2024", size=8.5),
@@ -216,7 +216,7 @@ def art_verify():
         _text(30, 104, 264, "4  That left 3 product lines to report on",
               size=8.5, weight=800, color=_GOOD),
         _box(30, 124, 264, 28, fill=_SURFACE, radius=6),
-        _text(40, 133, 60, "£8.2m", size=9, weight=800),
+        _text(40, 133, 60, "$8.2m", size=9, weight=800),
         _text(180, 133, 106, "Found in the data", size=8.5, weight=700, color=_GOOD),
     )
 
@@ -225,7 +225,7 @@ def art_edit():
     """Your words, over the model's — and the check runs again."""
     return _svg(
         _box(20, 20, 280, 92, fill="#ffffff"),
-        _text(32, 32, 250, "Property leads at £8.2m, and is the", size=9.5),
+        _text(32, 32, 250, "Property leads at $8.2m, and is the", size=9.5),
         _text(32, 48, 250, "line to protect at renewal.", size=9.5),
         _bar(174, 46, 2, 13, fill=_BLUE, radius=1),
         _box(32, 74, 92, 22, fill=_BLUE, stroke=_BLUE, radius=6),
@@ -242,7 +242,7 @@ def art_edit():
 def art_drivers():
     """Explore drivers: what moved, and what pulled the other way."""
     return _svg(
-        _text(20, 16, 280, "Premium fell £2.7m. What drove it?", size=10, weight=700),
+        _text(20, 16, 280, "Premium fell $2.7m. What drove it?", size=10, weight=700),
         _text(20, 34, 280, "Property fell the most — 115% of the movement.",
               size=9, color=_MUTED),
         _text(20, 62, 68, "Property", size=9),
@@ -430,7 +430,7 @@ STEPS: Tuple[TourStep, ...] = (
     ),
     TourStep(
         "Check any number",
-        "Open “How this was calculated” under any answer. It walks through what we did "
+        "Open “Source & calculation” under any answer. It walks through what we did "
         "to the data, one step at a time, and then lists every figure in the answer with "
         "a verdict beside it.",
         art_verify,
@@ -475,7 +475,8 @@ STEPS: Tuple[TourStep, ...] = (
     ),
     TourStep(
         "Choose your benchmark",
-        "Pin a custom peer set for the conversation from the + menu beside the composer. "
+        "Pin a custom peer set for the conversation from the Tools menu beside the "
+        "composer, which also states which set is in force. "
         "Five is the minimum, because a benchmark of two carriers is close enough to "
         "naming them.",
         art_peers,
@@ -497,7 +498,7 @@ STEPS: Tuple[TourStep, ...] = (
         art_board,
         chapter=DEEPER,
         points=(
-            "Turn it on in the + menu beside the composer, or use “View as board” on an "
+            "Turn it on in the Tools menu beside the composer, or use “View as board” on an "
             "answer you already have.",
             "Drag the widgets to reorder them, and edit any widget in place.",
             "Every widget keeps the evidence behind it, so a board is as checkable as "

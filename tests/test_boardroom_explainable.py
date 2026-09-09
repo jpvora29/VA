@@ -21,6 +21,7 @@ import pytest
 from dash.development.base_component import Component
 
 from core.boardroom import derive, opportunity
+from core.boardroom.money import format_money
 from ui.boardroom import builder, catalog, editor, model, ppt_export, widgets_generated
 from ui.boardroom.render import render_document
 
@@ -303,6 +304,10 @@ def test_watch_items_are_ordered_by_the_premium_they_expose():
 def test_the_board_shows_money_where_the_old_widgets_showed_a_score():
     rendered = render_document(builder.build_document_from_digest(digest(), 0), [])
     shown = text_of(rendered)
+    # `digest()` is a RAW model digest and this render path shows it verbatim,
+    # so these are the fixture's own strings. What normalises a model-authored
+    # symbol is `complete_widget` on the generation path — see
+    # `test_a_model_authored_currency_symbol_is_normalised`.
     assert "£33.8m" in shown  # product-line whitespace
     assert "£18.6m" in shown  # industry whitespace
     assert "No current premium" in shown, "zero premium must read as a fact, not a 100 score"
@@ -515,7 +520,9 @@ def test_a_product_row_gets_the_shares_its_own_premiums_imply():
     assert prop["share_of_wallet_pct"] == 19.5      # 8.2 / 42.0
     assert prop["share_of_portfolio_pct"] == 82.0   # 8.2 / (8.2 + 1.8)
     assert prop["whitespace_premium_value"] == 33_800_000
-    assert prop["carrier_premium"] == "£8.2m", "a number must arrive with its display text"
+    assert prop["carrier_premium"] == format_money(8_200_000), (
+        "a number must arrive with its display text, in the reporting currency"
+    )
 
 
 def test_a_row_with_no_premium_at_all_is_dropped():
@@ -553,7 +560,10 @@ def test_the_board_prints_the_share_of_wallet_the_model_omitted():
     payload["headroom"] = derive.complete_headroom(payload["headroom"])
     shown = text_of(render_document(builder.build_document_from_digest(payload, 0), []))
     assert "19.5%" in shown
-    assert "£33.8m" in shown
+    # A DERIVED amount is printed by `format_money`, so it carries whatever
+    # currency `core/boardroom/money.yaml` declares. Asserting a literal symbol
+    # here would make a reporting-currency change look like a board bug.
+    assert format_money(33_800_000) in shown
 
 
 # ── the product page says each thing once ───────────────────────────────────
@@ -574,7 +584,8 @@ def test_the_map_keeps_the_plot_and_headroom_keeps_the_numbers():
     rendered = render_document(builder.build_document_from_digest(digest(), 0), [])
     shown = text_of(rendered)
     assert "Product portfolio map" in shown and "Product line headroom" in shown
-    # The whitespace money is stated by headroom, not by the map.
+    # The whitespace money is stated by headroom, not by the map. Verbatim from
+    # the raw digest here; normalised on the generation path.
     assert "£33.8m" in shown
 
 
@@ -843,3 +854,51 @@ def test_the_slide_names_the_same_two_axes():
     assert "Avg share of wallet 20.8%" in deck
     assert "Avg share of portfolio 50.0%" in deck
 
+
+
+def test_a_model_authored_currency_symbol_is_normalised():
+    """A board must not print the model's currency beside the configured one.
+
+    The completion layer used to fill a display string only where one was
+    MISSING, so a model that wrote "£33.8m" had it passed straight through — and
+    it could land next to a derived figure in the reporting currency, on the same
+    row. The number is the fact; the string is a rendering of it, and only
+    `core.boardroom.money` knows what currency to render in.
+    """
+    completed = derive.complete_widget(
+        "headroom",
+        {
+            "rows": [
+                {
+                    "product_line": "Property",
+                    "carrier_premium_value": 8_200_000,
+                    "carrier_premium": "£8.2m",
+                    "marsh_premium_value": 42_000_000,
+                    "marsh_premium": "€42.0m",
+                }
+            ]
+        },
+    )
+    row = completed["rows"][0]
+    assert row["carrier_premium"] == format_money(8_200_000)
+    assert row["marsh_premium"] == format_money(42_000_000)
+    assert "£" not in row["carrier_premium"] and "€" not in row["marsh_premium"]
+
+
+def test_a_written_phrase_survives_where_an_amount_does_not():
+    """"No current premium" says something the number 0 does not.
+
+    Re-rendering every display string would turn that sentence into "$0" and
+    lose the point of it, so only strings that carry digits — i.e. renderings of
+    an amount — are replaced.
+    """
+    completed = derive.complete_headroom(
+        {"rows": [{"product_line": "Cyber", "carrier_premium_value": 0.0,
+                   "carrier_premium": "No current premium",
+                   "marsh_premium_value": 6_000_000,
+                   "marsh_premium": "£6.0m"}]},
+        drop_empty=False,
+    )
+    row = completed["rows"][0]
+    assert row["carrier_premium"] == "No current premium"
+    assert row["marsh_premium"] == format_money(6_000_000)

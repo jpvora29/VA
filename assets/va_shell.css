@@ -1144,3 +1144,95 @@ body {
     .tour-copy { padding: 18px 18px 6px; }
     .tour-try-question { display: none; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   The rail as a DRAWER, below the split breakpoint
+   ═════════════════════════════════════════════════════════════════════════
+   At 1024px and under there is not enough width for a 264px column of chat
+   titles AND a readable answer beside it. The old behaviour was to keep both
+   and let the content run off the left edge — the reported defect was a
+   greeting cut in half and a transcript with its first characters missing.
+
+   So under that width the rail stops being a column and becomes a drawer: it
+   floats over the content, the content keeps the whole pane, and the collapse
+   state the whole app already shares (``ui.shell.rail``) is what opens and
+   closes it. Nothing new is stored, and nothing about the wide layout changes.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* The way back in when the rail — and its own toggle — are off-screen. */
+.va-rail-open {
+    display: none;
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    margin-right: 4px;
+    border: none;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    font-size: 16px;
+    cursor: pointer;
+    transition: background var(--va-transition-fast);
+}
+.va-rail-open:hover { background: rgba(255, 255, 255, 0.22); }
+
+/* Somewhere to click that means "put the drawer away". Inert (and invisible)
+   at every width where the rail is a real column. */
+.va-rail-scrim {
+    display: none;
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    border: none;
+    padding: 0;
+    background: rgba(11, 19, 32, 0.34);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--va-transition-med);
+}
+
+@media (max-width: 1024px) {
+    .va-rail-open { display: inline-flex; align-items: center; justify-content: center; }
+
+    .va-rail {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 45;
+        box-shadow: var(--va-shadow-lg);
+        transform: translateX(0);
+        transition: transform var(--va-transition-med);
+    }
+
+    /* Studio is a grid, so its rail is a track rather than a flex child: the
+       track has to collapse to nothing or the drawer leaves a gap behind it.
+       Both states are named because the collapsed rule above is written at the
+       same specificity and would otherwise keep the icon column. */
+    .va-body .qs-root,
+    .va-rails-collapsed .qs-root { grid-template-columns: 0 minmax(0, 1fr); }
+
+    .va-rail-scrim { display: block; }
+    .va-body:not(.va-rails-collapsed) .va-rail-scrim {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    /* Collapsed, at this width, means GONE — an icon column here would eat the
+       same width the drawer exists to give back. */
+    .va-rails-collapsed .va-rail {
+        transform: translateX(-100%);
+        box-shadow: none;
+    }
+
+    /* …and open means open: the drawer shows its full labelled width whatever
+       the app-wide collapse state says the column would have been. */
+    .va-body:not(.va-rails-collapsed) .va-rail {
+        flex-basis: var(--va-rail-w);
+        width: var(--va-rail-w);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .va-rail-scrim { transition: none; }
+}

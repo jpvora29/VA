@@ -25,7 +25,7 @@ index, so `ui.callbacks` can wire them without this module importing state.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 import dash_bootstrap_components as dbc
 from dash import dcc, html
@@ -47,6 +47,8 @@ class AnswerContext:
     shape: str = ""
     has_rows: bool = False
     is_insight: bool = False
+    #: Whether this answer produced evidence the analysis panel can hold open.
+    has_analysis: bool = False
 
 
 @dataclass(frozen=True)
@@ -127,18 +129,72 @@ ACTIONS: Tuple[AnswerAction, ...] = (
 )
 
 
+#: The next step worth promoting to a filled button when it applies. A row of
+#: four equal-weight buttons asks the reader to choose; one primary and the rest
+#: quiet tells them what this answer is actually FOR — and raising a finding as a
+#: decision is the step that turns an answer into work.
+PROMOTED = "decision"
+
+
 def actions_for(ctx: AnswerContext) -> List[AnswerAction]:
     """The actions that actually apply to this answer, in display order."""
     return [action for action in ACTIONS if action.applies(ctx)]
 
 
-def _action_button(action: AnswerAction, idx: int):
+def promoted_action(actions: Sequence[AnswerAction]) -> Optional[AnswerAction]:
+    """The one action to lead with, or ``None`` when there is nothing to promote.
+
+    Exactly one, and only from the actions that already applied — promoting a
+    step this answer cannot take would be worse than promoting nothing.
+    """
+    if not actions:
+        return None
+    return next((a for a in actions if a.key == PROMOTED), actions[0])
+
+
+def _action_button(action: AnswerAction, idx: int, *, primary: bool = False):
     return html.Button(
         [html.I(className=f"{action.icon} answer-action-icon"), html.Span(action.label)],
         id={"type": "answer-action", "idx": idx, "action": action.key},
         n_clicks=0,
-        className="answer-action-btn",
+        className="answer-action-btn" + (" is-primary" if primary else ""),
         title=action.title,
+    )
+
+
+def _pin_button(idx: int):
+    """Hold this answer's evidence open in the analysis panel."""
+    return html.Button(
+        html.I(className="bi bi-pin-angle"),
+        id={"type": "answer-pin", "idx": idx},
+        n_clicks=0,
+        className="answer-pin-btn",
+        title="Keep this analysis in the panel while you follow up",
+    )
+
+
+def next_question(question: str, idx: int = 0):
+    """The single follow-up worth offering under an answer.
+
+    One, not a row: the point is to name the obvious next move, and four
+    equally-plausible questions is a menu the reader has to read rather than a
+    suggestion they can take. The rest stay in the follow-up block below.
+    """
+    text = (question or "").strip()
+    if not text:
+        return None
+    return html.Div(
+        [
+            html.Span("Suggested next question", className="answer-next-label"),
+            html.Button(
+                [html.I(className="bi bi-chat-square-text"), html.Span(text)],
+                id={"type": "suggestion-chip", "idx": idx, "q": text},
+                n_clicks=0,
+                className="answer-next-chip",
+                title=text,
+            ),
+        ],
+        className="answer-next",
     )
 
 
@@ -229,14 +285,19 @@ def answer_footer(ctx: AnswerContext, *, content: str):
     native browser action with no callback behind it.
     """
     actions = actions_for(ctx)
+    lead = promoted_action(actions)
     return html.Div(
         [
             html.Div(
-                [_action_button(action, ctx.idx) for action in actions],
+                [
+                    _action_button(action, ctx.idx, primary=(action is lead))
+                    for action in sorted(actions, key=lambda a: a is not lead)
+                ],
                 className="answer-actions",
             ),
             html.Div(
                 [
+                    _pin_button(ctx.idx) if ctx.has_analysis else None,
                     dcc.Clipboard(
                         content=content, title="Copy", className="answer-copy"
                     ),

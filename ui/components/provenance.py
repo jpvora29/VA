@@ -46,7 +46,7 @@ from core.answers.provenance import (
     UNVERIFIED,
     checked_figures,
 )
-from core.answers.steps import Calculation, describe_all
+from core.answers.steps import UNNAMED_SOURCE, Calculation, describe_all
 
 # A long answer can state twenty figures; past this many the receipt becomes the
 # wall it was meant to replace.
@@ -280,8 +280,42 @@ def _terms_section(terms: List[Dict[str, Any]]):
     )
 
 
-def provenance_drawer(prov: Dict[str, Any] | None):
-    """The whole panel, or ``None`` when the turn recorded nothing to show."""
+def dataset_label(prov: Dict[str, Any] | None, period: str = "") -> str:
+    """The data this answer read, named in business words — "Premium · Q2 2026".
+
+    Taken from the first calculation's own title rather than from a table name,
+    because the title is already the humanised source (:mod:`core.answers.steps`)
+    and the reader should never meet a schema object.
+    """
+    calculations = describe_all((prov or {}).get("queries") or [])
+    source = calculations[0].title if calculations else ""
+    # "The data · Q2 2026" tells the reader nothing they did not already know.
+    # When the query recorded no lens, the period alone is the honest chip.
+    if source == UNNAMED_SOURCE:
+        source = ""
+    parts = [p for p in (source, (period or "").strip()) if p]
+    return " · ".join(parts)
+
+
+def _dataset_chip(label: str):
+    """The source, stated on the closed drawer so it costs no click to read."""
+    if not label:
+        return None
+    return html.Span(
+        [html.I(className="bi bi-database"), html.Span(label)],
+        className="prov-dataset",
+        title=f"This answer was built from {label}",
+    )
+
+
+def provenance_drawer(prov: Dict[str, Any] | None, *, period: str = ""):
+    """The whole panel, or ``None`` when the turn recorded nothing to show.
+
+    ``period`` is the timeframe the answer ran under, taken from its own scope.
+    It rides on the dataset chip because "which data" and "over what window" are
+    one question, and answering half of it on the closed drawer is what sends the
+    reader hunting for the other half.
+    """
     if not prov:
         return None
     sections = [
@@ -297,10 +331,10 @@ def provenance_drawer(prov: Dict[str, Any] | None):
         [
             html.Summary(
                 [
+                    html.I(className="bi bi-chevron-right prov-chevron"),
+                    html.Span("Source & calculation", className="prov-summary-text"),
                     verification_badge(str(prov.get("state") or UNVERIFIED)),
-                    html.Span("How this was calculated", className="prov-summary-text"),
-                    html.Span("step by step", className="prov-summary-hint"),
-                    html.I(className="bi bi-chevron-down prov-chevron"),
+                    _dataset_chip(dataset_label(prov, period)),
                 ],
                 className="prov-summary",
             ),

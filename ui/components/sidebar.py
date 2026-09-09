@@ -8,6 +8,7 @@ The rail is the shared ``va-rail`` frame (``ui.shell.rail``); collapsing is app-
 and owned by ``ui.shell.collapse``, so nothing here knows the rail's width."""
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any
 
 from dash import html
@@ -107,16 +108,52 @@ def _local_inputs() -> list[Any]:
     ]
 
 
+def _when(updated_at: Any) -> str:
+    """When a chat was last touched, in the words a person would use.
+
+    "Today" and "Yesterday" are what the reader is actually scanning for in a
+    list ordered by recency; anything older is a date, because "6 days ago"
+    makes them do the arithmetic the date already did.
+    """
+    text = str(updated_at or "").strip()
+    if not text:
+        return ""
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    stamp = f"{moment.day} {moment.strftime('%b')} {moment.year}"
+    days = (date.today() - moment.date()).days
+    if days == 0:
+        return f"Today, {stamp}"
+    if days == 1:
+        return f"Yesterday, {stamp}"
+    return stamp
+
+
 def _conversation_item(conv: dict[str, Any], active_id: str | None) -> html.Div:
-    """A single sidebar row: open button + hover delete."""
+    """A single sidebar row: title over when it was last touched, plus a delete.
+
+    The date is not decoration. Every row in this list is a sentence fragment the
+    user wrote themselves, and two of them ("Premium growth review", "Premium
+    review") are told apart by when they happened far more often than by their
+    titles.
+    """
     conv_id = conv["id"]
     is_active = conv_id == active_id
+    when = _when(conv.get("updated_at"))
     return html.Div(
         [
             html.Button(
                 [
                     html.I(className="bi bi-chat-left-text conv-item-icon"),
-                    html.Span(conv["title"], className="conv-item-title"),
+                    html.Span(
+                        [
+                            html.Span(conv["title"], className="conv-item-title"),
+                            html.Span(when, className="conv-item-when") if when else None,
+                        ],
+                        className="conv-item-text",
+                    ),
                 ],
                 id={"type": "conv-item", "id": conv_id},
                 n_clicks=0,

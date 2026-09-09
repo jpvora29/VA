@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Sequence, Tuple
 
 from core.answers import lenses
+from core.answers.language import join_words as _join, plural
 
 # The clauses worth describing. Anything else in the query is machinery.
 _SELECT = re.compile(r"(?is)\bselect\b(?P<body>.*?)\bfrom\b")
@@ -137,6 +138,12 @@ def source_of(table: str, lens: str) -> str:
     return f"the {named} data" if named else "the data"
 
 
+#: What ``title_of`` falls back to when the query recorded no lens. Named,
+#: because a caller that wants to SHOW the source needs to tell "premium data"
+#: from "we could not say" — and "The data" is not worth a chip.
+UNNAMED_SOURCE = "The data"
+
+
 def title_of(lens: str) -> str:
     """The heading for one block of steps.
 
@@ -144,25 +151,7 @@ def title_of(lens: str) -> str:
     this source twice on one card and it must not have two names.
     """
     label = lenses.label_of(lens) or humanise(lens).capitalize()
-    return f"{label} data" if label else "The data"
-
-
-def _join(parts: Sequence[str]) -> str:
-    """A list as a person writes it — "a, b and c"."""
-    items = [p for p in parts if p]
-    if len(items) <= 1:
-        return items[0] if items else ""
-    return f"{', '.join(items[:-1])} and {items[-1]}"
-
-
-def _plural(noun: str) -> str:
-    """Enough pluralisation for the nouns a GROUP BY produces."""
-    word = noun.strip()
-    if not word or word.endswith("s"):
-        return word
-    if word.endswith("y") and word[-2:-1] not in "aeiou":
-        return word[:-1] + "ies"
-    return word + "s"
+    return f"{label} data" if label else UNNAMED_SOURCE
 
 
 def _values_in(raw: str) -> List[str]:
@@ -274,9 +263,9 @@ def _outcome(row_count: int, cuts: Sequence[str]) -> str:
         return ""
     if cuts:
         if len(cuts) > 1:
-            noun = "combinations" if row_count != 1 else "combination"
+            noun = plural("combination", row_count)
         else:
-            noun = _plural(cuts[0]) if row_count != 1 else cuts[0]
+            noun = plural(cuts[0], row_count)
         return f"That left {row_count:,} {noun} to report on"
     if row_count == 1:
         return "That gave us a single total"

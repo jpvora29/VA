@@ -989,6 +989,7 @@
 
 .contrib-delta { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
 .contrib-delta.up { color: var(--va-good); }
+.contrib-delta.flat { color: var(--va-ink-300); }
 .contrib-delta.down { color: var(--va-danger); }
 .contrib-share {
     text-align: right;
@@ -1010,6 +1011,195 @@
     font-size: 11px;
     color: var(--va-ink-400);
     line-height: 1.5;
+}
+
+
+/* ── the lead, one look per shape ─────────────────────────────────────────
+   The panel drew the same ranked bars whatever it was given, so the fourth
+   visit looked exactly like the first and people stopped opening it. The bars
+   below are unchanged — they are the checkable evidence, and swapping them per
+   shape would stop two answers being comparable. What changes is the picture
+   ABOVE them, which states what kind of movement this is. */
+.contrib-lead { margin: 2px 0 14px; }
+
+/* concentrated: these few against everything else, as one split bar. */
+.conc-bar {
+    display: flex;
+    height: 16px;
+    border-radius: var(--va-radius-sm);
+    overflow: hidden;
+    background: var(--va-surface-2);
+}
+.conc-seg { height: 100%; }
+.conc-seg.lead { background: var(--va-blue); }
+/* Up to three leaders, each a step lighter, so they read as an ordered
+   group rather than one indistinguishable block. */
+.conc-seg.lead:nth-child(2) { background: #6f92f7; }
+.conc-seg.lead:nth-child(3) { background: #a9bff9; }
+.conc-seg.rest { background: var(--va-border-mid); }
+
+.conc-keys {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-top: 7px;
+    font-size: 11.5px;
+    font-weight: 700;
+}
+.conc-key { display: inline-flex; align-items: center; gap: 6px; }
+.conc-key::before {
+    content: "";
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    background: currentColor;
+}
+.conc-key.lead { color: var(--va-blue); }
+.conc-key.rest { color: var(--va-ink-300); }
+
+/* offsetting: the two real numbers either side of the small one they made. */
+.gains-losses {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+}
+.gl-card {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 10px 12px;
+    border-radius: var(--va-radius-md);
+    border: 1px solid var(--va-border-soft);
+    background: var(--va-surface-1);
+}
+.gl-card.down { border-color: rgba(197, 53, 50, 0.28); background: rgba(197, 53, 50, 0.06); }
+.gl-card.up { border-color: rgba(31, 157, 85, 0.28); background: rgba(31, 157, 85, 0.06); }
+.gl-card.net { border-color: var(--va-border-mid); }
+.gl-label {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--va-ink-400);
+}
+.gl-value { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.gl-value.down { color: var(--va-danger); }
+.gl-value.up { color: var(--va-good); }
+.gl-value.net { color: var(--va-ink-700); }
+
+/* broad: the spread IS the finding, so every slice gets a cell. */
+.spread-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+.spread-cell {
+    flex: 1 1 82px;
+    min-width: 0;
+    padding: 7px 8px;
+    border-radius: var(--va-radius-sm);
+    color: #ffffff;
+}
+.spread-cell.down { background: #c53532; }
+.spread-cell.up { background: var(--va-good); }
+.spread-cell.flat { background: var(--va-ink-300); }
+.spread-name {
+    display: block;
+    font-size: 10.5px;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.spread-key { margin-top: 7px; font-size: 11px; color: var(--va-ink-300); }
+
+/* single: one slice is the story, so it is stated rather than ranked. */
+.single-headline {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+}
+.single-name { font-size: 15px; font-weight: 800; color: var(--va-navy); }
+.single-delta { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.single-delta.up { color: var(--va-good); }
+.single-delta.down { color: var(--va-danger); }
+.single-track {
+    height: 10px;
+    margin-top: 7px;
+    border-radius: var(--va-radius-sm);
+    background: var(--va-surface-2);
+    overflow: hidden;
+}
+.single-fill { height: 100%; }
+.single-fill.up { background: var(--va-good); }
+.single-fill.down { background: #c53532; }
+.single-key { margin-top: 5px; font-size: 11.5px; color: var(--va-ink-400); }
+
+/* The rows the lead sentence NAMED, so the words and the evidence point at the
+   same slices instead of leaving the reader to match them up. */
+.contrib-row.is-lead .contrib-name-text { color: var(--va-navy); font-weight: 800; }
+
+/* ── what changed unexpectedly ────────────────────────────────────────────
+   The ranking above answers "what moved most", which the biggest part of the
+   book wins every quarter. This answers the other question — measured against
+   each slice's own history — and it is the half worth coming back for. */
+.contrib-odd {
+    margin-top: 14px;
+    padding: 11px 13px;
+    border-radius: var(--va-radius-md);
+    border: 1px solid rgba(185, 129, 10, 0.26);
+    background: rgba(185, 129, 10, 0.07);
+}
+
+.odd-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 8px;
+    color: var(--va-warn);
+}
+.odd-title {
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+}
+
+.odd-rows { display: flex; flex-direction: column; gap: 7px; }
+
+.odd-row {
+    display: grid;
+    grid-template-columns: auto minmax(60px, auto) auto 1fr;
+    align-items: baseline;
+    gap: 9px;
+    font-size: 12.5px;
+    color: var(--va-ink-600);
+}
+.odd-row .bi { color: var(--va-warn); font-size: 12px; }
+.odd-name { font-weight: 800; color: var(--va-navy); }
+.odd-delta { font-weight: 700; font-variant-numeric: tabular-nums; }
+.odd-delta.up { color: var(--va-good); }
+.odd-delta.down { color: var(--va-danger); }
+.odd-reason { color: var(--va-ink-500); }
+
+/* A slice the lead sentence already named is still worth flagging, but it is
+   not news in the same way — it sits quieter than the one you had not met. */
+.odd-row.told { opacity: 0.72; }
+
+.odd-foot {
+    margin-top: 9px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(185, 129, 10, 0.22);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--va-ink-400);
+}
+
+@media (max-width: 640px) {
+    .gains-losses { grid-template-columns: 1fr; }
+    .odd-row { grid-template-columns: auto 1fr; }
+    .odd-reason { grid-column: 1 / -1; }
 }
 
 @media (max-width: 640px) {
@@ -1358,3 +1548,818 @@
     font-size: 13px;
 }
 .answer-edit-toggle:hover { color: var(--va-blue); background: var(--va-surface-1); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PRISM — the conversation surface
+   ═════════════════════════════════════════════════════════════════════════
+   One reading order, stated once here so every part below has a reason:
+
+       who answered, on what data, when
+       the finding, large
+       the numbers it turns on
+       the prose
+       the evidence
+       where it came from
+       the one thing to do next
+
+   Everything in this layer either sets that order or gets out of its way.
+   ────────────────────────────────────────────────────────────────────────── */
+
+
+/* ── The two columns ──────────────────────────────────────────────────────
+   Conversation on the left, evidence on the right. The right column is a
+   PANEL, not a second transcript: it holds one answer's charts open while the
+   conversation moves past them, which is the whole reason it exists. */
+
+.chat-workspace {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    align-items: stretch;
+}
+
+.chat-column {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.analysis-dock {
+    flex: 0 0 clamp(360px, 30vw, 460px);
+    width: clamp(360px, 30vw, 460px);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--va-surface-0);
+    border-left: 1px solid var(--va-border-soft);
+    transition: flex-basis var(--va-transition-med), width var(--va-transition-med);
+}
+
+/* Collapsed by the reader, or empty because there is nothing to hold open yet.
+   Both are the same geometry: no width, no border, nothing to look past. */
+.chat-workspace.dock-hidden .analysis-dock,
+.analysis-dock.is-empty {
+    flex-basis: 0;
+    width: 0;
+    border-left: none;
+    overflow: hidden;
+}
+
+.dock-head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 13px 16px 11px;
+    border-bottom: 1px solid var(--va-border-soft);
+}
+
+.dock-title-icon { color: var(--va-blue); font-size: 13px; }
+
+.dock-title {
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: -0.005em;
+    color: var(--va-navy);
+}
+
+.dock-collapse {
+    margin-left: auto;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--va-ink-400);
+    cursor: pointer;
+    transition: background var(--va-transition-fast), color var(--va-transition-fast);
+}
+.dock-collapse:hover { background: var(--va-surface-1); color: var(--va-navy); }
+
+.dock-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 14px 16px 24px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--va-border-mid) transparent;
+}
+
+.dock-target-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+/* The question the panel is answering. Two lines at most: it is a label for the
+   charts below it, not a restatement of the conversation. */
+.dock-question {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 13.5px;
+    font-weight: 700;
+    line-height: 1.4;
+    color: var(--va-navy);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Whether the panel is following the conversation or held on one answer. The
+   difference matters: a reader who pinned an answer and forgot needs the panel
+   to say so before they read an old chart as the newest one. */
+.dock-pin {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: var(--va-radius-pill);
+    background: var(--va-surface-1);
+    color: var(--va-ink-400);
+    font-size: 11px;
+    font-weight: 700;
+}
+.dock-pin .bi { font-size: 10px; }
+
+button.dock-pin { cursor: pointer; }
+button.dock-pin.is-pinned {
+    background: var(--va-blue-soft);
+    border-color: rgba(11, 75, 255, 0.24);
+    color: var(--va-blue);
+}
+button.dock-pin.is-pinned:hover { background: #e2ebff; }
+
+/* Inside the panel the evidence IS the content, so it drops the card chrome it
+   wears in the transcript. */
+.dock-body .ev-panel,
+.dock-body .contrib-panel {
+    margin: 0 0 14px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    max-width: none;
+}
+
+.dock-body .scope-bar { margin-bottom: 12px; }
+
+.dock-empty {
+    padding: 40px 18px;
+    text-align: center;
+    color: var(--va-ink-400);
+}
+.dock-empty-icon { font-size: 26px; color: var(--va-border-mid); }
+.dock-empty-title {
+    margin-top: 10px;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--va-ink-600);
+}
+.dock-empty-note { margin-top: 5px; font-size: 12px; line-height: 1.5; }
+
+/* The way back to a hidden panel: a tab on the edge, not a menu item.
+
+   It floats over the conversation, so the column gives up exactly its width
+   while it is showing. The first version did not, and the tab sat on top of the
+   first question in the transcript — which is precisely the sort of overlap the
+   laid-out composer exists to avoid. */
+.dock-reopen {
+    display: none;
+    position: absolute;
+    top: 50%;
+    right: 0;
+    transform: translateY(-50%);
+    z-index: 3;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 42px;
+    padding: 0;
+    border: 1px solid var(--va-border-soft);
+    border-right: none;
+    border-radius: var(--va-radius-sm) 0 0 var(--va-radius-sm);
+    background: var(--va-surface-0);
+    color: var(--va-ink-500);
+    font-size: 14px;
+    cursor: pointer;
+    box-shadow: var(--va-shadow-sm);
+    transition: color var(--va-transition-fast), border-color var(--va-transition-fast);
+}
+.dock-reopen:hover { color: var(--va-blue); border-color: var(--va-blue); }
+.dock-reopen-label { display: none; }
+.chat-workspace.dock-hidden .dock-reopen { display: inline-flex; }
+.chat-workspace.dock-hidden .chat-column { padding-right: 34px; }
+
+
+/* ── Conversation / Analysis, for screens that fit one at a time ───────── */
+
+.chat-view-switch-band {
+    display: none;
+    flex: 0 0 auto;
+    gap: 4px;
+    padding: 8px clamp(12px, 4vw, 48px) 0;
+}
+
+.chat-view-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: var(--va-radius-pill);
+    background: var(--va-surface-0);
+    color: var(--va-ink-500);
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: color var(--va-transition-fast), background var(--va-transition-fast),
+        border-color var(--va-transition-fast);
+}
+.chat-view-tab .bi { font-size: 12px; }
+.chat-view-tab:hover { color: var(--va-navy); }
+.chat-view-tab.active {
+    background: var(--va-blue-soft);
+    border-color: rgba(11, 75, 255, 0.26);
+    color: var(--va-blue);
+}
+
+
+/* ── Who is speaking, and when ───────────────────────────────────────────── */
+
+.turn { display: flex; flex-direction: column; }
+.turn-assistant { align-items: stretch; }
+.turn-user { align-items: flex-end; }
+
+.turn-header {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin: 2px 0 8px;
+}
+
+.turn-avatar {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    color: #ffffff;
+}
+
+.turn-avatar-va { background: var(--va-grad-cta); }
+.turn-avatar-you {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--va-navy);
+    font-size: 11px;
+}
+
+.turn-name {
+    font-size: 13px;
+    font-weight: 800;
+    color: var(--va-navy);
+}
+
+/* What the answer was built from, named at the top of the turn and again, in
+   full, on the answer's own source line. */
+.turn-source {
+    padding-left: 10px;
+    border-left: 1px solid var(--va-border-mid);
+    color: var(--va-ink-400);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.turn-stamp {
+    margin-left: auto;
+    color: var(--va-ink-300);
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+}
+
+.turn-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 5px 2px 0;
+}
+.turn-footer .turn-stamp { margin-left: 0; }
+
+
+/* ── The answer card ─────────────────────────────────────────────────────── */
+
+.turn-assistant .gpt-message,
+.turn-assistant .insight-card {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 26px 28px 18px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: var(--va-radius-lg);
+    background: var(--va-surface-0);
+    box-shadow: var(--va-shadow-sm);
+}
+
+.turn-user .user-message {
+    margin: 0;
+    padding: 11px 16px;
+    background: var(--va-blue-soft);
+    color: var(--va-ink-900);
+    border: 1px solid rgba(11, 75, 255, 0.14);
+    box-shadow: none;
+}
+
+/* The finding, set as the finding. Everything above it is chrome and everything
+   below it is support, so this is the one thing on the card allowed to be big. */
+.answer-lead { margin: 4px 0 18px; }
+
+.answer-headline {
+    margin: 0;
+    font-size: clamp(21px, 2.3vw, 30px);
+    font-weight: 800;
+    line-height: 1.18;
+    letter-spacing: -0.022em;
+    color: var(--va-navy);
+    text-wrap: balance;
+}
+
+.answer-standfirst {
+    margin: 9px 0 0;
+    font-size: 14.5px;
+    line-height: 1.55;
+    color: var(--va-ink-500);
+}
+
+/* The one or two numbers the finding turns on, read off the same totals the
+   drivers panel prints, so the headline and the evidence cannot disagree. */
+.answer-figures {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 26px;
+    margin-top: 20px;
+}
+
+.answer-figure + .answer-figure {
+    padding-left: 26px;
+    border-left: 1px solid var(--va-border-soft);
+}
+
+.answer-figure-value {
+    font-size: clamp(26px, 3vw, 38px);
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -0.03em;
+    color: var(--va-blue);
+    font-variant-numeric: tabular-nums;
+}
+
+.answer-figure-label {
+    margin-top: 5px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--va-ink-400);
+}
+
+/* With a headline above it, the prose is support: its own first paragraph stops
+   competing for the lead. */
+.answer-lead + div .insight-card-body > p:first-of-type,
+.answer-lead + div > div > p:first-of-type {
+    font-size: 14.5px;
+    font-weight: 500;
+    color: var(--va-ink-600);
+}
+
+
+/* ── Scope, as the chips the concept reads them as ───────────────────────── */
+
+.turn-assistant .answer-scope {
+    margin: 0 0 18px;
+    padding: 0;
+    border: none;
+}
+
+.turn-assistant .answer-scope .scope-bar { gap: 7px; }
+
+.turn-assistant .answer-scope .scope-pill {
+    padding: 6px 13px;
+    border: 1px solid var(--va-border-mid);
+    border-radius: var(--va-radius-pill);
+    background: var(--va-surface-0);
+    box-shadow: var(--va-shadow-sm);
+}
+.turn-assistant .answer-scope .scope-pill + .scope-pill {
+    border-left: 1px solid var(--va-border-mid);
+}
+.turn-assistant .answer-scope .scope-pill-label { display: none; }
+.turn-assistant .answer-scope .scope-pill-value {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--va-ink-700);
+}
+.turn-assistant .answer-scope .scope-pill-icon { color: var(--va-ink-400); }
+
+
+/* ── Source & calculation ────────────────────────────────────────────────── */
+
+.prov-drawer {
+    margin-top: 18px;
+    border: none;
+    border-top: 1px solid var(--va-border-soft);
+    border-radius: 0;
+    background: transparent;
+}
+
+.prov-summary {
+    gap: 9px;
+    padding: 14px 0 6px;
+    background: transparent;
+}
+.prov-summary:hover { background: transparent; }
+.prov-summary:hover .prov-summary-text { color: var(--va-blue); }
+
+.prov-summary-text { font-size: 13px; font-weight: 700; color: var(--va-ink-600); }
+
+.prov-chevron {
+    margin-left: 0;
+    font-size: 11px;
+    color: var(--va-ink-400);
+    transition: transform var(--va-transition-fast);
+}
+.prov-drawer[open] .prov-chevron { transform: rotate(90deg); }
+
+/* The dataset, stated on the CLOSED drawer. "Which data, over what window" is
+   the question a reader asks before trusting a number, and answering it should
+   not cost a click. */
+.prov-dataset {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 11px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: var(--va-radius-pill);
+    background: var(--va-surface-1);
+    color: var(--va-ink-500);
+    font-size: 11.5px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.prov-dataset .bi { font-size: 11px; color: var(--va-ink-400); }
+
+.prov-body { border-top: 1px solid var(--va-border-soft); }
+
+
+/* ── One promoted action, the rest quiet ─────────────────────────────────── */
+
+.answer-footer {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--va-border-soft);
+    opacity: 1;
+}
+
+.answer-actions { gap: 8px; }
+
+.answer-action-btn {
+    padding: 9px 14px;
+    border: 1px solid var(--va-border-mid);
+    border-radius: var(--va-radius-sm);
+    background: var(--va-surface-0);
+    color: var(--va-ink-600);
+    font-size: 13px;
+    font-weight: 700;
+}
+.answer-action-btn:hover {
+    background: var(--va-surface-0);
+    border-color: var(--va-blue);
+    color: var(--va-blue);
+}
+
+/* The one next step this answer is FOR. Four equal buttons ask the reader to
+   choose; one filled button tells them. */
+.answer-action-btn.is-primary {
+    border-color: transparent;
+    background: var(--va-blue);
+    color: #ffffff;
+    box-shadow: 0 6px 16px rgba(11, 75, 255, 0.22);
+}
+.answer-action-btn.is-primary:hover {
+    background: var(--va-navy);
+    color: #ffffff;
+    border-color: transparent;
+}
+
+.answer-pin-btn {
+    padding: 4px 6px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--va-ink-400);
+    font-size: 13px;
+    cursor: pointer;
+    transition: color var(--va-transition-fast), background var(--va-transition-fast);
+}
+.answer-pin-btn:hover { color: var(--va-blue); background: var(--va-surface-1); }
+
+/* The single obvious continuation. One, because four plausible questions is a
+   menu to read rather than a suggestion to take. */
+.answer-next {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+}
+
+.answer-next-label {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--va-ink-400);
+}
+
+.answer-next-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 100%;
+    padding: 9px 16px;
+    border: 1px solid rgba(11, 75, 255, 0.2);
+    border-radius: var(--va-radius-pill);
+    background: var(--va-blue-soft);
+    color: var(--va-blue);
+    font-size: 13px;
+    font-weight: 700;
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--va-transition-fast), transform var(--va-transition-fast);
+}
+.answer-next-chip:hover { background: #e2ebff; transform: translateY(-1px); }
+.answer-next-chip .bi { font-size: 12px; opacity: 0.8; }
+
+
+/* ── The composer: one line, with its controls named ─────────────────────── */
+
+.composer {
+    flex-direction: row;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 8px 8px 8px 12px;
+    border-width: 1.5px;
+    border-radius: 28px;
+}
+
+.composer-toolbar {
+    flex: 0 0 auto;
+    order: -1;
+    padding-bottom: 5px;
+    flex-wrap: wrap;
+}
+
+.composer-input-row { flex: 1 1 auto; min-width: 0; }
+.composer-input, .composer textarea { min-height: 44px; }
+
+/* Named, not a plus. A plus reads as "attach a file", which is why three
+   analytical workflows sat behind it undiscovered. */
+.composer-tool-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 36px;
+    padding: 0 13px;
+    border: 1px solid var(--va-border-mid);
+    border-radius: var(--va-radius-pill);
+    background: var(--va-surface-0);
+    color: var(--va-ink-600);
+    font-size: 12.5px;
+    font-weight: 700;
+    box-shadow: none;
+}
+.composer-tool-btn:hover,
+.composer-tool-btn:focus,
+.composer-add-wrap.show .composer-tool-btn {
+    background: var(--va-blue-soft);
+    border-color: rgba(11, 75, 255, 0.28);
+    color: var(--va-blue);
+}
+.composer-tool-btn .bi { font-size: 13px; }
+.composer-tool-caret { font-size: 10px; opacity: 0.7; }
+
+.composer-menu-text { display: flex; flex-direction: column; gap: 1px; }
+.composer-menu-name { font-size: 13px; font-weight: 700; color: var(--va-ink-800); }
+.composer-menu-hint { font-size: 11.5px; color: var(--va-ink-400); }
+.composer-add-wrap .dropdown-item { align-items: flex-start; }
+
+/* The peer set is scope, and scope you cannot see is a number you cannot check,
+   so it is stated whether or not it has been changed. */
+.custom-peers-cue-pill {
+    display: inline-flex;
+    align-items: center;
+    height: 36px;
+}
+
+.custom-peers-cue-body {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 36px;
+    padding: 0 13px;
+    border: 1px solid var(--va-border-mid);
+    border-radius: var(--va-radius-pill);
+    background: var(--va-surface-0);
+    color: var(--va-ink-600);
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background var(--va-transition-fast), border-color var(--va-transition-fast),
+        color var(--va-transition-fast);
+}
+.custom-peers-cue-body:hover {
+    background: var(--va-blue-soft);
+    border-color: rgba(11, 75, 255, 0.28);
+    color: var(--va-blue);
+}
+.custom-peers-cue-key { color: var(--va-ink-400); font-weight: 600; }
+.custom-peers-cue-pill.is-default .custom-peers-cue-body { color: var(--va-ink-500); }
+
+.send-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    font-size: 16px;
+}
+
+.composer-disclaimer { text-align: center; }
+
+
+/* ── The empty state, made small ─────────────────────────────────────────── */
+
+.welcome-hero { padding: 20px 4px 4px; max-width: 780px; }
+.welcome-head { align-items: flex-start; text-align: left; width: 100%; }
+
+.welcome-title {
+    margin-bottom: 6px;
+    font-size: clamp(20px, 2.2vw, 27px);
+    font-weight: 800;
+    letter-spacing: -0.022em;
+}
+
+.welcome-subtitle {
+    max-width: 60ch;
+    margin-bottom: 20px;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.welcome-suggest-label { margin-bottom: 10px; letter-spacing: 0.08em; }
+
+/* An outcome over the question it sends. The reader is choosing a job, not a
+   sentence, but the question stays visible: a starter that hides what it will
+   ask is a starter you cannot trust. */
+.starter-chip {
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+    width: 100%;
+    padding: 13px 15px;
+    border: 1px solid var(--va-border-mid);
+    border-radius: var(--va-radius-md);
+    background: var(--va-surface-0);
+    text-align: left;
+    cursor: pointer;
+    box-shadow: var(--va-shadow-sm);
+    transition: border-color var(--va-transition-fast), box-shadow var(--va-transition-fast),
+        transform var(--va-transition-fast);
+}
+.starter-chip:hover {
+    border-color: rgba(11, 75, 255, 0.4);
+    box-shadow: var(--va-shadow-md);
+    transform: translateY(-1px);
+}
+.starter-chip:focus-visible { outline: none; box-shadow: var(--va-focus-ring); }
+
+.starter-chip-icon { color: var(--va-blue); font-size: 15px; margin-top: 1px; }
+.starter-chip-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.starter-chip-outcome { font-size: 13.5px; font-weight: 700; color: var(--va-navy); }
+.starter-chip-question {
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--va-ink-400);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+
+/* ── The chat list: a title, and when it happened ────────────────────────── */
+
+.conv-item-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.conv-item-when { font-size: 11px; color: var(--va-ink-300); font-weight: 600; }
+.conv-item-active .conv-item-when { color: var(--va-ink-400); }
+
+
+/* ── Widths ──────────────────────────────────────────────────────────────
+   Checked at 1440, 1280, 1024, 768 and 390. The panel narrows first, then the
+   split becomes a switch (both columns stay mounted, so nothing is lost in the
+   swap), then the composer stacks. */
+
+@media (max-width: 1240px) {
+    .analysis-dock { flex-basis: 340px; width: 340px; }
+}
+
+@media (max-width: 1024px) {
+    .chat-view-switch-band { display: flex; }
+
+    .chat-workspace .analysis-dock,
+    .chat-workspace .chat-column { flex-basis: auto; width: auto; }
+
+    .chat-workspace.show-chat .analysis-dock { display: none; }
+
+    /* Looking at the analysis is not a reason to stop being able to ask about
+       it — the chart is usually what prompts the next question. So the Analysis
+       view stacks: the panel takes the room the transcript had, and the composer
+       stays exactly where it was, at the foot of the screen. */
+    .chat-workspace.show-analysis { flex-direction: column; }
+    .chat-workspace.show-analysis .chat-column { flex: 0 0 auto; }
+    .chat-workspace.show-analysis .chat-row { display: none; }
+
+    /* Deliberately switched to, so it shows even with nothing in it — a blank
+       column would be a worse answer than the empty state is. */
+    .chat-workspace.show-analysis .analysis-dock {
+        order: -1;
+        flex: 1 1 auto;
+        width: auto;
+        min-height: 0;
+        border-left: none;
+        border-bottom: 1px solid var(--va-border-soft);
+        overflow: auto;
+    }
+
+    /* With one column at a time there is nothing to collapse away from. */
+    .dock-collapse,
+    .dock-reopen { display: none !important; }
+
+    .turn-assistant .gpt-message,
+    .turn-assistant .insight-card { padding: 20px 18px 14px; }
+}
+
+@media (max-width: 720px) {
+    .composer { flex-direction: column; align-items: stretch; padding: 10px 12px 8px; }
+    .composer-toolbar { order: 1; padding-bottom: 0; }
+    .composer-input-row { order: 0; }
+    .answer-next { justify-content: flex-start; }
+    .answer-figures { gap: 16px; }
+    .answer-figure + .answer-figure { padding-left: 16px; }
+    .turn-source { display: none; }
+}
+
+@media (max-width: 560px) {
+    /* The divider between two key figures is a divider only while they are on
+       one line. Wrapped, it becomes a rule hanging off the left of the second
+       one, which reads as a quote mark. */
+    .answer-figures { gap: 12px 20px; }
+    .answer-figure + .answer-figure { padding-left: 0; border-left: none; }
+
+    /* Tools and the peer set are one row that scrolls, not two stacked rows —
+       stacked, they push the composer to a third of the screen. */
+    .composer-toolbar {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+    .composer-toolbar::-webkit-scrollbar { display: none; }
+    .composer-tool-btn,
+    .custom-peers-cue-body { height: 32px; padding: 0 10px; font-size: 12px; }
+
+    /* Two lines of placeholder need two lines of box, or the guidance is cut in
+       half and the field looks broken before it has been typed in. */
+    .composer-input, .composer textarea { min-height: 54px; }
+
+    .turn-assistant .gpt-message,
+    .turn-assistant .insight-card { padding: 16px 14px 12px; }
+    .answer-action-btn { padding: 8px 11px; font-size: 12.5px; }
+    .dock-body { padding: 12px 12px 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .analysis-dock,
+    .starter-chip,
+    .answer-next-chip { transition: none; }
+    .starter-chip:hover,
+    .answer-next-chip:hover { transform: none; }
+}

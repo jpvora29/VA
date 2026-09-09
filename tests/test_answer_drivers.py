@@ -289,9 +289,12 @@ def test_the_answer_its_evidence_and_its_drivers_are_one_card():
 
     history = transcript()
     history["messages"][1]["contribution"] = decompose(TWO_PERIODS).as_dict()
-    items = render_chat(history, False, False, None, {})
+    items = render_chat(history, False, False, None, {}, {"username": "jash"})
     assert len(items) == 2, "the user turn and ONE answer card"
-    card = items[-1]
+    # A turn is its attribution line plus its card; the card is what has to hold
+    # the evidence, so it is the card that is checked and not the wrapper.
+    turn = items[-1]
+    card = turn.children[-1]
     rendered = classes(card)
     assert "has-evidence" in card.className
     assert any("ev-panel" in c for c in rendered)

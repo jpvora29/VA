@@ -61,6 +61,7 @@ class Contribution:
 
     measure: str = ""
     dimension: str = ""
+    period_column: str = ""
     prior_period: str = ""
     current_period: str = ""
     drivers: List[Driver] = field(default_factory=list)
@@ -130,6 +131,7 @@ class Contribution:
             "dimension_label": self.dimension_label,
             "measure": self.measure,
             "dimension": self.dimension,
+            "period_column": self.period_column,
             "prior_period": self.prior_period,
             "current_period": self.current_period,
             "prior_total": self.prior_total,
@@ -220,9 +222,19 @@ def find_dimension_column(
     return best
 
 
+def order_periods(values: Sequence[str]) -> List[str]:
+    """Period labels oldest first, so "Q1 2026" comes before "Q2 2026".
+
+    Length before value, because a shorter label sorts as an earlier one for the
+    formats this data uses ("2024" before "2024 Q1"), and a plain lexical sort
+    would put "Q10" before "Q2".
+    """
+    return sorted(values, key=lambda v: (len(v), v))
+
+
 def _ordered_periods(values: Sequence[str]) -> Tuple[str, str]:
-    """(prior, current) — sorted so "Q1 2026" comes before "Q2 2026"."""
-    ordered = sorted(values, key=lambda v: (len(v), v))
+    """(prior, current) — the last two, oldest first."""
+    ordered = order_periods(values)
     return ordered[-2], ordered[-1]
 
 
@@ -278,6 +290,7 @@ def decompose(rows: Sequence[Mapping[str, Any]]) -> Contribution:
     return Contribution(
         measure=measure,
         dimension=dimension,
+        period_column=period,
         prior_period=prior,
         current_period=current,
         drivers=drivers,
