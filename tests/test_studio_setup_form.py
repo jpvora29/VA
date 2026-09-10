@@ -1180,3 +1180,31 @@ def test_the_form_carries_a_token_that_changes_with_each_rendering():
     from studio.page.authoring.setup import form_token
 
     assert form_token().data != form_token().data
+
+
+def test_data_source_asks_its_questions_on_the_same_grid_as_audience_and_voice():
+    """Two sections asking the same kind of question must space them the same way.
+
+    Under the old flex row the two source questions sized to their own labels, so
+    the second one started wherever the first one's pills ended and lined up with
+    nothing on the card above it.
+    """
+    from pathlib import Path
+
+    css = Path("assets/studio_authoring_v4.css").read_text(encoding="utf-8")
+    source = css.split(".qs-root .qs-source-field {", 1)[1].split("}", 1)[0]
+    options = css.split(".qs-root .qs-options-grid {", 1)[1].split("}", 1)[0]
+    assert "display: grid" in source
+    assert "repeat(2, minmax(0, 1fr))" in source
+    # One declared rhythm, read by both — not two numbers that happen to match.
+    assert "--qs-field-gap-y" in source and "--qs-field-gap-x" in source
+    assert "--qs-field-gap-y" in options and "--qs-field-gap-x" in options
+    assert "--qs-field-gap-y: 18px" in css and "--qs-field-gap-x: 26px" in css
+
+
+def test_the_source_status_line_runs_under_both_questions():
+    from pathlib import Path
+
+    css = Path("assets/studio_authoring_v4.css").read_text(encoding="utf-8")
+    block = css.split(".qs-root .qs-source-field .qs-source-status {", 1)[1].split("}", 1)[0]
+    assert "grid-column: 1 / -1" in block

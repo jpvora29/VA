@@ -386,20 +386,6 @@ body {
     font-size: 14px;
 }
 
-.qs-mode-rail .qs-step-num {
-    top: -5px;
-    right: -5px;
-    background: var(--va-surface-0);
-    color: var(--va-ink-400);
-    box-shadow: inset 0 0 0 1px var(--va-border-mid);
-}
-
-.qs-mode-rail .qs-mode-btn.active .qs-step-num {
-    background: var(--va-navy);
-    color: #fff;
-    box-shadow: none;
-}
-
 .qs-mode-rail .qs-mode-text {
     display: flex;
     flex-direction: column;
@@ -541,8 +527,7 @@ body {
     justify-content: center;
 }
 
-/* The TILE is what grows to the 42px icon footprint when a rail collapses — it
-   used to be the numeral, which is now a small badge sitting on the tile. */
+/* The TILE is what grows to the 42px icon footprint when a rail collapses. */
 .va-rails-collapsed .qs-mode-rail .qs-mode-tile,
 .va-rails-collapsed .va-rail-step-tile {
     width: 42px;
@@ -557,12 +542,11 @@ body {
     font-size: 18px;
 }
 
-/* The step numeral sits OUTSIDE its tile (top/right -5px). At the 2px row gap the
-   stepper uses when expanded, each badge landed on the tile above it — so the
-   collapsed column opens the gap well clear of the badge on both sides, and drops
-   from under the toggle rather than butting straight up against it. */
+/* Collapsed, the list is a column of 42px tiles with no label between them, so it
+   needs a row gap the expanded list does not — and it drops from under the toggle
+   rather than butting straight up against it. */
 .va-rails-collapsed .qs-mode-rail .qs-mode-list {
-    gap: 18px;
+    gap: 10px;
     padding-top: 14px;
 }
 

@@ -31,6 +31,13 @@
     --v4-pop: 0 0 0 1px var(--v4-hair), 0 16px 40px -12px rgba(10, 22, 54, 0.28);
     --v4-focus: 0 0 0 3px rgba(11, 75, 255, 0.18);
 
+    /* The gap between two questions asked side by side. Declared once because
+       every section of the setup form is judged against its neighbour: AUDIENCE
+       & VOICE and DATA SOURCE ask the same kind of question, so if they space
+       their answers differently the second one reads as the broken one. */
+    --qs-field-gap-y: 18px;
+    --qs-field-gap-x: 26px;
+
     background:
         radial-gradient(1200px 460px at 82% -220px, rgba(11, 75, 255, 0.055), transparent 62%),
         var(--v4-canvas);
@@ -317,21 +324,40 @@
 .qs-root .studio-report-radio .dash-options-list-option-text { font: inherit; color: inherit; }
 
 /* The two source/basis choices are one decision — "what is this deck built from?" — so
-   they sit side by side instead of as two stacked full-width bars with a gap between. */
+   they sit side by side rather than as two stacked full-width bars.
+
+   On the SAME grid as AUDIENCE & VOICE above it (`.qs-options-grid`), not a flex row
+   of content-width children. Both sections ask two questions of the same kind, and
+   under `flex: 0 1 auto` these two sized to their own labels — so the second question
+   started wherever the first one's pills happened to end, its column edge lined up
+   with nothing on the card above, and the block read as a different, sloppier control
+   than its neighbour. Two equal columns give both sections one vertical rhythm; the
+   grid gap replaces the ad-hoc 36px so the two cards also breathe alike. */
 .qs-root .qs-source-field {
-    display: flex; flex-direction: row; flex-wrap: wrap;
-    align-items: flex-start; gap: 16px 36px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--qs-field-gap-y, 18px) var(--qs-field-gap-x, 26px);
+    align-items: start;
 }
 .qs-root .qs-source-field > .studio-field,
-.qs-root .qs-source-field .qs-basis-field { flex: 0 1 auto; }
-.qs-root .qs-source-field .qs-source-status { flex-basis: 100%; order: 3; }
+.qs-root .qs-source-field .qs-basis-field { min-width: 0; }
+/* The status line is about BOTH answers, so it runs the full width under them. */
+.qs-root .qs-source-field .qs-source-status { grid-column: 1 / -1; order: 3; margin-top: 2px; }
 /* Its separator rule belonged to the stacked layout; side by side it drew a hairline
    floating above DATA BASIS and attached to nothing. */
 .qs-root .qs-source-field .qs-basis-field {
     order: 2; border-top: none; padding-top: 0;
 }
 
-.qs-root .qs-options-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 18px 26px; }
+.qs-root .qs-options-grid {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--qs-field-gap-y, 18px) var(--qs-field-gap-x, 26px);
+}
+
+/* One question per column at the width where two columns of pills start to clip. */
+@media (max-width: 900px) {
+    .qs-root .qs-source-field { grid-template-columns: minmax(0, 1fr); }
+}
 
 /* checkbox: a real one, not the bootstrap default */
 .qs-root .studio-check .form-check-input {

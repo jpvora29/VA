@@ -16,18 +16,18 @@ from studio.page.authoring.derive import deck_counts
 def mode_rail(active: str, counts: Mapping[str, int]) -> html.Aside:
     """Studio's left rail, in the shared ``va-rail`` frame (``ui.shell.rail``).
 
-    The modes ARE a sequence (Setup -> Data -> Canvas -> Review), so they render as a
-    numbered stepper: tile, step numeral, label. The brand block that used to head this
-    rail is gone — the merged application names itself once, in the navbar.
+    Four places to work, listed in the order you usually reach them: tile, label,
+    hint. They are NOT numbered. A numeral on each one claimed a sequence that
+    Studio does not enforce — an author re-runs Setup after seeing the Canvas, and
+    jumps to Review without opening Data at all — so the badges promised a wizard
+    and delivered a menu, and cost four lines of chrome to say what the order of
+    the list already says. The brand block that used to head this rail is gone
+    too: the merged application names itself once, in the navbar.
     """
     items = [
         html.Button(
             [
-                html.Span(
-                    [html.I(className=f"bi {m['icon']}"),
-                     html.Span(str(i), className="qs-step-num")],
-                    className="qs-mode-tile",
-                ),
+                html.Span(html.I(className=f"bi {m['icon']}"), className="qs-mode-tile"),
                 html.Span(
                     [
                         html.Span(m["label"], className="qs-mode-label"),
@@ -40,7 +40,7 @@ def mode_rail(active: str, counts: Mapping[str, int]) -> html.Aside:
             className="qs-mode-btn" + (" active" if m["id"] == active else ""),
             title=m["hint"],
         )
-        for i, m in enumerate(MODES, 1)
+        for m in MODES
     ]
     return rail_frame(
         "Studio",

@@ -208,22 +208,28 @@ def test_collapsing_moves_studios_grid_track_not_just_its_rail():
     assert "--va-rail-w-collapsed" in rule.group(1)
 
 
-def test_the_collapsed_stepper_clears_its_step_numerals():
-    """Studio's step numeral is positioned OUTSIDE its tile, so the collapsed column
-    needs a row gap wider than that overhang or the badges sit on the tile above."""
+def test_studios_modes_are_a_list_of_places_not_a_numbered_wizard():
+    """Studio does not enforce Setup -> Data -> Canvas -> Review: authors re-open
+    Setup from the Canvas and go to Review without touching Data. A numeral on each
+    mode promised a sequence the app does not have."""
     import re
 
+    from studio.page.authoring.chrome import mode_rail
+
+    rail = str(mode_rail("setup", {"total": 0}))
+    assert "qs-step-num" not in rail
+    assert "Setup" in rail and "Review" in rail  # the labels still carry the order
+
     css = pathlib.Path("assets/va_shell.css").read_text(encoding="utf-8")
-    overhang = int(
-        re.search(r"\.qs-mode-rail \.qs-step-num \{[^}]*top:\s*-(\d+)px", css).group(1)
-    )
+    assert ".qs-step-num" not in css
+    # The collapsed column still opens a gap: 42px tiles with no label between them.
     gap = int(
         re.search(
             r"\.va-rails-collapsed \.qs-mode-rail \.qs-mode-list \{[^}]*gap:\s*(\d+)px",
             css,
         ).group(1)
     )
-    assert gap >= overhang * 2, f"{gap}px gap does not clear a {overhang}px badge each side"
+    assert gap >= 8
 
 
 def test_a_placeholder_workspace_renders_without_a_backend():
