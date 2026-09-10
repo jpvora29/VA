@@ -1,0 +1,486 @@
+{
+  "terms": [
+    {
+      "term": "Premium",
+      "aliases": [
+        "gwp",
+        "gross written premium",
+        "written premium"
+      ],
+      "definition": "Gross written premium placed with Marsh by this carrier in the selected scope. It is Marsh-placed business only — never the carrier's whole book, and never the open market. | Formula: SUM(Premium) over the selected filters | How to phrase it: Say \"wrote $X with Marsh\" or \"$X of Marsh-placed premium\". The qualifier is not optional: without it the sentence claims the carrier's entire book. | Never say: Never present it as the carrier's total premium, its market premium, or its revenue.",
+      "category": "metric",
+      "unit": "currency",
+      "notes": "Source: terms.yaml (key: premium)"
+    },
+    {
+      "term": "The Marsh book",
+      "aliases": [
+        "marsh pool",
+        "the pool",
+        "wider marsh book",
+        "the book with marsh"
+      ],
+      "definition": "Total premium Marsh placed in the same scope across ALL carriers. It is the closest market proxy available here, and it is a proxy — it is Marsh's flow, not the market. | Formula: SUM(Premium) over the same filters with the carrier pin removed | How to phrase it: Say \"the wider Marsh book\" or \"the Marsh book\". Use it as the denominator a carrier's movement is judged against. | Never say: Never call it \"the market\", \"total market premium\", or \"industry premium\".",
+      "category": "metric",
+      "unit": "currency",
+      "notes": "Source: terms.yaml (key: marsh_book)"
+    },
+    {
+      "term": "Share of wallet",
+      "aliases": [
+        "sow",
+        "wallet share",
+        "share of the wallet"
+      ],
+      "definition": "The share of the Marsh book in this scope that this carrier writes. It measures how relevant the carrier is to Marsh's placement in that scope — not how large it is in the market. | Formula: carrier premium / Marsh book premium in the same scope, as a percent | How to phrase it: Say \"holds X% of the wallet\" or \"X% share of wallet\". Movement is in percentage points. | Never say: Never call it market share, penetration of the market, or the carrier's share of the industry.",
+      "category": "metric",
+      "unit": "percent",
+      "notes": "Source: terms.yaml (key: share_of_wallet)"
+    },
+    {
+      "term": "Share of portfolio",
+      "aliases": [
+        "portfolio share",
+        "mix",
+        "book mix",
+        "share of the book"
+      ],
+      "definition": "A line's share of THIS carrier's own Marsh-placed book — an internal mix measure. Share of wallet looks outward at Marsh's placement; share of portfolio looks inward at how the carrier's own premium is distributed. | Formula: line premium / this carrier's total premium in scope, as a percent | How to phrase it: Say \"X% of the carrier's book sits in Property\". Use it for concentration and mix, not for competitive standing. | Never say: Never mix it with share of wallet in the same clause; they have different denominators and a reader cannot tell them apart from the number alone.",
+      "category": "metric",
+      "unit": "percent",
+      "notes": "Source: terms.yaml (key: share_of_portfolio)"
+    },
+    {
+      "term": "Rank",
+      "aliases": [
+        "position",
+        "standing",
+        "league position"
+      ],
+      "definition": "The carrier's position by premium WITHIN THE MARSH BOOK for this scope, among the carriers Marsh placed business with there. A position in Marsh's flow, not in the market. | Formula: dense rank of carrier premium among carriers in the same scope | How to phrase it: Say \"ranks #5 of 12 in the Marsh book\". Always carry the field size — \"#5\" alone is meaningless, and \"#5 of 12\" and \"#5 of 200\" are different findings. | Never say: Never write \"market rank\", \"#5 in the market\", \"market leader\", or \"top-five carrier\" without the Marsh-book qualifier.",
+      "category": "metric",
+      "unit": "rank",
+      "notes": "Source: terms.yaml (key: rank)"
+    },
+    {
+      "term": "Peer average",
+      "aliases": [
+        "peer benchmark",
+        "peer set average",
+        "top-5 peer average"
+      ],
+      "definition": "The mean of each peer carrier's total premium (or share) in the same scope, taken over the peer group resolved from the Peers table for this carrier and country. | Formula: AVG(SUM(Premium) per peer carrier) over the same filters | How to phrase it: Say \"against a top-5 peer average of X%\". Peers are discussed only as a set. | Never say: Never name an individual peer, quote one peer's premium, share, rank or score, or say anything that identifies which carriers are in the set.",
+      "category": "metric",
+      "unit": "currency",
+      "notes": "Source: terms.yaml (key: peer_average)"
+    },
+    {
+      "term": "Headroom",
+      "aliases": [
+        "placed elsewhere",
+        "unplaced premium",
+        "the rest of the book"
+      ],
+      "definition": "Premium in the Marsh book for this scope that is placed with OTHER carriers. It is OBSERVED business — someone already writes it — not business this carrier could win. | Formula: Marsh book premium in scope minus this carrier's premium in scope | How to phrase it: Say \"$X of the Marsh book is placed with other carriers\". State it as observation. | Never say: Never call it addressable market, opportunity, winnable premium, or potential — all four assert appetite, capacity or access that premium data cannot show.",
+      "category": "metric",
+      "unit": "currency",
+      "notes": "Source: terms.yaml (key: headroom)"
+    },
+    {
+      "term": "Whitespace",
+      "aliases": [
+        "gaps",
+        "openings",
+        "unwritten segments"
+      ],
+      "definition": "Segments where the Marsh book has meaningful premium and this carrier writes little or none. An observation about where the carrier is absent, nothing more. | Formula: segments ranked by Marsh book premium where carrier premium is zero or thin | How to phrase it: Say \"the carrier writes nothing in X, where Marsh placed $Y\". Name the segment and the Marsh figure. | Never say: Never qualify it as addressable or as an opportunity the carrier can take without appetite, capacity or validation evidence to cite alongside it.",
+      "category": "metric",
+      "unit": "currency",
+      "notes": "Source: terms.yaml (key: whitespace)"
+    },
+    {
+      "term": "Reporting year",
+      "aliases": [
+        "reporting year",
+        "the year",
+        "current year",
+        "prior year"
+      ],
+      "definition": "The year the figures on this page cover, and the year they are compared with. Every premium, share and rank in the commentary belongs to one of the two. | Formula: the latest year in the selected scope, and the year before it | How to phrase it: Say \"in 2025\" or \"up 57.1% on the year\". Date the figure once so the reader knows which book is being described. | Never say: Never present a year the warehouse has only loaded part of as a full one, and never compare a part year against a complete one without saying which months each covers.",
+      "category": "metric",
+      "unit": null,
+      "notes": "Source: terms.yaml (key: reporting_year)"
+    },
+    {
+      "term": "Placed average",
+      "aliases": [
+        "placed average",
+        "its own average",
+        "house average",
+        "average where it writes"
+      ],
+      "definition": "The carrier's share of wallet measured ONLY across the segments it actually writes, excluding the ones it is absent from. The benchmark for asking whether a segment is written thinly, because it is the standard the carrier has already shown it can reach. | Formula: carrier premium in segments where it writes, divided by Marsh premium in those same segments | How to phrase it: Say \"the book holds 9.6% there against the 12.9% it averages where it writes\". Name both numbers; the gap alone says nothing. | Never say: Never present it as the carrier's share of wallet for the scope, and never compare the two as though they measured the same thing. They differ by exactly the business the carrier does not write, which is a finding of its own, not a discrepancy.",
+      "category": "metric",
+      "unit": "percent",
+      "notes": "Source: terms.yaml (key: placed_average)"
+    },
+    {
+      "term": "Concentration",
+      "aliases": [
+        "book concentration",
+        "lead share",
+        "top-three share"
+      ],
+      "definition": "How much of the carrier's Marsh-placed book sits in its largest few segments or lines. A description of shape, computed from premium alone. | Formula: the largest slice's share of the book, and the top three slices' share together | How to phrase it: Say \"the top two lines carry 61% of everything written\". State the shape and let the reader draw the conclusion. | Never say: Never call a concentrated book risky, fragile or exposed without naming what would have to happen for it to hurt, and never read diversification appetite from it. The figure shows where premium sits, not whether that is a problem.",
+      "category": "metric",
+      "unit": "percent",
+      "notes": "Source: terms.yaml (key: concentration)"
+    },
+    {
+      "term": "Appetite",
+      "aliases": [
+        "risk appetite",
+        "underwriting appetite",
+        "willingness to write"
+      ],
+      "definition": "A carrier's stated willingness to underwrite a class of risk — its underwriting strategy, capacity and authority. It is NOT derivable from premium data. | How to phrase it: Only discuss appetite when the source is something the carrier or the account team said. Otherwise write about what the carrier DID write, which is what the data shows. | Never say: Never infer appetite from premium. Writing nothing in a class may mean no appetite, no access, no capacity, or no submission flow — the premium figure cannot tell them apart.",
+      "category": "metric",
+      "unit": null,
+      "notes": "Source: terms.yaml (key: appetite)"
+    },
+    {
+      "term": "Capture rate",
+      "aliases": [
+        "capture gap",
+        "share of growth",
+        "take rate"
+      ],
+      "definition": "The share of the Marsh book's GROWTH in a segment that this carrier took. The capture gap is where the Marsh book grew hardest and the carrier took least of it. | Formula: carrier premium movement / Marsh book premium movement in the same segment | How to phrase it: Say \"Marsh premium in Cyber grew $X while the carrier took $Y of it\". It is the lever behind a flat share on a growing book. | Never say: Never present it as a win rate or a hit ratio — those are submission-level measures this data does not hold.",
+      "category": "metric",
+      "unit": "percent",
+      "notes": "Source: terms.yaml (key: capture_rate)"
+    },
+    {
+      "term": "Renewal book",
+      "aliases": [
+        "renewals",
+        "the renewal",
+        "expiring book"
+      ],
+      "definition": "Premium already on risk that comes up for renewal in the coming period — what the carrier has to defend rather than win. | How to phrase it: Use it when the point is defence: \"the renewal book in Cyber is what to protect first\". | Never say: Never state a renewal or retention FIGURE — the premium data here has no new-versus- renewal split, so any retention percentage would be invented.",
+      "category": "metric",
+      "unit": "currency",
+      "notes": "Source: terms.yaml (key: renewal_book)"
+    },
+    {
+      "term": "Placement",
+      "aliases": [
+        "placed",
+        "placing"
+      ],
+      "definition": "The act of Marsh putting a client's risk with a carrier. Every premium figure in this product is placement premium. | How to phrase it: Use it to keep the frame honest: the deck describes what Marsh placed, not what the carrier sold. | Never say: Never use it interchangeably with the carrier's own production or distribution.",
+      "category": "metric",
+      "unit": null,
+      "notes": "Source: terms.yaml (key: placement)"
+    },
+    {
+      "term": "Year on year",
+      "aliases": [
+        "yoy",
+        "year-over-year",
+        "annual movement"
+      ],
+      "definition": "The movement between the reporting year and the one before it, on the same filters. | Formula: (current - prior) / prior, as a percent | How to phrase it: Say \"grew 12.4% year on year\". Put the direction in the verb, never in a plus or minus sign glued to the number. | Never say: Never compare a part year against a full year without saying so.",
+      "category": "metric",
+      "unit": "percent",
+      "notes": "Source: terms.yaml (key: yoy)"
+    },
+    {
+      "term": "Percentage point",
+      "aliases": [
+        "pp",
+        "ppt",
+        "points of share",
+        "basis points"
+      ],
+      "definition": "The unit of movement for anything already measured in percent. Share of wallet moving from 7.8% to 9.1% moved 1.3 percentage points — it did not move 1.3 percent. | Formula: current percent minus prior percent | How to phrase it: Write it out: \"1.3 percentage points\", or \"1.3 points of share\" where the sentence has already established that share is the subject. | Never say: Never abbreviate it to \"pp\" or \"ppt\" in carrier-facing prose, and never write it as a percent — \"share rose 1.3%\" is a different and wrong claim.",
+      "category": "metric",
+      "unit": "percentage_points",
+      "notes": "Source: terms.yaml (key: percentage_point)"
+    },
+    {
+      "term": "Survey score",
+      "aliases": [
+        "broker score",
+        "perception score",
+        "service score"
+      ],
+      "definition": "A 1-9 score from the Carrier Survey, in which brokers rate carriers on service attributes. A SEPARATE book from premium, with its own carrier vocabulary and its own peer groups. | Formula: AVG(Score) over the survey book for the scope | How to phrase it: Keep it visibly separate from premium: a carrier can be growing premium and slipping on service, and that tension is usually the most useful thing on the page. | Never say: Never blend a survey score with a premium figure in one claim, and never carry a premium-side peer group onto a survey ranking — the two books name carriers differently.",
+      "category": "metric",
+      "unit": "score",
+      "notes": "Source: terms.yaml (key: survey_score)"
+    },
+    {
+      "term": "NPS",
+      "aliases": [
+        "net promoter score"
+      ],
+      "definition": "Net Promoter Score from the survey book, on a 0-10 likelihood-to-recommend scale. Promoters score 9-10, passives 7-8, detractors 0-6. | Formula: standard NPS over survey respondents in scope | How to phrase it: Report it as a survey finding, alongside the score rather than instead of it. | Never say: Never present NPS as a premium or commercial outcome.",
+      "category": "metric",
+      "unit": "score",
+      "notes": "Source: terms.yaml (key: nps)"
+    },
+    {
+      "term": "SurveyCountry",
+      "aliases": [
+        "SurveyCountry"
+      ],
+      "definition": "Geographic location where the insurance business, carrier or survey is conducted (e.g., US, Canada, Singapore).",
+      "category": "survey_field",
+      "notes": "Source: definitions.txt (survey dataset)"
+    },
+    {
+      "term": "Carrier",
+      "aliases": [
+        "Carrier"
+      ],
+      "definition": "An insurance company or underwriting entity that provides insurance coverage to clients.",
+      "category": "survey_field",
+      "notes": "Source: definitions.txt (survey dataset)"
+    },
+    {
+      "term": "Survey Year",
+      "aliases": [
+        "Survey_Year"
+      ],
+      "definition": "Represents the reporting or survey year.",
+      "category": "survey_field",
+      "notes": "Source: definitions.txt (survey dataset)"
+    },
+    {
+      "term": "SurveyPractice",
+      "aliases": [
+        "SurveyPractice"
+      ],
+      "definition": "Line of Business (LOB) or product area covered in surveys (e.g., Property, Casualty, Cyber, Marine). Represents the insurance product being analyzed.",
+      "category": "survey_field",
+      "notes": "Source: definitions.txt (survey dataset)"
+    },
+    {
+      "term": "Score",
+      "aliases": [
+        "Score"
+      ],
+      "definition": "Survey Score ranging from 1-9.",
+      "category": "survey_field",
+      "notes": "Source: definitions.txt (survey dataset)"
+    },
+    {
+      "term": "Regions",
+      "aliases": [
+        "Regions"
+      ],
+      "definition": "Broad geographic grouping that aggregates multiple countries (e.g., North America, EMEA, APAC, Latin America).",
+      "category": "survey_field",
+      "notes": "Source: definitions.txt (survey dataset)"
+    },
+    {
+      "term": "Section",
+      "aliases": [
+        "Section"
+      ],
+      "definition": "Functional areas or dimensions of service being assessed in surveys, typically reflecting operational activities (e.g., Underwriting, Claims, Policy Servicing, Loss Control).",
+      "category": "survey_field",
+      "notes": "Source: definitions.txt (survey dataset)"
+    },
+    {
+      "term": "Attribute",
+      "aliases": [
+        "Attribute"
+      ],
+      "definition": "Specific survey questions or metrics within a section that measure performance (e.g., Responsiveness, Accuracy, Timeliness).",
+      "category": "survey_field",
+      "notes": "Source: definitions.txt (survey dataset)"
+    },
+    {
+      "term": "SurveySegment",
+      "aliases": [
+        "SurveySegment"
+      ],
+      "definition": "Client or business grouping dimension, typically based on type of business or relationship stage (e.g., Large Corporate, Mid-Market).",
+      "category": "survey_field",
+      "notes": "Source: definitions.txt (survey dataset)"
+    },
+    {
+      "term": "NPS Score",
+      "aliases": [
+        "NPS Score"
+      ],
+      "definition": "Net Promoter Score rating provided by the respondent on a 0-10 scale, indicating likelihood to recommend the carrier.",
+      "category": "survey_field",
+      "notes": "Source: definitions.txt (survey dataset)"
+    },
+    {
+      "term": "NPS Group",
+      "aliases": [
+        "NPS_Group"
+      ],
+      "definition": "Classification of the NPS Score into standard groups: Promoters (9-10) = highly satisfied and loyal clients. Passives (7-8) = neutral clients. Detractors (0-6) = dissatisfied clients.",
+      "category": "survey_field",
+      "notes": "Source: definitions.txt (survey dataset)"
+    },
+    {
+      "term": "YoY Growth",
+      "aliases": [
+        "YoY Growth"
+      ],
+      "definition": "Year-over-year change in metric value = (CurrentYear - PreviousYear) / PreviousYear * 100.",
+      "category": "survey_field",
+      "notes": "Source: definitions.txt (survey dataset)"
+    },
+    {
+      "term": "Peer Average",
+      "aliases": [
+        "Peer Average"
+      ],
+      "definition": "Aggregated score of all the distinct peers for the mentioned carrier.",
+      "category": "survey_field",
+      "notes": "Source: definitions.txt (survey dataset)"
+    },
+    {
+      "term": "Billing Date",
+      "aliases": [
+        "Billing_Date"
+      ],
+      "definition": "The date on which the insurance premium was billed or invoiced to the client.",
+      "category": "gpr_field",
+      "notes": "Source: definitions.txt (GPR/premium dataset)"
+    },
+    {
+      "term": "Region",
+      "aliases": [
+        "Region"
+      ],
+      "definition": "A broad geographical classification that groups multiple countries or markets (e.g., Asia, North America, MENA, LAC).",
+      "category": "gpr_field",
+      "notes": "Source: definitions.txt (GPR/premium dataset)"
+    },
+    {
+      "term": "Country",
+      "aliases": [
+        "Country"
+      ],
+      "definition": "The specific country in which the insurance policy was issued, where the risk is located, or where the client is based.",
+      "category": "gpr_field",
+      "notes": "Source: definitions.txt (GPR/premium dataset)"
+    },
+    {
+      "term": "Product Line",
+      "aliases": [
+        "Product_Line"
+      ],
+      "definition": "A high-level categorization of insurance products based on the type of risk covered (e.g., Property, Casualty, FINPRO).",
+      "category": "gpr_field",
+      "notes": "Source: definitions.txt (GPR/premium dataset)"
+    },
+    {
+      "term": "Business Line",
+      "aliases": [
+        "Business_Line"
+      ],
+      "definition": "A sub-classification within the Product Line specifying the type of coverage (e.g., Marine Cargo under Property, D&O under Financial Lines).",
+      "category": "gpr_field",
+      "notes": "Source: definitions.txt (GPR/premium dataset)"
+    },
+    {
+      "term": "Cover Line",
+      "aliases": [
+        "Cover_Line"
+      ],
+      "definition": "The most granular level of insurance categorization, describing the specific type of coverage within a Business Line.",
+      "category": "gpr_field",
+      "notes": "Source: definitions.txt (GPR/premium dataset)"
+    },
+    {
+      "term": "GIIND INDUSTRY NAME",
+      "aliases": [
+        "GIIND_INDUSTRY_NAME"
+      ],
+      "definition": "A standardized industry classification used in general insurance to describe the client's industry segment.",
+      "category": "gpr_field",
+      "notes": "Source: definitions.txt (GPR/premium dataset)"
+    },
+    {
+      "term": "SIC Minor Class",
+      "aliases": [
+        "SIC_Minor_Class"
+      ],
+      "definition": "A sub-category of the Standard Industrial Classification (SIC) code providing a detailed description of the client's industry activity.",
+      "category": "gpr_field",
+      "notes": "Source: definitions.txt (GPR/premium dataset)"
+    },
+    {
+      "term": "SIC Major Class",
+      "aliases": [
+        "SIC_Major_Class"
+      ],
+      "definition": "A broader classification within the SIC system grouping related SIC Minor Classes under a major industry umbrella.",
+      "category": "gpr_field",
+      "notes": "Source: definitions.txt (GPR/premium dataset)"
+    },
+    {
+      "term": "Client Segment",
+      "aliases": [
+        "Client_Segment"
+      ],
+      "definition": "A classification of clients based on size, revenue, risk profile, or strategic importance (e.g., Risk Management, Corporate, Commercial).",
+      "category": "gpr_field",
+      "notes": "Source: definitions.txt (GPR/premium dataset)"
+    },
+    {
+      "term": "Premium",
+      "aliases": [
+        "Premium"
+      ],
+      "definition": "The total gross amount charged to the client for the insurance coverage provided, typically measured in monetary terms.",
+      "category": "gpr_field",
+      "notes": "Source: definitions.txt (GPR/premium dataset)"
+    },
+    {
+      "term": "Carrier Group",
+      "aliases": [
+        "Carrier_Group"
+      ],
+      "definition": "A grouping of individual insurance carriers under a parent or holding entity (e.g., AIG includes various AIG companies).",
+      "category": "gpr_field",
+      "notes": "Source: definitions.txt (GPR/premium dataset)"
+    },
+    {
+      "term": "Year",
+      "aliases": [
+        "Year"
+      ],
+      "definition": "The calendar year extracted from the Billing Date, used for year-over-year comparisons.",
+      "category": "gpr_field",
+      "notes": "Source: definitions.txt (GPR/premium dataset)"
+    },
+    {
+      "term": "Month Name",
+      "aliases": [
+        "Month_Name"
+      ],
+      "definition": "The calendar month derived from the Billing Date, used for seasonality analysis.",
+      "category": "gpr_field",
+      "notes": "Source: definitions.txt (GPR/premium dataset)"
+    },
+    {
+      "term": "CLIENT NAME",
+      "aliases": [
+        "CLIENT_NAME"
+      ],
+      "definition": "The legal or standardized name of the insured entity for which the insurance policy is issued.",
+      "category": "gpr_field",
+      "notes": "Source: definitions.txt (GPR/premium dataset)"
+    }
+  ]
+}

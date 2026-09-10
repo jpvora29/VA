@@ -1,0 +1,417 @@
+{
+  "record": {
+    "version": 2,
+    "content": "Chubb's Marsh-placed premium increased from $300 (2024) to $390 (2025), a 30% increase across the 4 comparable product lines returned.\n\n- Property was the largest growth contributor, adding $60 (60% growth) and accounting for 54.55% of the gross increases.\n- Marine had the largest decline, down $20 (33.33%); declines totalled $20, offsetting 18.18% of the gross increases.\n- 3 of the 4 comparable product lines grew, 1 declined and 0 were unchanged.\n- Property was the largest returned product line at $160, representing 41.03% of current premium versus 33.33% previously.\n- Cyber premium increased from $80 to $100, a 25% increase.\n- Casualty premium increased from $60 to $90, a 50% increase.",
+    "facts": [
+      {
+        "id": "f_4a729166dd2d9c56",
+        "metric": "Premium",
+        "value": 60.0,
+        "unit": "currency",
+        "rendered": "$60",
+        "dimensions": [
+          [
+            "carrier_group",
+            "CHUBB"
+          ],
+          [
+            "country",
+            "Canada"
+          ],
+          [
+            "product_line",
+            "Casualty"
+          ],
+          [
+            "year",
+            "2024"
+          ]
+        ],
+        "source_id": "s_7102ec71e32ea920",
+        "lens": "growth",
+        "formula": "Value returned by the recorded calculation",
+        "support": []
+      },
+      {
+        "id": "f_0254dcc2bc76867d",
+        "metric": "Premium",
+        "value": 90.0,
+        "unit": "currency",
+        "rendered": "$90",
+        "dimensions": [
+          [
+            "carrier_group",
+            "CHUBB"
+          ],
+          [
+            "country",
+            "Canada"
+          ],
+          [
+            "product_line",
+            "Casualty"
+          ],
+          [
+            "year",
+            "2025"
+          ]
+        ],
+        "source_id": "s_7102ec71e32ea920",
+        "lens": "growth",
+        "formula": "Value returned by the recorded calculation",
+        "support": []
+      },
+      {
+        "id": "f_cc56f0aa836108ec",
+        "metric": "Premium",
+        "value": 80.0,
+        "unit": "currency",
+        "rendered": "$80",
+        "dimensions": [
+          [
+            "carrier_group",
+            "CHUBB"
+          ],
+          [
+            "country",
+            "Canada"
+          ],
+          [
+            "product_line",
+            "Cyber"
+          ],
+          [
+            "year",
+            "2024"
+          ]
+        ],
+        "source_id": "s_7102ec71e32ea920",
+        "lens": "growth",
+        "formula": "Value returned by the recorded calculation",
+        "support": []
+      },
+      {
+        "id": "f_841a2c87ecbf32f1",
+        "metric": "Premium",
+        "value": 100.0,
+        "unit": "currency",
+        "rendered": "$100",
+        "dimensions": [
+          [
+            "carrier_group",
+            "CHUBB"
+          ],
+          [
+            "country",
+            "Canada"
+          ],
+          [
+            "product_line",
+            "Cyber"
+          ],
+          [
+            "year",
+            "2025"
+          ]
+        ],
+        "source_id": "s_7102ec71e32ea920",
+        "lens": "growth",
+        "formula": "Value returned by the recorded calculation",
+        "support": []
+      },
+      {
+        "id": "f_1808451db9261abe",
+        "metric": "Premium",
+        "value": 60.0,
+        "unit": "currency",
+        "rendered": "$60",
+        "dimensions": [
+          [
+            "carrier_group",
+            "CHUBB"
+          ],
+          [
+            "country",
+            "Canada"
+          ],
+          [
+            "product_line",
+            "Marine"
+          ],
+          [
+            "year",
+            "2024"
+          ]
+        ],
+        "source_id": "s_7102ec71e32ea920",
+        "lens": "growth",
+        "formula": "Value returned by the recorded calculation",
+        "support": []
+      },
+      {
+        "id": "f_dbe1a1c22e9c983d",
+        "metric": "Premium",
+        "value": 40.0,
+        "unit": "currency",
+        "rendered": "$40",
+        "dimensions": [
+          [
+            "carrier_group",
+            "CHUBB"
+          ],
+          [
+            "country",
+            "Canada"
+          ],
+          [
+            "product_line",
+            "Marine"
+          ],
+          [
+            "year",
+            "2025"
+          ]
+        ],
+        "source_id": "s_7102ec71e32ea920",
+        "lens": "growth",
+        "formula": "Value returned by the recorded calculation",
+        "support": []
+      },
+      {
+        "id": "f_b4dfb822b95c11ff",
+        "metric": "Premium",
+        "value": 100.0,
+        "unit": "currency",
+        "rendered": "$100",
+        "dimensions": [
+          [
+            "carrier_group",
+            "CHUBB"
+          ],
+          [
+            "country",
+            "Canada"
+          ],
+          [
+            "product_line",
+            "Property"
+          ],
+          [
+            "year",
+            "2024"
+          ]
+        ],
+        "source_id": "s_7102ec71e32ea920",
+        "lens": "growth",
+        "formula": "Value returned by the recorded calculation",
+        "support": []
+      },
+      {
+        "id": "f_38fb37873686eb06",
+        "metric": "Premium",
+        "value": 160.0,
+        "unit": "currency",
+        "rendered": "$160",
+        "dimensions": [
+          [
+            "carrier_group",
+            "CHUBB"
+          ],
+          [
+            "country",
+            "Canada"
+          ],
+          [
+            "product_line",
+            "Property"
+          ],
+          [
+            "year",
+            "2025"
+          ]
+        ],
+        "source_id": "s_7102ec71e32ea920",
+        "lens": "growth",
+        "formula": "Value returned by the recorded calculation",
+        "support": []
+      }
+    ],
+    "claims": [
+      {
+        "id": "c_93c1b4e2a219ca4e",
+        "text": "Chubb's Marsh-placed premium increased from $300 (2024) to $390 (2025), a 30% increase across the 4 comparable product lines returned.",
+        "fact_ids": [
+          "f_0254dcc2bc76867d",
+          "f_1808451db9261abe",
+          "f_38fb37873686eb06",
+          "f_4a729166dd2d9c56",
+          "f_841a2c87ecbf32f1",
+          "f_b4dfb822b95c11ff",
+          "f_cc56f0aa836108ec",
+          "f_dbe1a1c22e9c983d"
+        ],
+        "kind": "portfolio_change",
+        "formula": "Prior total = 60 + 80 + 60 + 100; current total = 90 + 100 + 40 + 160; 390 - 300 = 90; (390 - 300) / 300 \u00d7 100 = 30%",
+        "priority": 50,
+        "focus_ids": []
+      },
+      {
+        "id": "c_c71a179925035a61",
+        "text": "Property was the largest growth contributor, adding $60 (60% growth) and accounting for 54.55% of the gross increases.",
+        "fact_ids": [
+          "f_0254dcc2bc76867d",
+          "f_1808451db9261abe",
+          "f_38fb37873686eb06",
+          "f_4a729166dd2d9c56",
+          "f_841a2c87ecbf32f1",
+          "f_b4dfb822b95c11ff",
+          "f_cc56f0aa836108ec",
+          "f_dbe1a1c22e9c983d"
+        ],
+        "kind": "growth_driver",
+        "formula": "160 - 100 = 60; gross increases = 110; contribution = 60 / 110 \u00d7 100; growth = 60 / 100 \u00d7 100",
+        "priority": 40,
+        "focus_ids": [
+          "f_b4dfb822b95c11ff",
+          "f_38fb37873686eb06"
+        ]
+      },
+      {
+        "id": "c_28c113c6d0176a6e",
+        "text": "Marine had the largest decline, down $20 (33.33%); declines totalled $20, offsetting 18.18% of the gross increases.",
+        "fact_ids": [
+          "f_0254dcc2bc76867d",
+          "f_1808451db9261abe",
+          "f_38fb37873686eb06",
+          "f_4a729166dd2d9c56",
+          "f_841a2c87ecbf32f1",
+          "f_b4dfb822b95c11ff",
+          "f_cc56f0aa836108ec",
+          "f_dbe1a1c22e9c983d"
+        ],
+        "kind": "growth_offset",
+        "formula": "40 - 60 = -20; gross declines = 20; gross increases = 110; offset = 20 / 110 \u00d7 100; decline = 20 / 60 \u00d7 100",
+        "priority": 39,
+        "focus_ids": [
+          "f_1808451db9261abe",
+          "f_dbe1a1c22e9c983d"
+        ]
+      },
+      {
+        "id": "c_b25e07e74838acb0",
+        "text": "3 of the 4 comparable product lines grew, 1 declined and 0 were unchanged.",
+        "fact_ids": [
+          "f_0254dcc2bc76867d",
+          "f_1808451db9261abe",
+          "f_38fb37873686eb06",
+          "f_4a729166dd2d9c56",
+          "f_841a2c87ecbf32f1",
+          "f_b4dfb822b95c11ff",
+          "f_cc56f0aa836108ec",
+          "f_dbe1a1c22e9c983d"
+        ],
+        "kind": "growth_breadth",
+        "formula": "Count current - prior > 0: 3; < 0: 1; = 0: 0",
+        "priority": 38,
+        "focus_ids": []
+      },
+      {
+        "id": "c_6897eb261c8be42c",
+        "text": "Property was the largest returned product line at $160, representing 41.03% of current premium versus 33.33% previously.",
+        "fact_ids": [
+          "f_0254dcc2bc76867d",
+          "f_1808451db9261abe",
+          "f_38fb37873686eb06",
+          "f_4a729166dd2d9c56",
+          "f_841a2c87ecbf32f1",
+          "f_b4dfb822b95c11ff",
+          "f_cc56f0aa836108ec",
+          "f_dbe1a1c22e9c983d"
+        ],
+        "kind": "premium_mix",
+        "formula": "160 / 390 \u00d7 100 = 41.0256%; 100 / 300 \u00d7 100 = 33.3333%",
+        "priority": 37,
+        "focus_ids": []
+      },
+      {
+        "id": "c_5cac04b68d0fc64b",
+        "text": "Cyber premium increased from $80 to $100, a 25% increase.",
+        "fact_ids": [
+          "f_cc56f0aa836108ec",
+          "f_841a2c87ecbf32f1"
+        ],
+        "kind": "change",
+        "formula": "100 - 80 = 20; (100 - 80) / 80 \u00d7 100 = 25%",
+        "priority": 12,
+        "focus_ids": []
+      },
+      {
+        "id": "c_884b3c667b55638f",
+        "text": "Casualty premium increased from $60 to $90, a 50% increase.",
+        "fact_ids": [
+          "f_4a729166dd2d9c56",
+          "f_0254dcc2bc76867d"
+        ],
+        "kind": "change",
+        "formula": "90 - 60 = 30; (90 - 60) / 60 \u00d7 100 = 50%",
+        "priority": 12,
+        "focus_ids": []
+      }
+    ],
+    "limitation": "",
+    "selection_rejected": false
+  },
+  "evidence": [
+    {
+      "flow": "gpr",
+      "lens": "growth",
+      "sql": "recorded grouped result",
+      "scope": {
+        "Carrier_Group": "CHUBB",
+        "Country": "Canada"
+      },
+      "rows": [
+        {
+          "Product_Line": "Property",
+          "Year": 2024,
+          "Premium": 100
+        },
+        {
+          "Product_Line": "Property",
+          "Year": 2025,
+          "Premium": 160
+        },
+        {
+          "Product_Line": "Cyber",
+          "Year": 2024,
+          "Premium": 80
+        },
+        {
+          "Product_Line": "Cyber",
+          "Year": 2025,
+          "Premium": 100
+        },
+        {
+          "Product_Line": "Marine",
+          "Year": 2024,
+          "Premium": 60
+        },
+        {
+          "Product_Line": "Marine",
+          "Year": 2025,
+          "Premium": 40
+        },
+        {
+          "Product_Line": "Casualty",
+          "Year": 2024,
+          "Premium": 60
+        },
+        {
+          "Product_Line": "Casualty",
+          "Year": 2025,
+          "Premium": 90
+        }
+      ]
+    }
+  ]
+}

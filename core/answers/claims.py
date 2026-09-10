@@ -16,6 +16,7 @@ class AnswerClaim:
     kind: str = "observation"
     formula: str = ""
     priority: float = 0
+    focus_ids: tuple[str, ...] = ()
 
     def as_dict(self) -> dict:
         return asdict(self)

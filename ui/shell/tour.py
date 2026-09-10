@@ -359,7 +359,7 @@ STEPS: Tuple[TourStep, ...] = (
     TourStep(
         "One place for the whole account",
         "Four workspaces behind one navbar. Studio builds a QBR deck from the data, "
-        "Chat answers questions about it, Recap summarises a period or a meeting, and "
+        "Chat answers questions about it, Recap reads past review decks into a recap, and "
         "MoM drafts minutes. Nothing is thrown away when you move between them.",
         art_workspaces,
         chapter=GETTING_STARTED,

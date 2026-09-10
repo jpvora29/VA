@@ -1,0 +1,367 @@
+/* ============================================================================
+   The QBR Recap workspace.
+
+   Deliberately the MoM sheet's rules under `.recap-*` names: the two workspaces
+   are the same page shape (upload, watch a long run, take the document away), and
+   a person who has used one should not have to re-learn the other. What differs
+   is what Recap actually needs — one multi-deck zone, and the cover-slide chips.
+
+   Every colour is a `--va-*` token from assets/theme_tokens.css. The standalone
+   recap app carried its own teal/ice hex values; on a page that already agrees on
+   one palette, a second one is the seam this merge removes.
+
+   Sorts before va_shell.css, which must stay last (tests/test_app_shell.py).
+   ========================================================================== */
+
+/* ── the page ─────────────────────────────────────────────────────────────── */
+
+.recap-host {
+    flex: 1 1 auto;
+    width: 100%;
+    height: 100%;
+    overflow-y: auto;
+    background: var(--va-surface-1);
+}
+
+.recap-page {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 40px 28px 72px;
+    font-family: var(--va-font);
+    color: var(--va-ink-700);
+}
+
+.recap-header {
+    margin-bottom: 26px;
+}
+
+.recap-title {
+    margin: 0 0 8px;
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--va-navy);
+}
+
+.recap-blurb {
+    margin: 0;
+    max-width: 58ch;
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--va-ink-500);
+}
+
+/* ── cards ────────────────────────────────────────────────────────────────── */
+
+.recap-card {
+    margin-bottom: 16px;
+    padding: 22px 24px;
+    border-radius: var(--va-radius-md);
+    background: var(--va-surface-0);
+    box-shadow: 0 0 0 1px var(--va-border-soft), var(--va-shadow-sm);
+}
+
+.recap-card-label {
+    margin: 0 0 14px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--va-ink-400);
+}
+
+.recap-card-note {
+    margin: 12px 0 0;
+    font-size: 12px;
+    color: var(--va-ink-400);
+}
+
+/* ── uploads ──────────────────────────────────────────────────────────────── */
+
+.recap-drop {
+    border-radius: var(--va-radius-sm);
+    border: 1.5px dashed var(--va-border-mid);
+    background: var(--va-surface-1);
+    cursor: pointer;
+    transition: border-color var(--va-transition-fast), background var(--va-transition-fast);
+}
+
+.recap-drop:hover {
+    border-color: var(--va-blue);
+    background: var(--va-blue-soft);
+}
+
+.recap-drop-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 26px 14px;
+    text-align: center;
+}
+
+.recap-drop-inner .bi {
+    font-size: 19px;
+    color: var(--va-ink-400);
+}
+
+.recap-drop-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 7px;
+}
+
+.recap-drop-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--va-navy);
+}
+
+.recap-drop-formats {
+    font-size: 11px;
+    color: var(--va-ink-400);
+}
+
+.recap-drop-hint {
+    font-size: 11.5px;
+    color: var(--va-ink-500);
+}
+
+/* One line per deck: a drop of five files reports five outcomes, not one. */
+.recap-file-status {
+    min-height: 18px;
+    margin-top: 7px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* Status is never colour-only: each state carries its own icon and its filename. */
+.recap-file-status .is-good {
+    color: var(--va-good);
+}
+
+.recap-file-status .is-bad {
+    color: var(--va-danger);
+}
+
+.recap-file-status .bi {
+    margin-right: 6px;
+}
+
+/* ── what the deck says ───────────────────────────────────────────────────── */
+
+.recap-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+.recap-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    padding: 5px 11px;
+    border-radius: var(--va-radius-pill);
+    background: var(--va-blue-soft);
+    box-shadow: inset 0 0 0 1px var(--va-border-mid);
+    font-size: 12px;
+    color: var(--va-ink-700);
+}
+
+.recap-chip.is-empty {
+    background: var(--va-surface-1);
+    color: var(--va-ink-400);
+}
+
+.recap-chip-label {
+    font-weight: 600;
+    color: var(--va-ink-500);
+}
+
+/* ── generate ─────────────────────────────────────────────────────────────── */
+
+.recap-card-action {
+    padding: 20px 24px 22px;
+}
+
+.recap-generate {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    width: 100%;
+    padding: 12px 0;
+    border: 0;
+    border-radius: var(--va-radius-sm);
+    background: var(--va-grad-cta);
+    color: var(--va-surface-0);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity var(--va-transition-fast), filter var(--va-transition-fast);
+}
+
+.recap-generate:hover:not(:disabled) {
+    filter: brightness(1.08);
+}
+
+.recap-generate:focus-visible {
+    outline: none;
+    box-shadow: var(--va-focus-ring);
+}
+
+.recap-generate:disabled {
+    background: var(--va-surface-2);
+    color: var(--va-ink-400);
+    cursor: not-allowed;
+}
+
+.recap-hint:not(:empty) {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--va-ink-500);
+}
+
+/* ── progress ─────────────────────────────────────────────────────────────── */
+
+.recap-progress {
+    margin-top: 18px;
+}
+
+.recap-progress-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.recap-progress-step {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--va-ink-700);
+}
+
+.recap-progress-pct {
+    font-size: 12.5px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--va-blue);
+}
+
+.recap-progress-track {
+    height: 7px;
+    border-radius: var(--va-radius-pill);
+    background: var(--va-surface-2);
+    overflow: hidden;
+}
+
+.recap-progress-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: var(--va-blue);
+    transition: width var(--va-transition-med);
+}
+
+.recap-progress-fill.is-failed {
+    background: var(--va-danger);
+}
+
+.recap-progress-msg:not(:empty) {
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: var(--va-ink-500);
+}
+
+/* ── result ───────────────────────────────────────────────────────────────── */
+
+.recap-result {
+    margin-top: 16px;
+    padding: 15px 17px;
+    border-radius: var(--va-radius-sm);
+}
+
+.recap-result.is-good {
+    background: var(--va-blue-soft);
+    box-shadow: inset 0 0 0 1px var(--va-border-mid);
+}
+
+.recap-result.is-bad {
+    background: #fdf2f2;
+    box-shadow: inset 0 0 0 1px rgba(197, 53, 50, 0.28);
+}
+
+.recap-result-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--va-navy);
+}
+
+.recap-result.is-bad .recap-result-head {
+    color: var(--va-danger);
+}
+
+.recap-result-file {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--va-ink-500);
+}
+
+.recap-result-topics {
+    margin: 10px 0 0;
+    padding-left: 18px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--va-ink-600);
+}
+
+.recap-download {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+    padding: 9px 18px;
+    border: 0;
+    border-radius: var(--va-radius-sm);
+    background: var(--va-navy);
+    color: var(--va-surface-0);
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.recap-download:hover {
+    background: var(--va-navy-2);
+}
+
+.recap-download:focus-visible {
+    outline: none;
+    box-shadow: var(--va-focus-ring);
+}
+
+/* ── the rail's live steps ────────────────────────────────────────────────────
+   `.va-rail-step` (assets/va_shell.css) already sizes these and handles the
+   collapsed icon column; these rules only add the run's state on top. */
+
+.va-recap-rail .va-rail-step.is-running {
+    color: var(--va-navy);
+    background: var(--va-blue-soft);
+}
+
+.va-recap-rail .va-rail-step.is-running .va-rail-step-tile {
+    color: var(--va-surface-0);
+    background: var(--va-blue);
+    box-shadow: none;
+}
+
+.va-recap-rail .va-rail-step.is-done {
+    color: var(--va-ink-600);
+}
+
+.va-recap-rail .va-rail-step.is-done .va-rail-step-tile {
+    color: var(--va-good);
+    box-shadow: inset 0 0 0 1px var(--va-good);
+}

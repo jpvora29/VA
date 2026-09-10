@@ -48,6 +48,58 @@ flowchart LR
 
 ### Accuracy and response structure
 
+The response-depth regression came from an overly narrow statement library, a
+four-statement cap, and treating any reused input fact as a repeated insight.
+The writer now supports up to ten distinct statements for analytical questions;
+lookups and explicit short answers remain one statement. Sparse model selections
+are completed from the ranked, supported candidates. Summaries and drivers can
+share evidence without duplicating the same conclusion across lenses.
+
+Product-line growth can now explain the returned comparable total, largest
+growth contributor, largest decline and offsets, breadth, premium mix, growth
+excluding the largest contributor, and concentration of gross increases.
+Contribution and offset points explain their effect on the combined growth rate;
+mix points explain the change in a line's weight. The cap is a maximum, not a
+quota: sparse evidence must not be padded with invented analysis.
+All are deterministic calculations with input references. Totals explicitly
+describe the returned cuts; missing periods are not zero-filled, and rates,
+scores and peer averages are not added as premium. The SQL and pandas growth
+tools name the underlying measure and actual prior year in their supporting
+rows, allowing the answer to use those existing inputs without another query.
+Partial-year comparisons keep the same cutoff in both periods.
+
+Version 3 passes the same display scope used by the UI pills to both response
+writers. A secondary result with partial metadata no longer makes shared filters
+reappear. Differing country/product/period values retain their labels; display
+scope never adds a filter to a calculation. Carrier premium is introduced as
+"Chubb's premium", with the Marsh placement definition in Source & calculation.
+Version 1 and 2 records retain their original reconstruction for saved chats.
+
+Scoped comparisons can span separate tool results with the same metric, unit,
+lens and non-period dimensions (including any cutoff). Identical observations
+are deduplicated before pairing periods. Different scopes/lenses and unscoped
+result sets remain separate; conflicting values still fail closed. Each selected
+input retains its original source ID, so combining comparisons does not discard
+provenance. SQL fallbacks must faithfully carry their actual scope and metric
+semantics; this layer cannot prove an upstream query selected the right book.
+
+Regression coverage: `tests/test_answer_insights.py` exercises the Chubb growth
+case, SQL/pandas inputs, missing periods, conflicting operands, sparse selection,
+duplicate lenses, scope distinctions and record compatibility. Run the browser
+host in `tests/e2e/chat_server.py` with a disposable `APP_DB_PATH`, choose the
+Chubb growth starter, send, open Source & calculation, and reload. Expect one
+carrier headline, eight supporting points, one chart, unchanged filter pills, and
+verification that survives the persisted transcript round trip.
+
+`tests/test_answer_response_quality.py` adds both writer adapters, partial scope,
+separate SQL-backed tool calls, duplicate results, subject naming, and a captured
+version 2 record. Add "split results" to the Chubb browser question to exercise
+separate period queries. The September 10 follow-up passed 600 chatbot/analytics/
+chart/harness tests, with three live Azure tests skipped for missing credentials.
+The isolated browser run verified the split-result answer, its calculation
+drawer, one chart, and persistence after refresh. Live model/warehouse behavior
+has not been verified by this fixture.
+
 - All four response rails and the analyst writer share one answer pipeline.
   The model chooses statement IDs from an enum; Python owns the numerical text,
   period comparisons, percentage-point differences, and peer gaps. Missing or

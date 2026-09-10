@@ -245,7 +245,7 @@ def compute_yoy(source: FrameSource, args: PrimitiveArgs) -> List[AnalyticsFact]
     for cut_key, group in _by_cut(totals, year, cuts).items():
         series = sorted(((row[year], value) for row, value in group),
                         key=lambda pair: _sortable(pair[0]))
-        for (_, prior), (current_year, current) in zip(series, series[1:]):
+        for (prior_year, prior), (current_year, current) in zip(series, series[1:]):
             if not prior:
                 continue
             pct = round((current - prior) / prior * 100, 1)
@@ -253,7 +253,8 @@ def compute_yoy(source: FrameSource, args: PrimitiveArgs) -> List[AnalyticsFact]
                 _fact("yoy", pct, "%", f"{pct:+.1f}%",
                       {"year": current_year, **dict(cut_key)},
                       "(current - prior) / prior * 100, by year",
-                      {"yr": current_year, "measure": current, "prev": prior})
+                      {"yr": current_year, "measure": current, "prev": prior,
+                       "prior_year": prior_year, "measure_name": column})
             )
     # Chronological across every cut, then by cut — the order the SQL's ``ORDER BY yr``
     # over a grouped CTE emits (a GROUP BY comes out in key order).
@@ -677,7 +678,7 @@ def compute_yoy_to_date(source: FrameSource, args: PrimitiveArgs,
     for cut_key, group in _by_cut(totals, year_column, cuts).items():
         series = sorted(((row[year_column], value) for row, value in group),
                         key=lambda pair: _sortable(pair[0]))
-        for (_, prior), (current_year, current) in zip(series, series[1:]):
+        for (prior_year, prior), (current_year, current) in zip(series, series[1:]):
             if not prior:
                 continue
             pct = round((current - prior) / prior * 100, 1)
@@ -688,7 +689,7 @@ def compute_yoy_to_date(source: FrameSource, args: PrimitiveArgs,
                       f"(current - prior) / prior * 100, by year, "
                       f"both truncated to {through or grain}",
                       {"yr": current_year, "measure": current, "prev": prior,
-                       "pin_max": cutoff})
+                       "pin_max": cutoff, "prior_year": prior_year, "measure_name": column})
             )
     facts.sort(key=lambda fact: (_sortable(fact.dims["year"]), _dims_order(fact, cuts)))
     return facts

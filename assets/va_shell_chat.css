@@ -108,6 +108,9 @@
    shimmer track that keeps moving even while the stage label does not. */
 .thinking-bar {
     position: relative;
+    height: 32px;
+    box-sizing: border-box;
+    animation: none;
     gap: 10px;
     padding: 7px 16px 8px;
     border: 1px solid rgba(11, 75, 255, 0.20);
@@ -1882,6 +1885,12 @@ button.dock-pin.is-pinned:hover { background: #e2ebff; }
     box-shadow: none;
 }
 
+/* Transcript updates must not replay entrance motion on existing messages. */
+.chat-viewport .message,
+.chat-viewport .insight-card {
+    animation: none;
+}
+
 /* The finding, set as the finding. Everything above it is chrome and everything
    below it is support, so this is the one thing on the card allowed to be big. */
 .answer-lead { margin: 4px 0 18px; }
@@ -2196,7 +2205,9 @@ button.dock-pin.is-pinned:hover { background: #e2ebff; }
 .custom-peers-cue-key { color: var(--va-ink-400); font-weight: 600; }
 .custom-peers-cue-pill.is-default .custom-peers-cue-body { color: var(--va-ink-500); }
 
-.send-btn {
+/* Swapping Send for Stop must not change the composer or transcript height. */
+.send-btn,
+.stop-btn {
     width: 44px;
     height: 44px;
     border-radius: 50%;

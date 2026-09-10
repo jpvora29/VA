@@ -1,9 +1,9 @@
 """The workspace shape a not-yet-built tab wears.
 
-Recap and MoM have no engine behind them yet. They still get the full shell — the
-same rail width, the same content frame — so switching to them changes the *content*
-and nothing about the furniture. When the real feature lands it replaces
-``placeholder_body`` and inherits the frame unchanged.
+No workspace wears it today — Recap was the last to grow an engine — but the frame is
+what a new tab starts in: the full shell, the same rail width, the same content frame,
+so switching to it changes the *content* and nothing about the furniture. When the
+real feature lands it replaces ``placeholder_body`` and inherits the frame unchanged.
 """
 from __future__ import annotations
 

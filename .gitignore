@@ -39,6 +39,10 @@ studio/dataset/_store/
 # them). Client documents; generated per run by mom/config.py.
 outputs/mom/
 
+# Recap run directories (uploaded QBR decks, the insight store read out of them, and
+# the recap written from it). Client documents; generated per run by recap/config.py.
+outputs/recap/
+
 # Local-only application config. The package was removed from the repo in
 # afeeaf4 ("Delete config directory") but the code still imports it
 # unconditionally (core/graph/gpr_subgraph.py, document_builder), so it has to

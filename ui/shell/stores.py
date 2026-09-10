@@ -16,6 +16,7 @@ from dash import dcc
 from mom.modes import DEFAULT_MODE
 from studio.authoring.layout import studio_stores
 from ui.mom.render import POLL_INTERVAL_MS
+from ui.recap.render import POLL_INTERVAL_MS as RECAP_POLL_INTERVAL_MS
 from ui.shell.tabs import DEFAULT_TAB
 
 
@@ -102,6 +103,31 @@ def mom_stores() -> List[Any]:
     ]
 
 
+def recap_stores() -> List[Any]:
+    """The Recap workspace's state: the staged decks, what their cover slide said,
+    the run in flight, and the poll that follows it.
+
+    The decks are staged to disk on arrival (``recap.uploads``) and ``recap-files``
+    holds only ``{name, path}`` per deck — several whole decks as base64 in browser
+    storage would be shipped back to the server on every callback that reads them.
+
+    Memory storage throughout, for the same reason MoM uses it: a reload has no run to
+    resume and no staged file the upload zone would show, so remembering either would
+    only lie to the user.
+    """
+    return [
+        dcc.Store(id="recap-files", data=[]),
+        dcc.Store(id="recap-meta-store", data={}),
+        dcc.Store(id="recap-job"),
+        # Enabled only while a run is in flight (``ui.recap.callbacks``), so an idle
+        # Recap tab costs nothing.
+        dcc.Interval(id="recap-poll", interval=RECAP_POLL_INTERVAL_MS, n_intervals=0,
+                     disabled=True),
+        dcc.Download(id="recap-download"),
+    ]
+
+
 def global_stores() -> List[Any]:
-    """Shell + Chatbot + Studio + MoM state, in one flat list for the root layout."""
-    return [*shell_stores(), *chat_stores(), *studio_stores(), *mom_stores()]
+    """Shell + Chatbot + Studio + Recap + MoM state, one flat list for the root layout."""
+    return [*shell_stores(), *chat_stores(), *studio_stores(), *recap_stores(),
+            *mom_stores()]

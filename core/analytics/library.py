@@ -182,7 +182,8 @@ def compute_yoy(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[An
             FROM "{spec.primary_table}"{where}
             GROUP BY {group_cols}
         )
-        SELECT *, LAG(measure) OVER ({partition}ORDER BY yr) AS prev
+        SELECT *, LAG(measure) OVER ({partition}ORDER BY yr) AS prev,
+                  LAG(yr) OVER ({partition}ORDER BY yr) AS prior_year
         FROM agg
         ORDER BY yr
     """
@@ -201,7 +202,7 @@ def compute_yoy(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[An
                 unit="%",
                 rendered=f"{pct:+.1f}%",
                 dims=dims,
-                support=[row],
+                support=[dict(row, measure_name=column)],
                 formula="(current - prior) / prior * 100, by year",
             )
         )
@@ -958,7 +959,8 @@ def compute_yoy_to_date(
             GROUP BY yr{cut_tail}
         )
         SELECT *, (SELECT pin_max FROM bounds) AS pin_max,
-               LAG(measure) OVER ({partition}ORDER BY yr) AS prev
+               LAG(measure) OVER ({partition}ORDER BY yr) AS prev,
+               LAG(yr) OVER ({partition}ORDER BY yr) AS prior_year
         FROM agg
         ORDER BY yr
     """
@@ -982,7 +984,7 @@ def compute_yoy_to_date(
                     "grain": grain,
                     **{c: row[c] for c in cuts},
                 },
-                support=[row],
+                support=[dict(row, measure_name=column)],
                 formula=(
                     f"(current - prior) / prior * 100, by year, "
                     f"both truncated to {through or grain}"

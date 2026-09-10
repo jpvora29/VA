@@ -43,6 +43,7 @@ from core.agents.common.directives import (
 )
 from core.agents.analyst.generic_solver import solve_generic
 from core.agents.analyst.insight_writer import grounded_insight
+from core.answers.scope import answer_scope
 from core.agents.analyst.peer_solver import solve_peer
 from core.agents.analyst.schema_identifier import identify_schema
 from core.agents.analyst.common import digest_evidence
@@ -241,6 +242,7 @@ def writer_node(state: AnalystState) -> dict:
         evidence=evidence,
         presentation=presentation_mode(rc),
         shape=answer_shape(rc),
+        scope=answer_scope(state),
     )
     return {"answer": scrub_peer_names(result.text, evidence, state), "answer_record": result.as_dict()}
 

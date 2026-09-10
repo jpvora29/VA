@@ -5,6 +5,7 @@ from core.agents.common.contract import resolved_filters_of
 from core.agents.common.directives import answer_shape, presentation_mode, prose_suppressed
 from core.answers.grounded import AnswerRequest
 from core.answers.writer import write_answer
+from core.answers.scope import answer_scope
 
 
 FLOW_FIELDS = {
@@ -41,6 +42,6 @@ def write_response(state: dict, key: str, flows: tuple[str, ...], *, client=None
     question = state["messages"][-1].content
     request = AnswerRequest(question, response_evidence(state, flows),
                             answer_shape(state.get("routing_context")),
-                            presentation_mode(state.get("routing_context")))
+                            presentation_mode(state.get("routing_context")), answer_scope(state))
     answer = write_answer(request, client=client)
     return {key: answer.text, key + "_record": answer.as_dict()}

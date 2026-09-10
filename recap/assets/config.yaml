@@ -1,0 +1,211 @@
+# QBR Recap App — Reference Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+# All lists here are loaded at pipeline startup from assets/config.yaml.
+# To add a new carrier, country, region, or line of business, edit this file —
+# no code changes are needed.
+#
+# Matching is case-insensitive substring search against the extracted slide text.
+# Order within each list does not affect matching; the pipeline prefers whichever
+# entry appears first on slide 1 of the uploaded deck for carrier / quarter / year
+# detection, then falls back to the full deck text.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── Carriers ────────────────────────────────────────────────────────────────
+# Add any insurer or Lloyd's syndicate that appears as a QBR counterparty.
+carriers:
+  - AIG
+  - Allianz
+  - Aviva
+  - AXA
+  - Beazley
+  - Chubb
+  - Convex
+  - Everest
+  - Hiscox
+  - Liberty
+  - Lloyd's
+  - Munich Re
+  - QBE
+  - RSA
+  - Swiss Re
+  - Talbot
+  - Tokio Marine
+  - Zurich
+  - WR Berkley
+  - Markel
+  - Axis
+
+
+# ── Lines of Business ────────────────────────────────────────────────────────
+# Add any LoB label as it appears in QBR slide text (case-insensitive).
+# Includes both full names and common internal abbreviations so either form
+# in a slide will be matched.
+lines_of_business:
+  # Core P&C
+  - Property
+  - Casualty
+  - General Liability
+  - Product Liability
+  - Professional Liability
+  - Motor / Auto
+  - Trade Credit
+  - Political Risk
+  - Surety
+
+  # Financial / Management Lines
+  - Directors & Officers (D&O)
+  - Errors & Omissions (E&O)
+  - Crime / Fidelity
+  - Management Liability
+  - FINPRO
+  - D&O
+  - E&O
+  - PI
+  - Crime
+  - EPL
+
+  # Specialty Lines
+  - Aviation & Space
+  - Marine / Cargo / Logistics
+  - Marine & Cargo
+  - Energy & Power
+  - Construction / Infrastructure / Surety
+  - Construction & Surety
+  - Credit Specialties
+  - Cyber
+  - Real Estate
+  - Private Equity, M&A / Transactional Risk
+  - Political Risk / Structured Credit
+  - Political Violence / Terrorism / War
+  - Political Violence
+  - Kidnap & Ransom
+  - PEMA
+  - Specialty lines
+
+  # People / Benefits
+  - Employee Benefits
+  - Health & Benefits
+  - Pensions / Retirement consulting
+  - Life / Accident / Disability
+  - Wellbeing
+
+  # Reinsurance / Capital
+  - Reinsurance
+  - Reinsurance broking
+  - Capital advisory
+  - Catastrophe / portfolio analytics
+  - Alternative risk transfer
+  - Insurance-linked securities
+
+  # Program / Delegated / Facility
+  - Programs
+  - Delegated authority
+  - Affinity
+  - Captives
+  - Facilities / lineslips
+  - Binding authorities
+
+
+# ── Countries ────────────────────────────────────────────────────────────────
+# Add any country that appears as a geographic scope in QBR decks.
+countries:
+  # Europe
+  - United Kingdom
+  - Austria
+  - Belgium
+  - Denmark
+  - Finland
+  - France
+  - Germany
+  - Ireland
+  - Italy
+  - Netherlands
+  - Norway
+  - Portugal
+  - Romania
+  - Spain
+  - Sweden
+  # Americas
+  - United States
+  - Argentina
+  - Brazil
+  - Chile
+  - Colombia
+  - Mexico
+  - Panama
+  - Peru
+  - Puerto Rico
+  - Uruguay
+  # Bermuda
+  - Bermuda
+  # Asia Pacific
+  - Australia
+  - New Zealand
+  - China
+  - Hong Kong
+  - Indonesia
+  - Japan
+  - Malaysia
+  - Philippines
+  - Singapore
+  - South Korea
+  - Taiwan
+  - Thailand
+  - Vietnam
+
+
+# ── Regions ──────────────────────────────────────────────────────────────────
+# Broad geographic groupings used in EMEA / global QBR decks.
+regions:
+  - APAC
+  - Asia
+  - CEMENA
+  - EMEA
+  - Europe
+  - LAC
+  - Latin America
+  - MENA
+  - North America
+  - Pacific
+
+
+# ── Company & Team Context ────────────────────────────────────────────────────
+# Plain-text context injected into LLM system prompts so every enrichment,
+# classification, and recap call understands what Marsh and the ICG team are.
+# Edit this section freely — no code changes are needed.
+context:
+  marsh: |
+    Marsh is a global leader in insurance broking and risk advisory. The firm
+    helps organisations manage uncertainty across areas including property,
+    casualty, cyber, marine, energy, financial lines, and specialty risks.
+    Marsh acts as an advisor and broker that helps clients: assess and quantify
+    risk; design insurance programmes; negotiate with insurers; support claims
+    and renewals; and improve resilience and risk management.
+    Marsh is part of Marsh McLennan.
+
+  icg: |
+    The Insurer Consulting Group (ICG) sits within Marsh's Strategic Carrier
+    Services function. ICG focuses on the insurer side of the market and
+    supports: insurer relationship management; market-facing consulting and
+    advisory; analysis of insurer performance, appetite, and strategy;
+    supporting placement conversations with insurers; creating insights on
+    capacity, pricing, and coverage trends; and helping Marsh teams position
+    risk to insurers more effectively.
+    ICG helps Marsh understand what insurers want, how insurers are behaving in
+    the market, where the best opportunities are for placement or negotiation,
+    and how to strengthen Marsh's relationships with insurer partners.
+    This is important because Marsh depends on strong insurer relationships to
+    secure competitive coverage for clients — ICG bridges the gap between
+    client needs, market realities, and insurer expectations.
+
+
+# ── Segments ──────────────────────────────────────────────────────────────────
+# ICG client segments. The LLM must only use values from this list.
+segments:
+  - Risk Management
+  - NOT DEFINED
+  - Commercial
+  - Corporate
+  - MMC
+  - Consumer

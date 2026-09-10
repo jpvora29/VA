@@ -26,7 +26,7 @@ class Tab:
 TABS: Tuple[Tab, ...] = (
     Tab("studio", "Studio", "bi-easel2", "Build a QBR deck from the data"),
     Tab("chat", "Chatbot", "bi-chat-square-dots", "Ask the Virtual Analyst"),
-    Tab("recap", "Recap", "bi-journal-text", "Summarise a period or a meeting"),
+    Tab("recap", "Recap", "bi-journal-text", "Recap a review from its decks"),
     Tab("mom", "MoM", "bi-card-checklist", "Draft minutes of meeting"),
 )
 

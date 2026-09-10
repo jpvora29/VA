@@ -153,7 +153,7 @@ pitch_workflow = PitchBuilderWorkflow()
 
 clientside_callback(
     """
-    function(children, draft, editMode) {
+    function(children, draft, editMode, cursor) {
         // While the user is editing a Boardroom card, the chat repaints on every
         // tweak — don't yank the viewport to the bottom mid-edit.
         if (editMode) {
@@ -176,14 +176,15 @@ clientside_callback(
                 el.__stick = dist < 140;
             }, {passive: true});
         }
-        const ctx = window.dash_clientside.callback_context;
-        const trig = (ctx && ctx.triggered.length) ? ctx.triggered[0].prop_id : '';
-        // A freshly committed message (chat-box children change) always snaps to
-        // the bottom; a streaming tick (live-draft) only follows when the user
-        // hasn't scrolled away.
-        if (trig.indexOf('chat-box') !== -1) {
+        // Only an explicit navigation or a new user question re-pins the chat.
+        // Answers, edits and repeated renders preserve the reader's position.
+        const thread = (cursor || {}).thread_id || null;
+        const questions = el.querySelectorAll('.turn-user').length;
+        if (thread !== el.__chatThread || questions > (el.__chatQuestions || 0)) {
             el.__stick = true;
         }
+        el.__chatThread = thread;
+        el.__chatQuestions = questions;
         // Auto-follow is INSTANT. With `scroll-behavior: smooth` on the
         // viewport, a new smooth scroll started every streaming tick (~8 a
         // second) interrupts the one before it, and the transcript shivers in
@@ -198,6 +199,7 @@ clientside_callback(
     Input("chat-box", "children"),
     Input("live-draft", "children"),
     State("boardroom-edit-mode", "data"),
+    State("chat-cursor", "data"),
     prevent_initial_call=True,
 )
 
@@ -525,7 +527,7 @@ clientside_callback(
     function(thinking) {
         const on = !!thinking;
         return [
-            {display: on ? 'flex' : 'none'},
+            {display: 'flex', visibility: on ? 'visible' : 'hidden'},
             {display: on ? 'none' : 'inline-flex'},
             {display: on ? 'inline-flex' : 'none'}
         ];
@@ -2134,7 +2136,8 @@ def _evidence_after(messages: list[dict[str, Any]], idx: int) -> tuple[list[dict
 @callback(
     Output("chat-render", "data"),
     Input("chat-store", "data"),
-    Input("is-thinking", "data"),
+    # Progress ticks must not rebuild the transcript or its Plotly charts.
+    State("is-thinking", "data"),
     Input("boardroom-edit-mode", "data"),
     Input("answer-editing", "data"),
     State("boardroom-active-page", "data"),

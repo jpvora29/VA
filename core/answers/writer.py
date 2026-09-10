@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.answers.claims import AnswerClaim
-from core.answers.grounded import AnswerRequest, GroundedAnswer, compose_answer
+from core.answers.grounded import ANALYST_CLAIM_LIMIT, ANSWER_VERSION, AnswerRequest, GroundedAnswer, compose_answer
 
 
 @dataclass(frozen=True)
@@ -23,7 +23,7 @@ class ClaimSelectionClient:
             "description": "Choose supported statements that directly answer the question.",
             "parameters": {
                 "type": "object", "additionalProperties": False,
-                "properties": {"claim_ids": {"type": "array", "minItems": 1, "maxItems": 4,
+                "properties": {"claim_ids": {"type": "array", "minItems": 1, "maxItems": ANALYST_CLAIM_LIMIT,
                                               "items": {"type": "string", "enum": [c.id for c in options]}}},
                 "required": ["claim_ids"],
             },
@@ -32,7 +32,10 @@ class ClaimSelectionClient:
         response = model.invoke([
             SystemMessage(content=(
                 "Select the statements that answer the exact question. Put the direct answer first, "
-                "then useful comparisons. Avoid repeating facts already in a comparison. "
+                "then the largest contributors, offsets, breadth and mix changes when available. "
+                "For a breakdown, cover the different product lines rather than stopping at the total. "
+                f"Select up to {ANALYST_CLAIM_LIMIT} distinct insights when the evidence supports them. "
+                "Avoid repeating observations already explained by a comparison. "
                 "All statements were calculated by the application. You may select their IDs only. "
                 "Do not write, calculate, or infer additional claims."
             )),
@@ -56,5 +59,7 @@ def write_answer(request: AnswerRequest, *, client: Any = None) -> GroundedAnswe
     from core.observability import log_event
     log_event(get_logger(__name__), "answer_grounded", node="answer_writer",
               facts=len(answer.facts), claims=len(answer.claims),
+              answer_version=ANSWER_VERSION, shape=request.shape,
+              evidence_sets=len(request.evidence), claim_kinds=[c.kind for c in answer.claims],
               selection_rejected=answer.selection_rejected, limitation=answer.limitation)
     return answer

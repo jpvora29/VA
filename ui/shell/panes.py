@@ -71,6 +71,8 @@ def _chat_pane(user_id: int, username: str) -> Any:
 
 
 def _recap_pane(user_id: int, username: str) -> Any:
+    """The Recap rail and page. Built once and never re-rendered as a whole — the
+    upload zone holds the decks the user chose, and a re-render would empty it."""
     return html.Div([recap_rail(), html.Div(recap_body(), className="main-container")],
                     className="va-pane-split")
 

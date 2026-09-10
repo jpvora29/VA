@@ -726,8 +726,9 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                                 # Live status bar — shown only while a turn is
                                                 # streaming. poll_job updates the stage label +
                                                 # elapsed time; a clientside callback toggles
-                                                # its visibility off is-thinking. The bar keeps
-                                                # a shimmer track so a long turn still reads as
+                                                # its visibility off is-thinking. Its layout
+                                                # space stays reserved so messages never jump.
+                                                # A shimmer track lets a long turn read as
                                                 # progress rather than a frozen pill.
                                                 html.Div(
                                                     [
@@ -746,7 +747,7 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                                     ],
                                                     id="thinking-bar",
                                                     className="thinking-bar",
-                                                    style={"display": "none"},
+                                                    style={"display": "flex", "visibility": "hidden"},
                                                 ),
                                                 command_menu(),
                                                 html.Div(
