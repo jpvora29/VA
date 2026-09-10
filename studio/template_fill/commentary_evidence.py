@@ -21,11 +21,12 @@ Pure: a dict in, a frozen pack out. No IO, no LLM, no formatting policy beyond t
 from __future__ import annotations
 
 import re
+import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from studio.template_fill import units as U
-from studio.template_fill.render import _money
+from studio.template_fill.units import money_level as _money
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,9 @@ class Evidence:
     label: str
     rendered: str
     term: str = ""              # glossary key, when the fact IS a defined concept
+    value: Optional[float] = None
+    unit: str = ""
+    entity: str = ""
 
     def as_line(self) -> str:
         return f"[{self.fact_id}] {self.label}: {self.rendered}"
@@ -100,13 +104,43 @@ class EvidencePack:
 
 def _num(mapping: Mapping[str, Any], key: str) -> Optional[float]:
     value = (mapping or {}).get(key)
-    return float(value) if isinstance(value, (int, float)) else None
+    return float(value) if isinstance(value, (int, float)) and math.isfinite(value) else None
 
 
-def _add(out: List[Evidence], fact_id: str, label: str, rendered: str, term: str = "") -> None:
+def _add(out: List[Evidence], fact_id: str, label: str, rendered: str, term: str = "",
+         *, value: Optional[float] = None, unit: str = "", entity: str = "") -> None:
     """Append a fact, skipping the ones that rendered to nothing."""
     if rendered and rendered.strip():
-        out.append(Evidence(fact_id, label, rendered.strip(), term))
+        out.append(Evidence(fact_id, label, rendered.strip(), term, value, unit, entity))
+
+
+def _direction(value: float) -> str:
+    return "increased" if value > 0 else "decreased" if value < 0 else "unchanged"
+
+
+def benchmark_label(peer: Mapping[str, Any]) -> str:
+    """Name the computation, including its actual population size when available."""
+    count = peer.get("benchmark_count")
+    if count is None and peer.get("n_carriers"):
+        count = min(int(peer["n_carriers"]), 5)
+    return (f"average of the {int(count)} largest carriers by Marsh-placed premium"
+            if count else "largest-carrier average by Marsh-placed premium")
+
+
+def _scope_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
+    out: List[Evidence] = []
+    scope = f.get("scope") or {}
+    for key, label in (("Product_Line", "Product"), ("Country", "Geography")):
+        value = scope.get(key, "All product lines in the selection" if key == "Product_Line"
+                          else "All geographies in the selection") if scope else None
+        if value is not None:
+            display = ", ".join(map(str, value)) if isinstance(value, (list, tuple)) else str(value)
+            _add(out, f"scope.{key}", label, display)
+    if scope:
+        _add(out, "scope.denominator", "Share of wallet denominator",
+             "Total Marsh-placed premium across all carriers in this same product, geography and period",
+             "share_of_wallet")
+    return out
 
 
 def _carrier_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
@@ -125,13 +159,16 @@ def _carrier_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
              str(int(year) - 1), "reporting_year")
     if _num(c, "current") is not None:
         _add(out, "carrier.premium", f"Premium {subject} placed with Marsh{when}",
-             _money(c["current"]), "premium")
+             _money(c["current"]), "premium", value=c["current"], unit="currency", entity=subject)
+    if _num(c, "prior") is not None:
+        _add(out, "carrier.prior", f"{subject}'s Marsh-placed premium in the comparison year",
+             _money(c["prior"]), "premium", value=c["prior"], unit="currency", entity=subject)
     if _num(c, "pct") is not None:
-        _add(out, "carrier.yoy", f"{subject}'s premium movement year on year",
-             f"{abs(c['pct']):.1f}%", "yoy")
+        _add(out, "carrier.yoy", f"{subject}'s Marsh-placed premium {_direction(c['pct'])} year on year",
+             f"{abs(c['pct']):.1f}%", "yoy", value=c["pct"], unit="percent_change", entity=subject)
     if _num(c, "delta") is not None:
-        _add(out, "carrier.delta", f"{subject}'s premium movement in money",
-             _money(abs(c["delta"])), "premium")
+        _add(out, "carrier.delta", f"{subject}'s Marsh-placed premium {_direction(c['delta'])} by",
+             _money(abs(c["delta"])), "premium", value=c["delta"], unit="currency_change", entity=subject)
     return out
 
 
@@ -141,9 +178,12 @@ def _market_items(f: Mapping[str, Any]) -> List[Evidence]:
     if _num(m, "current") is not None:
         _add(out, "marsh.premium", "Total premium Marsh placed in this scope, all carriers",
              _money(m["current"]), "marsh_book")
+    if _num(m, "prior") is not None:
+        _add(out, "marsh.prior", "Total Marsh-placed premium in the comparison year, all carriers",
+             _money(m["prior"]), "marsh_book")
     if _num(m, "pct") is not None:
-        _add(out, "marsh.yoy", "The wider Marsh book's movement year on year",
-             f"{abs(m['pct']):.1f}%", "yoy")
+        _add(out, "marsh.yoy", f"Total Marsh-placed premium {_direction(m['pct'])} year on year",
+             f"{abs(m['pct']):.1f}%", "yoy", value=m["pct"], unit="percent_change", entity="Marsh")
     carrier, market = _num(f.get("carrier") or {}, "current"), _num(m, "current")
     if carrier is not None and market is not None and market > carrier:
         _add(out, "headroom", "Marsh premium in this scope placed with OTHER carriers",
@@ -168,7 +208,8 @@ def _standing_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
     if _num(s, "delta") is not None and not U.is_flat(s["delta"]):
         way = "rose" if s["delta"] > 0 else "fell"
         _add(out, "sow.delta", f"Share of wallet {way} by",
-             U.points(s["delta"]), "percentage_point")
+             U.points(s["delta"]), "percentage_point", value=s["delta"],
+             unit="percentage_point_change", entity=subject)
         # The PRIOR level, because that is the form the composers now use: "share
         # of wallet rose to 9.1% from 7.8%" reads the way a partner writes it and
         # never needs the words "percentage points". The figure is real — the
@@ -179,18 +220,19 @@ def _standing_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
         if _num(s, "current") is not None:
             _add(out, "sow.prior", f"{subject}'s share of the Marsh book a year earlier",
                  f"{s['current'] - s['delta']:.1f}%", "share_of_wallet")
-    # The rendered form carries the words "top-5" on purpose. ``verifier._TOKEN_RE`` reads
-    # the "-5" in "top-5 peer average" as a numeric token and ``_norm`` strips the sign, so
-    # a sentence saying "top-5" while citing only this fact was failing verification on an
-    # unsupported number "5" and being dropped — silently, and every time, because that is
-    # how the benchmark is named in English. Naming it inside the value makes the pack
-    # self-describing and the sentence verifiable.
+    # The numeric count is part of the rendered benchmark so it can be cited.
+    benchmark = benchmark_label(peer)
     if _num(peer, "sow") is not None:
-        _add(out, "peer.sow", "Top-5 peer average share of wallet",
-             f"{peer['sow']:.1f}% (top-5 peer average)", "peer_average")
+        _add(out, "peer.sow", "Share of Marsh-placed premium: " + benchmark,
+             f"{peer['sow']:.1f}% ({benchmark})", "placement_benchmark")
     if _num(peer, "current") is not None:
-        _add(out, "peer.premium", "Top-5 peer average premium in this scope",
-             f"{_money(peer['current'])} (top-5 peer average)", "peer_average")
+        _add(out, "peer.premium", "Premium benchmark in this scope",
+             f"{_money(peer['current'])} ({benchmark})", "placement_benchmark")
+    if peer:
+        _add(out, "peer.basis", "Benchmark selection",
+             "Largest carriers in this scope; the subject carrier is eligible for inclusion. "
+             "This is an average per carrier, not their combined share or a configured peer group.",
+             "placement_benchmark")
     return out
 
 
@@ -211,8 +253,8 @@ def _gap_items(f: Mapping[str, Any]) -> List[Evidence]:
         point = market / 100.0
         _add(out, "share.point_value", "What one point of share of wallet is worth",
              _money(point), "share_of_wallet")
-        if abs(gap) >= 0.05:
-            _add(out, "peer.gap_value", "Premium value of closing the gap to the peer average",
+        if gap >= 0.05:
+            _add(out, "peer.gap_value", "Illustrative premium difference at benchmark share, holding Marsh premium constant; not a forecast or winnable opportunity",
                  _money(abs(gap) * point), "premium")
     return out
 
@@ -230,20 +272,25 @@ _MAX_MOVERS = 8
 
 def _mover_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
     out: List[Evidence] = []
+    floor = abs(_num(f.get("carrier") or {}, "current") or 0) * 0.01
     for row in (f.get("movers") or [])[:_MAX_MOVERS]:
         name, delta = row.get("name"), row.get("delta")
-        if not name or not isinstance(delta, (int, float)):
+        if not name or not isinstance(delta, (int, float)) or not math.isfinite(delta) or abs(delta) < floor or delta == 0:
             continue
-        way = "added" if delta > 0 else "gave back"
+        way = "increased" if delta > 0 else "decreased"
         pct = f" ({abs(row['pct']):.1f}%)" if isinstance(row.get("pct"), (int, float)) else ""
-        _add(out, f"mover.{name}", f"{subject} {way} premium in {name}",
-             f"{_money(abs(delta))}{pct}", "premium")
+        _add(out, f"mover.{name}", f"{subject}'s Marsh-placed premium in {name} {way} by",
+             f"{_money(abs(delta))}{pct}", "premium", value=delta, unit="currency_change", entity=name)
+        for key in ("current", "prior"):
+            if _num(row, key) is not None:
+                _add(out, f"mover.{name}.{key}", f"{name}: {subject}'s {key} Marsh-placed premium",
+                     _money(row[key]), "premium", value=row[key], unit="currency", entity=name)
     for row in (f.get("pool") or [])[:_MAX_MOVERS]:
         name, delta = row.get("name"), row.get("delta")
-        if not name or not isinstance(delta, (int, float)) or delta <= 0:
+        if not name or not isinstance(delta, (int, float)) or not math.isfinite(delta) or abs(delta) < floor or delta == 0:
             continue
-        _add(out, f"pool.{name}", f"The Marsh book in {name} grew by",
-             _money(delta), "marsh_book")
+        _add(out, f"pool.{name}", f"Total Marsh-placed premium in {name} {_direction(delta)} by",
+             _money(abs(delta)), "marsh_book", value=delta, unit="currency_change", entity=name)
     return out
 
 
@@ -275,12 +322,7 @@ def _mix_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
 
 
 def _trend_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
-    """Where the book is heading — the only facts in the pack with a time axis.
-
-    The pace fact deliberately carries BOTH figures it is derived from. The glossary
-    entry for ``momentum`` requires a sentence to print them, and a figure a sentence may
-    print has to be one the pack carries.
-    """
+    """Comparable quarterly and trailing observations with explicit periods."""
     trend = f.get("trend") or {}
     out: List[Evidence] = []
     if trend.get("ttm") is not None and trend.get("ttm_pct") is not None:
@@ -291,21 +333,19 @@ def _trend_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
              f"{_money(trend['ttm'])}, down {abs(trend['ttm_pct']):.1f}% on the prior twelve "
              f"months",
              "trailing_twelve_months")
-    quarter, pace = trend.get("quarter_pct"), trend.get("pace")
-    if quarter is None or not trend.get("quarter_label"):
+    if not trend.get("quarter_label") or trend.get("quarter_prior") is None:
         return out
-    _add(out, "trend.quarter", f"How {subject}'s book moved in the latest closed quarter",
-         f"{abs(quarter):.1f}% in {trend['quarter_label']}", "momentum")
-    if pace and trend.get("annual_pct") is not None:
-        # The year's own movement and the quarter's — the two the reading rests on. NOT
-        # the trailing-twelve figure above, which covers a different window: a sentence
-        # that prints one while claiming the other is unevidenced in a way no verifier
-        # scoped to cited facts can catch.
-        _add(out, "trend.pace",
-             "The latest quarter read against the pace of the year it closed",
-             f"{abs(trend['annual_pct']):.1f}% across the year against "
-             f"{abs(quarter):.1f}% in {trend['quarter_label']} — {pace}",
-             "momentum")
+    current, prior = trend["quarter_current"], trend["quarter_prior"]
+    _add(out, "trend.quarter", f"{subject}'s Marsh-placed premium: comparable quarters",
+         f"{_money(current)} in {trend['quarter_label']} versus {_money(prior)} in "
+         f"{trend['quarter_prior_label']}; {_direction(current - prior)} by {_money(abs(current - prior))}",
+         "momentum", value=current-prior, unit="currency_change", entity=subject)
+    if _num(trend, "quarter_yoy") is not None:
+        _add(out, "trend.quarter_yoy", "Change versus the SAME quarter last year",
+             f"{_direction(trend['quarter_yoy'])} {abs(trend['quarter_yoy']):.1f}%",
+             "momentum", value=trend["quarter_yoy"], unit="percent_change", entity=subject)
+    if trend.get("comparison_note"):
+        _add(out, "trend.comparison_note", "Quarterly comparison limitation", trend["comparison_note"])
     return out
 
 
@@ -346,32 +386,41 @@ def _peer_value(row) -> str:
     on a strong position, and a figure the sentence may print has to be a figure the pack
     carries or ``check_numbers`` drops the whole bullet.
     """
-    return (f", top-5 peer average {row.peer_sow:.1f}%"
+    label = benchmark_label({"n_carriers": getattr(row, "carriers", 0)})
+    return (f", {label}: {row.peer_sow:.1f}%"
             if row.peer_sow is not None else "")
 
 
 def _thin_value(row) -> str:
-    return (f"{row.sow:.1f}% of a {_money(row.market)} pool, against a "
-            f"{row.placed_sow:.1f}% placed average{_peer_value(row)}, "
-            f"{_money(row.stake)} at parity")
+    return (f"carrier share of Marsh-placed premium {row.sow:.1f}%; "
+            f"carrier average across segments it writes {row.placed_sow:.1f}%; "
+            f"Marsh-placed premium {_money(row.market)}{_peer_value(row)}; "
+            f"illustrative premium difference at own-average share {_money(row.stake)}; not a forecast")
 
 
 def _behind_value(row) -> str:
     # "top-5" spelled inside the value for the same reason peer.sow does it above.
-    return (f"{row.sow:.1f}% of a {_money(row.market)} pool, against a "
-            f"{row.peer_sow:.1f}% top-5 peer average, {_money(row.stake)} at parity")
+    return (f"carrier share of Marsh-placed premium {row.sow:.1f}%{_peer_value(row)}; "
+            f"Marsh-placed premium {_money(row.market)}; "
+            f"illustrative premium difference at benchmark share {_money(row.stake)}; not a forecast")
 
 
 def _strong_value(row) -> str:
-    return (f"{row.sow:.1f}% of a {_money(row.market)} pool, against a "
-            f"{row.placed_sow:.1f}% placed average{_peer_value(row)}")
+    return (f"carrier share of Marsh-placed premium {row.sow:.1f}%; "
+            f"carrier average across segments it writes {row.placed_sow:.1f}%; "
+            f"total Marsh-placed premium {_money(row.market)}{_peer_value(row)}")
 
 
 def _losing_value(row) -> str:
     moved = U.points(row.sow_delta)
-    pool = (f", on a pool that moved {abs(row.market_yoy):.1f}%"
+    pool = (f"; total Marsh-placed premium {_direction(row.market_yoy)} {abs(row.market_yoy):.1f}%"
             if row.market_yoy is not None else "")
-    return (f"down {moved} to {row.sow:.1f}% of a {_money(row.market)} pool{pool}"
+    prior = getattr(row, "prior_sow", None)
+    if prior is None and row.sow is not None and row.sow_delta is not None:
+        prior = row.sow - row.sow_delta
+    before = f" from {prior:.1f}%" if prior is not None else ""
+    return (f"carrier share of Marsh-placed premium fell by {moved} to {row.sow:.1f}%{before}; "
+            f"total Marsh-placed premium {_money(row.market)}{pool}"
             f"{_peer_value(row)}")
 
 
@@ -382,8 +431,8 @@ _SEGMENT_RENDER: Dict[str, Tuple[str, Any, str]] = {
                "whitespace"),
     "thin": ("{name} — {subject}'s share against its own placed average", _thin_value,
              "placed_average"),
-    "behind": ("{name} — {subject}'s share against the top-5 peer average", _behind_value,
-               "peer_average"),
+    "behind": ("{name} — {subject}'s share against the largest-carrier average", _behind_value,
+               "placement_benchmark"),
     "strong": ("{name} — where {subject} places above its own average", _strong_value,
                "placed_average"),
     "losing": ("{name} — share given back year on year", _losing_value, "share_of_wallet"),
@@ -415,14 +464,26 @@ def _segment_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
                 continue
             seen[kind] = seen.get(kind, 0) + 1
             template, render, term = spec
-            _add(out, _fact_id(label, kind, row.name),
-                 template.format(name=row.name, subject=subject), render(row), term)
+            fid = _fact_id(label, kind, row.name)
+            _add(out, fid, template.format(name=row.name, subject=subject), render(row), term,
+                 value=getattr(row, "stake", None), unit="currency_scenario", entity=row.name)
+            for suffix, metric, value in (
+                ("carrier_current", "Carrier premium", row.carrier),
+                ("carrier_prior", "Carrier premium in comparison year", getattr(row, "prior_carrier", None)),
+                ("marsh_current", "Total Marsh-placed premium", row.market),
+                ("marsh_prior", "Total Marsh-placed premium in comparison year", getattr(row, "prior_market", None)),
+            ):
+                if value is not None and math.isfinite(value):
+                    _add(out, fid + "." + suffix, f"{row.name}: {metric}", _money(value),
+                         "premium" if suffix.startswith("carrier") else "marsh_book",
+                         value=value, unit="currency", entity=row.name)
     return out
 
 
 # One builder per fact family, in the order a column reads them. A new family is a new
 # function in this tuple — the pack builder itself never changes.
 _BUILDERS = (
+    _scope_items,
     lambda f, subject: _carrier_items(f, subject),
     lambda f, subject: _market_items(f),
     lambda f, subject: _standing_items(f, subject),
@@ -443,4 +504,15 @@ def build_pack(facts: Mapping[str, Any]) -> EvidencePack:
     seen: Dict[str, Evidence] = {}
     for item in items:                       # first writer of an id wins; order preserved
         seen.setdefault(item.fact_id, item)
-    return EvidencePack(subject=subject, items=tuple(seen.values()))
+    pack = EvidencePack(subject=subject, items=tuple(seen.values()))
+    if pack.items:
+        from studio.template_fill import commentary_findings as findings
+        for topic in ("working", "challenges", "growth", "priorities", "threats"):
+            if topic == "threats" or not findings.for_topic(pack, topic):
+                seen[f"assessment.{topic}"] = Evidence(
+                    f"assessment.{topic}", "Evidence availability for " + topic,
+                    "status: no qualifying finding in the supplied placement comparisons; "
+                    "scope: available premium and share data only; "
+                    "limitation: no inference about unmeasured underwriting, renewal or operating performance")
+        pack = EvidencePack(subject=subject, items=tuple(seen.values()))
+    return pack

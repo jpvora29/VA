@@ -48,7 +48,7 @@ logger = get_logger(__name__)
 #: Bumped when the prompt below changes in a way that should invalidate cached commentary.
 #: Read by :mod:`studio.template_fill.commentary_cache` — a better prompt must not be
 #: shadowed by yesterday's answer.
-PROMPT_VERSION = "section-v3"
+PROMPT_VERSION = "icg-findings-v5"
 
 #: How many repair rounds a section gets.
 #:
@@ -87,9 +87,8 @@ class Column:
     targets: Tuple[Target, ...]      # every place this column's text is written to
     topic: str
     node: str
-    bullets: int                     # how many sentences the column wants
-    draft: Tuple[str, ...] = ()      # the rule composers' answer — fallback, and (in
-    #                                  ``auto`` mode) the claim selection shown to the model
+    bullets: int                     # maximum number of independent findings
+    draft: Tuple[str, ...] = ()      # explicit deterministic preview/fallback only
 
     @property
     def draft_text(self) -> str:
@@ -226,7 +225,7 @@ def _evidence_key(facts, keys: Dict[int, str]) -> str:
     if marker not in keys:
         try:
             pack = E.build_pack(dict(facts or {}))
-            keys[marker] = cache.evidence_digest(pack.rendered_values())
+            keys[marker] = cache.evidence_digest((pack.as_brief(),))
         except Exception as exc:  # noqa: BLE001 — a grouping key must never break a build
             logger.warning("commentary_batch: could not read evidence (%s)", exc)
             keys[marker] = f"unreadable-{marker}"
@@ -311,7 +310,7 @@ def section_payload(section: Section, pack, glossary_brief: str, *,
                     keep: Optional[Mapping[str, Sequence[str]]] = None,
                     plan=None) -> str:
     """The user message: the evidence once, the definitions once, then each field's ask."""
-    from studio.template_fill import editorial
+    from studio.template_fill import editorial, commentary_findings
 
     blocks = [f"CARRIER: {section.subject}", "",
               "EVIDENCE — the only facts you may use across every field below. Every "
@@ -333,7 +332,8 @@ def section_payload(section: Section, pack, glossary_brief: str, *,
     blocks += [_column_block(c, show_draft=show_draft,
                              rejected=(rejected or {}).get(c.field_id, ()),
                              keep=(keep or {}).get(c.field_id, ()),
-                             editorial_brief=plan.brief(c.field_id))
+                             editorial_brief=commentary_findings.brief(pack, c.topic)
+                             + "\nAvoid repeating another field's finding; section relevance takes priority over variety.")
                for c in section.columns]
     return "\n".join(blocks)
 
@@ -362,7 +362,8 @@ def _glossary_brief(pack) -> str:
 
 def _author(section: Section, pack, glossary_brief: str, *, columns=None,
             rejected: Optional[Mapping[str, Sequence[str]]] = None,
-            keep: Optional[Mapping[str, Sequence[str]]] = None, plan=None):
+            keep: Optional[Mapping[str, Sequence[str]]] = None, plan=None,
+            established: Optional[Mapping[str, str]] = None):
     """One author call over ``columns`` (default: the whole section). Returns the model's answer."""
     from studio.ai import client
     from studio.ai.models import CommentarySections
@@ -371,11 +372,15 @@ def _author(section: Section, pack, glossary_brief: str, *, columns=None,
 
     wanted = tuple(columns if columns is not None else section.columns)
     ask = Section(section.label, section.subject, section.style, section.facts, wanted)
+    payload = section_payload(ask, pack, glossary_brief, show_draft=show_draft_to_author(),
+                              rejected=rejected, keep=keep, plan=plan)
+    if established:
+        payload += "\nALREADY ACCEPTED IN OTHER FIELDS — do not repeat these findings:\n" + "\n".join(
+            f"{fid}: {body}" for fid, body in established.items())
     return client.structured(
         CommentarySections,
         C.deck_voice(section.style, section.subject),
-        section_payload(ask, pack, glossary_brief, show_draft=show_draft_to_author(),
-                        rejected=rejected, keep=keep, plan=plan),
+        payload,
         tier=C._COMMENTARY_TIER, node=f"section-{section.label}",
         phase="author", fields=ask.field_ids,
     )
@@ -390,21 +395,22 @@ def _judged_by_field(answer, columns: Sequence[Column]) -> Dict[str, List[Any]]:
     """
     from studio.template_fill import commentary_verify as V
 
-    wanted = {c.field_id for c in columns}
+    wanted = {c.field_id: c for c in columns}
     out: Dict[str, List[Any]] = {}
     for entry in getattr(answer, "sections", None) or ():
         field_id = (entry.field_id or "").strip()
         if field_id not in wanted:
             logger.info("commentary_batch: ignoring unrequested field %r", field_id)
             continue
-        bullets = [V.Judged(text=(b.text or "").strip(), fact_ids=tuple(b.fact_ids or ()))
+        bullets = [V.Judged(text=(b.text or "").strip(), fact_ids=tuple(b.fact_ids or ()),
+                            topic=wanted[field_id].topic)
                    for b in (entry.bullets or ()) if (b.text or "").strip()]
         action = (entry.action or "").strip()
         if action and _wants_action(field_id, columns):
             # The action IS the last line of an imperative column — the brief for
             # ``key_messages`` and ``priorities`` says to end on the ask. Landing it in its
             # own schema field and then dropping it would be asking for work and binning it.
-            bullets.append(V.Judged(text=action, fact_ids=()))
+            bullets.append(V.Judged(text=action, fact_ids=(), topic=wanted[field_id].topic))
         out[field_id] = bullets
     return out
 
@@ -531,7 +537,7 @@ def cache_key(section: Section, column: Column, pack, plan=None):
     plan = plan if plan is not None else editorial.EMPTY_PLAN
     return cache.CacheKey(
         subject=section.subject, topic=column.topic, bullets=column.bullets,
-        evidence=cache.evidence_digest(pack.rendered_values()),
+        evidence=cache.evidence_digest((pack.as_brief(), _glossary_brief(pack))),
         brief=C.column_rules(column.topic, column.bullets) + plan.brief(column.field_id),
         style=section.style, prompt_version=PROMPT_VERSION, tier=C._COMMENTARY_TIER,
         deployment=_deployment(), draft=cache.evidence_digest(column.draft),
@@ -605,16 +611,18 @@ def write_section(section: Section, plan=None) -> Dict[Target, str]:
         return _placed(section.columns, text)
 
     glossary_brief = _glossary_brief(pack)
-    answer = _author(section, pack, glossary_brief, columns=pending, plan=plan)
+    answer = _author(section, pack, glossary_brief, columns=pending, plan=plan, established=text)
     if answer is None:
         refuse(f"the author returned nothing for section {section.label}", retryable=True)
         return _placed(section.columns, text)
 
     kept, dropped = _verify_section(_judged_by_field(answer, pending), pack, glossary_brief,
                                     label=section.label, plan=plan)
+    kept = _exclude_established(kept, text, dropped)
     written, failed = _accepted(kept, pending, subject=section.subject, dropped=dropped)
     if failed:
-        repaired, failed = _repair(section, pack, glossary_brief, failed, plan=plan)
+        repaired, failed = _repair(section, pack, glossary_brief, failed, plan=plan,
+                                   established={**text, **written})
         written.update(repaired)
     if failed:
         # Last resort, after every repair round: a verified line beats the draft.
@@ -655,7 +663,8 @@ def _report_repeats(section: Section, text: Mapping[str, str]) -> None:
 
 
 def _repair(section: Section, pack, glossary_brief: str, failed: Sequence[Failure],
-            *, plan=None) -> Tuple[Dict[str, str], List[Failure]]:
+            *, plan=None, established: Optional[Mapping[str, str]] = None
+            ) -> Tuple[Dict[str, str], List[Failure]]:
     """Repair the failed fields ONLY — never the whole section, never the deck.
 
     Re-running the section would throw away the fields that passed and pay to write them
@@ -691,16 +700,35 @@ def _repair(section: Section, pack, glossary_brief: str, failed: Sequence[Failur
         keep = {f.column.field_id: f.kept_lines for f in outstanding if f.kept_lines}
         answer = _author(section, pack, glossary_brief, columns=columns,
                          rejected={f.column.field_id: f.reasons for f in outstanding},
-                         keep=keep, plan=plan)
+                         keep=keep, plan=plan, established={**(established or {}), **repaired})
         if answer is None:
             break                      # keep whatever the earlier rounds repaired
         fresh, dropped = _verify_section(_judged_by_field(answer, columns), pack,
                                          glossary_brief, label=f"{section.label}-repair",
                                          plan=plan)
+        fresh = _exclude_established(fresh, {**(established or {}), **repaired}, dropped)
         text, outstanding = _accepted(_merged(keep, fresh), columns,
                                       subject=section.subject, dropped=dropped)
         repaired.update(text)
     return repaired, outstanding
+
+
+def _exclude_established(fresh, established, dropped):
+    """A repair or partial cache miss cannot repeat a finding already accepted."""
+    from studio.template_fill import editorial
+
+    owners = {editorial.claim_key(line): fid for fid, body in established.items()
+              for line in body.splitlines() if editorial.claim_key(line)}
+    out = {}
+    for fid, lines in fresh.items():
+        out[fid] = []
+        for line in lines:
+            owner = owners.get(editorial.claim_key(line))
+            if owner and owner != fid:
+                dropped.setdefault(fid, []).append(f"finding already accepted in field {owner}; choose a distinct finding")
+            else:
+                out[fid].append(line)
+    return out
 
 
 def _merged(keep: Mapping[str, Sequence[str]],

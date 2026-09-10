@@ -16,7 +16,10 @@ from typing import Iterable, List, Sequence, Set, Tuple
 
 # A numeric token: optional #/sign/currency, digits (with commas/decimal), optional
 # unit suffix (%, x, pts, m, bn, b, k).
-_TOKEN_RE = re.compile(r"[#+\-]?\s*(?:usd\s*|\$)?\d[\d,]*(?:\.\d+)?\s*(?:%|x|pts|bn|b|m|k)?", re.I)
+_TOKEN_RE = re.compile(
+    r"[#+\-]?\s*(?:usd\s*|\$)?\d[\d,]*(?:\.\d+)?\s*(?:%|(?:pts|bn|x|b|m|k)(?![a-z]))?",
+    re.I,
+)
 _SENT_RE = re.compile(r"(?<=[.!?])\s+")
 
 

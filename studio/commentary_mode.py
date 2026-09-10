@@ -1,33 +1,9 @@
-"""Who is allowed to write the commentary this run ships.
+"""Choose how Studio authors and verifies QBR commentary.
 
-Studio has always had a deterministic composer behind every prose column, and it has always
-been the fallback: no credentials, a dead endpoint, an empty answer, a verifier drop — every
-one of those paths ends by returning the rule draft, per column and quietly. That is the
-right behaviour for a demo and the wrong one for a deliverable, because the two outcomes are
-indistinguishable on the slide. A deck can be written entirely by the rule composers and
-look exactly like one a model wrote badly, which is a bad place to be standing when someone
-says the commentary reads poorly.
-
-So the run declares what it will accept:
-
-    COMMENTARY_MODE=ai_required   a model writes every column, or the build FAILS
-    COMMENTARY_MODE=auto          today's behaviour: a model writes, rules catch it (default)
-    COMMENTARY_MODE=off           the rule composers write; no model is called
-
-``ai_required`` changes four things and nothing else:
-
-* the writer factory may not hand back the rule composer (:mod:`commentary_writer`);
-* the author prompt is not shown finished deterministic prose to imitate — it gets the
-  evidence, the priorities and the column's questions, and writes from those;
-* a column that ends up as its draft raises :class:`CommentaryUnavailable` instead of
-  shipping;
-* the configuration is checked BEFORE the build spends minutes on analytics, so a missing
-  API key is an actionable error in the first second rather than a deterministic deck in
-  the thirtieth minute.
-
-``STUDIO_AI=off`` still wins over everything: it is a kill switch, and a kill switch that
-can be overridden is not one. Asking for both is a contradiction, and this module answers
-it the safe way — off — rather than failing a run that explicitly asked for no model.
+COMMENTARY_MODE=ai_required (default): verified AI in every requested field, or fail.
+COMMENTARY_MODE=auto: explicitly permit a deterministic fallback after an AI failure.
+COMMENTARY_MODE=off: deterministic preview; no model calls.
+STUDIO_AI=off takes precedence. Every AI mode writes from facts, not fallback prose.
 """
 from __future__ import annotations
 
@@ -70,21 +46,17 @@ class CommentaryUnavailable(RuntimeError):
 
 
 def mode() -> str:
-    """This run's commentary mode — one of ``ai_required``, ``auto``, ``off``.
-
-    An unrecognised value reads as ``auto`` with a warning rather than raising: a typo in an
-    environment variable must not stop a build, and the warning is how it gets noticed.
-    """
+    """Resolve the mode; missing or invalid values require verified AI."""
     from studio.ai import client
 
     if client.disabled():                 # STUDIO_AI=off — the kill switch wins
         return OFF
-    raw = (os.getenv("COMMENTARY_MODE") or AUTO).strip().lower()
+    raw = (os.getenv("COMMENTARY_MODE") or AI_REQUIRED).strip().lower()
     resolved = _ALIASES.get(raw, raw)
     if resolved not in _MODES:
-        logger.warning("COMMENTARY_MODE=%r is not one of %s — reading it as %r",
-                       raw, ", ".join(_MODES), AUTO)
-        return AUTO
+        logger.warning("COMMENTARY_MODE=%r is not one of %s — requiring verified AI commentary",
+                       raw, ", ".join(_MODES))
+        return AI_REQUIRED
     return resolved
 
 
@@ -94,24 +66,10 @@ def ai_required() -> bool:
 
 
 def show_draft_to_author() -> bool:
-    """Whether the author prompt may include the finished deterministic prose.
-
-    In ``auto`` it may, and does: the draft is the claim selection and the priority order,
-    and a model shown one writes a better column than a model shown a bare fact list. In
-    ``ai_required`` it may not, because a model handed completed sentences reliably rewords
-    them, and a reworded rule draft is a deterministic column with an ``authorship=ai``
-    label on it. It still gets the evidence, the column's brief and the questions the column
-    exists to answer — which is the intent the draft was standing in for.
-
-    The cost is real and worth naming: the draft is also where the deck's
-    :class:`~studio.template_fill.ledger.ClaimLedger` shows through, so withholding it gives
-    up some of the cross-page de-duplication the ledger buys. Within a sub-deck nothing is
-    lost — the section prompt tells the model outright that no two of its fields may make
-    the same point — and the whole-deck repetition check still reports what slips through
-    (:func:`studio.template_fill.commentary_qa.check_narratives`). That is the trade
-    ``ai_required`` makes on purpose: genuine authorship over guaranteed non-repetition.
-    """
-    return not ai_required()
+    """Never anchor the AI author to finished fallback prose."""
+    # Finished fallback prose anchors the model to the wording it should improve.
+    # Every AI mode now authors directly from the evidence and selected findings.
+    return False
 
 
 def preflight(tier: str = "reason") -> None:

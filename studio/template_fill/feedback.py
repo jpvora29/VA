@@ -413,7 +413,7 @@ def _facts(result, filters: Dict[str, Any]) -> Dict[str, Any]:
     peer = _safe(C.peer_average_totals, result.flow, filters, result.engine) or {}
     movers = _safe(C.movement_by_dim, result.flow, dim, filters, result.engine, top=8) or []
     pool = _safe(C.movement_by_dim, result.flow, dim, base, result.engine, top=8) or []
-    return {"subject": str(subject or ""), "carrier": carrier, "marsh": marsh, "rank": rank,
+    return {"subject": str(subject or ""), "scope": dict(base), "carrier": carrier, "marsh": marsh, "rank": rank,
             "sow": sow, "peer": peer, "movers": movers, "pool": pool,
             # The two families that are not another reading of the headline: HOW the book
             # is distributed, and WHERE it is heading. Without them every column argued
@@ -523,7 +523,7 @@ def _mag(pct: float) -> str:
 
 def _moved(pct: float) -> str:
     """A movement as a clause of its own: ``grew 12.0%`` / ``fell 3.0%``."""
-    return f"{'grew' if pct >= 0 else 'fell'} {_mag(pct)}"
+    return f"{'grew' if pct > 0 else 'fell'} {_mag(pct)}" if pct else "was unchanged"
 
 
 def _up_down(pct: float) -> str:
@@ -603,7 +603,7 @@ def _point_of_share(f: Dict[str, Any]) -> Optional[float]:
 
 
 def _peer_share_gap(f: Dict[str, Any]) -> Optional[float]:
-    """How far the carrier's share of wallet sits BELOW the top-5 peer average, in points."""
+    """How far the carrier's share of wallet sits BELOW the {_benchmark(f)}, in points."""
     mine = (f.get("sow") or {}).get("current")
     theirs = (f.get("peer") or {}).get("sow")
     if mine is None or theirs is None or theirs <= mine:
@@ -619,8 +619,7 @@ def _working_points(f: Dict[str, Any]) -> List[str]:
         line = (f"{_subject(f, opening=True)} grew its book with Marsh {_mag(c['pct'])} "
                 f"year on year to {_money(c['current'])}")
         if m.get("pct") is not None and m["pct"] < c["pct"]:
-            line += (f", well ahead of the wider Marsh book, which {_moved(m['pct'])}, so the "
-                     f"gain was won on share rather than carried by the market")
+            line += f", compared with total Marsh-placed premium that {_moved(m['pct'])}"
         elif m.get("pct") is not None:
             line += f", against a wider Marsh book that {_moved(m['pct'])}"
         parts.append(line + ".")
@@ -630,14 +629,13 @@ def _working_points(f: Dict[str, Any]) -> List[str]:
                      f"{_money(c['delta'])}.")
     if (r.get("delta") or 0) > 0:
         parts.append(f"Rank within the Marsh book improved {_places(int(r['delta']))} to "
-                     f"{_rank_of(r)}, and that came at competitors' expense rather than "
-                     f"from a growing pool.")
+                     f"{_rank_of(r)}.")
     if (s.get("delta") or 0) > 0:
         line = f"Share of wallet rose {U.shift(s['current'], s['delta'])}"
         peer_sow = (f.get("peer") or {}).get("sow")
         if peer_sow is not None:
             side = "above" if s["current"] >= peer_sow else "below"
-            line += (f", {side} the top-5 peer average of {peer_sow:.1f}%")
+            line += (f", {side} the {_benchmark(f)} of {peer_sow:.1f}%")
         parts.append(line + ".")
     # Where the book places above its own standard. A scope-level growth figure says the
     # book grew; this says which part of it the rest could be measured against.
@@ -645,7 +643,7 @@ def _working_points(f: Dict[str, Any]) -> List[str]:
 
     parts += P.points(_segments(f), SEG.Placement.STRONG, subject=_subject(f), limit=2)
 
-    if not parts and c.get("current"):
+    if not parts and c.get("current") and c.get("pct") == 0:
         parts.append(f"{_subject(f, opening=True)} held its book with Marsh at "
                      f"{_money(c['current'])}.")
     return parts
@@ -699,9 +697,7 @@ def _challenges_points(f: Dict[str, Any]) -> List[str]:
     point = _point_of_share(f)
     if gap is not None:
         line = (f"At {s['current']:.1f}% share of wallet the book sits {U.points(gap)} "
-                f"below the top-5 peer average of {f['peer']['sow']:.1f}%")
-        if point:
-            line += f", which is about {_money(gap * point)} of premium in scope"
+                f"below the {_benchmark(f)} of {f['peer']['sow']:.1f}%")
         parts.append(line + ".")
     return parts
 
@@ -741,176 +737,72 @@ def _tracks_parent(f: Dict[str, Any]) -> bool:
 
 
 def _growth_points(f: Dict[str, Any]) -> List[str]:
-    """Opportunities: where the premium the book does not have actually sits.
-
-    Ordered by what a carrier's leadership can act on, which is not the order the figures
-    arrive in. Absence first - business Marsh already places that this book writes none of
-    - then the segments it writes below its own standard, then those below the benchmark,
-    then the one it places best as evidence the rest can be moved.
-
-    The scope-level lines that used to lead this column now trail it. "Every point of share
-    is worth about $4M" and "closing the gap to the peer average would add roughly $349K"
-    are arithmetic on the headline, and on a line whose real story was $69M of untouched
-    industries they were what the column said instead. They stay as the tail, so a scope
-    with no segment findings still fills its cell.
-    """
+    """Named placement gaps and clearly qualified benchmark scenarios."""
     from studio.template_fill import segment_prose as P
-
-    c, m, s_ = f["carrier"], f.get("marsh") or {}, f["sow"]
     found = _segments(f)
-    subject = _subject(f)
-    parts: List[str] = P.points(found, *SEG.OPPORTUNITY_KINDS, subject=subject, limit=3)
-
-    summary = P.absence_summary(found, subject)
-    if summary and len(parts) < 2:
-        parts.append(summary)
-    # Nothing here differs from the wider book. Saying so is a finding; repeating the
-    # portfolio's own story on every page, as this column used to, is not.
+    parts = P.points(found, *SEG.OPPORTUNITY_KINDS, subject=_subject(f), limit=3)
     if not parts and _tracks_parent(f):
         parts.append(P.tracking_note(share=(f.get("sow") or {}).get("current")))
-
-    # The proof point is the only STRONG line this column carries, so it leads its class.
-    proof = next((p for p in (P.sentence(r, subject, lead=True)
-                              for fs in found.values()
-                              for r in fs.of(SEG.Placement.STRONG)[:1])
-                  if p), None)
-    if proof and parts:
-        parts.append(proof)
-
-    capture = _capture_gap(f)
-    if capture:
-        parts.append(capture)
-
-    if c.get("current") is not None and m.get("current"):
-        headroom = m["current"] - c["current"]
-        if headroom > 0:
-            share = (f", leaving {subject} on {s_['current']:.1f}% of the wallet"
-                     if s_.get("current") is not None else "")
-            point = _point_of_share(f)
-            worth = (f", where every point of share is worth about {_money(point)}"
-                     if point else "")
-            parts.append(f"Of the {_money(m['current'])} Marsh book, {_money(headroom)} is "
-                         f"placed with other carriers{share}{worth}.")
     gap, point = _peer_share_gap(f), _point_of_share(f)
     if gap is not None and point:
-        parts.append(f"Closing the {U.points(gap)} gap to the top-5 peer average would add "
-                     f"roughly {_money(gap * point)} of GWP at today's market size.")
-    if (m.get("pct") or 0) > 0 and (c.get("pct") is not None) and m["pct"] > c["pct"]:
-        parts.append(f"Marsh demand grew {_mag(m['pct'])} year on year, so holding share "
-                     f"flat would still leave premium on the table, and capture rate is "
-                     f"the lever.")
+        parts.append(f"Matching the {_benchmark(f)} would correspond to an illustrative "
+                     f"{_money(gap * point)} premium increase at the current Marsh total, "
+                     "subject to validating appetite and placement access.")
+    headroom = _unplaced_headroom(f)
+    if headroom:
+        parts.append(headroom.rstrip(".") + "; this does not establish what the carrier could win.")
     return parts
 
 
 def _capture_gap(f: Dict[str, Any]) -> Optional[str]:
-    """Where Marsh demand grew hardest and the carrier took least of it.
-
-    A comparison needs something to compare: a scope holding one value on the driver
-    dimension has no widest gap, only its own total again.
-    """
+    """Compare material carrier and Marsh premium movements in one named segment."""
     rows = f.get("pool") or []
-    pool = [x for x in rows if (x.get("delta") or 0) > 0]
-    if len(rows) < 2 or not pool:
+    mine = {x["name"]: (x.get("delta") or 0.0) for x in f.get("movers") or []}
+    eligible = [x for x in rows if x.get("name") in mine and (x.get("delta") or 0) > 0
+                and abs(mine[x["name"]]) >= _material_floor(f)]
+    if len(rows) < 2 or not eligible:
         return None
-    mine = {x["name"]: (x.get("delta") or 0.0) for x in (f.get("movers") or [])}
-    worst = max(pool, key=lambda x: x["delta"] - mine.get(x["name"], 0.0))
-    if worst["name"] not in mine:
-        return None
-    captured = mine[worst["name"]]
-    if captured >= worst["delta"]:
-        return None
-    took = (f"{_subject(f)} took only {_money(captured)} of it" if captured > 0
-            else f"{_subject(f)} gave back {_money(captured)}")
-    return (f"{worst['name']} added {_money(worst['delta'])} of Marsh premium year on year "
-            f"while {took}, the widest capture gap in the portfolio.")
+    row = max(eligible, key=lambda x: x["delta"] - mine[x["name"]])
+    value = mine[row["name"]]
+    way = "increased" if value > 0 else "decreased" if value < 0 else "was unchanged"
+    movement = f"{way} by {_money(abs(value))}" if value else way
+    return (f"Marsh-placed premium in {row['name']} increased by {_money(row['delta'])}. "
+            f"{_subject(f, opening=True)}'s premium in that segment {movement}.")
 
 
 def _key_messages_points(f: Dict[str, Any]) -> List[str]:
-    """Key messages: the four lines the account team should be able to say from memory.
-
-    Opens on the STANCE (:mod:`studio.template_fill.stance`) rather than on a premium
-    total: what the team needs to carry out of the room is what to do about this book, and
-    the figures behind that call follow in the lines beneath it.
-    """
-    from studio.template_fill.stance import book_posture_point
-
-    c, r, s, peer = f["carrier"], f["rank"], f["sow"], f.get("peer") or {}
-    m = f.get("marsh") or {}
-    parts: List[str] = []
-    stance = book_posture_point(f)
-    if stance:
-        parts.append(stance)
+    """Material performance and placement observations, one comparison per bullet."""
+    c, r, s, peer = (f.get(key) or {} for key in ("carrier", "rank", "sow", "peer"))
+    parts = []
     if c.get("current") is not None:
         year = f" in {int(c['current_year'])}" if c.get("current_year") else ""
-        yoy = f", {_up_down(c['pct'])} on the year," if c.get("pct") is not None else ""
-        market = (f" against a wider Marsh book that {_moved(m['pct'])}"
-                  if m.get("pct") is not None else "")
-        parts.append(f"{_subject(f, opening=True)} wrote {_money(c['current'])} with "
-                     f"Marsh{year}{yoy}{market}.")
-    pos: List[str] = []
-    if r.get("current") is not None:
-        pos.append(f"ranks {_rank_of(r)}")
+        change = f", {_up_down(c['pct'])} year on year" if c.get("pct") is not None else ""
+        parts.append(f"{_subject(f, opening=True)} wrote {_money(c['current'])} with Marsh{year}{change}.")
     if s.get("current") is not None:
-        moved = (f", {'up' if s['delta'] >= 0 else 'down'} {U.points_of_share(s['delta'])}"
-                 if s.get("delta") is not None else "")
-        # The peer average benchmarks the SHARE, so it hangs off the share clause â€” never
-        # off a rank, which it says nothing about.
-        against = (f", against a top-5 peer average of {peer['sow']:.1f}%"
-                   if peer.get("sow") is not None else "")
-        pos.append(f"holds {s['current']:.1f}% of the wallet{moved}{against}")
-    if pos:
-        parts.append(f"{_subject(f, opening=True)} " + _and(pos) + ".")
+        movement = U.shift(s['current'], s['delta']) if s.get("delta") else f"at {s['current']:.1f}%"
+        verb = "rose" if (s.get("delta") or 0) > 0 else "fell" if (s.get("delta") or 0) < 0 else "stood"
+        parts.append(f"{_subject(f, opening=True)}'s share of Marsh placements {verb} {movement}.")
+        if peer.get("sow") is not None:
+            parts.append(f"{_subject(f, opening=True)} received {s['current']:.1f}% of Marsh placements, "
+                         f"compared with {peer['sow']:.1f}% for the {_benchmark(f)}.")
+    if r.get("current") is not None:
+        parts.append(f"{_subject(f, opening=True)} ranked {_rank_of(r)} by Marsh-placed premium.")
     risers = _named_moves(f.get("movers") or [], rising=True, floor=_material_floor(f))
     if risers:
-        parts.append(f"Momentum sits with {risers}, so the renewal book there is what to "
-                     f"protect first.")
-    gap, point = _peer_share_gap(f), _point_of_share(f)
-    if gap is not None and point:
-        parts.append(f"Reaching peer parity means winning {U.points_of_share(gap)}, worth "
-                     f"about {_money(gap * point)} of GWP.")
+        parts.append(f"Premium increases included {risers}.")
     return parts
 
 
 def _thesis_points(f: Dict[str, Any]) -> List[str]:
-    """The portfolio thesis: the one tension the rest of the deck exists to discuss.
-
-    Every other column reports a part of the book. The summary page's job is different â€” it
-    states where the account STANDS, as a single claim a leadership team can agree or argue
-    with, and the tension in it is what the following pages then evidence. So this is a
-    synthesis of two facts that are usually reported apart: how the book is growing against
-    the Marsh pool, and how well it is penetrated against the peer benchmark. A book can be
-    winning one and losing the other, and that gap is the thesis.
-    """
+    """Principal observed performance comparison, with an optional placement benchmark."""
     c, m = f.get("carrier") or {}, f.get("marsh") or {}
-    s_, peer = f.get("sow") or {}, f.get("peer") or {}
-    if c.get("current") is None or c.get("pct") is None or m.get("pct") is None:
+    if c.get("current") is None or c.get("pct") is None:
         return []
-    share, peer_share = s_.get("current"), peer.get("sow")
-    outgrowing = c["pct"] > m["pct"]
-    lead = (f"{_subject(f, opening=True)} grew {_mag(c['pct'])} to {_money(c['current'])} "
-            f"against a Marsh book that {_moved(m['pct'])}")
-    if share is None or peer_share is None:
-        tail = (", so the book is taking share" if outgrowing
-                else ", so the book is giving share back")
-        return [lead + tail + "."]
-    behind = peer_share - share
-    if outgrowing and behind > 0:
-        # The common shape, and the one worth arguing about: winning the year, still
-        # under-represented on the book that matters.
-        return [f"{lead}, but at {share:.1f}% of the wallet it is still "
-                f"{U.points(behind)} behind the top-5 peer average of {peer_share:.1f}% â€” "
-                f"the growth is real and the relevance is not yet."]
-    if outgrowing:
-        return [f"{lead}, and at {share:.1f}% of the wallet it already writes above the "
-                f"top-5 peer average of {peer_share:.1f}% â€” the question is holding that, "
-                f"not winning it."]
-    if behind > 0:
-        return [f"{lead}, and at {share:.1f}% of the wallet it sits {U.points(behind)} "
-                f"behind the top-5 peer average of {peer_share:.1f}% â€” the book is losing "
-                f"ground from a position already behind its peers."]
-    return [f"{lead}, though at {share:.1f}% of the wallet it still writes above the "
-            f"top-5 peer average of {peer_share:.1f}% â€” a strong position growing slower "
-            f"than the book around it."]
+    lead = (f"{_subject(f, opening=True)}'s Marsh-placed premium {_moved(c['pct'])} "
+            f"to {_money(c['current'])}")
+    if m.get("pct") is not None:
+        lead += f", while total Marsh-placed premium {_moved(m['pct'])}"
+    return [lead + "."]
 
 
 def _highlights_points(f: Dict[str, Any]) -> List[str]:
@@ -930,18 +822,8 @@ def _highlights_points(f: Dict[str, Any]) -> List[str]:
 
 
 def _recent_gain(f: Dict[str, Any]) -> Optional[str]:
-    """A share position won inside one year is new rather than established.
-
-    The distinct thing to say about a book with no bad news: how much of its standing is
-    one year old. Both figures are the share facts already on the page, but the claim â€”
-    that the position is young â€” is one no other column makes.
-    """
-    s = f.get("sow") or {}
-    cur, delta = s.get("current"), s.get("delta")
-    if cur is None or delta is None or delta <= 0:
-        return None
-    return (f"{U.points(delta)} of the {cur:.1f}% share was won in the last year alone, so "
-            f"the position is newly held rather than established.")
+    """An annual gain does not establish that the carrier's position is newly held."""
+    return None
 
 
 def _defending_lead(f: Dict[str, Any]) -> Optional[str]:
@@ -951,7 +833,7 @@ def _defending_lead(f: Dict[str, Any]) -> Optional[str]:
     if mine is None or theirs is None or mine <= theirs:
         return None
     return (f"At {mine:.1f}% share of wallet the book sits {U.points(mine - theirs)} above "
-            f"the top-5 peer average of {theirs:.1f}%, so the task here is defending a lead "
+            f"the {_benchmark(f)} of {theirs:.1f}%, so the task here is defending a lead "
             f"rather than closing a gap.")
 
 
@@ -963,8 +845,8 @@ def _unplaced_headroom(f: Dict[str, Any]) -> Optional[str]:
     headroom = m["current"] - c["current"]
     if headroom <= 0:
         return None
-    return (f"{_money(headroom)} of the {_money(m['current'])} Marsh book is still placed "
-            f"with other carriers.")
+    return (f"Marsh placed {_money(headroom)} with other carriers out of "
+            f"{_money(m['current'])} in total placements in this scope.")
 
 
 def _absent_segments(f: Dict[str, Any]) -> Optional[str]:
@@ -988,12 +870,12 @@ def _tracking_note(f: Dict[str, Any]) -> Optional[str]:
 
 
 def _marsh_demand(f: Dict[str, Any]) -> Optional[str]:
-    """Where the pool itself is growing, the pool is the opportunity."""
+    """Premium movement; this does not measure demand or qualify an opportunity."""
     m = f.get("marsh") or {}
     if m.get("pct") is None or m["pct"] <= 0 or not m.get("current"):
         return None
-    return (f"Marsh demand grew {_mag(m['pct'])} year on year to {_money(m['current'])}, so "
-            f"the pool to win from is getting larger.")
+    return (f"Total Marsh-placed premium grew {_mag(m['pct'])} year on year "
+            f"to {_money(m['current'])}.")
 
 
 def _book_held(f: Dict[str, Any]) -> Optional[str]:
@@ -1017,7 +899,10 @@ _FALLBACKS: Dict[str, Tuple[Callable[[Dict[str, Any]], Optional[str]], ...]] = {
 
 
 def _fallback_points(kind: str, f: Dict[str, Any]) -> List[str]:
-    """The first fallback for ``kind`` that its figures can carry, as a one-point list."""
+    """State an evidence limitation when no qualifying result supports a section."""
+    if kind in {"challenges", "working"}:
+        finding = "shortfall" if kind == "challenges" else "improvement"
+        return [f"The supplied premium and share comparisons show no qualifying {finding} for this section."]
     for build in _FALLBACKS.get(kind, ()):
         line = build(f)
         if line:
@@ -1078,8 +963,6 @@ def _compose(kind: str, f: Dict[str, Any], limit: int, ledger=None, extras=None)
     :class:`~studio.template_fill.ledger.ClaimLedger` the points are taken through it, so a
     claim an earlier page already made gives way to this page's next-best one.
     """
-    from studio.template_fill.openings import vary_openings
-
     if kind not in _COMPOSERS:
         return _kpi_cell(kind, f)
     said = points(kind, f)
@@ -1087,10 +970,8 @@ def _compose(kind: str, f: Dict[str, Any], limit: int, ledger=None, extras=None)
         said = said + [line for line in extras.for_topic(kind) if line not in said]
     if ledger is not None:
         said = ledger.take(said, limit=limit)
-    # Every composer opens on the subject, because every one is written to stand alone.
-    # Stacked into a cell they read as a roll-call, so all but the first are turned back
-    # into "the book" — the same rule the LLM rewrite is held to.
-    return _bullets(vary_openings(said[:limit], str(f.get("subject") or "")), limit)
+    # Explicit names keep each bullet understandable on its own.
+    return _bullets(said[:limit], limit)
 
 
 # ── value resolution ─────────────────────────────────────────────────────────
@@ -1202,3 +1083,8 @@ def values(template: Template, result, *, ledger=None, extras=None,
     # Every cell above holds either a finished KPI string or a PendingRewrite. The deck
     # writes them all together (``assemble``); a lone caller writes its own here.
     return out if defer_rewrites else rewrites.write_now(out)
+
+
+def _benchmark(f: Dict[str, Any]) -> str:
+    from studio.template_fill.commentary_evidence import benchmark_label
+    return benchmark_label(f.get("peer") or {})

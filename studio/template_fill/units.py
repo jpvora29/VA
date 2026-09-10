@@ -19,6 +19,12 @@ from typing import Optional
 _FLAT_BELOW = 0.05
 
 
+def money_level(value: float) -> str:
+    """A premium level preserves its sign; movement magnitudes pass abs(value)."""
+    from studio.template_fill.render import _money
+    return ("-" if value < 0 else "") + _money(value)
+
+
 def points(value: Optional[float], *, decimals: int = 1) -> str:
     """A percentage-point movement, spelled out: ``1.3`` → ``"1.3 percentage points"``.
 

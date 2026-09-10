@@ -14,6 +14,7 @@ under test is the orchestration rather than the writing.
 from __future__ import annotations
 
 import pytest
+import re
 
 from studio import commentary_mode as mode
 from studio import telemetry
@@ -25,6 +26,13 @@ from studio.template_fill.deck_slides import DeckSlides
 
 
 # ── fixtures: one book, enough of it to build a real evidence pack ───────────
+
+
+def _approved_verdicts(user):
+    """Explicit successful review for orchestration tests; absence is now failure."""
+    from studio.ai.models import CommentaryVerdict, CommentaryVerdicts
+    count = len(re.findall(r"^\d+\. ", user, re.M))
+    return CommentaryVerdicts(verdicts=[CommentaryVerdict(keep=True) for _ in range(count)])
 
 
 def _facts() -> dict:
@@ -59,7 +67,8 @@ def _value_set(facts: dict, topics=("working", "challenges", "growth")) -> dict:
 def _no_cache(tmp_path, monkeypatch):
     """Point the on-disk cache at a throwaway directory for every test in this file."""
     monkeypatch.setenv("STUDIO_COMMENTARY_CACHE", str(tmp_path / "commentary"))
-    monkeypatch.delenv("COMMENTARY_MODE", raising=False)
+    monkeypatch.setenv("COMMENTARY_MODE", "auto")
+    monkeypatch.setenv("STUDIO_PPT_MERGE_ENGINE", "opc")
     monkeypatch.delenv("STUDIO_AI", raising=False)
 
 
@@ -102,9 +111,9 @@ def stub_model(monkeypatch):
             # generous answer but refuses a short one.
             return CommentarySections(sections=[
                 CommentarySection(field_id=fid, bullets=[
-                    CommentaryBullet(text=line, fact_ids=[]) for line in _SENTENCES
+                    CommentaryBullet(text=line, fact_ids=["period.year"]) for line in _SENTENCES
                 ]) for fid in asked])
-        return None                      # every other schema: the verifier keeps everything
+        return _approved_verdicts(user)
 
     monkeypatch.setattr(client, "structured", structured)
     monkeypatch.setattr(client, "llm_available", lambda: True)
@@ -180,8 +189,8 @@ def test_a_field_the_model_invents_is_ignored_rather_than_mapped_by_position(stu
         if model is CommentarySections:
             return CommentarySections(sections=[CommentarySection(
                 field_id="not.a.field",
-                bullets=[CommentaryBullet(text="A sentence about nothing.", fact_ids=[])])])
-        return None
+                bullets=[CommentaryBullet(text="A sentence about nothing.", fact_ids=["period.year"])])])
+        return _approved_verdicts(user)
 
     monkeypatch.setattr(client, "structured", structured)
     facts = _facts()
@@ -263,9 +272,9 @@ def test_the_kill_switch_beats_the_strict_mode(monkeypatch):
     mode.preflight()                                    # and refuses nothing
 
 
-def test_an_unreadable_mode_reads_as_auto(monkeypatch):
+def test_an_unreadable_mode_requires_verified_ai(monkeypatch):
     monkeypatch.setenv("COMMENTARY_MODE", "sort-of-required")
-    assert mode.mode() == mode.AUTO
+    assert mode.mode() == mode.AI_REQUIRED
 
 
 def test_strict_mode_withholds_the_finished_draft_from_the_author(monkeypatch, stub_model):
@@ -276,10 +285,10 @@ def test_strict_mode_withholds_the_finished_draft_from_the_author(monkeypatch, s
     assert "EVIDENCE" in prompt and "FIELD" in prompt
 
 
-def test_auto_mode_still_shows_the_draft(stub_model):
+def test_auto_mode_also_authors_without_a_finished_draft(stub_model):
     rewrites.write_all([_value_set(_facts(), topics=("working",))])
     prompt = [c for c in stub_model if c["phase"] == "author"][0]["user"]
-    assert "working line one." in prompt
+    assert "working line one." not in prompt
 
 
 # ── the cache: an export must not re-write the deck ─────────────────────────
@@ -324,13 +333,13 @@ def test_a_retry_after_a_partial_failure_only_rewrites_what_failed(monkeypatch):
     def structured(model, system, user, *, tier="balanced", node="ai", phase="other",
                    fields=(), **kw):
         if model is not CommentarySections:
-            return None
+            return _approved_verdicts(user)
         asked.append(tuple(fields))
         wanted = [line.split()[2] for line in user.splitlines()
                   if line.startswith("--- FIELD ")]
         return CommentarySections(sections=[
             CommentarySection(field_id=fid, bullets=[
-                CommentaryBullet(text=line, fact_ids=[]) for line in _SENTENCES])
+                CommentaryBullet(text=line, fact_ids=["period.year"]) for line in _SENTENCES])
             for fid in wanted if fid.split(".")[0] in answered])
 
     monkeypatch.setattr(client, "llm_available", lambda: True)
@@ -524,12 +533,12 @@ def test_a_risk_flag_reaches_the_audit_line_rather_than_being_asked_for_and_binn
     def structured(model, system, user, *, tier="balanced", node="ai", phase="other",
                    fields=(), **kw):
         if model is not CommentarySections:
-            return None
+            return _approved_verdicts(user)
         wanted = [line.split()[2] for line in user.splitlines()
                   if line.startswith("--- FIELD ")]
         return CommentarySections(sections=[
             CommentarySection(field_id=fid, risk_flag="concern", bullets=[
-                CommentaryBullet(text=line, fact_ids=[]) for line in _SENTENCES])
+                CommentaryBullet(text=line, fact_ids=["period.year"]) for line in _SENTENCES])
             for fid in wanted])
 
     monkeypatch.setattr(client, "llm_available", lambda: True)
@@ -669,21 +678,21 @@ def failing_model(monkeypatch):
                      if line.startswith("--- FIELD ")]
             return CommentarySections(sections=[
                 CommentarySection(field_id=fid, bullets=[
-                    CommentaryBullet(text="Momentum: Cyber", fact_ids=[]),      # a fragment
-                    CommentaryBullet(text=_SENTENCES[0], fact_ids=[]),
+                    CommentaryBullet(text="Momentum: Cyber", fact_ids=["period.year"]),      # a fragment
+                    CommentaryBullet(text=_SENTENCES[0], fact_ids=["period.year"]),
                 ]) for fid in asked])
-        return None
+        return _approved_verdicts(user)
 
     monkeypatch.setattr(client, "structured", structured)
     monkeypatch.setattr(client, "llm_available", lambda: True)
     return calls
 
 
-def test_the_repair_is_told_why_the_first_answer_was_rejected(failing_model):
+def test_the_repair_is_told_why_the_first_answer_was_rejected(unusable_model):
     """Otherwise the retry is a re-roll of the same dice, at the price of a call."""
     rewrites.write_all([_one_growth_field()])
 
-    repairs = [c for c in failing_model if "REJECTED" in c["user"]]
+    repairs = [c for c in unusable_model if "REJECTED" in c["user"]]
     assert repairs, "the repair call must carry the previous answer's verdict"
     assert "fragment" in repairs[0]["user"], "and name what was actually wrong"
 
@@ -709,10 +718,10 @@ def unusable_model(monkeypatch):
                      if line.startswith("--- FIELD ")]
             return CommentarySections(sections=[
                 CommentarySection(field_id=fid, bullets=[
-                    CommentaryBullet(text="Momentum: Cyber", fact_ids=[]),
-                    CommentaryBullet(text="Growth: Property", fact_ids=[]),
+                    CommentaryBullet(text="Momentum: Cyber", fact_ids=["period.year"]),
+                    CommentaryBullet(text="Growth: Property", fact_ids=["period.year"]),
                 ]) for fid in asked])
-        return None
+        return _approved_verdicts(user)
 
     monkeypatch.setattr(client, "structured", structured)
     monkeypatch.setattr(client, "llm_available", lambda: True)
@@ -770,14 +779,14 @@ def test_a_field_that_repairs_successfully_ships_and_does_not_refuse(monkeypatch
     def structured(model, system, user, *, tier="balanced", node="ai", phase="other",
                    fields=(), **kw):
         if model is not CommentarySections:
-            return None
+            return _approved_verdicts(user)
         attempts["n"] += 1
         asked = [line.split()[2] for line in user.splitlines()
                  if line.startswith("--- FIELD ")]
-        bullets = ([CommentaryBullet(text="Momentum: Cyber", fact_ids=[]),
-                    CommentaryBullet(text=_SENTENCES[0], fact_ids=[])]
+        bullets = ([CommentaryBullet(text="Momentum: Cyber", fact_ids=["period.year"]),
+                    CommentaryBullet(text="Unfinished comparison", fact_ids=["period.year"])]
                    if attempts["n"] == 1 else
-                   [CommentaryBullet(text=s, fact_ids=[]) for s in _SENTENCES[:2]])
+                   [CommentaryBullet(text=s, fact_ids=["period.year"]) for s in _SENTENCES[:2]])
         return CommentarySections(sections=[
             CommentarySection(field_id=fid, bullets=bullets) for fid in asked])
 
@@ -810,14 +819,14 @@ def _model_writing_one_bad_line(monkeypatch, *, bad="Momentum: Cyber"):
                    fields=(), **kw):
         calls.append({"node": node, "phase": phase, "user": user})
         if model is not CommentarySections:
-            return None
+            return _approved_verdicts(user)
         asked = [line.split()[2] for line in user.splitlines()
                  if line.startswith("--- FIELD ")]
         wanted = 3 if "Write 3 lines" in user else 2
         texts = [bad] + list(_SENTENCES[:wanted - 1])
         return CommentarySections(sections=[
             CommentarySection(field_id=fid,
-                              bullets=[CommentaryBullet(text=t, fact_ids=[]) for t in texts])
+                              bullets=[CommentaryBullet(text=t, fact_ids=["period.year"]) for t in texts])
             for fid in asked])
 
     monkeypatch.setattr(client, "structured", structured)
@@ -833,7 +842,7 @@ def test_one_unusable_line_no_longer_refuses_a_strict_build(monkeypatch):
     written = rewrites.write_all([_one_growth_field()])[0]
 
     text = list(written.values())[0]
-    assert text.splitlines() == list(_SENTENCES[:2]), "the spare covered the rejected line"
+    assert text.splitlines() == list(_SENTENCES[:1]), "one verified finding needs no padding"
     assert "growth line one." not in text, "and no deterministic prose was substituted"
     assert len([c for c in calls if c["phase"] == "author"]) == 1, "no repair was needed"
 
@@ -847,7 +856,7 @@ def test_a_whole_sub_deck_of_flaky_fields_still_builds(monkeypatch):
 
     assert len(written) == 3
     for text in written.values():
-        assert text.splitlines() == list(_SENTENCES[:2])
+        assert text.splitlines() == list(_SENTENCES[:1])
 
 
 def test_a_field_the_model_cannot_write_still_stops_the_deck(monkeypatch):
@@ -859,13 +868,13 @@ def test_a_field_the_model_cannot_write_still_stops_the_deck(monkeypatch):
     def all_fragments(model, system, user, *, tier="balanced", node="ai", phase="other",
                       fields=(), **kw):
         if model is not CommentarySections:
-            return None
+            return _approved_verdicts(user)
         asked = [line.split()[2] for line in user.splitlines()
                  if line.startswith("--- FIELD ")]
         return CommentarySections(sections=[
             CommentarySection(field_id=fid, bullets=[
-                CommentaryBullet(text="Momentum: Cyber", fact_ids=[]),
-                CommentaryBullet(text="Rank improved to 4th.", fact_ids=[]),
+                CommentaryBullet(text="Momentum: Cyber", fact_ids=["period.year"]),
+                CommentaryBullet(text="Rank improved to 4th.", fact_ids=["period.year"]),
             ]) for fid in asked])
 
     monkeypatch.setattr(client, "structured", all_fragments)
@@ -881,15 +890,15 @@ def test_the_fields_that_were_written_are_cached_before_the_refusal(monkeypatch)
     def one_bad_field(model, system, user, *, tier="balanced", node="ai", phase="other",
                       fields=(), **kw):
         if model is not CommentarySections:
-            return None
+            return _approved_verdicts(user)
         asked = [line.split()[2] for line in user.splitlines()
                  if line.startswith("--- FIELD ")]
         return CommentarySections(sections=[
             CommentarySection(
                 field_id=fid,
-                bullets=[CommentaryBullet(text="Momentum: Cyber", fact_ids=[])]
+                bullets=[CommentaryBullet(text="Momentum: Cyber", fact_ids=["period.year"])]
                 if fid.startswith("growth")
-                else [CommentaryBullet(text=s, fact_ids=[]) for s in _SENTENCES[:2]],
+                else [CommentaryBullet(text=s, fact_ids=["period.year"]) for s in _SENTENCES[:2]],
             ) for fid in asked])
 
     monkeypatch.setattr(client, "structured", one_bad_field)
@@ -946,7 +955,7 @@ def model_fixing_one_field_per_round(monkeypatch):
     def structured(model, system, user, *, tier="balanced", node="ai", phase="other",
                    fields=(), **kw):
         if model is not CommentarySections:
-            return None
+            return _approved_verdicts(user)
         calls.append({"user": user, "fields": tuple(fields)})
         rounds["n"] += 1
         asked = [line.split()[2] for line in user.splitlines()
@@ -954,9 +963,9 @@ def model_fixing_one_field_per_round(monkeypatch):
         # On round N, the Nth field asked for is written properly; the rest lose a line.
         out = []
         for i, fid in enumerate(sorted(asked)):
-            good = [CommentaryBullet(text=s, fact_ids=[]) for s in _SENTENCES[:2]]
-            short = [CommentaryBullet(text="Momentum: Cyber", fact_ids=[]),
-                     CommentaryBullet(text=_SENTENCES[0], fact_ids=[])]
+            good = [CommentaryBullet(text=s, fact_ids=["period.year"]) for s in _SENTENCES[:2]]
+            short = [CommentaryBullet(text="Momentum: Cyber", fact_ids=["period.year"]),
+                     CommentaryBullet(text="Unfinished comparison", fact_ids=["period.year"])]
             out.append(CommentarySection(field_id=fid,
                                          bullets=good if i < rounds["n"] - 1 else short))
         return CommentarySections(sections=out)
@@ -994,17 +1003,16 @@ def test_repaired_fields_from_earlier_rounds_are_not_discarded(
 # ── repair tops a field up; it does not rewrite it ──────────────────────────
 
 
-def test_the_repair_shows_the_lines_already_verified_and_asks_only_for_the_rest(
-        failing_model):
-    """Re-asking for the whole field puts verified lines back at risk for nothing."""
-    rewrites.write_all([_one_growth_field()])
-
+def test_the_repair_shows_the_lines_already_verified_and_asks_only_for_the_rest(failing_model):
+    section = B.group_sections([_one_growth_field()])[0]
+    column = section.columns[0]
+    pack = B._pack_for(section)
+    B._repair(section, pack, "", [B.Failure(column, ("fragment",), (_SENTENCES[0],))])
     repairs = [c for c in failing_model if "REJECTED" in c["user"]]
-    assert repairs, "there must be a repair call to inspect"
-    user = repairs[0]["user"]
-    assert "ALREADY WRITTEN AND VERIFIED" in user, "the kept line must be shown as final"
-    assert _SENTENCES[0] in user, "and it must be the line that actually survived"
-    assert "Write ONLY the 1 line(s) still missing" in user, "ask for the gap, not the field"
+    assert repairs
+    assert "ALREADY WRITTEN AND VERIFIED" in repairs[0]["user"]
+    assert _SENTENCES[0] in repairs[0]["user"]
+    assert "up to 1 additional" in repairs[0]["user"]
 
 
 def test_a_kept_line_is_never_re_verified_and_so_cannot_be_lost(failing_model):

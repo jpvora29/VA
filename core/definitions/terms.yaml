@@ -46,8 +46,8 @@ marsh_book:
     market proxy available here, and it is a proxy — it is Marsh's flow, not the market.
   formula: SUM(Premium) over the same filters with the carrier pin removed
   say: >-
-    Say "the wider Marsh book" or "the Marsh book". Use it as the denominator a carrier's
-    movement is judged against.
+    Say "total Marsh-placed premium" and name the relevant product or segment.
+    Use it as the denominator for the carrier's share of Marsh placements.
   never: >-
     Never call it "the market", "total market premium", or "industry premium".
   unit: currency
@@ -61,7 +61,8 @@ share_of_wallet:
     market.
   formula: carrier premium / Marsh book premium in the same scope, as a percent
   say: >-
-    Say "holds X% of the wallet" or "X% share of wallet". Movement is in percentage points.
+    Say "the carrier received X% of Marsh's premium placements in [named segment]".
+    Prefer current and prior share when available. Share movements are in percentage points.
   never: >-
     Never call it market share, penetration of the market, or the carrier's share of the
     industry.
@@ -106,11 +107,32 @@ peer_average:
     the peer group resolved from the Peers table for this carrier and country.
   formula: AVG(SUM(Premium) per peer carrier) over the same filters
   say: >-
-    Say "against a top-5 peer average of X%". Peers are discussed only as a set.
+    Say "against the selected peer group's average of X%" and use the actual count when
+    supplied. Do not label a configured peer group top-five unless that is its selection rule.
   never: >-
     Never name an individual peer, quote one peer's premium, share, rank or score, or say
     anything that identifies which carriers are in the set.
   unit: currency
+
+placement_benchmark:
+  label: Largest-carrier placement benchmark
+  aliases: [largest-carrier average, largest carriers by Marsh-placed premium]
+  definition: >-
+    The average premium or share of the largest up-to-five carriers by Marsh-placed
+    premium in the exact same scope and period. The subject carrier is eligible for
+    inclusion. This is an average per carrier, not their combined share and not a
+    configured peer group from the Peers table. Membership may differ between periods.
+  formula: >-
+    Mean of the largest min(five, carrier count) carrier premium totals in scope;
+    benchmark share is that mean divided by total Marsh-placed premium in scope.
+  say: >-
+    Say "the average of the largest N carriers by Marsh-placed premium", using the
+    actual supplied count. Describe a share gap as a relative position. Any premium
+    equivalent holds total Marsh placements constant; it is not a forecast or winnable premium.
+  never: >-
+    Never name individual comparison carriers, claim the group excludes the subject,
+    call an average their combined share, or call a group of fewer than five top-five.
+  unit: percent
 
 headroom:
   label: Headroom
@@ -228,7 +250,8 @@ renewal_book:
     carrier has to defend rather than win.
   formula: ""
   say: >-
-    Use it when the point is defence: "the renewal book in Cyber is what to protect first".
+    Discuss a renewal book only when renewal-specific evidence is supplied. A proposed
+    review of renewals is an investigation, not evidence that renewals caused a movement.
   never: >-
     Never state a renewal or retention FIGURE — the premium data here has no new-versus-
     renewal split, so any retention percentage would be invented.
@@ -281,18 +304,17 @@ momentum:
   label: Momentum
   aliases: [pace, trajectory, run rate, direction of travel]
   definition: >-
-    How the latest quarter's movement compares with the pace of the year it closed. A book
-    up strongly on the year whose final quarter barely moved is slowing, whatever the
-    headline says.
-  formula: latest quarter's period-over-period percent, against the same scope's annual movement
+    A change in growth over multiple comparable periods. Studio's quarterly evidence
+    reports a closed quarter against the same quarter a year earlier. That is a
+    quarterly observation and by itself does not establish a momentum trend.
+  formula: current-quarter premium / same-quarter-prior-year premium minus one, as a percent
   say: >-
-    Say which way it is going and give both figures — "up 27.0% on the year, but the fourth
-    quarter moved 5.1%". The two numbers are the claim; the word is only the reading, and
-    they must be the year's movement and the quarter's, never a trailing-twelve figure
-    standing in for either.
+    Name both comparison quarters and their premium values. Use absolute premiums
+    when the prior base is zero, negative or very small. Quarter coverage must be explicit.
   never: >-
-    Never call a single quarter a trend on its own, never project it forward, and never
-    describe momentum without printing the two figures it is derived from.
+    Never compare quarterly QoQ with annual YoY to claim acceleration, slowing or an
+    annual run rate. Never treat one quarter as a trend, project it forward, or describe
+    an incomplete quarter as complete.
   unit: percent
 
 percentage_point:

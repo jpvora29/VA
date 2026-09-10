@@ -61,7 +61,7 @@ class CriticReport(BaseModel):
 
 
 class CommentaryBullet(BaseModel):
-    text: str = Field(description="One complete sentence, ending in a full stop")
+    text: str = Field(description="One independent finding in one or two short complete sentences")
     fact_ids: List[str] = Field(
         default_factory=list,
         description="Ids of the evidence facts this sentence's figures and claims come from",
@@ -102,8 +102,7 @@ class CommentarySection(BaseModel):
     bullets: List[CommentaryBullet] = Field(default_factory=list)
     action: str = Field(
         default="",
-        description="One specific leadership action, naming a segment and a figure. Empty "
-                    "unless the column is asked for one.",
+        description="Leave empty. Put any proposed action in a normal bullet with supporting fact_ids.",
     )
     risk_flag: str = Field(
         default="none", description="none | watch | concern — the risk this column carries"

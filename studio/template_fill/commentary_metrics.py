@@ -1,30 +1,9 @@
-"""Score a deck's commentary on the things that separate a written page from a produced one.
+"""Descriptive prose telemetry and a per-bullet clarity check.
 
-:mod:`studio.template_fill.commentary_qa` asks "is anything WRONG with this text" — an
-unbenchmarked adjective, a claim the data can't carry, the same sentence on two slides. This
-module asks the different question: "does it READ like a partner wrote it". Both are
-report-only; neither ever edits the prose.
-
-It exists because "the commentary is better now" is otherwise unfalsifiable, and this
-codebase has already lost two commentary changes to that (see the reverted per-slide cache
-and the spare-candidate experiment). Every rule here is a proportion over the deck's own
-bullets, so two runs are directly comparable and a regression is visible as a number rather
-than as a feeling.
-
-The five that matter, and why:
-
-* ``subject_opening_rate`` — bullets that open on the carrier's name. The roll-call
-  ("Zurich wrote …", "Zurich ranks …") is the single loudest generated-text tell.
-* ``opening_variety`` — distinct sentence openings over bullets. Catches the roll-call's
-  quieter cousin, where every line opens the same way without naming anybody.
-* ``causal_rate`` — bullets that say WHY something moved. A consultant's page is mostly
-  mechanism; a generated one is mostly measurement.
-* ``implication_rate`` — bullets that say what follows for this account. The "so what".
-* ``restatement_rate`` — bullets that are a measure and a value and nothing else. The
-  metric read-out, stated as a proportion so it can be driven down deliberately.
-
-Deliberately regex-based and local: a judge model would score the deck it just wrote, which
-is how you measure your own prompt rather than your own prose.
+Opening variety, causal words and implications are diagnostics, not quality targets.
+Clear observations may repeat carrier names and need no invented cause or consequence.
+The clarity check flags ambiguous comparisons and overlong bullets for repair; numerical
+and semantic verification determine whether the finding is supported.
 """
 from __future__ import annotations
 
@@ -122,6 +101,25 @@ def is_restatement(bullet: str) -> bool:
     if _CAUSAL.search(bullet) or _IMPLICATION.search(bullet):
         return False
     return bool(_MEASURE_OPENER.match(bullet))
+
+
+def clarity_issue(bullet: str):
+    """Concrete ambiguity checks, not a preference for particular sentence openings.
+
+    Meaning and section relevance are also checked by the evidence-aware reviewer.
+    These cheap checks catch the recurrent unreadable patterns before that call.
+    """
+    ambiguous = re.search(
+        r"\b(?:placement base|Marsh flow|pressure sat|Marsh demand|annual run rate|"
+        r"year.end pace|the same book|the client segment that)\b|"
+        r"\bof a\s+\$[\d.,]+[KMB]?\s+pool\b", bullet, re.I)
+    if ambiguous:
+        return f"Name the entity and exact metric instead of {ambiguous.group(0)!r}"
+    if len(bullet.split()) > 60:
+        return "Keep one finding in at most two short sentences; move supporting figures to the chart"
+    if len(re.split(r"(?<=[.!?])\s+", bullet.strip())) > 2:
+        return "Too many sentences for one finding"
+    return None
 
 
 def _rate(hits: int, total: int) -> float:

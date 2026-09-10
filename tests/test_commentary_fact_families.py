@@ -75,95 +75,56 @@ def test_a_missing_mix_costs_its_own_line_and_nothing_else():
 # ── where the book is heading ────────────────────────────────────────────────
 
 
-def _trend(**over) -> Dict[str, Any]:
-    base = {"ttm": 810_598_028.0, "ttm_pct": 27.0, "annual_pct": 26.4, "quarter_pct": 5.1,
-            "quarter_label": "2025-Q4", "pace": "slowing"}
+def _trend(**over):
+    base = {"quarter_current": 50_000_000, "quarter_prior": 60_000_000,
+            "quarter_label": "2025-Q4", "quarter_prior_label": "2024-Q4"}
     base.update(over)
-    return {"trend": base}
+    return {"subject": "Zurich", "trend": base}
 
 
-def test_a_quarter_far_below_the_years_pace_reads_as_slowing():
-    assert facts_trend._pace(27.0, 5.1) == "slowing"
+@pytest.mark.parametrize("annual,quarter", [(27,5.1),(5,18),(12,10),(None,5),(27,None)])
+def test_different_growth_bases_never_imply_momentum(annual, quarter):
+    assert facts_trend._pace(annual, quarter) == ""
 
 
-def test_a_quarter_ahead_of_the_years_pace_reads_as_accelerating():
-    assert facts_trend._pace(5.0, 18.0) == "accelerating"
-
-
-def test_a_quarter_in_line_with_the_year_is_not_called_a_turn():
-    """Below the threshold the two readings agree, and "slowing" would be noise."""
-    assert facts_trend._pace(12.0, 10.0) == "holding"
-
-
-def test_the_pace_read_needs_both_figures():
-    assert facts_trend._pace(None, 5.1) == ""
-    assert facts_trend._pace(27.0, None) == ""
-
-
-def test_the_momentum_line_always_prints_both_figures_it_rests_on():
-    """The glossary's `momentum` entry: the two numbers are the claim, the word is the
-    reading. A sentence may only print a figure the evidence carries."""
+def test_quarter_observation_names_both_absolute_values_and_comparable_periods():
     line, = facts_trend.lines_for("challenges", _trend())
-    assert "26.4%" in line and "5.1%" in line and "2025-Q4" in line
-    assert "not still running" in line
+    assert all(value in line for value in ("$50M", "$60M", "2025-Q4", "2024-Q4"))
+    assert "pace" not in line
 
 
-def test_the_momentum_line_prints_the_year_it_judged_on_not_the_trailing_window():
-    """Regression: the pace was judged on the year's movement and the sentence printed the
-    trailing-twelve figure — a different window and a different number, so a true sentence
-    was evidencing a claim it had not actually measured."""
-    line, = facts_trend.lines_for("challenges", _trend(annual_pct=26.4, ttm_pct=0.4))
-    assert "26.4%" in line
-    assert "0.4%" not in line
+def test_quarter_observation_needs_both_absolute_values():
+    assert facts_trend.lines_for("challenges", _trend(quarter_prior=None)) == ()
 
 
-def test_a_pace_reading_with_no_annual_figure_says_nothing():
-    """It is a COMPARISON; without both sides there is no claim to make."""
-    assert facts_trend.lines_for("challenges", _trend(annual_pct=None)) == ()
+def test_quarter_declines_and_gains_go_to_the_correct_section():
+    assert facts_trend.lines_for("challenges", _trend())
+    assert not facts_trend.lines_for("working", _trend())
+    assert facts_trend.lines_for("working", _trend(quarter_current=70_000_000))
+    assert not facts_trend.lines_for("challenges", _trend(quarter_current=70_000_000))
 
 
-def test_a_slowing_book_is_a_challenge_and_an_accelerating_one_is_working():
-    assert facts_trend.lines_for("challenges", _trend(pace="slowing"))
-    assert facts_trend.lines_for("working", _trend(pace="slowing")) == ()
-    assert facts_trend.lines_for("working", _trend(pace="accelerating"))
-    assert facts_trend.lines_for("challenges", _trend(pace="accelerating")) == ()
+def test_thesis_can_report_either_direction_or_unchanged():
+    for current in (50_000_000, 60_000_000, 70_000_000):
+        assert facts_trend.lines_for("thesis", _trend(quarter_current=current))
 
 
-def test_the_thesis_takes_the_reading_whichever_way_it_goes():
-    for pace in ("slowing", "accelerating", "holding"):
-        assert facts_trend.lines_for("thesis", _trend(pace=pace)), pace
+def test_reporting_year_excludes_later_data(monkeypatch):
+    from types import SimpleNamespace
+    labels = [f"{y}-{m:02d}" for y in (2024, 2025) for m in range(1,13)]
+    monkeypatch.setattr(facts_trend.C, "period_series", lambda *a, **k:
+                        {"labels": labels, "values": [100] * len(labels)})
+    result = SimpleNamespace(flow="gpr", engine=None)
+    assert facts_trend.load(result, {"Year": 2023}) == {}
+    assert facts_trend.load(result, {"Year": 2025})["quarter_label"] == "2025-Q4"
 
 
-def test_a_trend_that_ran_past_the_reported_year_is_dropped(monkeypatch):
-    """The primitives return the latest period IN THE DATA, which is not this page's
-    period when the deck reports a closed prior year — a figure dated wrong is worse
-    than no figure."""
-    monkeypatch.setattr(facts_trend.C, "ttm",
-                        lambda *a, **k: {"current": 1.0, "ttm_pct": 9.0})
-    monkeypatch.setattr(facts_trend.C, "qoq",
-                        lambda *a, **k: {"latest": 4.0, "latest_label": "2025-Q4"})
-
-    @dataclass
-    class R:
-        flow: str = "gpr"
-        engine: Any = None
-
-    assert facts_trend.load(R(), {"Year": 2023}) == {}
-    assert facts_trend.load(R(), {"Year": 2025})["quarter_label"] == "2025-Q4"
-
-
-def test_a_failing_primitive_costs_its_own_family(monkeypatch):
+def test_a_failing_monthly_source_produces_no_trend(monkeypatch):
+    from types import SimpleNamespace
     def explode(*a, **k):
         raise RuntimeError("no period column")
-
-    monkeypatch.setattr(facts_trend.C, "ttm", explode)
-
-    @dataclass
-    class R:
-        flow: str = "gpr"
-        engine: Any = None
-
-    assert facts_trend.load(R(), {"Year": 2025}) == {}
+    monkeypatch.setattr(facts_trend.C, "period_series", explode)
+    assert facts_trend.load(SimpleNamespace(flow="gpr", engine=None), {"Year": 2025}) == {}
 
 
 # ── both families reach the evidence pack, and the columns that own them ─────
@@ -187,18 +148,13 @@ def test_the_pack_now_carries_a_time_axis(deck_facts):
     assert "trend.ttm" in ids and "mix.concentration" in ids
 
 
-def test_every_column_leads_from_a_different_slice_of_one_pack(deck_facts):
-    """The other half of why five briefed columns read as one paragraph: they were handed
-    an IDENTICAL pack and each reached for the headline, the easiest fact to write about."""
-    from studio.template_fill import commentary as CM
-    from studio.template_fill import commentary_evidence as E
-
-    pack = E.build_pack(deck_facts)
-    openings = {}
-    for topic in ("thesis", "performance", "challenges", "growth", "priorities"):
-        lead = pack.as_brief(CM.evidence_focus(topic)).split("ALSO TRUE")[0]
-        openings[topic] = lead.strip().splitlines()[1]
-    assert len(set(openings.values())) == len(openings), openings
+def test_column_questions_and_eligible_findings_are_section_specific(deck_facts):
+    from studio.template_fill import commentary_findings as F
+    from studio.template_fill.commentary_evidence import build_pack
+    pack = build_pack(deck_facts)
+    assert F.brief(pack, "growth") != F.brief(pack, "challenges")
+    assert F.brief(pack, "threats") != F.brief(pack, "working")
+    assert all("growth" in f.topics for f in F.for_topic(pack, "growth"))
 
 
 def test_the_whole_pack_is_still_offered_to_every_column(deck_facts):

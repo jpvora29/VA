@@ -1,32 +1,14 @@
-"""Per-page commentary — fill a template's qualitative prose slots from the facts.
+"""QBR commentary slot binding, writing policy and per-bullet readability checks.
 
-Section-aware (see :mod:`studio.template_fill.sections`): on slides that carry
-fact-derivable commentary (Trading Summary, SWOT, Highlights, Summary) the ellipsis
-prose boxes are bound to ``note:<slot-key>`` roles and filled with whole sentences that
-are 100% faithful by construction — each column is composed by the SAME fact-grounded
-composers as the per-country feedback panels (:mod:`studio.template_fill.feedback`), so
-the deck argues in one voice; SWOT quadrants, and any column those composers cannot
-carry, fall back to the rule-based :mod:`studio.narrate.commentary`.
-
-When an LLM is configured it WRITES the column rather than re-wording it: given the draft
-and the column's own brief (:data:`_TOPIC_BRIEF`) it may fold two claims into one sentence
-or drop a line that adds nothing, within the bounds :func:`min_lines` sets. What comes back
-is checked — for faithfulness (every number must already appear in the deterministic
-draft), for READING (whole sentences, none of the phrases that make prose sound generated),
-and for SHAPE (one carrier-name opening per column, no bullet opening on a bare measure).
-A rewrite that fails any of those is dropped and the draft stands — and the draft has had
-its own repeated openings varied (:mod:`studio.template_fill.openings`), so the fallback is
-no longer the roll-call it used to be.
-
-Qualitative-only sections (relationship Feedback) are deliberately left as placeholders —
-premium data can't honestly fill them.
-
-Mirrors :mod:`studio.template_fill.grids`: ``augment`` re-binds slots, ``values``
-produces the keyed text — both fold into the same doc the preview and fill consume.
+AI authors receive scoped evidence and section-specific findings, then numerical and
+semantic verification. Each finding stands alone and clear metric openings are allowed.
+The default requires verified AI commentary; explicit auto/off modes retain rule drafts.
+Relationship feedback remains a placeholder when premium data cannot support it.
 """
 from __future__ import annotations
 
 import re
+import html
 from dataclasses import dataclass, field
 from typing import (
     Any,
@@ -41,7 +23,6 @@ from typing import (
 )
 
 from logger import get_logger
-from studio.template_fill import openings
 from studio.template_fill import rewrites
 from studio.template_fill import roles as R
 from studio.template_fill.analyze import Shape, Slide, Template
@@ -62,479 +43,193 @@ _COMMENTARY_SECTIONS = {
 # still demands whole sentences: a QBR page is read aloud to an executive team, and a
 # telegraphic fragment ("Momentum: Cyber +97%") is not something a partner would say.
 _STYLE_DIRECTIVE: Dict[str, str] = {
-    "concise": "Write each line as ONE complete sentence carrying the figure and its "
-               "consequence.",
-    "balanced": "Write each line as TWO complete sentences: what the figures show, then what "
-                "it means for this account.",
-    "detailed": "Write each line as TWO OR THREE complete sentences: what the figures show, "
-                "what moved them, and what the account should do about it.",
+    "concise": "Normally use one short sentence per bullet. Keep only the decisive comparison. ",
+    "balanced": "Use one or two short sentences per bullet, normally at most forty-five words. ",
+    "detailed": "Use at most two sentences per bullet, adding the material context or a supported next step. ",
 }
-
-# Commentary is written as BULLET POINTS, one per line — the deck renders each line as its
-# own bulleted paragraph, so the line structure is part of the contract.
-#
-# The model is allowed to MERGE or DROP one bullet, and that permission is the point. The
-# draft composes each claim to stand alone, so a column often carries two thin facts that a
-# writer would fold into one sentence, or a closing line that adds nothing once the others
-# are written. Forbidding every structural move — the old rule was "return exactly the same
-# number of lines" — left the model with nothing to do but swap adjectives, and any rewrite
-# that dropped an unverifiable figure came back a line short and was thrown away wholesale.
-def _bullet_rules(wanted: int) -> str:
-    """The line-structure contract for a column of ``wanted`` draft bullets."""
-    floor = min_lines(wanted)
-    # When the floor equals the ask there is no room to merge or drop — a two-bullet
-    # feedback cell that comes back with one line fails the whole column, and in
-    # ``COMMENTARY_MODE=ai_required`` that fails the deck. So those columns are asked for
-    # one line MORE than the cell shows: a candidate the checks reject can then be dropped
-    # without leaving the cell short. Only the strongest `wanted` survivors ship, so the
-    # slide is unchanged and no weaker line reaches it.
-    room = ("You may merge two bullets that make one point, or drop a bullet that adds "
-            f"nothing once the others are written: return between {floor} and {wanted} "
-            "lines. " if floor < wanted else
-            f"Write {ask_lines(wanted)} lines in priority order. The cell shows "
-            f"{wanted}; the extra line is a spare, so that a line which cannot be "
-            "evidenced can be dropped without leaving the cell short. Every line must "
-            "stand on its own — do not split one point across two of them. ")
-    return (
-        "The draft is a bullet list, ONE BULLET PER LINE, in priority order. " + room +
-        "Keep the order. Do not write any bullet character, dash or number at the start of "
-        "a line — the slide adds the bullet itself. "
-    )
 
 
 def min_lines(wanted: int) -> int:
-    """The fewest bullets a rewrite of ``wanted`` may come back with.
-
-    One merge or one drop, never two, and never below two lines on a column that had them:
-    a rewrite that halves a page is not an edit, it is a different page.
-    """
-    return max(min(wanted, 2), wanted - 1)
+    """A single material finding is enough; empty output still needs repair."""
+    return 1 if wanted > 0 else 0
 
 
 def ask_lines(wanted: int) -> int:
-    """How many lines to ASK a column for — one more when it has no room to lose any.
-
-    A column whose floor equals its ask (one- and two-bullet cells, which is every
-    feedback-table cell) fails outright if a single line is rejected. Asking for a spare
-    costs nothing on the slide — :func:`_judge` still ships at most ``wanted`` — and turns
-    the commonest cause of a refused build into a dropped candidate.
-    """
-    return wanted + 1 if min_lines(wanted) == wanted else wanted
+    return wanted
 
 
-# What each column is FOR. The old prompt was identical for every topic, which is most of
-# why Key Messages and Challenges read the same: they draw on the same six figures, so
-# without a brief telling them apart the model has no reason to write them apart.
-#
-# Each brief says what question the column answers, the trap it falls into, and the move
-# that gets it out. Kept to what is true of the column regardless of carrier — anything
-# carrier-specific belongs in the facts, not the prompt.
+def _bullet_rules(wanted: int) -> str:
+    return (f"Write between one and {max(wanted, 1)} independent bullets in priority order, "
+            "ONE BULLET PER LINE. Use fewer when evidence supports fewer useful findings. "
+            "Do not add filler or split a single finding to fill the column. "
+            "Do not prefix lines with bullet characters or numbers; the slide adds them. ")
+
+
 _TOPIC_BRIEF: Dict[str, str] = {
-    "thesis":
-        "THIS COLUMN: the one claim the rest of the deck exists to argue. State where this "
-        "account STANDS — a position a leadership team can agree with or push back on — and "
-        "name the tension inside it. Not a summary of the figures below it. ",
-    "key_messages":
-        "THIS COLUMN: what the account team must be able to say from memory in the room. "
-        "Each line is a POSITION, not a statistic — the figure is the evidence for the "
-        "claim, never the claim itself. Do not open a line with the carrier's name and a "
-        "number; lead with what is true and let the figure follow. ",
-    "challenges":
-        "THIS COLUMN: what threatens this book over the next twelve months. Name the "
-        "MECHANISM, not the metric — which line, at which renewal, losing to what. A "
-        "restated decline is not a challenge; the reason it will continue is. ",
-    # ``working`` and ``growth`` are composer kinds rather than template column headers:
-    # they fill the per-country feedback panels (studio.template_fill.feedback), which ask
-    # the same questions of a narrower book.
-    "working":
-        "THIS COLUMN: what is working, and whether it was won or merely carried by the "
-        "market. Growth that only matched the Marsh pool is not a success — say which of "
-        "the two this was, and what it cost to get. ",
-    "growth":
-        "THIS COLUMN: the headroom worth going after, and what taking it is worth in "
-        "premium. Whitespace is business somebody else already writes; say that plainly "
-        "rather than calling it addressable, and name where it sits. ",
-    "reflections":
-        "THIS COLUMN: an honest read on the year just closed — what the account got right, "
-        "what it misjudged, and what that says about how the next one should be run. Write "
-        "it as a partner who was in the room, not as a scorecard. ",
-    "performance":
-        "THIS COLUMN: how the book actually performed and WHY it moved. Every line should "
-        "carry a driver — a line of business, a renewal, a shift in the Marsh pool — so the "
-        "reader learns something the chart beside it does not already show. ",
-    "priorities":
-        "THIS COLUMN: what happens next. Each line names an ACTION, who has to move, and "
-        "the premium at stake. End on the ask — the one thing this carrier must do for the "
-        "next quarter to look different. Never close on advice true of any carrier. ",
-    "strengths":
-        "THIS COLUMN: what this carrier can defend, and against whom. A strength nobody "
-        "could take away is not worth a line. ",
-    "weaknesses":
-        "THIS COLUMN: where the book is exposed. Be specific about the exposure, not "
-        "apologetic about the number. ",
-    "opportunities":
-        "THIS COLUMN: headroom this carrier could realistically take, and what taking it "
-        "would be worth. Whitespace is premium someone else already writes — say that "
-        "plainly rather than calling it addressable. ",
-    "threats":
-        "THIS COLUMN: what could go wrong that is not already going wrong. Name the source. ",
+    "thesis": "THIS COLUMN: the principal finding about this carrier's performance with Marsh. "
+              "State the most material result and its comparison; explain a tradeoff only if evidenced. ",
+    "key_messages": "THIS COLUMN: the two or three findings leadership should remember. "
+                    "Prioritize the material performance result, competitive position or specific next step. ",
+    "challenges": "THIS COLUMN: material premium declines, share losses or benchmark shortfalls. "
+                  "Name where each occurs and the comparison. Growth alone is not a challenge. "
+                  "Do not infer the cause, a failed renewal or persistence into the future from premium. ",
+    "working": "THIS COLUMN: material successes. Distinguish absolute premium growth from share gain. "
+               "Name the contributing product, industry or client segment where evidenced. "
+               "Matching Marsh growth can be a positive absolute result; describe its relative position accurately. ",
+    "growth": "THIS COLUMN: named gaps in Marsh placements that warrant investigation. "
+              "Distinguish unplaced-with-this-carrier premium from realistic opportunity. "
+              "Benchmark parity is an illustrative scenario, not a forecast. "
+              "A specific review of appetite, capacity or placement access is a proposed next step, not a known cause. ",
+    "reflections": "THIS COLUMN: material lessons from the reported period. Separate the observed result "
+                   "from explanations that still need to be investigated. Do not invent what the team misjudged. ",
+    "performance": "THIS COLUMN: what changed in Marsh-placed premium, share or rank, on a clearly defined "
+                   "comparison. Identify measured contributors where available; don't invent operational causes. ",
+    "priorities": "THIS COLUMN: specific next actions linked to named findings. Name the segment and "
+                  "the decision or investigation required. Distinguish recommendations from commitments. "
+                  "Do not invent an owner, deadline, achievable premium target or renewal event. ",
+    "strengths": "THIS COLUMN: material strengths supported by relative performance or placement evidence. ",
+    "weaknesses": "THIS COLUMN: material observed shortfalls in premium, share or benchmark position. "
+                  "Do not assume low share reflects poor execution without appetite or objectives evidence. ",
+    "opportunities": "THIS COLUMN: observed placement gaps worth assessing. State the benchmark and "
+                     "what must be validated before this becomes an opportunity the carrier can pursue. ",
+    "threats": "THIS COLUMN: an evidenced emerging risk. A concentration is an exposure, not proof of a future loss. "
+               "Do not turn a positive result into a threat merely to fill this column. ",
 }
 
-# The questions each column must ANSWER. Never rendered — they never reach a slide — but
-# they are what turns a brief into a specification. ``_TOPIC_BRIEF`` says what a column is
-# FOR; a model given only that still chooses which of the facts in front of it to use, and
-# reaches for the headline every time because the headline is the easiest thing to write
-# about. Naming the questions makes the industry evidence the expected answer rather than
-# optional colour.
-#
-# They are also the contract the deterministic composers order their claims by, so the
-# draft the model is shown already answers them in the same sequence.
 _TOPIC_QUESTIONS: Dict[str, Tuple[str, ...]] = {
-    "working": (
-        "What grew, and was it won on share or carried by the pool?",
-        "Which industry or client segment does this book place BEST in, and how far above "
-        "the average it achieves where it writes?",
-        "What did the growth actually buy — rank, share, or neither?",
-    ),
-    "challenges": (
-        "Where did the book lose share, and was the pool behind it growing or shrinking?",
-        "Which named industry or client segment is the ground being given in, and what is "
-        "that worth?",
-        "How much of the book rests on its largest few segments, and which of those is "
-        "moving the wrong way?",
-        "Where did Marsh demand grow hardest and this book take least of it?",
-    ),
-    "growth": (
-        "Which industries does Marsh place materially in that this book writes NOTHING of, "
-        "and how much premium is that?",
-        "Which does it write BELOW the average it achieves where it writes, and what would "
-        "parity be worth?",
-        "Which does it write below the top-5 peer average, and what is that worth?",
-        "Which industry proves the line CAN be placed better, and at what share?",
-    ),
-    "key_messages": (
-        "What must happen next, in which named industry, product or client segment?",
-        "What premium is at stake, and measured against which benchmark?",
-        "What is worth defending, and what says it is at risk?",
-    ),
-    "priorities": (
-        "Which named industry, product or segment carries the most premium at stake?",
-        "What has to move there, and what is it worth?",
-        "What is still unconfirmed before the ask becomes a commitment?",
-    ),
-    "thesis": (
-        "Where does this account STAND, in one claim a leadership team can push back on?",
-        "What is the tension inside that position?",
-    ),
-    "performance": (
-        "What moved, and which industry, segment or line drove it?",
-        "Did the pool move with it or against it?",
-    ),
-    "reflections": (
-        "What did the account get right, and what did it misjudge?",
-        "Which named segment does that judgement rest on?",
-    ),
+    "working": ("What improved, against which comparison?", "Which named segment contributed materially?"),
+    "challenges": ("Where did premium or share decline?", "Which benchmark shortfall deserves attention?"),
+    "growth": ("Which named segments are absent or below the carrier's own placed average?",
+               "Where does share trail the largest-carrier benchmark?", "What needs validation before pursuing the gap?"),
+    "key_messages": ("Which findings matter most to leadership?",),
+    "priorities": ("What specific review or action follows from the material findings?",),
+    "thesis": ("What is the most important supported conclusion?",),
+    "performance": ("What changed over comparable periods?", "Which measured contributors explain the movement?"),
+    "reflections": ("What did the reported results establish, and what remains uncertain?",),
 }
 
-
-# Which fact families each column LEADS from. Every column still sees the whole pack (see
-# ``EvidencePack.as_brief``) — this decides what goes at the top of it, under a heading
-# saying these are the facts the column exists to report.
-#
-# This is the other half of why the summary page read as five paraphrases of one paragraph.
-# The five columns were briefed differently and then handed an IDENTICAL forty-fact pack,
-# so each one reached for the headline premium and the rank, because those are the easiest
-# facts in any pack to write a sentence about. A brief that says "report the trajectory"
-# and a pack that opens on the trailing-twelve-month figures are the same instruction said
-# twice, and the second one is the one a model acts on.
-#
-# Prefixes, matched with ``str.startswith``, so a new fact inside a family joins its
-# column's lead automatically.
 _TOPIC_EVIDENCE: Dict[str, Tuple[str, ...]] = {
-    # Where the account STANDS: position against the market and against the peer set,
-    # and the shape of what it has won.
-    "thesis": ("rank.", "sow.", "peer.", "mix.", "share."),
-    # What the team must be able to SAY: the same standing facts, plus the one reading
-    # that is not in any chart on the page.
-    "key_messages": ("rank.", "sow.", "peer.", "trend.", "mix."),
-    # How the book PERFORMED and why it moved: the decomposition and the trajectory.
+    "thesis": ("sow.", "rank.", "carrier.", "peer."),
+    "key_messages": ("carrier.", "sow.", "peer.", "segment."),
     "performance": ("mover.", "pool.", "trend.", "carrier."),
-    # What is WORKING, and whether it was won or carried by the market — which is a
-    # comparison between the carrier's movers and the pool they came from.
-    "working": ("mover.", "pool.", "sow.", "segment."),
-    # What THREATENS the book: where it is losing share, where it trails the benchmark,
-    # and whether the year's growth was still running when the year closed.
-    "challenges": ("trend.", "peer.", "segment.", "pool."),
-    # The HEADROOM and what taking it is worth.
-    "growth": ("segment.", "headroom", "peer.gap", "share.point_value", "mix."),
-    # What happens NEXT: the gap, what closing it is worth, and where it sits.
-    "priorities": ("peer.gap", "share.point_value", "segment.", "mover."),
-    # An honest read on the YEAR just closed.
-    "reflections": ("trend.", "mover.", "rank.", "sow."),
+    "working": ("mover.", "sow.", "segment.", "carrier."),
+    "challenges": ("segment.", "sow.", "peer.", "mover."),
+    "growth": ("segment.", "headroom", "peer.gap"),
+    "priorities": ("segment.", "peer.gap", "mover."),
+    "reflections": ("trend.", "mover.", "sow."),
 }
-
-
-# The SWOT quadrant asks the same four questions under older names, so it reads the same
-# four policies rather than a second copy of them that can drift.
-_EVIDENCE_ALIAS: Dict[str, str] = {
-    "strengths": "working",
-    "weaknesses": "challenges",
-    "opportunities": "growth",
-    "threats": "challenges",
-}
+_EVIDENCE_ALIAS = {"strengths": "working", "weaknesses": "challenges",
+                   "opportunities": "growth", "threats": "challenges"}
+_IMPERATIVE_TOPICS = frozenset({"key_messages", "priorities", "growth", "opportunities"})
 
 
 def evidence_focus(topic: str) -> Tuple[str, ...]:
-    """The fact-id prefixes this column leads from, or ``()`` for the flat pack."""
     return _TOPIC_EVIDENCE.get(_EVIDENCE_ALIAS.get(topic, topic), ())
 
 
 def _questions_rule(topic: str) -> str:
-    """The column's hidden question set as a prompt block. Never rendered on a slide."""
     questions = _TOPIC_QUESTIONS.get(topic, ())
-    if not questions:
-        return ""
-    listed = " ".join(f"({i}) {q}" for i, q in enumerate(questions, 1))
-    return ("ANSWER THESE QUESTIONS in this order, and only where the evidence supports an "
-            f"answer — never print a question, and never number your lines: {listed} ")
-
-
-# Which columns diagnose and which may instruct. The deck used to close every page on
-# "the call is to defend Cyber, scale Financial Lines, fix Casualty" — six products, no
-# figures, and true of any carrier with six lines. Diagnosis is what the feedback columns
-# are for; the instruction belongs where a team is expected to act on it, and only when it
-# says where and how much.
-_IMPERATIVE_TOPICS = frozenset({"key_messages", "priorities"})
-
-_DIAGNOSTIC_RULE = (
-    "VOICE FOR THIS COLUMN: diagnose, do not instruct. State the position, the mechanism "
-    "behind it and what is at stake, and let the reader draw the conclusion. Do not tell "
-    "the carrier what to do and do not open a line with an instruction. "
-)
-
-_IMPERATIVE_RULE = (
-    "VOICE FOR THIS COLUMN: you may say what must happen — but ONLY tied to a named "
-    "industry, product or client segment AND a premium figure from the evidence. Never "
-    "write an instruction against a bare product name: 'defend Cyber', 'scale Financial "
-    "Lines', 'fix Casualty', 'selectively pursue Property' are all refused. An instruction "
-    "with no named segment and no figure behind it is a slogan, not a message. "
-)
+    return ("Answer only where evidenced; never print a question: "
+            + " ".join(questions) + " ") if questions else ""
 
 
 def _voice_rule(topic: str) -> str:
-    return _IMPERATIVE_RULE if topic in _IMPERATIVE_TOPICS else _DIAGNOSTIC_RULE
+    if topic in _IMPERATIVE_TOPICS:
+        return "Proposed actions must follow from named evidence; distinguish investigation from a confirmed solution. "
+    return "Report the finding clearly. An operational cause or future outcome requires separate evidence. "
 
 
-# Who is writing. Insurer Consulting Group partners write for carrier boards: plain,
-# declarative, unhedged, and always answerable to the figure on the page.
 _VOICE = (
-    "You are a partner in Marsh's Insurer Consulting Group with twenty years advising "
-    "carriers, writing the commentary a carrier's executive team will read in their "
-    "quarterly business review. Write the way you would speak to that room: plainly, in the "
-    "past tense, in complete sentences, with a view the figures support and no hedging. "
-    "Distinguish market movement from share movement, and use the market's own words — GWP, "
-    "share of wallet, rank, renewal book, capture rate, headroom, placement. "
+    "You are an experienced Marsh Insurer Consulting Group (ICG) analyst and insurance consulting "
+    "leader writing a carrier's QBR. Help the carrier understand its performance with Marsh, "
+    "material shortfalls, relative placement position and evidence-supported next steps. "
+    "Use direct, natural business English that a stakeholder understands on first reading. "
+    "Exercise judgement through selecting and explaining the right finding, not through dramatic language. "
 )
-
-# What separates a consultant's page from a generated one. These are the habits that make
-# commentary read as machine-written, and they are named explicitly because a model asked
-# only for "professional" prose reaches for every one of them.
 _CRAFT = (
-    "CRAFT: every line must be a complete sentence with a subject and a verb and end in a "
-    "full stop — never a heading, a label, a fragment, or a 'Topic: value' pair. Say what "
-    "happened and what it means; do not restate a figure you have already given, do not "
-    "explain what a percentage is, and do not close on advice that would be true for any "
-    "carrier. Never write the words 'indicating', 'showcasing', 'underscoring', "
-    "'demonstrating', 'reflecting a', 'positioning the carrier', 'solid foothold', 'robust', "
-    "'strategic', 'leverage', 'key driver', 'landscape', 'moving forward', 'it is worth "
-    "noting', 'overall,', 'untapped', 'low-hanging', 'ripe for', 'significant "
-    "opportunity', 'huge potential', 'a natural fit', or 'penetrate the market'. "
+    "One finding per bullet, normally in one or two short sentences. Name the carrier, product, "
+    "industry or client segment and the exact metric. State the relevant comparison plainly. "
+    "Use only the two or three figures needed to understand it; other detail belongs in the chart. "
+    "A clear observed result can stand alone. Do not force a 'so what', a cause or an action onto every bullet. "
+    "Avoid 'the book', 'pool', 'flow', 'placement base', 'pressure sat', and 'ground given back'. "
+    "Say 'Marsh-placed premium' or 'share of Marsh placements' with the relevant segment. "
+    "Avoid filler such as robust, strategic, showcasing or underscoring. "
 )
-
 _FAITHFULNESS = (
-    "HARD RULES: keep EVERY number, currency amount, percentage and rank EXACTLY as written — "
-    "never invent, recalculate or round a figure; never name a competitor carrier. "
+    "Every bullet must cite its supporting fact IDs. Copy numerical display values exactly from those facts; "
+    "never recalculate, round or invent figures. Preserve direction and distinguish percentages from percentage points. "
+    "Only the subject carrier and Marsh may be named; comparison carriers remain aggregate. "
 )
-
-# What the ICG glossary is FOR, said once, so the definitions that travel with every
-# section are read as rules rather than as background.
-#
-# The glossary (``core/definitions/terms.yaml``) gives each term its meaning, the formula
-# THIS system computes it with, and a ``never`` — the specific overstatement the term
-# attracts. Handing a model those four fields under the heading "definitions" invites it to
-# skim them; every one of them is a constraint on what a sentence may claim, and the bans
-# are the half that keeps a page defensible.
 _DEFINITIONS = (
-    "THE DEFINITIONS YOU ARE GIVEN ARE BINDING. Each term carries what it means, how it is "
-    "computed here, and a NEVER — the overstatement that term attracts. Claim exactly what "
-    "the term measures and nothing wider: premium placed with Marsh is not the carrier's "
-    "book, the Marsh book is not the market, share of wallet is not market share, rank is "
-    "rank within the Marsh book, and headroom is premium another carrier already writes. A "
-    "term shown as NOT computed from our data is something this book cannot see — never "
-    "infer it from premium. "
+    "Use the supplied ICG definitions and their limitations. Marsh-placed premium is not the carrier's entire "
+    "premium or revenue. Share of Marsh placements is not total-market share or portfolio mix. "
+    "Premium growth does not establish demand growth, pricing, retention, appetite, profitability or capacity. "
+    "A share decline does not necessarily mean premium declined. A benchmark gap is not winnable premium. "
+    "Compare the same scope and clearly identified periods. Never infer acceleration by comparing annual YoY with QoQ. "
 )
-
-# The anatomy of ONE line. The rules above say what a column is for and what it may not
-# say; this says what a single sentence has to CONTAIN to earn its space on the slide.
-#
-# It is the difference between a true sentence and a usable one. "Marine premium fell 12%"
-# is true and a reader can do nothing with it: they do not learn where it fell, against
-# what, or what follows. The four parts are what a partner says in the room, and naming
-# them is what turns "write good commentary" into a specification a model can meet.
 _POINTER = (
-    "EVERY LINE IS A POINTER, and a pointer has four parts: the CLAIM — what is true of "
-    "this book; the DRIVER — the named industry, product line, client segment or market it "
-    "rests on; the EVIDENCE — a figure from the pack AND what it is measured against (the "
-    "Marsh book, the peer average, the prior year); and the CONSEQUENCE — what it means for "
-    "this account. A line with no driver is a headline, a line with no consequence is a "
-    "read-out, and neither belongs on the page. Name the driver in the line itself: 'the "
-    "largest three industries' names nothing. Keep each sentence to something a partner "
-    "could say in one breath — around twenty-five words, never more than thirty-five. "
+    "Lead with the meaningful observed finding. Prefer a current/prior share comparison when available. "
+    "Identify the segment by name, never 'the client segment that averaged ...'. "
+    "If a necessary name, denominator or comparison is missing, omit that finding and flag the data gap. "
 )
-
-# One worked example beats three paragraphs of instruction, and there was none. The figures
-# are invented on purpose and said to be: the numeric verifier
-# (:func:`studio.template_fill.commentary_verify.check_numbers`) deletes any line carrying a
-# figure that is not in the evidence pack, so a model that copies them loses the line.
-_EXAMPLES = (
-    "WHAT A LINE SHOULD LOOK LIKE (the shape, not the content — these figures are "
-    "invented, and a line that reuses them is deleted):\n"
-    "  GOOD: The year's growth sat almost entirely in Marine, which added $4.1m against "
-    "a Marsh pool up 3%, lifting share there to 11.2% while the rest of the book held "
-    "flat.\n"
-    "  WEAK: Premium grew 8.4% year on year. — true, and it names nothing and "
-    "settles nothing.\n"
-    "  WEAK: The book showed robust growth, indicating a solid foothold in the region. "
-    "— an adjective standing where the driver should be.\n"
-    "  WEAK: Continue to build on strengths and pursue opportunities in key segments. "
-    "— true of any carrier in any quarter.\n\n"
-)
-
-# The habit that most separates the chat analyst's prose from this deck's. The chat writer
-# is told to connect its sections explicitly ("that decline is concentrated in…", "which is
-# why…"); a commentary column was told only to keep its bullets in priority order, so it
-# produced a LIST of true statements with nothing running between them. A column is an
-# argument, and the reader should be able to follow it from the first line to the last.
 _ARGUMENT = (
-    "SHAPE THE COLUMN AS ONE ARGUMENT, not a list of findings. Each line should follow "
-    "from the one before it — the second line answers the question the first raises, and "
-    "the last lands the sharpest, most specific point. Carry the thread in the words "
-    "themselves ('that growth sits almost entirely in…', 'which is why…', 'the same is not "
-    "true of…'), and open the column on the widest claim and narrow from there. Never write "
-    "two lines that could be swapped without changing the argument. "
+    "Each bullet must stand on its own. Order findings by importance but do not use 'also', 'the same book' "
+    "or other references that require another bullet to decode the meaning. "
 )
-
-# Principle 5 of the shared analyst principles, promoted to its own instruction because it
-# is the single most analyst-like move available and the evidence pack usually contains one:
-# premium and share move in opposite directions whenever the carrier grew slower than the
-# pool it grew in.
 _TENSION = (
-    "LOOK FOR THE TENSION. Where two figures in the evidence disagree — premium up while "
-    "share of wallet fell, rank improved while the book shrank, a segment growing where the "
-    "carrier is thin — say so plainly and say what it means. A disagreement between two "
-    "numbers is worth more to this room than either number restated. "
+    "Explain a divergence when it matters, such as premium growing while share falls. "
+    "Use a measured decomposition for contribution; operational causes require operational evidence. "
+    "Superlatives such as fastest-growing or largest require a complete relevant comparison and a cited ranking. "
+)
+_EXAMPLES = (
+    "STYLE EXAMPLES ONLY; their figures are invented and must never be copied: "
+    "Good: 'The carrier's share of Marsh's Services premium fell from 25.7% to 16.8%, "
+    "while Marsh's Services premium grew 38.6%.' "
+    "Good: 'Property accounted for most of the premium increase, contributing $4M of the $5M gain.' "
+    "Good proposed priority: 'Review placement outcomes in Services to establish where share was lost "
+    "and whether those accounts remain within appetite.' "
+    "Poor: 'The pressure sat in a rising placement base.' "
+    "Poor: 'The carrier should capture all premium placed elsewhere.' "
 )
 
 
 def _analyst_principles() -> str:
-    """The shared "reading the book" principles, as a prompt block.
-
-    The same file the chat analyst writes from (:mod:`core.analysis`), so a habit added
-    for one product reaches the other. Absent or unreadable, the column is written from
-    the voice and craft rules alone rather than not at all.
-    """
-    try:
-        from core.analysis import get_lens_library
-
-        body = get_lens_library().reading_principles()
-    except Exception as exc:  # noqa: BLE001 — principles sharpen prose, they do not gate it
-        logger.warning("commentary: analyst principles unavailable (%s)", exc)
-        return ""
-    if not body:
-        return ""
-    # Its own block, top and bottom: the rules around it are running prose, and a numbered
-    # list wedged onto the end of a sentence reads as part of that sentence.
-    return "\n\nHOW TO READ THIS BOOK:\n" + body + "\n\n"
+    """Kept as a seam for callers; the QBR policy is self-contained."""
+    return ""
 
 
 def _style_directive(style: Optional[str]) -> str:
-    """How long a line runs, from the Setup voice control."""
     return _STYLE_DIRECTIVE.get((style or "balanced").lower(), _STYLE_DIRECTIVE["balanced"])
 
 
-def deck_voice(style: Optional[str], subject: str = "") -> str:
-    """Every rule that is true of EVERY column in this deck.
+def _openings_rule(subject: str) -> str:
+    return ("You may start with the metric or the carrier's name. Repeat names where they clarify meaning; "
+            "do not replace a clear reference merely to vary the opening. ")
 
-    Split out of :func:`_style_system` so a section-level call can state it once instead of
-    once per column: :mod:`studio.template_fill.commentary_batch` writes a whole sub-deck in
-    one request, and repeating six hundred words of craft rules per column in that request
-    would be most of its prompt.
-    """
-    return (_VOICE + _analyst_principles() + _CRAFT + _FAITHFULNESS + _DEFINITIONS
-            + _POINTER + _ARGUMENT + _TENSION + _EXAMPLES
-            + _openings_rule(subject) + _style_directive(style))
+
+def deck_voice(style: Optional[str], subject: str = "") -> str:
+    return (_VOICE + _CRAFT + _FAITHFULNESS + _DEFINITIONS + _POINTER
+            + _ARGUMENT + _TENSION + _EXAMPLES + _openings_rule(subject) + _style_directive(style))
 
 
 def column_rules(topic: str, wanted: int) -> str:
-    """The rules that belong to ONE column: its length, its brief, its voice, its questions."""
     return (_bullet_rules(wanted) + _TOPIC_BRIEF.get(topic, "")
             + _voice_rule(topic) + _questions_rule(topic))
 
 
 def top_up_rules(topic: str, remaining: int) -> str:
-    """Column rules for a repair that KEEPS its verified lines and writes only the rest.
-
-    A repair used to re-ask for the whole column, which put every already-verified line
-    back at risk of a worse second answer and spent the call re-earning ground the field
-    had already won. Asking only for what is missing is both cheaper and strictly safer:
-    the kept lines cannot be lost by a retry that was meant to help them.
-    """
     return (_top_up_bullet_rules(remaining) + _TOPIC_BRIEF.get(topic, "")
             + _voice_rule(topic) + _questions_rule(topic))
 
 
 def _top_up_bullet_rules(remaining: int) -> str:
-    """The line contract for a top-up: only the missing lines, and one spare."""
-    return (
-        f"Write ONLY the {remaining} line(s) still missing from this field, one point per "
-        "line, in priority order, to follow the lines already written above. Do NOT "
-        "rewrite, reword or repeat those — they are final. Write one spare line beyond "
-        f"the {remaining} asked for, so a line that cannot be evidenced can be dropped "
-        "without leaving the field short. Do not write any bullet character, dash or "
-        "number at the start of a line — the slide adds the bullet itself. "
-    )
+    return (f"Write up to {max(remaining, 1)} additional independent bullet(s), only when supported. "
+            "Do not rewrite or repeat the already verified lines. No filler and no leading bullet characters. ")
 
 
 def _style_system(style: Optional[str], *, topic: str = "", wanted: int = 1,
                   subject: str = "") -> str:
-    """The system prompt for one column, widest rule to narrowest.
-
-        who is writing -> how to read the book -> craft -> what may not change
-          -> what the terms mean -> what one line must carry -> how the column argues
-          -> what good and bad look like -> this column's own brief -> its length
-
-    The middle three are shared with the chat analyst
-    (:func:`_analyst_principles`, :data:`_ARGUMENT`, :data:`_TENSION`): the deck reads
-    as a worse writer than the chatbot largely because the chatbot was told how to read
-    the data and how to connect what it found, and the deck was told neither.
-    """
-    return (_VOICE + _analyst_principles() + _CRAFT + _FAITHFULNESS + _DEFINITIONS
-            + _POINTER + _ARGUMENT + _TENSION + _EXAMPLES
-            + _openings_rule(subject)
-            + _bullet_rules(wanted) + _TOPIC_BRIEF.get(topic, "")
-            + _voice_rule(topic) + _questions_rule(topic)
-            + _style_directive(style))
-
-
-def _openings_rule(subject: str) -> str:
-    """The instruction behind the opening gate, so the model is told the rule it is held to."""
-    if not subject:
-        return ""
-    return (f"OPENINGS: name {subject} ONCE in this column and then write about 'the book'. "
-            f"At most one line may begin with '{subject}'. Never leave a line that is a bare "
-            f"measure and a value ('Rank improved to 4th.', 'Share of wallet rose 0.6pp.') — "
-            f"a line that opens on a measure must go on to say why it moved or what follows "
-            f"from it. ")
+    return deck_voice(style, subject) + column_rules(topic, wanted)
 
 
 def _cx(sh: Shape) -> float:
@@ -709,11 +404,6 @@ def _is_whole_sentence(line: str) -> bool:
     return line.rstrip().endswith((".", "?", "!"))
 
 
-# How many bullets in one column may open on the carrier's name. One: a column says who it
-# is about, then talks about the book.
-_MAX_SUBJECT_OPENINGS = 1
-
-
 @dataclass(frozen=True)
 class _LineRule:
     """One reason a single line is not good enough to ship."""
@@ -725,10 +415,7 @@ class _LineRule:
 def _line_rules() -> Tuple[_LineRule, ...]:
     """The per-line quality bar, in the order a line is judged against it.
 
-    These are the habits that make a page read as produced rather than written: a
-    fragment instead of a sentence, one of the phrases a model reaches for when
-    asked to sound professional, and the roll-call line that states a measure and
-    its value and stops.
+    Refuse fragments, stock filler and ambiguous or overlong comparisons.
     """
     from studio.template_fill import commentary_metrics
 
@@ -736,27 +423,21 @@ def _line_rules() -> Tuple[_LineRule, ...]:
         _LineRule("fragment", lambda ln: not _is_whole_sentence(ln)),
         _LineRule("ai_tell", lambda ln: _AI_TELLS.search(ln) is not None),
         _LineRule("template_opener", lambda ln: _TEMPLATE_OPENERS.match(ln) is not None),
-        _LineRule("metric_readout", commentary_metrics.is_restatement),
+        _LineRule("unclear_comparison", lambda ln: commentary_metrics.clarity_issue(ln) is not None),
     )
 
 
 def _keep_lines(lines: Sequence[str], subject: str) -> Tuple[List[str], Dict[str, int]]:
     """The lines worth shipping, and a count of why the others were dropped.
 
-    Judged line by line, in order. The subject-opening cap is applied across the
-    column rather than per line — the rule is that the carrier is named ONCE, so
-    the first such line stays and later ones go.
+    Judged line by line, in order. Explicit carrier names and metric openings are
+    welcome when they make the finding clear.
     """
     rules = _line_rules()
     kept: List[str] = []
     dropped: Dict[str, int] = {}
-    named = 0
     for line in lines:
         broken = next((r.name for r in rules if r.rejects(line)), None)
-        if broken is None and subject and openings.subject_openings([line], subject):
-            named += 1
-            if named > _MAX_SUBJECT_OPENINGS:
-                broken = "subject_opening"
         if broken is not None:
             dropped[broken] = dropped.get(broken, 0) + 1
             continue
@@ -764,19 +445,7 @@ def _keep_lines(lines: Sequence[str], subject: str) -> Tuple[List[str], Dict[str
     return kept, dropped
 
 
-#: The fewest bullets a column may ship once repair has run out of rounds.
-#:
-#: :func:`min_lines` is the bar for a REWRITE — a model handed a full draft that comes
-#: back half the length has not edited the column, it has replaced it, and that is worth
-#: refusing. It is the wrong bar for a column whose evidence simply does not carry a
-#: second point: there, holding out for two bullets means the field falls back to
-#: deterministic prose (or fails the deck in ``ai_required``) while a verified,
-#: well-written line sits in hand. One such line beats both outcomes, and the fill engine
-#: already removes the surplus paragraph (:func:`studio.template_fill.fill._write_bullets`)
-#: so a short column leaves no empty bullet behind.
-#:
-#: Applied ONLY as a last resort, never on the first pass: the ask, the gates and the
-#: repair rounds are all unchanged, so a column that can make two points still must.
+#: Backward-compatible salvage floor; one supported finding is accepted on the first pass too.
 SALVAGE_FLOOR = 1
 
 
@@ -819,7 +488,7 @@ class ColumnJudgement:
 def judge_column(lines: Sequence[str], *, wanted: int, node: str,
                  subject: str = "", floor: Optional[int] = None) -> ColumnJudgement:
     """:func:`accept_column`, with the reasons kept. See :class:`ColumnJudgement`."""
-    return _judge([_LEADING_BULLET.sub("", ln).strip() for ln in lines if ln and ln.strip()],
+    return _judge([html.unescape(_LEADING_BULLET.sub("", ln)).strip() for ln in lines if ln and ln.strip()],
                   wanted=wanted, node=node, subject=subject, floor=floor)
 
 
@@ -1244,10 +913,7 @@ def values(template: Template, result, *, ledger=None,
                     said = ledger.take(said, limit=min(len(said), _MAX_COLUMN_BULLETS))
                 else:
                     said = said[:_MAX_COLUMN_BULLETS]
-                # Trimmed to the column FIRST, then varied: which bullets survive decides
-                # which of them still names the carrier, so varying before the ledger has
-                # chosen would introduce "the book" with no introduction in front of it.
-                said = openings.vary_openings(said, subject)
+                # Preserve explicit entity names so each bullet stands on its own.
                 base = bullet_list(said)
                 cache[key] = plan_rewrite(base, node=f"commentary-{topic}", style=style,
                                           topic=topic, subject=subject,

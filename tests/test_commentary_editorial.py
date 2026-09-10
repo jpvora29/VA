@@ -65,7 +65,7 @@ def _value_set(facts: dict, topics=("thesis", "key_messages", "priorities")) -> 
 @pytest.fixture(autouse=True)
 def _no_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("STUDIO_COMMENTARY_CACHE", str(tmp_path / "commentary"))
-    monkeypatch.delenv("COMMENTARY_MODE", raising=False)
+    monkeypatch.setenv("COMMENTARY_MODE", "auto")
     monkeypatch.delenv("STUDIO_AI", raising=False)
 
 
@@ -337,11 +337,14 @@ def repeating_model(monkeypatch):
                    fields=(), **kw):
         calls.append({"node": node, "phase": phase, "fields": tuple(fields), "user": user})
         if model is not CommentarySections:
-            return None                  # the claim verifier keeps everything
+            import re
+            from studio.ai.models import CommentaryVerdict, CommentaryVerdicts
+            count = len(re.findall(r"^\d+\. ", user, re.M))
+            return CommentaryVerdicts(verdicts=[CommentaryVerdict(keep=True) for _ in range(count)])
         asked = [line.split()[2] for line in user.splitlines()
                  if line.startswith("--- FIELD ")]
         renderings = [
-            "The book sits below the top-5 peer average, and closing that is the year's "
+            "The book sits below the peer average, and closing that is the year's "
             "work.",
             "Reaching peer parity is what the plan has to be built around this year.",
             "The distance to the peer benchmark is the single thing holding the book back.",
@@ -359,8 +362,8 @@ def repeating_model(monkeypatch):
 def test_every_field_is_told_its_editorial_job_in_the_prompt(repeating_model):
     B.write_deck([_value_set(_facts())])
     author = next(c for c in repeating_model if c["phase"] == "author")
-    assert "THIS FIELD IS THE HOME FOR" in author["user"]
-    assert "ANOTHER FIELD ON THIS PAGE OWNS THESE" in author["user"]
+    assert "SELECTED FINDINGS FOR THIS SECTION" in author["user"]
+    assert "section relevance takes priority over variety" in author["user"]
 
 
 def test_a_deck_whose_writer_repeats_one_finding_ships_it_once(repeating_model):
@@ -415,7 +418,8 @@ def test_two_different_books_are_still_written_separately(repeating_model):
     other["carrier"]["current"] = 51_000_000.0
     B.write_deck([_value_set(_facts()), _value_set(other)])
     authors = [c for c in repeating_model if c["phase"] == "author"]
-    assert all(call["user"].count("--- FIELD ") == 3 for call in authors)
+    assert sum(call["user"].count("--- FIELD ") == 3 for call in authors) == 2
+    assert all(call["user"].count("--- FIELD ") <= 3 for call in authors)
 
 
 def test_repetition_across_two_pages_of_one_book_is_reported(caplog):

@@ -105,12 +105,9 @@ def test_the_carrier_is_named_where_the_facts_carry_its_name():
 
 
 def test_the_peer_average_benchmarks_the_share_not_the_rank():
-    # A top-5 peer SHARE average says nothing about a rank, so it must never hang off one.
-    # Selected on the WALLET clause: the stance line that now opens the column mentions the
-    # rank too, and this rule is about the sentence that carries the benchmark.
-    line = next(p for p in F.points("key_messages", _GROWING) if "of the wallet" in p)
-    assert "ranks #2 of 12 and holds 11.6% of the wallet" in line
-    assert line.index("top-5 peer average") > line.index("of the wallet")
+    line = next(p for p in F.points("key_messages", _GROWING) if "largest-carrier average" in p)
+    assert "11.6% of Marsh placements" in line and "10.8%" in line
+    assert "rank" not in line
 
 
 # ── the summary page's prose columns come from the same composers ────────────
@@ -143,12 +140,12 @@ def test_a_rewrite_that_keeps_the_bullets_whole_is_accepted():
     assert CM._accept(lines, wanted=2, node="t") == "\n".join(lines)
 
 
-def test_a_rewrite_that_changes_the_bullet_count_is_refused():
-    assert CM._accept(["One sentence only."], wanted=2, node="t") is None
+def test_a_shorter_column_is_accepted():
+    assert CM._accept(["One supported finding."], wanted=2, node="t") == "One supported finding."
 
 
-def test_a_rewrite_that_leaves_a_fragment_is_refused():
-    assert CM._accept(["Momentum: Cyber", "A whole sentence."], wanted=2, node="t") is None
+def test_a_fragment_is_removed_without_losing_the_valid_line():
+    assert CM._accept(["Momentum: Cyber", "A whole sentence."], wanted=2, node="t") == "A whole sentence."
 
 
 def test_a_rewrite_that_reads_as_generated_is_refused():
@@ -170,25 +167,22 @@ def test_one_merged_bullet_is_allowed():
     assert CM._accept(lines, wanted=4, node="t") == "\n".join(lines)
 
 
-def test_two_merges_are_not_an_edit_but_a_different_page():
-    assert CM._accept(["The book grew 12.0%.", "Cyber carried it."],
-                      wanted=4, node="t") is None
+def test_two_material_findings_need_no_padding():
+    lines = ["The carrier grew its Marsh-placed premium 12.0%.", "Cyber contributed most of the increase."]
+    assert CM._accept(lines, wanted=4, node="t") == "\n".join(lines)
 
 
-def test_a_short_column_is_never_halved():
-    """One merge on a two-bullet column would leave a single line — not an edit."""
-    assert CM.min_lines(4) == 3 and CM.min_lines(3) == 2
-    assert CM.min_lines(2) == 2 and CM.min_lines(1) == 1
+def test_any_positive_capacity_accepts_one_material_finding():
+    assert all(CM.min_lines(wanted) == 1 for wanted in (1, 2, 3, 4))
+    assert CM.min_lines(0) == 0
 
 
 # ── the roll-call is refused ─────────────────────────────────────────────────
 
 
-def test_a_rewrite_that_names_the_carrier_on_every_line_is_refused():
-    """"Zurich wrote …", "Zurich ranks …" is the loudest generated-text tell there is."""
-    lines = ["Zurich grew its book 12.0% on the year.",
-             "Zurich ranks 2nd and holds 11.6% of the wallet."]
-    assert CM._accept(lines, wanted=2, node="t", subject="Zurich") is None
+def test_naming_the_carrier_on_each_line_is_allowed():
+    lines = ["Zurich grew its Marsh-placed premium 12.0%.", "Zurich's share of Marsh placements reached 11.6%."]
+    assert CM._accept(lines, wanted=2, node="t", subject="Zurich") == "\n".join(lines)
 
 
 def test_naming_the_carrier_once_is_how_a_column_introduces_itself():
@@ -197,11 +191,10 @@ def test_naming_the_carrier_once_is_how_a_column_introduces_itself():
     assert CM._accept(lines, wanted=2, node="t", subject="Zurich") == "\n".join(lines)
 
 
-def test_a_rewrite_that_leaves_a_metric_read_out_is_refused():
-    """A measure and a value with a full stop on the end is a table row, not a sentence."""
-    assert CM._accept(["Rank within the Marsh book improved 4 places to 2nd."],
-                      wanted=1, node="t") is None
-    assert CM._accept(["Share of wallet rose 3.2pp to 11.6%."], wanted=1, node="t") is None
+def test_clear_metric_led_observations_are_allowed():
+    for line in ("Rank within Marsh placements improved four places to second.",
+                 "Share of Marsh placements rose 3.2 percentage points to 11.6%."):
+        assert CM._accept([line], wanted=1, node="t") == line
 
 
 def test_a_measure_that_says_why_or_so_what_is_kept():
@@ -213,44 +206,28 @@ def test_a_measure_that_says_why_or_so_what_is_kept():
     assert CM._accept(earned, wanted=1, node="t") == earned[0]
 
 
-def test_the_prompt_tells_the_model_the_rule_it_is_held_to():
-    """A gate the prompt never mentions just costs a call and falls back to the draft."""
+def test_the_prompt_explains_the_quality_contract():
     system = CM._style_system("balanced", topic="challenges", wanted=4, subject="Zurich")
-    assert "Zurich" in system and "the book" in system
-    assert "bare measure and a value" in system
-    assert "merge two bullets" in system                  # the structural permission
-    assert "THIS COLUMN" in system and "MECHANISM" in system   # the column's own brief
+    assert "THIS COLUMN" in system and "Growth alone is not a challenge" in system
+    assert "Do not add filler" in system and "current/prior share" in system
 
 
-def test_the_prompt_specifies_what_one_line_must_carry():
-    """"Write good commentary" is not a specification. The four parts are.
-
-    A line that names no driver is a headline and a line that names no consequence is a
-    read-out, and both are true sentences — so the gates cannot catch them and the prompt
-    has to ask for the other two parts by name.
-    """
+def test_each_bullet_names_its_metric_and_comparison_without_a_forced_cause():
     system = CM.deck_voice("balanced", "Zurich")
-    for part in ("CLAIM", "DRIVER", "EVIDENCE", "CONSEQUENCE"):
-        assert part in system, part
-    assert "one breath" in system                      # the length ceiling, said usably
+    for rule in ("One finding per bullet", "exact metric", "comparison plainly", "Do not force a 'so what'"):
+        assert rule in system
 
 
-def test_the_prompt_shows_the_model_a_good_line_and_three_bad_ones():
-    """One worked example beats three paragraphs of instruction, and there was none."""
+def test_examples_are_explicitly_illustrative_and_include_a_supported_action():
     system = CM.deck_voice("balanced", "Zurich")
-    assert "GOOD:" in system and system.count("WEAK:") >= 3
-    # …and the invented figures are declared as invented, because the numeric verifier
-    # deletes any line carrying a figure that is not in the evidence pack.
-    assert "invented" in system
+    assert "Good:" in system and "Poor:" in system and "invented" in system
+    assert "Good proposed priority" in system
 
 
-def test_the_prompt_says_the_icg_definitions_are_binding():
-    """The glossary travels with every section already; what was missing was any
-    instruction to read it as a constraint rather than as background."""
+def test_the_prompt_distinguishes_marsh_placements_from_the_total_market():
     system = CM.deck_voice("balanced", "Zurich")
-    assert "BINDING" in system
-    for overstatement in ("is not the market", "not market share"):
-        assert overstatement in system
+    assert "supplied ICG definitions and their limitations" in system
+    assert "not total-market share" in system and "not the carrier's entire" in system
 
 
 def test_the_definitions_reach_the_model_with_their_bans():
@@ -321,18 +298,10 @@ def test_the_verifiers_stay_deterministic_while_the_writer_runs_warm():
 # ── the deck and the chat answer read from ONE set of analyst principles ─────
 
 
-def test_a_column_is_written_from_the_same_principles_as_a_chat_answer():
-    """The style lever: the chat analyst was told how to read this book and the deck was
-    not. Both now inject ``core/analysis/analyst_principles.md`` — one file, no drift."""
-    from core.analysis import get_lens_library
-
-    shared = get_lens_library().reading_principles()
+def test_qbr_policy_does_not_inherit_conflicting_chat_instructions():
     prompt = CM._style_system("balanced", topic="performance", wanted=3, subject="Zurich")
-
-    assert shared and shared in prompt
-    # The half that only makes sense when a user asked a question must NOT come along.
-    assert "Answer the literal question first" not in prompt
-    assert "Be proportional" not in prompt
+    assert CM._analyst_principles() == ""
+    assert "One finding per bullet" in prompt and "Each bullet must stand on its own" in prompt
 
 
 def test_the_chat_analyst_still_gets_every_principle():
@@ -346,27 +315,23 @@ def test_the_chat_analyst_still_gets_every_principle():
     assert library.reading_principles() != everything
 
 
-def test_missing_principles_do_not_stop_a_column_being_written(monkeypatch):
-    """They sharpen the prose; they are not allowed to gate it."""
+def test_missing_chat_principles_do_not_stop_qbr_prompts(monkeypatch):
     monkeypatch.setattr(CM, "_analyst_principles", lambda: "")
-    prompt = CM._style_system("balanced", topic="working", wanted=2, subject="Zurich")
-    assert "Marsh's Insurer Consulting Group" in prompt
+    assert "Insurer Consulting Group" in CM._style_system("balanced", topic="working", wanted=2)
 
 
-def test_a_column_is_told_to_argue_rather_than_to_list():
-    """The chat writer connects its sections explicitly; a column was told only to keep
-    its bullets in priority order, so it produced a list of unrelated true statements."""
+def test_bullets_are_independent_and_divergences_need_evidence():
     prompt = CM._style_system("balanced", topic="performance", wanted=3, subject="Zurich")
-    assert "ONE ARGUMENT" in prompt
-    assert "LOOK FOR THE TENSION" in prompt
+    assert "Each bullet must stand on its own" in prompt
+    assert "Explain a divergence when it matters" in prompt
+    assert "ONE ARGUMENT" not in prompt
 
 
-def test_every_topic_carries_the_shared_style_rules():
-    for topic in ("thesis", "key_messages", "challenges", "priorities", "performance",
-                  "reflections", "working", "growth"):
+def test_every_topic_carries_the_qbr_quality_contract():
+    for topic in CM._TOPIC_BRIEF:
         prompt = CM._style_system("balanced", topic=topic, wanted=3, subject="Zurich")
-        assert "HOW TO READ THIS BOOK" in prompt, topic
-        assert "ONE ARGUMENT" in prompt, topic
+        assert "Every bullet must cite its supporting fact IDs" in prompt
+        assert "One finding per bullet" in prompt
 
 
 # ── the model now writes from EVIDENCE, and both verifiers rule on it ────────
@@ -392,33 +357,35 @@ def _facts(**over):
 
 
 def _column(*bullets):
-    """A `CommentaryColumn` as the model would return it, citing nothing in particular."""
+    """Writer orchestration fixture; numerical verification has its own scoped tests."""
     from studio.ai.models import CommentaryBullet, CommentaryColumn
-
-    return CommentaryColumn(bullets=[CommentaryBullet(text=b, fact_ids=[]) for b in bullets])
+    from studio.template_fill.commentary_evidence import build_pack
+    ids = [item.fact_id for item in build_pack(_facts()).items]
+    return CommentaryColumn(bullets=[CommentaryBullet(text=b, fact_ids=ids) for b in bullets])
 
 
 def _stub_model(monkeypatch, column, *, verdicts=None):
-    """Point the writer at a canned column and the claim judge at canned verdicts."""
+    import re
     from studio.ai import client
-    from studio.ai.models import CommentaryColumn, CommentaryVerdicts
-
+    from studio.ai.models import CommentaryColumn, CommentaryVerdict, CommentaryVerdicts
+    monkeypatch.setenv("COMMENTARY_MODE", "auto")
     monkeypatch.setattr(client, "llm_available", lambda: True)
-
     def structured(model, system, user, **kw):
         if model is CommentaryColumn:
             return column
         if model is CommentaryVerdicts:
-            return verdicts
+            if verdicts is not None:
+                return verdicts
+            count = len(re.findall(r"^\d+\. ", user, re.M))
+            return CommentaryVerdicts(verdicts=[CommentaryVerdict(keep=True) for _ in range(count)])
         return None
-
     monkeypatch.setattr(client, "structured", structured)
 
 
 def test_the_model_writes_the_column_from_the_evidence(monkeypatch):
     written = ("The book outgrew the Marsh pool by nearly nineteen points, taking $46M more "
                "premium in a market that grew 9.9%.",
-               "At 9.1% of the wallet it still sits behind a top-5 peer average of 10.8%.")
+               "At 9.1% of the wallet it still sits behind a largest-carrier average of 10.8%.")
     _stub_model(monkeypatch, _column(*written))
     out = CM._rewrite(_draft(2), node="t", subject="Zurich", facts=_facts())
     assert out.splitlines() == list(written)
@@ -430,7 +397,7 @@ def test_an_invented_figure_is_dropped_before_the_judge_ever_sees_it(monkeypatch
         "The book grew to $208M with Marsh, taking share as it went.",
         "Share of wallet reached 44.4%, well clear of the field."))          # invented
     out = CM._rewrite(_draft(2), node="t", subject="Zurich", facts=_facts())
-    assert out == _draft(2), "one line left is below the floor, so the draft stands"
+    assert out == "The book grew to $208M with Marsh, taking share as it went."
 
 
 def test_the_claim_judge_drops_an_unsupported_claim(monkeypatch):
@@ -440,7 +407,7 @@ def test_the_claim_judge_drops_an_unsupported_claim(monkeypatch):
 
     kept = ("The book outgrew the Marsh pool and took $46M more premium than a year ago.",
             "Cyber carried $22M of that, so the renewal there is what to defend first.",
-            "At 9.1% of the wallet the book still trails a top-5 peer average of 10.8%.")
+            "At 9.1% of the wallet the book still trails a largest-carrier average of 10.8%.")
     _stub_model(
         monkeypatch,
         _column(*kept, "That makes the carrier the market leader in this segment."),
@@ -454,17 +421,13 @@ def test_the_claim_judge_drops_an_unsupported_claim(monkeypatch):
     assert out.splitlines() == list(kept) and "market leader" not in out
 
 
-def test_a_judge_that_answers_nonsense_is_ignored_rather_than_obeyed(monkeypatch):
-    """A verdict list that does not line up must not be read as 'drop everything' — that
-    blanks the page, which is worse than any sentence it might have caught."""
+def test_a_misaligned_judge_cannot_approve_the_column(monkeypatch):
     from studio.ai.models import CommentaryVerdict, CommentaryVerdicts
-
-    written = ("The book took $46M more premium than a year ago, ahead of the Marsh pool.",
-               "At 9.1% of the wallet it still trails a top-5 peer average of 10.8%.")
+    written = ("Zurich's Marsh-placed premium increased by $46M.",
+               "Its share of Marsh placements reached 9.1%.")
     _stub_model(monkeypatch, _column(*written),
-                verdicts=CommentaryVerdicts(verdicts=[CommentaryVerdict(keep=False)]))
-    assert CM._rewrite(_draft(2), node="t", subject="Zurich",
-                       facts=_facts()).splitlines() == list(written)
+                verdicts=CommentaryVerdicts(verdicts=[CommentaryVerdict(keep=True)]))
+    assert CM._rewrite(_draft(2), node="t", subject="Zurich", facts=_facts()) == _draft(2)
 
 
 def test_with_no_evidence_the_draft_stands(monkeypatch):

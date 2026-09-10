@@ -39,7 +39,7 @@ GOOD = [
 ]
 
 # The four habits the per-line rules exist to catch.
-READOUT = "Rank improved to 4th."
+READOUT = "The pressure sat in the placement base."
 FRAGMENT = "Strong performance in Property"
 AI_TELL = "The book grew, demonstrating a robust position in the market."
 
@@ -69,7 +69,7 @@ def test_every_line_rule_drops_only_its_own_line(bad):
 
 def test_a_column_with_too_little_left_keeps_the_draft():
     """The bar still holds: three read-outs are not a column."""
-    allbad = [READOUT, "Share of wallet rose 0.6pp.", "Premium up 4%."]
+    allbad = [READOUT, "The same book grew with Marsh demand.", FRAGMENT]
     assert _accept(allbad, wanted=3, node="n", subject=SUBJECT) is None
 
 
@@ -87,7 +87,7 @@ def test_the_carrier_may_open_one_line():
     assert len(_lines(_accept(lines, wanted=3, node="n", subject=SUBJECT))) == 3
 
 
-def test_a_roll_call_loses_its_later_lines_not_the_column():
+def test_explicit_carrier_names_are_preserved():
     """Naming the carrier on every line is the roll-call the rule exists to stop."""
     lines = [
         f"{SUBJECT} grew its book 12% to $12.4M on the back of Property.",
@@ -95,9 +95,7 @@ def test_a_roll_call_loses_its_later_lines_not_the_column():
         GOOD[2],
     ]
     kept = _lines(_accept(lines, wanted=3, node="n", subject=SUBJECT))
-    assert len(kept) == 2
-    assert kept[0].startswith(SUBJECT)
-    assert not kept[1].startswith(SUBJECT)
+    assert kept == lines  # Repeating the carrier clarifies whose metrics these are.
 
 
 # ── _keep_lines reports why ──────────────────────────────────────────────────
@@ -105,7 +103,7 @@ def test_a_roll_call_loses_its_later_lines_not_the_column():
 def test_drops_are_attributed_so_quality_is_diagnosable():
     kept, dropped = _keep_lines([*GOOD[:1], READOUT, FRAGMENT], SUBJECT)
     assert kept == GOOD[:1]
-    assert dropped == {"metric_readout": 1, "fragment": 1}
+    assert dropped == {"unclear_comparison": 1, "fragment": 1}
 
 
 def test_nothing_dropped_reports_nothing():
@@ -122,15 +120,15 @@ def test_a_column_is_two_or_three_points():
     assert _PANEL_BULLETS == 3
     assert _CELL_BULLETS == 2, "a table cell keeps the headlines only"
     assert _HIGHLIGHT_BULLETS == 3
-    assert min_lines(_PANEL_BULLETS) == 2
+    assert min_lines(_PANEL_BULLETS) == 1
 
 
 def test_two_lines_is_a_whole_column():
     assert _lines(_accept(GOOD[:2], wanted=3, node="n", subject=SUBJECT)) == GOOD[:2]
 
 
-def test_one_line_is_not():
-    assert _accept(GOOD[:1], wanted=3, node="n", subject=SUBJECT) is None
+def test_one_material_line_is_a_whole_column():
+    assert _lines(_accept(GOOD[:1], wanted=3, node="n", subject=SUBJECT)) == GOOD[:1]
 
 
 # ── template openers: the tell a reader names instantly ──────────────────────
@@ -206,27 +204,27 @@ def test_a_stance_line_is_the_same_on_every_build():
 # asked for one spare — so a rejected line is covered instead of fatal.
 
 
-def test_a_two_bullet_cell_has_no_room_to_lose_a_line():
+def test_a_two_bullet_cell_accepts_one_supported_finding():
     """The condition the spare exists for. If this changes, the spare is unnecessary."""
-    assert min_lines(_CELL_BULLETS) == _CELL_BULLETS
+    assert min_lines(_CELL_BULLETS) == 1
 
 
-def test_a_column_with_no_room_is_asked_for_a_spare():
+def test_no_column_is_asked_for_padding():
     from studio.template_fill.commentary import ask_lines
 
-    assert ask_lines(_CELL_BULLETS) == _CELL_BULLETS + 1
-    assert ask_lines(1) == 2
+    assert ask_lines(_CELL_BULLETS) == _CELL_BULLETS
+    assert ask_lines(1) == 1
     # A column that may already merge or drop has its room; it is not asked for more.
     assert ask_lines(_PANEL_BULLETS) == _PANEL_BULLETS
     assert ask_lines(4) == 4
 
 
-def test_the_prompt_explains_the_spare_rather_than_asking_for_a_longer_cell():
+def test_the_prompt_explicitly_allows_fewer_findings():
     from studio.template_fill.commentary import _bullet_rules
 
     rules = _bullet_rules(_CELL_BULLETS)
-    assert f"Write {_CELL_BULLETS + 1} lines" in rules
-    assert f"The cell shows {_CELL_BULLETS}" in rules
+    assert f"one and {_CELL_BULLETS}" in rules
+    assert "Do not add filler" in rules
 
 
 def test_a_spare_covers_a_rejected_line_and_the_cell_still_ships_full():
@@ -240,9 +238,9 @@ def test_the_spare_never_makes_the_cell_longer_than_it_shows():
     assert len(kept) == 2
 
 
-def test_two_bad_lines_still_fail_the_cell():
+def test_two_bad_lines_leave_the_supported_finding():
     """The bar has not moved: the spare covers ONE rejection, not any number."""
-    assert _accept([FRAGMENT, READOUT, GOOD[0]], wanted=2, node="n", subject=SUBJECT) is None
+    assert _accept([FRAGMENT, READOUT, GOOD[0]], wanted=2, node="n", subject=SUBJECT) == GOOD[0]
 
 
 def test_lines_are_judged_before_they_are_trimmed():

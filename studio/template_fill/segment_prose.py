@@ -1,23 +1,7 @@
-"""How one segment finding is SAID — the sentences the industry evidence composes into.
+"""Plain, scoped observations for deterministic segment previews.
 
-Separate from :mod:`studio.template_fill.feedback` because it has one job and a hard
-contract: every figure a sentence here prints must also appear in the ``rendered`` value
-:mod:`studio.template_fill.commentary_evidence` built for the same finding, or
-``commentary_verify.check_numbers`` drops the line as an unsupported number. Both sides
-therefore use the same formatters (:func:`render._money`, ``f"{x:.1f}%"``,
-:mod:`studio.template_fill.units`), and a test asserts the containment rather than trusting
-the convention.
-
-Two rules shape the wording, and both are enforced elsewhere by gates that would silently
-send a whole column back to its draft:
-
-* **Never open on a measure.** ``commentary_metrics.is_restatement`` refuses a bullet that
-  opens on "Share"/"Rank"/"Premium" and then neither explains nor concludes — and
-  ``commentary._accept`` throws away any rewrite containing one. So the decline sentence is
-  "The book gave back 1.4 percentage points…", never "Share fell 1.4…".
-* **Diagnose, do not instruct.** These sentences fill What's working / What's not / Growth
-  Opportunities, which state position and mechanism. The imperative belongs in Key Messages
-  and Priorities, and only tied to a named segment and a figure.
+Each bullet identifies the segment, carrier metric and comparison. Numeric displays
+match commentary evidence. Placement gaps are scenarios, never promised premium.
 """
 from __future__ import annotations
 
@@ -28,126 +12,41 @@ from studio.template_fill import units as U
 from studio.template_fill.render import _money
 
 
-# Two rules pull against each other here, and both are real.
-#
-# A sentence that states a position and stops is a measurement, not a finding: the half that
-# earns its place on a slide is what FOLLOWS from the figure. But the same consequence
-# clause repeated on every page is decoration - the deck once closed eleven of its bullets
-# with the same eight words, which is the texture that reads as machine-written however
-# true each sentence is.
-#
-# So every variant below carries a consequence, and the variants differ in WHAT the
-# consequence is, chosen from what happens to be true of that row. Dropping the "so what"
-# to gain variety measured worse on ``commentary_metrics.implication_rate`` and was the
-# wrong trade; two different consequences beat one repeated and beat none.
-
-
-def _peer_clause(row: SegmentFinding) -> str:
-    """Where the row sits against the aggregate benchmark, when that is worth saying."""
-    if row.peer_sow is None or row.sow is None:
-        return ""
-    if row.sow >= row.peer_sow + 1.0:
-        return f" and ahead of the top-5 peer average of {row.peer_sow:.1f}%"
-    if row.peer_sow >= row.sow + 1.0:
-        return f" while the top five hold {row.peer_sow:.1f}% of it"
-    return ""
-
-
 def _absent(row: SegmentFinding, subject: str, lead: bool = False) -> str:
-    """The gap stated as placement, never as an opportunity.
-
-    ``terms.yaml`` bans qualifying whitespace as addressable without appetite evidence, so
-    the sentence says what Marsh placed, what the book wrote, and stops there.
-    """
-    if row.peer_sow:
-        return (f"Marsh placed {_money(row.market)} of premium in {row.name} here and the "
-                f"book wrote none of it, while the top five each placed "
-                f"{row.peer_sow:.1f}%, so the class is being written by others rather "
-                f"than left unplaced.")
-    return (f"Marsh placed {_money(row.market)} of premium in {row.name} here and the book "
-            f"wrote none of it, so the whole pool sits with other carriers.")
+    return (f"Marsh placed {_money(row.market)} of premium in {row.name}, "
+            f"and {subject or 'the carrier'} received none of those placements.")
 
 
 def _thin(row: SegmentFinding, subject: str, lead: bool = False) -> str:
-    """The shortfall against the book's own standard, and what it is worth.
-
-    The second one drops the restated benchmark: by then the reader has it, and repeating
-    it is what turns two findings into one sentence said twice.
-    """
-    if lead:
-        return (f"{row.name} is a {_money(row.market)} pool where the book holds "
-                f"{row.sow:.1f}% of the wallet against the {row.placed_sow:.1f}% it "
-                f"averages where it writes, so about {_money(row.stake)} of premium is on "
-                f"the table at its own standard.")
-    behind = (f" while the top five hold {row.peer_sow:.1f}% of it"
-              if (row.peer_sow is not None and row.sow is not None
-                  and row.peer_sow >= row.sow + 1.0) else "")
-    return (f"It is thin in {row.name} too, {row.sow:.1f}% of a {_money(row.market)} "
-            f"pool{behind}, worth about {_money(row.stake)} at the same standard.")
+    return (f"{subject or 'The carrier'} received {row.sow:.1f}% of Marsh's placements in {row.name}, "
+            f"below its {row.placed_sow:.1f}% average across the segments it writes. "
+            f"Matching that share would correspond to an illustrative {_money(row.stake)} "
+            "premium difference at the current Marsh total.")
 
 
 def _behind(row: SegmentFinding, subject: str, lead: bool = False) -> str:
-    if lead:
-        return (f"In {row.name} the book holds {row.sow:.1f}% of a {_money(row.market)} "
-                f"pool against a top-5 peer average of {row.peer_sow:.1f}%, which leaves "
-                f"it about {_money(row.stake)} of premium behind carriers writing the same "
-                f"class.")
-    return (f"{row.name} sits behind the same benchmark, {row.sow:.1f}% against "
-            f"{row.peer_sow:.1f}%, which means about {_money(row.stake)} of premium.")
-
-
-def _strong_tail(row: SegmentFinding, lead: bool) -> str:
-    """What this position proves - a different reading for each thing that is true of it.
-
-    The superlative belongs to the lead row only: a runner-up that also called itself the
-    deepest placement would contradict the line above it.
-    """
-    if row.peer_sow is not None and row.sow is not None and row.sow >= row.peer_sow + 1.0:
-        return (f", and ahead of the top-5 peer average of {row.peer_sow:.1f}%, so the "
-                f"position holds against the benchmark and not just its own history")
-    if row.placed_sow and row.sow and row.sow >= row.placed_sow * 1.5:
-        return (", half again the rate it manages elsewhere, so the ceiling is higher than "
-                "the book's own average suggests")
-    if lead:
-        return ", so the standard the rest of the book is held to is set here"
-    return ", so more than one class supports a deeper position than the average"
+    from studio.template_fill.commentary_evidence import benchmark_label
+    benchmark = benchmark_label({"n_carriers": row.carriers})
+    return (f"{subject or 'The carrier'} received {row.sow:.1f}% of Marsh's placements in {row.name}, "
+            f"compared with {row.peer_sow:.1f}% for the {benchmark}.")
 
 
 def _strong(row: SegmentFinding, subject: str, lead: bool = False) -> str:
-    """Only the first one may claim the superlative: two "places best" lines in one column
-    is a contradiction the reader notices before anything else on the page."""
-    opening = (f"{row.name} is where this book places best, at" if lead
-               else f"{row.name} also sits above the book's own standard, at")
-    return (f"{opening} {row.sow:.1f}% of a {_money(row.market)} pool against the "
-            f"{row.placed_sow:.1f}% it averages where it writes{_strong_tail(row, lead)}.")
+    return (f"{subject or 'The carrier'} received {row.sow:.1f}% of Marsh's placements in {row.name}, "
+            f"above its {row.placed_sow:.1f}% average across the segments it writes.")
 
 
 def _moved(pct: float) -> str:
     return f"grew {pct:.1f}%" if pct >= 0 else f"fell {abs(pct):.1f}%"
 
 
-# Share given back while the pool grew this fast is a capture failure rather than a market
-# one, and worth saying so. Below it the two are hard to tell apart from premium alone.
-_POOL_GREW_CLEARLY = 5.0
-
-
-def _losing_tail(row: SegmentFinding) -> str:
-    moved = row.market_yoy
-    if moved is None:
-        return ", so the ground went to other carriers"
-    if moved < 0:
-        return ", so some of that was the pool contracting rather than ground lost"
-    if moved >= _POOL_GREW_CLEARLY:
-        return ", so this was ground lost rather than a market that shrank"
-    return ", so the ground went to other carriers rather than to a shrinking market"
-
-
 def _losing(row: SegmentFinding, subject: str, lead: bool = False) -> str:
-    """Opens on the book, not on "Share": ``commentary_metrics.is_restatement`` refuses a
-    bullet that opens on a measure, and ``_accept`` then discards the whole rewrite."""
-    moved = (f" that {_moved(row.market_yoy)}" if row.market_yoy is not None else "")
-    return (f"The book gave back {U.points(row.sow_delta)} of share in {row.name}, to "
-            f"{row.sow:.1f}% of a {_money(row.market)} pool{moved}{_losing_tail(row)}.")
+    prior = row.prior_sow if row.prior_sow is not None else row.sow - row.sow_delta
+    line = (f"{subject or 'The carrier'}'s share of Marsh's premium in {row.name} fell "
+            f"from {prior:.1f}% to {row.sow:.1f}%.")
+    if row.market_yoy is not None:
+        line += f" Total Marsh-placed premium in that segment {_moved(row.market_yoy)}."
+    return line
 
 
 _SENTENCE: Dict[Placement, Callable[[SegmentFinding, str], str]] = {
@@ -162,8 +61,7 @@ _SENTENCE: Dict[Placement, Callable[[SegmentFinding, str], str]] = {
 def sentence(row: SegmentFinding, subject: str = "", lead: bool = False) -> Optional[str]:
     """One finding as a diagnostic sentence, or ``None`` for a class that says nothing.
 
-    ``lead`` marks the first finding of its class in a column, which is the only one
-    allowed to claim a superlative.
+    ``lead`` remains accepted for caller compatibility; every observation stands alone.
     """
     build = _SENTENCE.get(row.placement)
     return build(row, subject, lead) if build else None
@@ -232,7 +130,7 @@ def absence_summary(found: Dict[str, SegmentFindings], subject: str = "") -> Opt
         named = ", ".join(r.name for r in rows[:2])
         rest = len(rows) - 2
         tail = f" and {rest} other {findings.label}" + ("s" if rest != 1 else "") if rest else ""
-        return (f"Across {len(rows)} {findings.label} groups the book writes nothing at all, "
+        return (f"{subject or 'The carrier'} received no Marsh placements across {len(rows)} {findings.label} groups: "
                 f"{named}{tail}, together worth {_money(findings.absent_total)} of Marsh "
                 f"placements.")
     return None
@@ -244,6 +142,6 @@ def tracking_note(label: str = "industry", share: Optional[float] = None) -> str
     Worth a line: it tells a leadership team there is no local anomaly to chase, which is
     a finding. Manufacturing a difference to fill the column is what the deck did before.
     """
-    at = f", and at {share:.1f}% of the wallet" if share is not None else ", so"
-    return (f"The book's {label} mix here tracks the wider portfolio closely{at} nothing "
-            f"in this scope behaves differently from the group.")
+    level = f" Its share of Marsh placements in this scope is {share:.1f}%." if share is not None else ""
+    return (f"The carrier's {label} placement pattern tracks the wider portfolio in the "
+            f"supplied comparisons.{level}")

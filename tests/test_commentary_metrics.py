@@ -113,17 +113,13 @@ def test_the_same_bullet_twice_is_counted():
 # ── the measured before/after ────────────────────────────────────────────────
 
 
-def test_the_opening_fix_measurably_lowers_the_roll_call():
-    """Composed from real facts by the real composers — not a hand-written example."""
+def test_opening_metrics_are_descriptive_not_rejection_targets():
     raw = F.points("key_messages", _FACTS)
-    before = M.score(_payload(*raw), subject="Zurich")
-    after = M.score(_payload(*vary_openings(raw, "Zurich")), subject="Zurich")
-
-    assert before.subject_opening_rate > after.subject_opening_rate
-    assert after.subject_opening_rate <= 1.0 / after.bullets + 1e-9, \
-        "at most one bullet may still name the carrier"
-    assert after.opening_variety >= before.opening_variety
-    assert after.bullets == before.bullets, "varying an opening must not drop a claim"
+    measured = M.score(_payload(*raw), subject="Zurich")
+    assert measured.subject_opening_rate > 0
+    from studio.template_fill import commentary as C
+    assert C._accept(raw, wanted=len(raw), node="metrics", subject="Zurich")
+    assert measured.bullets == len(raw)
 
 
 def test_the_score_survives_a_carrier_whose_name_is_a_regex_metacharacter():

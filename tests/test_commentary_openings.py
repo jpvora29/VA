@@ -92,30 +92,27 @@ def test_the_figures_are_never_touched():
 # ── the composers actually produce the roll-call, and the fix lands on them ──
 
 
-def test_the_key_messages_column_no_longer_opens_every_line_on_the_carrier():
-    """The exact complaint: a column of "{carrier} wrote …" / "{carrier} ranks …"."""
+def test_key_messages_preserve_explicit_carrier_references():
     raw = F.points("key_messages", _FACTS)
-    assert subject_openings(raw, "Zurich") > 1, "the composers do produce the roll-call"
-    assert subject_openings(vary_openings(raw, "Zurich"), "Zurich") == 1
+    assert subject_openings(raw, "Zurich") > 1
+    assert "Zurich's share of Marsh placements" in " ".join(raw)
 
 
 @pytest.mark.parametrize("kind", ["working", "challenges", "growth", "key_messages"])
-def test_no_composer_column_names_the_carrier_more_than_once_after_varying(kind):
-    varied = vary_openings(F.points(kind, _FACTS), "Zurich")
-    assert subject_openings(varied, "Zurich") <= 1
+def test_composer_columns_remain_readable_with_explicit_names(kind):
+    lines = F.points(kind, _FACTS)
+    assert lines and all(line.endswith(".") for line in lines)
+    assert all(len(line.split()) <= 60 for line in lines)
 
 
-def test_the_feedback_panels_go_through_the_same_fix():
-    """The per-country cells are composed by the same functions and had the same problem."""
-    text = F._compose("key_messages", _FACTS, 4)
-    assert subject_openings(text.split("\n"), "Zurich") <= 1
+def test_feedback_preserves_names_in_each_independent_finding():
+    lines = F._compose("key_messages", _FACTS, 4).split("\n")
+    assert subject_openings(lines, "Zurich") > 1
+    assert "The book" not in " ".join(lines)
 
 
-def test_the_summary_columns_go_through_it_too():
-    """`commentary.values` varies AFTER the ledger has chosen, so the surviving bullets
-    still carry exactly one introduction between them."""
+def test_summary_columns_do_not_replace_clear_subject_references():
     import inspect
-
     src = inspect.getsource(CM.values)
-    assert "openings.vary_openings(said, subject)" in src
-    assert src.index("ledger.take") < src.index("vary_openings")
+    assert "vary_openings" not in src
+    assert "ledger.take" in src

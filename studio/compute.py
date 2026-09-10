@@ -597,17 +597,17 @@ def peer_average_totals(flow, filters, engine, *, top: int = _PEER_TOP_N) -> Opt
         return None
     base = {k: v for k, v in filters.items() if k != _CARRIER_COL}
 
-    def avg_at(year: int) -> Tuple[float, float]:
+    def avg_at(year: int) -> Tuple[float, float, int]:
         scoped = {**base, _YEAR_COL: year}
         facts = compute_breakdown(
             PrimitiveArgs(flow=flow, metric="premium", group_by=(_CARRIER_COL,), filters=scoped),
             engine=engine,
         )
         values = [f.value or 0.0 for f in facts]
-        return _top_average(values, top=top), sum(values)
+        return _top_average(values, top=top), sum(values), len(values)
 
-    c, c_total = avg_at(cur)
-    p, p_total = avg_at(cur - 1)
+    c, c_total, n = avg_at(cur)
+    p, p_total, prior_n = avg_at(cur - 1)
     sow = (c / c_total * 100) if c_total else None
     sow_prior = (p / p_total * 100) if p_total else None
     return {
@@ -615,6 +615,9 @@ def peer_average_totals(flow, filters, engine, *, top: int = _PEER_TOP_N) -> Opt
         "delta": c - p, "pct": ((c - p) / p * 100) if p else None,
         "sow": sow, "sow_prior": sow_prior,
         "sow_delta": None if (sow is None or sow_prior is None) else (sow - sow_prior),
+        "n_carriers": n, "benchmark_count": min(n, top),
+        "prior_benchmark_count": min(prior_n, top),
+        "benchmark_basis": "largest_carriers_in_scope_subject_eligible",
     }
 
 

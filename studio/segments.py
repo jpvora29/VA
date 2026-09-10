@@ -170,6 +170,9 @@ class SegmentFinding:
     sow_delta: Optional[float] = None     # share movement, percentage points
     carriers: int = 0                     # how many carriers Marsh placed with here
     placement: Placement = Placement.TRACKING
+    prior_carrier: Optional[float] = None
+    prior_market: Optional[float] = None
+    prior_sow: Optional[float] = None
 
     @property
     def label(self) -> str:
@@ -454,6 +457,9 @@ def _finding(dim: str, name: str, now: _Slice, before: Optional[_Slice],
         market_yoy=_movement(now.market, before.market) if before else None,
         sow_delta=None if (sow is None or prior_sow is None) else sow - prior_sow,
         carriers=now.carriers,
+        prior_carrier=before.carrier if before else None,
+        prior_market=before.market if before else None,
+        prior_sow=prior_sow,
     )
     from dataclasses import replace
 

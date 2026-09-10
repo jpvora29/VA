@@ -99,7 +99,7 @@ def test_the_top_five_benchmark_is_quotable():
     pack = build_pack({"subject": "Zurich", "peer": {"sow": 10.8}, "carrier": {},
                        "marsh": {}, "rank": {}, "sow": {}})
     allowed = allowed_numbers(*pack.rendered_values())
-    assert not _violations("The book sits below the top-5 peer average of 10.8%.", allowed, ())
+    assert not _violations("The carrier trails the largest-carrier average of 10.8%.", allowed, ())
 
 
 def test_the_reporting_year_is_quotable():
@@ -181,9 +181,9 @@ def test_the_diagnostic_columns_are_told_to_diagnose_and_key_messages_to_instruc
     """The rule the model is actually held to, asserted in the prompt it is given."""
     growth = CM._style_system("balanced", topic="growth", wanted=4, subject="Zurich")
     messages = CM._style_system("balanced", topic="key_messages", wanted=4, subject="Zurich")
-    assert "diagnose, do not instruct" in growth
-    assert "diagnose, do not instruct" not in messages
-    assert "'defend Cyber'" in messages
+    assert "proposed next step, not a known cause" in growth
+    assert "leadership should remember" in messages
+    assert "Proposed actions must follow from named evidence" in messages
 
 
 def test_every_column_carries_its_hidden_question_set():
@@ -197,9 +197,9 @@ def test_every_column_carries_its_hidden_question_set():
 
 def test_the_growth_questions_ask_for_all_three_opportunity_kinds():
     asked = " ".join(CM._TOPIC_QUESTIONS["growth"]).lower()
-    assert "nothing of" in asked          # ABSENT
-    assert "below the average it achieves" in asked   # THIN
-    assert "top-5 peer average" in asked  # BEHIND
+    assert "absent" in asked          # ABSENT
+    assert "below the carrier's own placed average" in asked   # THIN
+    assert "largest-carrier benchmark" in asked  # BEHIND
 
 
 def test_the_judge_is_told_an_absence_is_a_placement_observation():
@@ -207,8 +207,8 @@ def test_the_judge_is_told_an_absence_is_a_placement_observation():
     this clause the judge drops the finding the Growth column is built on."""
     from studio.template_fill.commentary_verify import _JUDGE_SYSTEM
 
-    assert "OBSERVATION ABOUT PLACEMENT" in _JUDGE_SYSTEM
-    assert "writes none of it" in _JUDGE_SYSTEM
+    assert "absence is a placement observation" in _JUDGE_SYSTEM
+    assert "does not prove a lack of appetite" in _JUDGE_SYSTEM
 
 
 # ── confidentiality ─────────────────────────────────────────────────────────

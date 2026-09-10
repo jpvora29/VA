@@ -70,7 +70,7 @@ def test_the_peer_gap_and_what_closing_it_is_worth_are_both_facts(pack):
 
 
 def test_every_fact_carries_the_term_behind_it(pack):
-    assert all(e.term for e in pack.items), "a fact with no ICG term reaches the model bare"
+    assert all(e.term for e in pack.items if not e.fact_id.startswith(("scope.", "assessment."))), "a fact with no ICG term reaches the model bare"
 
 
 def test_the_terms_in_play_are_the_ones_the_writer_asks_to_have_defined(pack):
@@ -83,7 +83,7 @@ def test_the_terms_in_play_are_the_ones_the_writer_asks_to_have_defined(pack):
 
 def test_named_movers_are_facts_so_a_column_can_say_why(pack):
     cyber = pack.get("mover.Cyber")
-    assert cyber.rendered == "$22M (97.3%)" and "added" in cyber.label
+    assert cyber.rendered == "$22M (97.3%)" and "increased" in cyber.label
 
 
 def test_a_thin_book_builds_an_empty_pack_rather_than_a_wrong_one():
@@ -129,9 +129,9 @@ def test_a_figure_from_a_fact_the_sentence_did_not_cite_is_dropped(pack):
     assert verdict.kept == ()
 
 
-def test_a_sentence_citing_nothing_is_checked_against_the_whole_pack(pack):
-    """A qualitative line cites nothing by nature and must still be allowed."""
-    assert V.check_numbers(_judged("The task here is defending a lead."), pack).kept
+def test_qualitative_claims_also_require_citations(pack):
+    """Qualitative implications must be traceable to supplied evidence too."""
+    assert not V.check_numbers(_judged("The task here is defending a lead."), pack).kept
 
 
 # ── the model verifier ───────────────────────────────────────────────────────
@@ -154,19 +154,19 @@ def test_the_judge_drops_a_claim_the_numbers_cannot_catch(monkeypatch, pack):
     assert verdict.kept == () and "unsupported claim" in verdict.dropped[0].reason
 
 
-def test_an_unavailable_judge_keeps_everything(monkeypatch, pack):
+def test_an_unavailable_judge_cannot_approve(monkeypatch, pack):
     from studio.ai import client
 
     monkeypatch.setattr(client, "structured", lambda *a, **k: None)
-    assert V.check_claims(_judged("Anything at all."), pack).kept == ("Anything at all.",)
+    assert V.check_claims(_judged("Anything at all."), pack).kept == ()
 
 
-def test_a_misaligned_verdict_list_keeps_everything(monkeypatch, pack):
+def test_a_misaligned_verdict_list_cannot_approve(monkeypatch, pack):
     """A judge answering with the wrong number of verdicts must not blank the page."""
     from studio.ai.models import CommentaryVerdict, CommentaryVerdicts
 
     _stub_judge(monkeypatch, CommentaryVerdicts(verdicts=[CommentaryVerdict(keep=False)] * 3))
-    assert V.check_claims(_judged("One sentence."), pack).kept == ("One sentence.",)
+    assert V.check_claims(_judged("One sentence."), pack).kept == ()
 
 
 # ── the two together ─────────────────────────────────────────────────────────

@@ -130,7 +130,7 @@ def test_values_commentary_carries_figures(_stub_compute):
     assert "52.5%" in vals["fbnote:0:2:1:1"] and "$48M" in vals["fbnote:0:2:1:1"]   # working well
     assert "$363M" in vals["fbnote:0:2:1:3"]                                        # headroom
     assert vals["fbnote:1:3:0:0"].startswith("Key Highlights:")
-    assert "ranks #2" in vals["fbnote:1:4:1:3"]                                     # key messages
+    assert "ranked #2" in vals["fbnote:1:4:1:3"]                                    # key messages
 
 
 def test_declines_flow_to_challenges():
@@ -320,7 +320,7 @@ _LAGGING = {**_GROWING, "carrier": {"current": 48e6, "pct": 2.0}}
 ])
 def test_composers_return_one_point_per_line(composer, facts):
     lines = F._compose(composer, facts, F._PANEL_BULLETS).split("\n")
-    assert len(lines) > 1, "a commentary cell should carry several points, not one paragraph"
+    assert len(lines) >= 1, "one supported finding is sufficient; never pad the column"
     assert all(line.strip() for line in lines)
 
 
@@ -331,7 +331,7 @@ def test_a_composer_with_no_evidenced_challenge_falls_back_rather_than_blanking(
     # negative — the fallback reports the position's age, every figure of it real.
     text = F._compose("challenges", _GROWING, F._PANEL_BULLETS)
     assert text, "the 'What's not' column shipped blank"
-    assert "3.2 percentage points of the 11.6% share" in text
+    assert "no qualifying shortfall" in text
     assert not any(word in text.lower() for word in ("fell", "slipped", "lost", "declin"))
 
 
@@ -340,8 +340,10 @@ def test_a_growing_book_below_peer_share_still_reports_a_challenge():
     # is a real, evidenced gap, and the quadrant must say so.
     behind = {**_GROWING, "sow": {"current": 7.1, "delta": 3.2}}
     text = F._compose("challenges", behind, F._PANEL_BULLETS)
-    assert "3.7 percentage points below the top-5 peer average of 10.8%" in text
-    assert "$15M" in text          # 3.7 points of the $411M Marsh book in scope
+    assert "3.7 percentage points below the largest-carrier average" in text
+    assert "10.8%" in text
+    assert "$15M" not in text
+    assert "$15M" in " ".join(F.points("growth", behind))
 
 
 def test_a_panel_carries_more_of_the_argument_than_a_table_cell():
@@ -643,7 +645,7 @@ def test_a_book_with_no_bad_news_still_fills_the_challenges_column():
     assert not F._challenges_points(_STRONG_FACTS), "fixture no longer exercises the gap"
     said = F.points("challenges", _STRONG_FACTS)
     assert said, "the 'What's not' column shipped blank"
-    assert "14.7" in said[0] and "6.2" in said[0], "the fallback carries no figure"
+    assert "no qualifying shortfall" in said[0]
 
 
 def test_the_challenges_fallback_does_not_repeat_the_working_column():
@@ -651,7 +653,7 @@ def test_the_challenges_fallback_does_not_repeat_the_working_column():
     the successes column already gave."""
     working = " ".join(F.points("working", _STRONG_FACTS))
     fallback = F.points("challenges", _STRONG_FACTS)[0]
-    assert "peer average" in working and "peer average" not in fallback
+    assert "largest-carrier average" in working and "average" not in fallback
 
 
 def test_every_commentary_kind_answers_for_a_strong_and_a_weak_book():
@@ -667,12 +669,12 @@ def test_every_commentary_kind_answers_for_a_strong_and_a_weak_book():
             assert F.points(kind, facts), f"{kind} said nothing"
 
 
-def test_a_bare_book_still_says_its_size():
-    """Nothing but a premium total — every composer still has one honest thing to say."""
+def test_a_bare_premium_total_does_not_invent_section_findings():
     bare = {"carrier": {"current": 19e6}, "marsh": {}, "rank": {}, "sow": {}}
-    for kind in ("working", "challenges", "growth", "key_messages"):
-        said = F.points(kind, bare)
-        assert said and "19M" in " ".join(said), f"{kind}: {said}"
+    for kind in ("growth", "key_messages", "thesis"):
+        assert "19M" in " ".join(F.points(kind, bare))
+    for kind in ("working", "challenges"):
+        assert "no qualifying" in " ".join(F.points(kind, bare))
 
 
 def test_no_commentary_cell_is_blank_in_a_generated_deck(tmp_path):
@@ -731,36 +733,32 @@ def _thesis(**over) -> str:
     return said[0]
 
 
-def test_the_thesis_names_the_tension_between_growth_and_relevance():
-    """Growing hard while under-penetrated is the shape worth arguing about, and both
-    halves have to be in the same sentence or it is two unrelated facts."""
+def test_the_thesis_states_a_clear_carrier_and_marsh_comparison():
     said = _thesis()
-    assert "grew 28.6% to $208M against a Marsh book that grew 9.9%" in said
-    assert "1.7 percentage points behind the top-5 peer average of 10.8%" in said
-    assert "the growth is real and the relevance is not yet" in said
+    assert "Marsh-placed premium grew 28.6% to $208M" in said
+    assert "total Marsh-placed premium grew 9.9%" in said
+    assert "relevance" not in said
 
 
-def test_a_book_already_above_the_peer_benchmark_is_told_to_hold_it():
+def test_the_benchmark_does_not_force_a_retention_action():
     said = _thesis(sow={"current": 12.0, "delta": 1.3})
-    assert "writes above the top-5 peer average" in said
-    assert "holding that, not winning it" in said
+    assert "28.6%" in said and "hold" not in said and "renewal" not in said
 
 
-def test_a_book_trailing_the_market_from_behind_its_peers_is_told_so():
+def test_slower_growth_still_reports_positive_growth():
     said = _thesis(carrier={"current": 207.9e6, "pct": 2.0})
-    assert "losing ground from a position already behind its peers" in said
+    assert "grew 2.0%" in said and "grew 9.9%" in said
 
 
-def test_a_strong_position_growing_slower_than_the_book_is_not_called_a_failure():
-    said = _thesis(carrier={"current": 207.9e6, "pct": 2.0},
-                   sow={"current": 12.0, "delta": -0.2})
-    assert "a strong position growing slower than the book around it" in said
+def test_negative_growth_is_never_written_as_a_gain():
+    said = _thesis(carrier={"current": 207.9e6, "pct": -2.0})
+    assert "fell 2.0%" in said and "grew 2.0%" not in said
 
 
 def test_without_a_peer_benchmark_the_thesis_still_states_the_direction():
     said = _thesis(peer={})
-    assert "the book is taking share" in said
-    assert "peer average" not in said
+    assert "grew 28.6%" in said and "grew 9.9%" in said
+    assert "average" not in said
 
 
 def test_the_thesis_never_ships_blank():
@@ -787,4 +785,4 @@ def test_the_summary_page_carries_the_thesis(tmp_path):
                         slides=DeckSlides.only("overall"))
     text = " ".join(sh.text_frame.text for s in Presentation(out).slides
                     for sh in s.shapes if sh.has_text_frame)
-    assert "against a Marsh book that grew" in text, "no thesis on the deck"
+    assert "while total Marsh-placed premium grew" in text, "no thesis on the deck"

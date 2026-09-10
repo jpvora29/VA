@@ -22,7 +22,9 @@ author, and then nothing has verified the edit.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+import html
+import re
 from typing import List, Optional, Sequence, Tuple
 
 from logger import get_logger
@@ -38,6 +40,7 @@ class Judged:
     fact_ids: Tuple[str, ...] = ()
     kept: bool = True
     reason: str = ""
+    topic: str = ""
 
 
 @dataclass(frozen=True)
@@ -67,65 +70,92 @@ def check_numbers(judged: Sequence[Judged], pack) -> Verdict:
     reaching for a fact it did not claim to be using, and that is how two figures get
     silently swapped.
 
-    A bullet citing NOTHING is checked against the whole pack — a qualitative line
-    ("the task here is defending a lead") is legitimate and cites nothing by nature.
+    Qualitative claims and proposed actions also need citations. Evidence-availability
+    facts support an honest limitation when a section has no qualifying findings.
     """
     from studio.ai.verifier import allowed_numbers, verify_bullets
 
     out: List[Judged] = []
     for item in judged:
+        item = replace(item, text=html.unescape(item.text).strip())
+        unknown = [fid for fid in item.fact_ids if pack.get(fid) is None]
+        if unknown:
+            out.append(replace(item, kept=False, reason="unknown citation: " + ", ".join(unknown)))
+            continue
+        if not item.fact_ids:
+            out.append(replace(item, kept=False, reason="claim has no supporting fact IDs"))
+            continue
         sources = pack.rendered_values(item.fact_ids) if item.fact_ids else \
             pack.rendered_values()
         allowed = allowed_numbers(*sources)
         clean, issues = verify_bullets([item.text], allowed)
-        if clean:
+        direction_issue = _direction_issue(item, pack)
+        if direction_issue:
+            out.append(replace(item, kept=False, reason=direction_issue))
+        elif clean:
             out.append(item)
         else:
-            out.append(Judged(item.text, item.fact_ids, kept=False,
-                              reason=f"unsupported figure ({'; '.join(issues[:2])})"))
+            out.append(replace(item, kept=False,
+                               reason=f"unsupported figure ({'; '.join(issues[:2])})"))
     return Verdict(tuple(out))
+
+
+def _direction_issue(item: Judged, pack) -> str:
+    """Catch a simple reversed movement; mixed comparisons need semantic review."""
+    movements = [pack.get(fid) for fid in item.fact_ids]
+    signs = {1 if e.value > 0 else -1 if e.value < 0 else 0 for e in movements
+             if e is not None and e.unit in {"currency_change", "percent_change", "percentage_point_change"}
+             and e.value is not None}
+    rising = bool(re.search(r"\b(?:grew|rose|increased)\b", item.text, re.I))
+    falling = bool(re.search(r"\b(?:fell|declined|decreased)\b", item.text, re.I))
+    if len(signs) == 1 and rising != falling and not re.search(r"\b(?:not|never|no|if|would|could)\b", item.text, re.I):
+        if (signs == {-1} and rising) or (signs == {1} and falling):
+            return "movement direction contradicts the cited change; preserve increase/decrease"
+    return ""
 
 
 # ── the model verifier ───────────────────────────────────────────────────────
 
 _JUDGE_SYSTEM = (
-    "You verify commentary written for a carrier's quarterly business review. You are given "
-    "the EVIDENCE the writer was allowed to use, the ICG DEFINITIONS of the business terms, "
-    "and the SENTENCES written. For each sentence decide whether to KEEP or DROP it.\n\n"
-    "DROP a sentence when any of these is true:\n"
-    "1. It makes a claim the evidence does not support — including a comparison, a cause, a "
-    "trend or a consequence that no listed fact establishes.\n"
-    "2. It uses a defined term to mean something other than its definition — calling share "
-    "of wallet 'market share', calling a Marsh-book rank a 'market rank', calling headroom "
-    "'addressable', or inferring appetite from premium.\n"
-    "3. It names an individual peer carrier, or reveals one peer's premium, share or rank. "
-    "Naming Marsh is fine; naming the subject carrier is fine.\n"
-    "4. It asserts something about renewals, retention, rate, loss ratio, capacity or "
-    "underwriting appetite that the evidence does not contain. But note what this does "
-    "NOT cover: writing that the carrier placed no premium in a named industry or "
-    "client segment, or less of it than the average it achieves where it does write, "
-    "is an OBSERVATION ABOUT PLACEMENT, and is supported whenever that segment's "
-    "figures are listed in the evidence. It becomes an appetite claim only if the "
-    "sentence goes on to say the carrier could, should, or is able to write it.\n\n"
-    "KEEP a sentence that is supported, correctly termed, and safe — including one that is "
-    "merely a judgement ('the task here is defending a lead') when the judgement follows "
-    "from the evidence, and including one that names an industry or client segment whose "
-    "figures are listed in the evidence, even where it says the carrier writes none "
-    "of it. Do not drop a sentence for style, length or tone; another check "
-    "owns that. When in doubt, KEEP: dropping a good line leaves the page thinner than "
-    "keeping a dull one.\n"
-    "Return one verdict per sentence, in the order given, with a short reason for each DROP."
+    "Review QBR commentary as an ICG insurance consulting leader before it reaches a carrier. "
+    "Assess each bullet against its CITED EVIDENCE, business definitions and SECTION purpose. "
+    "Return one KEEP/DROP verdict for each numbered bullet, in the original order.\n"
+    "DROP for factual errors: wrong value, direction, denominator, scope, period, comparison, "
+    "unsupported causal explanation, ranking or future outcome. Premium growth is not demand growth; "
+    "a share decline does not establish an absolute premium decline. An arithmetic contribution "
+    "is not evidence of pricing, retention, renewal, appetite, profitability or service quality. "
+    "Do not infer acceleration by comparing quarterly QoQ and annual YoY. A large percentage on "
+    "a tiny base needs absolute values and context, not a dramatic headline.\n"
+    "DROP for unclear meaning: an unnamed industry/client segment, unexplained average, 'the same book', "
+    "ambiguous 'share of a pool', or a sentence joining several metrics without saying whose metrics they are. "
+    "A reader must identify the entity, metric and comparison on first reading. Scope and periods may "
+    "be supplied by the explicit scope evidence and the slide's reporting context.\n"
+    "DROP for wrong section: a positive result alone is not a challenge; an unqualified placement gap "
+    "is not a winnable opportunity; a concentration alone does not establish a future loss. "
+    "DROP generic advice, empty consequence clauses and unsupported superlatives such as 'fastest-growing'. "
+    "DROP a bullet with more than one unrelated finding or so many comparisons that the point is obscured.\n"
+    "DROP individual peer identities or individual peer financials. The subject carrier and Marsh may be named. "
+    "Benchmarks must use the actual definition and count; an average per carrier is not combined share.\n"
+    "KEEP a clear, material observation that answers its section, even if it begins with Share, Premium, "
+    "or the carrier name, or makes no causal claim. Do not demand an extra consequence or action. "
+    "A specific proposed investigation of a supported gap is allowed: asking to review appetite does not "
+    "assert that appetite is the cause. Distinguish a recommendation from a proven solution. "
+    "An evidenced absence is a placement observation and does not prove a lack of appetite. "
+    "When support or meaning is uncertain, DROP with a precise repair instruction naming the missing "
+    "entity, comparison, evidence or incorrect interpretation. Do not approve to fill space."
 )
 
 
 def _judge_payload(judged: Sequence[Judged], pack, glossary_brief: str) -> str:
+    from studio.template_fill.commentary import _TOPIC_BRIEF
     lines = ["EVIDENCE (the only facts the writer could use):", pack.as_brief(), ""]
     if glossary_brief:
         lines += ["ICG DEFINITIONS:", glossary_brief, ""]
     lines.append("SENTENCES:")
     for i, item in enumerate(judged, start=1):
         cites = f"  [cites: {', '.join(item.fact_ids)}]" if item.fact_ids else ""
-        lines.append(f"{i}. {item.text}{cites}")
+        context = f"\nSECTION: {item.topic}. {_TOPIC_BRIEF.get(item.topic, '')}" if item.topic else ""
+        lines.append(f"{i}. {item.text}{cites}{context}")
     return "\n".join(lines)
 
 
@@ -133,9 +163,8 @@ def check_claims(judged: Sequence[Judged], pack, *, glossary_brief: str = "",
                  node: str = "commentary") -> Verdict:
     """Ask a model whether each bullet is supported and correctly termed.
 
-    Returns the input UNCHANGED when the model is unavailable or answers with a verdict
-    list that does not line up with the sentences — an unusable answer must not be read as
-    "drop everything", which would blank the page.
+    Missing or misaligned verdicts cannot approve commentary. The caller repairs the
+    affected fields, then fails required-AI exports if verification still cannot finish.
     """
     from studio.ai import client
     from studio.ai.models import CommentaryVerdicts
@@ -154,16 +183,17 @@ def check_claims(judged: Sequence[Judged], pack, *, glossary_brief: str = "",
     if report is None or len(report.verdicts) != len(items):
         if report is not None:
             logger.info("commentary_verify: %s judge returned %d verdict(s) for %d "
-                        "sentence(s) — keeping them all", node,
+                        "sentence(s) — verification unavailable", node,
                         len(report.verdicts), len(items))
-        return Verdict(tuple(items))
+        return Verdict(tuple(replace(item, kept=False, reason="semantic verification unavailable or incomplete")
+                             for item in items))
     out: List[Judged] = []
     for item, verdict in zip(items, report.verdicts):
         if verdict.keep:
             out.append(item)
         else:
-            out.append(Judged(item.text, item.fact_ids, kept=False,
-                              reason=f"unsupported claim ({verdict.reason.strip()})"))
+            out.append(replace(item, kept=False,
+                               reason=f"unsupported claim ({verdict.reason.strip()})"))
     return Verdict(tuple(out))
 
 
@@ -178,5 +208,5 @@ def verify(judged: Sequence[Judged], pack, *, glossary_brief: str = "",
     claims = check_claims(survivors, pack, glossary_brief=glossary_brief, node=node)
     claims.log(node)
     # Both verdicts, in the original order, so the caller can see every drop and why.
-    by_text = {j.text: j for j in claims.judged}
-    return Verdict(tuple(by_text.get(j.text, j) for j in numeric.judged))
+    reviewed = iter(claims.judged)
+    return Verdict(tuple(next(reviewed) if j.kept else j for j in numeric.judged))
