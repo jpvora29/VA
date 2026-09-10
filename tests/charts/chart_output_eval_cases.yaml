@@ -1,0 +1,35 @@
+chart_output_eval_cases:
+  - id: year_category_bar
+    user_query: Compare premium by product across years
+    expected_chart_type: bar
+    forbidden_chart_type: line
+    expected_x: Year
+    expected_y: [Premium]
+    expected_series: Product_Line
+    axis_assertions: [no_fractional_year_ticks, ticks_are_2023_2024_2025]
+    rows:
+      - {Year: 2023, Product_Line: Property, Premium: 100}
+      - {Year: 2023, Product_Line: Casualty, Premium: 70}
+      - {Year: 2024, Product_Line: Property, Premium: 110}
+      - {Year: 2024, Product_Line: Casualty, Premium: 80}
+      - {Year: 2025, Product_Line: Property, Premium: 120}
+      - {Year: 2025, Product_Line: Casualty, Premium: 90}
+  - id: explicit_year_trend
+    user_query: Show the premium trend over time
+    expected_chart_type: line
+    forbidden_chart_type: scatter
+    expected_x: Year
+    expected_y: [Premium]
+    axis_assertions: [no_fractional_year_ticks, ticks_are_2023_2024_2025]
+    rows:
+      - {Year: 2023, Premium: 100}
+      - {Year: 2024, Premium: 125}
+      - {Year: 2025, Premium: 140}
+  - id: product_comparison
+    user_query: Compare premium by product
+    expected_chart_type: bar
+    expected_x: Product_Line
+    expected_y: [Premium]
+    rows:
+      - {Product_Line: Property, Premium: 100}
+      - {Product_Line: Cyber, Premium: 50}

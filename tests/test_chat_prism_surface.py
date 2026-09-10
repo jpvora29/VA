@@ -327,7 +327,7 @@ def test_the_panel_says_whether_it_is_following_or_held():
     assert "analysis-unpin" in ids(held)
 
 
-def test_an_answer_with_evidence_offers_the_pin_and_a_bare_one_does_not():
+def test_answers_do_not_offer_a_pin_to_a_removed_sidebar():
     with_evidence = ai_message(
         "Premium grew 12%. Property led it.", True, idx=1, shape="analyst",
         contribution=CONTRIBUTION,
@@ -337,7 +337,7 @@ def test_an_answer_with_evidence_offers_the_pin_and_a_bare_one_does_not():
         if isinstance(getattr(n, "id", None), dict)
         and n.id.get("type") == "answer-pin"
     ]
-    assert len(pins) == 1
+    assert pins == []
 
     bare = ai_message("Premium grew.", False, idx=1)
     assert not [
@@ -347,10 +347,10 @@ def test_an_answer_with_evidence_offers_the_pin_and_a_bare_one_does_not():
     ]
 
 
-def test_the_chat_page_mounts_both_columns_and_the_switch_between_them():
+def test_chat_page_has_one_transcript_and_no_duplicate_analysis_surface():
     page = chatbot_page("jash")
-    assert {"analysis-dock", "analysis-dock-body", "chat-workspace",
-            "chat-view-switch", "analysis-pin", "analysis-view"} <= ids(page)
+    assert {"chat-workspace", "chat-box", "chat-loading", "chat-cursor"} <= ids(page)
+    assert not {"analysis-dock", "analysis-dock-body", "chat-view-switch", "analysis-pin", "analysis-view"} & ids(page)
 
 
 def narrow_block(css: str, width: int) -> str:
@@ -381,7 +381,8 @@ def test_the_tools_menu_is_labelled():
     menu = next(n for n in walk(page) if getattr(n, "id", None) == "composer-add-menu")
     assert "Tools" in str(menu.label)
     assert menu.toggleClassName == "composer-tool-btn"
-    assert {"menu-pitch-builder", "menu-boardroom-mode", "menu-custom-peers"} <= ids(menu)
+    assert {"menu-pitch-builder", "menu-boardroom-mode"} <= ids(menu)
+    assert "menu-custom-peers" not in ids(menu)
 
 
 def test_the_peer_set_is_stated_even_when_it_is_the_default():

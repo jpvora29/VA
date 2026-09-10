@@ -127,11 +127,10 @@ def _aggregation_for(spec: Mapping[str, Any], profile: ColumnProfile) -> str:
     default is `sum` — which quietly adds up percentages and scores. Chartwright
     knows each measure's role, so it can say which is right.
 
-    One caveat, stated rather than hidden: the renderer applies ONE aggregation to
-    every measure on the chart, so a combo mixing an amount with a rate cannot have
-    both. We choose for the majority (the bars), which is the same compromise the
-    renderer already makes — a combo's x is normally unique per row anyway, so no
-    aggregation happens at all.
+    The renderer applies one aggregation to a chart. Mixed amount/rate charts
+    therefore require unique x/series keys: its safety guard refuses to sum the
+    rates if duplicate keys would need aggregation. Compute combined rates from
+    their denominators upstream before asking for a less detailed chart.
     """
     measures = list(spec.get("y") or []) + list(spec.get("secondary_y") or [])
     if measures and all(col in profile.rates for col in measures):

@@ -1,5 +1,7 @@
 import logging
 import uuid
+from copy import deepcopy
+from functools import partial
 from pathlib import Path
 from datetime import datetime
 from io import BytesIO
@@ -64,14 +66,12 @@ from ui.decisions import callbacks as decision_callbacks  # noqa: F401  (registe
 
 # The analysis panel: which answer it holds, whether it is open, and which column
 # is on screen when the two do not fit side by side.
-from ui import analysis as analysis_callbacks  # noqa: F401  (registers callbacks)
 from ui.shell.layout import app_shell
 from ui.shell.tabs import resolve_tab
 from core.auth import session as auth_session
 from core.auth.settings import LOGOUT_PATH, sso_enabled
 from ui.components.sidebar import login_screen, conversation_list_children
 from ui.shell.busy import BUSY_SIGNIN, busy_running
-from ui.draft_text import draft_text
 from ui.progress import advance as advance_progress, label_of
 from core.store.users import get_or_create_user
 from core.store.conversations import (
@@ -79,6 +79,7 @@ from core.store.conversations import (
     save_conversation,
     load_conversation,
     delete_conversation,
+    save_chat_edit,
 )
 from core.memory.episodic import episodic_store
 from core.memory import semantic
@@ -133,7 +134,9 @@ from ui.helper import (
 )
 
 from document_builder.models import ReportConfig
-from ui.jobs import Job, start_job, get_job, cancel_job, clear_job
+from ui.jobs import Job, start_job, get_job, cancel_job, discard_job
+from ui.chat_turn import TurnRequest, finalize_turn
+from ui import chat_navigation  # noqa: F401  (registers scoped event reducers)
 from core.streaming import TokenStreamHandler, JobCancelled
 
 #  ── Logger ────────────────────────────────────────────────────────────────────────────────────────
@@ -1519,35 +1522,38 @@ def start_new_chat(n_clicks: int, user_store: dict[str, Any]) -> tuple[Any, Any,
     if not n_clicks:
         return no_update, no_update, no_update
     user_id, username = _current_user(user_store)
-    starters = generate_starter_questions(user_id) if user_id is not None else None
-    # Empty ({}) chat-store is falsy, so render_chat leaves the hero we set here.
-    return {}, None, [welcome_hero(username, starters)]
+    return {}, None, no_update
 
 
 @callback(
-    Output("chat-store", "data", allow_duplicate=True),
-    Output("active-conversation", "data", allow_duplicate=True),
-    Input({"type": "conv-item", "id": ALL}, "n_clicks"),
+    Output("conversation-load", "data"),
+    Input("chat-cursor", "data"),
     State("user-store", "data"),
     prevent_initial_call=True,
 )
-def open_conversation(
-    n_clicks_list: list[int | None], user_store: dict[str, Any]
-) -> tuple[Any, Any]:
-    """Load a saved conversation back into chat-store (transcript + thread_id)."""
-    triggered = ctx.triggered_id
-    triggered_value = ctx.triggered[0]["value"] if ctx.triggered else None
-    if not isinstance(triggered, dict) or not triggered_value:
-        return no_update, no_update
-    conv_id = triggered.get("id")
+def open_conversation(cursor: dict | None, user_store: dict | None) -> Any:
+    """Return a scoped load response; the browser discards obsolete selections."""
+    if not cursor or not cursor.get("loading"):
+        return no_update
     user_id, _ = _current_user(user_store)
+    conv_id = cursor.get("thread_id")
     if user_id is None or not conv_id:
-        return no_update, no_update
+        return no_update
     stored = load_conversation(user_id, conv_id)
     if stored is None:
-        return no_update, no_update
-    stored.setdefault("thread_id", conv_id)
-    return stored, conv_id
+        stored = {"thread_id": conv_id, "messages": []}
+    stored = enrich_chat_store(stored)
+    job = get_job(conv_id)
+    running = bool(job and not job.done and not job.deleted)
+    if stored.get("_running") and not running:
+        if job and job.done and job.transcript:
+            stored = job.transcript
+        else:
+            stored["_running"] = False
+            stored.setdefault("messages", []).append({"type": "AIMessage",
+                "content": "This run was interrupted by a server restart. Please send the question again."})
+            save_chat_edit(user_id, conv_id, stored, recovering=True)
+    return dict(cursor, transcript=stored, running=running)
 
 
 @callback(
@@ -1575,12 +1581,11 @@ def delete_conversation_cb(
     if user_id is None or not conv_id:
         return no_update, no_update, no_update, no_update
 
-    delete_conversation(user_id, conv_id)
+    discard_job(conv_id, partial(delete_conversation, user_id, conv_id))
     items = conversation_list_children(list_conversations(user_id), active_id)
 
     if conv_id == active_id:
-        starters = generate_starter_questions(user_id)
-        return items, {}, None, [welcome_hero(username, starters)]
+        return items, {}, None, no_update
     return items, no_update, no_update, no_update
 
 
@@ -1715,8 +1720,8 @@ def _update_chat_history(
         )
         return chat_history
 
-    # The analyst agent produces its own list of up to 3 charts (each with its own
-    # rows). When present, render those instead of the single per-flow chart that
+    # The analyst agent selects one primary chart with its own rows.
+    # When present, render it instead of the per-flow chart that
     # the deterministic rails attach.
     logger.info(
         "update_chat_history: table=%r analyst_charts=%d",
@@ -1773,11 +1778,10 @@ def _update_chat_history(
             )
 
     elif table == "both":
-        combined = (
-            updated_state.get("combined_response")
-            or updated_state.get("combined_result")
-            or ""
-        )
+        combined = updated_state.get("combined_response") or ""
+        legacy = updated_state.get("combined_result")
+        if not combined and isinstance(legacy, str):
+            combined = legacy
         chat_history["messages"].append(
             {
                 "type": "AIMessage",
@@ -1883,32 +1887,52 @@ def _commit_turn(
     return chat_history
 
 
-def _launch_job(thread_id: str, input_obj: Any) -> None:
-    """Start a streaming graph run for `thread_id` in a background thread."""
+def _run_graph_turn(request: TurnRequest, job: Job) -> None:
+    """Run the graph; the job registry calls finalization even after an error."""
+    handler = TokenStreamHandler(job.cancel, job.append_partial)
+    try:
+        for event in langgraph.stream_workflow(
+            request.input_obj, thread_id=request.thread_id, cancel=job.cancel, callbacks=[handler]
+        ):
+            if "interrupt" in event:
+                job.interrupt = event["interrupt"] or {}
+            elif "node" in event:
+                job.progress = advance_progress(job.progress, event["node"])
+    except JobCancelled:
+        job.cancelled = True
+        return
+    job.cancelled = job.cancel.is_set()
+    if not job.cancelled:
+        job.state = langgraph.get_state_values(request.thread_id)
 
-    def worker(job: Job) -> None:
-        # Streams final-answer tokens into job.partial_text and aborts the
-        # in-flight call when the user hits Stop (raising JobCancelled).
-        handler = TokenStreamHandler(job.cancel, job.append_partial)
+
+def _launch_job(thread_id: str, input_obj: Any, chat_history: dict,
+                user_id: int | str | None) -> Job:
+    request = TurnRequest(thread_id, user_id, deepcopy(chat_history), input_obj)
+    return start_job(thread_id, partial(_run_graph_turn, request), user_id=user_id,
+                     prepare=partial(_prepare_turn, request),
+                     finalize=partial(_finish_job, request))
+
+
+def _prepare_turn(request: TurnRequest, job: Job) -> None:
+    """Persist pending state only after the registry accepts this turn."""
+    if request.user_id is not None:
+        pending = dict(request.transcript, _running=True, _job_id=job.id)
+        save_conversation(request.user_id, request.thread_id, pending)
+
+
+def _finish_job(request: TurnRequest, job: Job) -> None:
+    finalize_turn(request, job, commit=_commit_turn, persist=save_conversation)
+    if request.user_id is None or job.error or job.cancelled or job.interrupt is not None:
+        return
+    question = next((m.get("content") for m in reversed(job.transcript.get("messages", []))
+                     if m.get("type") == "HumanMessage"), None)
+    if question:
         try:
-            for ev in langgraph.stream_workflow(
-                input_obj, thread_id=thread_id, cancel=job.cancel, callbacks=[handler]
-            ):
-                if "interrupt" in ev:
-                    job.interrupt = ev["interrupt"] or {}
-                elif "node" in ev:
-                    job.progress = advance_progress(job.progress, ev["node"])
-        except JobCancelled:
-            # Stop aborted a mid-flight call before the next node boundary.
-            job.cancelled = True
-            return
-        if job.cancel.is_set():
-            job.cancelled = True
-        else:
-            # Pull the merged AgentState the UI renders from (route, results, …).
-            job.state = langgraph.get_state_values(thread_id)
-
-    start_job(thread_id, worker)
+            episodic_store.record_question(request.user_id, request.thread_id, question, job.state.get("current_route"))
+            invalidate_suggestions(request.user_id)
+        except Exception:
+            logger.exception("Could not record memory for completed job %s", job.id)
 
 
 @callback(
@@ -1939,33 +1963,19 @@ def launch_new_job(
     ][-1]["content"]
 
     custom_peers = chat_history.get("custom_peers") or None
+    from core.state.turn import fresh_turn_outputs
     state_obj = AgentState(
         messages=[HumanMessage(content=user_input)],
         user_id=str(user_id) if user_id is not None else None,
         # Threaded through so the conversation meta-intent handler can load the
         # full saved transcript (both sides) for "summarize our discussion".
         thread_id=thread_id,
-        survey_attempts=0,
-        gpr_attempts=0,
-        gimmi_attempts=0,
         custom_peers=custom_peers,
         custom_peers_active=bool(custom_peers and custom_peers.get("peers")),
         boardroom_mode=bool(boardroom_mode),
-        # Clear the previous turn's chart/result outputs. The graph runs on a
-        # persistent checkpointer, and these channels have no reducer, so a turn
-        # that doesn't run a given chart/SQL node would otherwise inherit the last
-        # turn's value — which `_update_chat_history` then re-appends, surfacing a
-        # stale chart on a turn that produced none. Seeding them empty overwrites.
-        analyst_charts=[],
-        analyst_evidence=[],
-        survey_chart={},
-        gpr_chart={},
-        combined_chart={},
-        survey_query_result=[],
-        gpr_query_result=[],
-        combined_result=[],
+        **fresh_turn_outputs(),
     )
-    _launch_job(thread_id, state_obj)
+    _launch_job(thread_id, state_obj, chat_history, user_id)
     return False, False, "Starting…"
 
 
@@ -1975,10 +1985,11 @@ def launch_new_job(
     Output("thinking-agent", "children", allow_duplicate=True),
     Input("trigger-resume", "data"),
     State("chat-store", "data"),
+    State("user-store", "data"),
     prevent_initial_call=True,
 )
 def launch_resume_job(
-    is_trigger: bool, chat_history: dict[str, Any]
+    is_trigger: bool, chat_history: dict[str, Any], user_store: dict | None = None
 ) -> tuple[bool, bool | NoUpdate, str | NoUpdate]:
     """Kick off a streaming resume after the user answers a clarify card."""
     if not is_trigger:
@@ -1990,46 +2001,11 @@ def launch_resume_job(
     if not answer or not thread_id:
         return False, no_update, no_update
 
-    _launch_job(thread_id, Command(resume=answer))
+    user_id, _ = _current_user(user_store)
+    _launch_job(thread_id, Command(resume=answer), chat_history, user_id)
     return False, False, "Resuming…"
 
 
-def _live_draft(text: str, boardroom_mode: bool = False):
-    """The transient assistant bubble shown while the final answer streams in.
-
-    Returns an empty list (no bubble) until the first token arrives, so an
-    idle/lookup turn never flashes an empty box.
-
-    In Boardroom Mode the streamed tokens are the raw digest narration, not a
-    chat answer — surfacing them token-by-token is noisy and clashes with the
-    polished card that lands at the end. So we show a tidy "building" placeholder
-    instead; poll_job swaps in the committed Boardroom card on completion.
-
-    The draft is deliberately PLAIN TEXT, not `dcc.Markdown`. Half-written markdown
-    is not markdown: mid-stream, `**bol` renders as literal asterisks, a table is a
-    wall of pipes until its last row lands, and an unclosed ``` swallows the rest of
-    the answer. Re-parsing that from scratch every tick made the bubble flicker and
-    re-flow — the answer appeared to thrash rather than type. A text node under
-    `white-space: pre-wrap` only ever has characters appended, so React touches one
-    node and the text grows smoothly. `draft_text` softens the leftover syntax so the
-    draft still reads as prose, and the committed message renders as full markdown the
-    moment the turn finishes — formatting lands once, instead of being re-guessed.
-    """
-    text = draft_text(text or "").strip()
-    if not text:
-        return []
-    if boardroom_mode:
-        return html.Div(
-            [
-                html.Span(className="thinking-dot"),
-                html.Span(
-                    "Composing your boardroom view…",
-                    className="bm-building-label",
-                ),
-            ],
-            className="message gpt-message bm-building-card",
-        )
-    return html.Div(text, className="message gpt-message streaming-draft")
 
 
 def _fmt_elapsed(seconds: int) -> str:
@@ -2049,153 +2025,30 @@ def _fmt_elapsed(seconds: int) -> str:
 
 
 @callback(
-    Output("chat-store", "data", allow_duplicate=True),
-    Output("is-thinking", "data", allow_duplicate=True),
-    Output("job-poll", "disabled", allow_duplicate=True),
-    Output("thinking-agent", "children", allow_duplicate=True),
-    Output("thinking-elapsed", "children", allow_duplicate=True),
-    Output("live-draft", "children", allow_duplicate=True),
+    Output("job-event", "data"),
     Input("job-poll", "n_intervals"),
-    State("chat-store", "data"),
+    State("chat-cursor", "data"),
     State("user-store", "data"),
-    State("boardroom-mode-store", "data"),
     prevent_initial_call=True,
 )
-def poll_job(
-    n_intervals: int,
-    chat_history: dict[str, Any],
-    user_store: dict[str, Any],
-    boardroom_mode: bool,
-) -> tuple[Any, Any, Any, Any, Any, Any]:
-    """Poll the running job each tick; on completion, commit and stop polling."""
-    chat_history = chat_history or {}
-    thread_id = chat_history.get("thread_id")
-    job = get_job(thread_id)
-
-    if job is None:
-        return no_update, no_update, True, no_update, no_update, []
-
-    elapsed = _fmt_elapsed(job.elapsed_seconds())
-
-    # Still running — update the live status line + streamed draft, leave the
-    # committed transcript alone until the turn finishes. Re-render the markdown
-    # only when new tokens actually arrived since the last tick: at this poll
-    # cadence an unchanged re-parse is wasted work and a source of caret flicker.
-    if not job.done:
-        partial = job.get_partial()
-        draft = no_update
-        if len(partial) != job.rendered_len:
-            job.rendered_len = len(partial)
-            draft = _live_draft(partial, bool(boardroom_mode))
-        return (
-            no_update,
-            no_update,
-            no_update,
-            label_of(job.progress),
-            elapsed,
-            draft,
-        )
-
-    # Finished: tear the job down and finalize the turn. Clear the draft — the
-    # committed answer (or the stop/error message) renders in the transcript now.
-    partial = (job.get_partial() or "").strip()
-    clear_job(thread_id)
-    chat_history.pop("pending_clarification_answer", None)
-    chat_history["awaiting_clarification"] = False
-
-    if job.cancelled:
-        # Keep whatever streamed before the Stop so the work isn't lost, marked
-        # as interrupted. Nothing streamed yet -> the plain stopped notice.
-        content = f"{partial}\n\n_Stopped._" if partial else "_Stopped._"
-        chat_history.setdefault("messages", []).append(
-            {"type": "AIMessage", "content": content, "has_data_overflow": False}
-        )
-        chat_history["followups"] = []
-        return chat_history, False, True, "", "", []
-
-    if job.error:
-        logger.error("Chat job failed: %s", job.error)
-        chat_history.setdefault("messages", []).append(
-            {
-                "type": "AIMessage",
-                "content": "Sorry — something went wrong while answering. Please try again.",
-                "has_data_overflow": False,
-            }
-        )
-        chat_history["followups"] = []
-        return chat_history, False, True, "", "", []
-
-    if job.interrupt is not None:
-        chat_history.setdefault("messages", []).append(
-            {"type": "ClarifyCard", "payload": job.interrupt}
-        )
-        chat_history["awaiting_clarification"] = True
-        chat_history["followups"] = []
-        return chat_history, False, True, "", "", []
-
-    chat_history = _commit_turn(chat_history, job.state)
-    _persist_turn(user_store, chat_history, job.state)
-    return chat_history, False, True, "", "", []
-
-
-def _generate_conversation_title(question: str) -> str:
-    """A short, human-friendly sidebar label for a chat (e.g. "Zurich Share of
-    Wallet · Canada"), generated once from the opening question.
-
-    Uses the cheap summary client (gpt-4o-mini); best-effort — returns "" on any
-    failure so the caller falls back to the truncated raw question.
-    """
-    q = (question or "").strip()
-    if not q:
-        return ""
-    prompt = (
-        "Generate a concise title (3-6 words, Title Case) describing the topic of "
-        "this insurance-analytics question, for a chat sidebar. Return ONLY the "
-        "title: no quotes, no surrounding text, no trailing punctuation.\n\n"
-        f"Question: {q[:500]}"
-    )
-    try:
-        resp = Initialization.llm_summary.invoke(prompt)
-        text = (getattr(resp, "content", "") or "").strip()
-        # Keep the first line, strip stray quotes / trailing punctuation.
-        text = text.splitlines()[0].strip().strip("\"'").rstrip(".!?,;:").strip()
-        return text[:60]
-    except Exception:  # pragma: no cover - titling must never break a turn
-        logger.exception("Failed to generate conversation title")
-        return ""
-
-
-def _persist_turn(
-    user_store: dict[str, Any] | None,
-    chat_history: dict[str, Any],
-    state: dict[str, Any],
-) -> None:
-    """Save the transcript and record an episodic 'question' for this turn.
-
-    Best-effort: persistence/memory failures must never break the chat turn.
-    """
+def poll_job(n_intervals: int, cursor: dict | None, user_store: dict | None) -> Any:
+    """Read a compact cursor. Persisted transcripts are sent once at completion."""
+    cursor = cursor or {}
+    if cursor.get("loading"):
+        return no_update
+    job = get_job(cursor.get("thread_id"))
     user_id, _ = _current_user(user_store)
-    if user_id is None:
-        return
-    thread_id = chat_history.get("thread_id")
-    try:
-        save_conversation(user_id, thread_id, chat_history)
-        last_human = next(
-            (
-                m.get("content")
-                for m in reversed(chat_history.get("messages", []))
-                if m.get("type") == "HumanMessage"
-            ),
-            None,
-        )
-        if last_human:
-            episodic_store.record_question(
-                user_id, thread_id, last_human, state.get("current_route")
-            )
-            # New activity may change tailored suggestions on the next New chat.
-            invalidate_suggestions(user_id)
-    except Exception:  # pragma: no cover - never break a turn on persistence
-        logger.exception("Failed to persist turn / record episode")
+    event = {"selection_id": cursor.get("selection_id"), "thread_id": cursor.get("thread_id")}
+    if job is None or job.deleted or str(job.user_id) != str(user_id):
+        return dict(event, done=True, status="", transcript=None)
+    if job.done and cursor.get("job_id") == job.id:
+        return dict(event, done=True, status="", transcript=None)
+    if job.done:
+        return dict(event, done=True, status=job.error or "", transcript=job.transcript or None)
+    return dict(event, done=False, status=label_of(job.progress),
+                elapsed=_fmt_elapsed(job.elapsed_seconds()), transcript=None)
+
+
 
 
 @callback(
@@ -2212,8 +2065,8 @@ def persist_chat_edits(
 
     Boardroom edit callbacks mutate the ``doc`` inside ``chat-store`` but never run
     a graph turn, so without this the changes only live in the in-memory store and
-    vanish on reopen. We skip while a turn is streaming — poll_job persists the
-    final transcript itself, and saving every poll tick would be wasteful.
+    vanish on reopen. The worker owns persistence while a turn is running;
+    stale edits cannot overwrite that job's completed transcript.
     """
     if is_thinking:
         return no_update
@@ -2221,7 +2074,9 @@ def persist_chat_edits(
     thread_id = (chat_history or {}).get("thread_id")
     if user_id is None or not thread_id:
         return no_update
-    save_conversation(user_id, thread_id, chat_history)
+    job = get_job(thread_id)
+    if job is None or job.done:
+        save_chat_edit(user_id, thread_id, chat_history)
     return no_update
 
 
@@ -2242,66 +2097,13 @@ def stop_job(n_clicks: int, chat_history: dict[str, Any]) -> str | NoUpdate:
 # 3. -------------------------- RENDER CHAT ---------------------------------------
 
 
-@callback(
-    Output("chat-store", "data", allow_duplicate=True),
-    Input("chat-store", "data"),
-    State("user-store", "data"),
-    prevent_initial_call=True,
-)
-def enrich_chat_store(chat_history: dict[str, Any], user_store: dict[str, Any]) -> Any:
-    """One-time enrichments of a committed transcript: Boardroom docs + nice title.
-
-    Both must WRITE chat-store, and chat-store is a write hub — a second
-    chat-store→chat-store callback would be scheduled alongside this one in the same
-    dispatch and trip Dash's "Duplicate callback outputs". So they share this single
-    callback. It runs after `poll_job` has already rendered the answer, so the
-    (blocking) title LLM call never delays the visible answer. Self-terminating:
-    once docs + title are present, subsequent fires no-op (no render loop).
-
-    1. **Boardroom docs** — the editable doc is normally built at commit time, but
-       messages from before that change (or any path that only stored a digest) need
-       one too, else render_chat rebuilds a throwaway doc with fresh widget ids on
-       every paint and the edit buttons' ids never match the edit callbacks.
-    2. **Sidebar title** — a short LLM-generated label from the opening question,
-       generated once when an answer exists; cached on `chat_history["title"]`.
-    """
-    if not chat_history:
-        return no_update
-    changed = False
-
-    # 1) Boardroom editable docs.
-    for msg in chat_history.get("messages") or []:
-        if msg.get("type") == "Boardroom" and not msg.get("doc"):
-            specs = msg.get("charts") or []
-            msg["doc"] = build_boardroom_document(msg.get("digest") or {}, len(specs))
-            changed = True
-
-    # 2) Nice sidebar title, once a turn has actually produced an answer.
-    if not (chat_history.get("title") or "").strip():
-        msgs = chat_history.get("messages") or []
-        has_answer = any(
-            m.get("type") in ("AIMessage", "Boardroom", "DataOverflow") for m in msgs
-        )
-        first_q = next(
-            (
-                m.get("content")
-                for m in msgs
-                if m.get("type") == "HumanMessage" and (m.get("content") or "").strip()
-            ),
-            None,
-        )
-        if has_answer and first_q:
-            title = _generate_conversation_title(first_q)
-            if title:
-                chat_history["title"] = title
-                # Persist now so refresh_sidebar (reads the DB) shows the new title.
-                user_id, _ = _current_user(user_store)
-                thread_id = chat_history.get("thread_id")
-                if user_id is not None and thread_id:
-                    save_conversation(user_id, thread_id, chat_history)
-                changed = True
-
-    return chat_history if changed else no_update
+def enrich_chat_store(chat_history: dict[str, Any], user_store: dict[str, Any] | None = None) -> Any:
+    """Hydrate legacy board documents at load time, without an async store writer."""
+    chat = deepcopy(chat_history or {})
+    for message in chat.get("messages") or []:
+        if message.get("type") == "Boardroom" and not message.get("doc"):
+            message["doc"] = build_boardroom_document(message.get("digest") or {}, len(message.get("charts") or []))
+    return chat
 
 
 def _evidence_after(messages: list[dict[str, Any]], idx: int) -> tuple[list[dict[str, Any]], set]:
@@ -2330,15 +2132,26 @@ def _evidence_after(messages: list[dict[str, Any]], idx: int) -> tuple[list[dict
 
 
 @callback(
-    Output("chat-box", "children"),
+    Output("chat-render", "data"),
     Input("chat-store", "data"),
     Input("is-thinking", "data"),
     Input("boardroom-edit-mode", "data"),
     Input("answer-editing", "data"),
     State("boardroom-active-page", "data"),
     State("user-store", "data"),
+    Input("chat-cursor", "data"),
     prevent_initial_call=True,
 )
+def render_chat_event(chat_history, is_thinking, edit_mode, editing_idx, active_pages, user, cursor):
+    cursor = cursor or {}
+    if cursor.get("loading") or cursor.get("thread_id") != (chat_history or {}).get("thread_id"):
+        return no_update
+    children = render_chat(chat_history, is_thinking, edit_mode, editing_idx, active_pages, user)
+    if children is no_update:
+        return no_update
+    return dict(cursor, children=children)
+
+
 def render_chat(
     chat_history: dict[str, Any],
     is_thinking: bool,
@@ -2498,7 +2311,7 @@ def render_chat(
 
         return chat_items
 
-    return no_update
+    return [welcome_hero((user or {}).get("username") or "")]
 
 
 # 4. -------------------------- UPDATE CHAT-STORE ---------------------------------------
@@ -2512,14 +2325,21 @@ def render_chat(
     Input("send-btn", "n_clicks"),
     State("user-input", "value"),
     State("chat-store", "data"),
+    State("chat-cursor", "data"),
     prevent_initial_call=True,
 )
 def update_chat(
-    n_clicks: int, user_input: str, chat_history: dict[str, Any]
+    n_clicks: int, user_input: str, chat_history: dict[str, Any], cursor: dict | None = None
 ) -> tuple[dict[str, Any], Optional[bool], Optional[bool], Optional[str]]:
 
     chat_history = chat_history or {}
+    if cursor and (cursor.get("loading") or cursor.get("thread_id") != chat_history.get("thread_id")):
+        return no_update, no_update, no_update, no_update
     chat_history.setdefault("thread_id", uuid.uuid4().hex[:12])
+
+    running = get_job(chat_history["thread_id"])
+    if running is not None and not running.done:
+        return no_update, no_update, no_update, no_update
 
     if not (user_input or "").strip():
         return chat_history, no_update, no_update, no_update
@@ -2553,12 +2373,19 @@ def update_chat(
     Output("is-thinking", "data", allow_duplicate=True),
     Input({"type": "suggestion-chip", "idx": ALL, "q": ALL}, "n_clicks"),
     State("chat-store", "data"),
+    State("chat-cursor", "data"),
     prevent_initial_call=True,
 )
 def ask_suggested_question(
-    n_clicks_list: list[int | None], chat_history: dict[str, Any]
+    n_clicks_list: list[int | None], chat_history: dict[str, Any], cursor: dict | None = None
 ) -> tuple[dict[str, Any] | NoUpdate, Optional[bool], Optional[bool]]:
     """Send a starter or follow-up chip's question as if the user typed it."""
+
+    if cursor and (cursor.get("loading") or cursor.get("thread_id") != (chat_history or {}).get("thread_id")):
+        return no_update, no_update, no_update
+    running = get_job((chat_history or {}).get("thread_id"))
+    if running is not None and not running.done:
+        return no_update, no_update, no_update
 
     triggered = ctx.triggered_id
     triggered_value = ctx.triggered[0]["value"] if ctx.triggered else None

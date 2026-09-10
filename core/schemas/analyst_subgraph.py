@@ -105,3 +105,5 @@ class Evidence(TypedDict):
     rows: List[Any]
     lens: str
     redacted_peers: NotRequired[Tuple[str, ...]]
+    scope: NotRequired[Dict[str, Any]]
+    facts: NotRequired[List[Dict[str, Any]]]

@@ -232,10 +232,9 @@ def plan_analysis(
     except Exception:  # noqa: BLE001 - planning is best-effort; never break the turn
         return AnalysisPlan(derived=[], synthesis_focus="")
 
-    # Drop any hallucinated lens names so downstream body lookup is always valid.
+    from core.analysis.validation import MAX_CHAT_LENSES, validate_plan
     valid = set(library.names())
-    plan.derived = [d for d in plan.derived if d.lens in valid]
-    return plan
+    return validate_plan(plan, valid, limit=MAX_CHAT_LENSES if mode == "chat" else None)
 
 
 def _parse_lens_primitives(raw: Any) -> Tuple[LensPrimitive, ...]:

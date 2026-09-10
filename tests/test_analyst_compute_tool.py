@@ -79,7 +79,8 @@ def test_the_result_joins_the_same_evidence_contract_as_run_sql(engine):
     )
     assert len(evidence) == 1
     entry = evidence[0]
-    assert set(entry) == {"flow", "sql", "rows", "lens"}
+    assert set(entry) == {"flow", "sql", "rows", "lens", "scope", "facts"}
+    assert entry["facts"] and all("support" in fact for fact in entry["facts"])
     assert entry["lens"] == "market_context"
     assert entry["sql"].startswith("--")           # provenance, not an executed query
     assert entry["rows"]

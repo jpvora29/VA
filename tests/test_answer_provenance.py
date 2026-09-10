@@ -118,10 +118,16 @@ def test_coverage_counts_only_what_could_be_checked():
 # ── the record ──────────────────────────────────────────────────────────────
 
 
-def test_an_answer_whose_figures_are_all_present_is_verified():
+def test_numeric_matching_alone_does_not_establish_semantic_verification():
     prov = pv.build(state(), ANSWER)
-    assert prov.state == pv.VERIFIED
+    assert prov.state == pv.MATCHED
     assert prov.row_count == 2
+
+
+def test_old_saved_verified_badges_are_displayed_as_numeric_matches():
+    record = pv.build(state(), ANSWER).as_dict()
+    record["state"] = "verified"  # pre-fact-contract saved transcript
+    assert pv.stored_verification_state(record) == pv.MATCHED
 
 
 def test_one_invented_figure_makes_it_partly_verified():
@@ -182,8 +188,8 @@ def test_the_record_survives_the_trip_through_the_store():
 
 def test_the_drawer_states_the_verification_without_being_opened():
     drawer = provenance_drawer(pv.build(state(), ANSWER).as_dict())
-    assert any("prov-badge good" in c for c in classes(drawer))
-    assert "Verified against the data" in text_of(drawer)
+    assert any("prov-badge neutral" in c for c in classes(drawer))
+    assert "Number match only" in text_of(drawer)
 
 
 def test_the_drawer_names_the_figures_it_could_not_find():
@@ -319,7 +325,7 @@ def test_the_edit_control_is_not_one_of_the_next_steps():
 
 def test_an_edited_answer_is_re_checked_against_the_same_rows():
     base = pv.build(state(), ANSWER).as_dict()
-    assert base["state"] == pv.VERIFIED
+    assert base["state"] == pv.MATCHED
 
     rewritten = pv.reverify(base, ANSWER + " Peers average $4.4m.", ROWS)
     assert rewritten["state"] == pv.PARTIAL

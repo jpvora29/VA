@@ -600,15 +600,18 @@ def run_analytics_tools(
         state.get("custom_peers"),
     )
 
+    visible_rows = redactor.rows(turn.rows)
+    from core.analytics.tools.rows import public_facts_digest
+    visible_facts = public_facts_digest(turn.facts, redactor)
     update = {
-        keys.result: redactor.rows(turn.rows),
+        keys.result: visible_rows,
         keys.error: False,
         keys.overflow: turn.overflow,
         keys.sql: turn.provenance(),
         keys.analytics: {
             "calls": [call.describe() for call in turn.calls],
             "scope": dict(turn.scope),
-            "facts": facts_digest(turn.facts),
+            "facts": visible_facts,
         },
     }
     if turn.defaulted_year is not None:

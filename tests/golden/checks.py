@@ -343,6 +343,11 @@ def _measure_check(trace: GoldenTrace, case: Mapping[str, Any]) -> CheckResult:
 
 
 def _faithful_check(trace: GoldenTrace, case: Mapping[str, Any]) -> CheckResult:
+    if trace.answer_record:
+        from core.answers.grounded import validate_record
+        if not validate_record(trace.answer_record, trace.answer, trace.evidence_sets):
+            return _fail("numbers_trace_to_evidence", GROUNDING, "claim identity, scope, unit or calculation did not match the source evidence")
+        return _ok("numbers_trace_to_evidence", GROUNDING)
     if not trace.evidence_rows:
         return _skip("numbers_trace_to_evidence", GROUNDING, "no evidence captured")
     loose = numbers_not_in_evidence(trace.answer, trace.evidence_rows)

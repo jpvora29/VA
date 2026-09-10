@@ -22,10 +22,7 @@ from ui.chart_functions import generate_chart
 
 _CRITIC = ChartSpecCritic()
 
-_EVAL_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "codex changes" / "tests" / "chart_output_eval_cases.yaml"
-)
+_EVAL_PATH = Path(__file__).with_name("chart_output_eval_cases.yaml")
 _EVAL_CASES = yaml.safe_load(_EVAL_PATH.read_text(encoding="utf-8"))[
     "chart_output_eval_cases"
 ]

@@ -357,15 +357,28 @@ def test_every_designed_spec_renders(tool, arguments):
     look well-formed. Guards the seam between the agent and `chart_functions`."""
     from ui.chart_functions import generate_chart
 
-    grounding = ground_chart_call(tool, arguments, profile_of(MIXED_ROWS))
+    # Combo rates need a unique category: adding or averaging growth percentages
+    # across years would require denominator evidence the renderer does not have.
+    rows = MIXED_ROWS[:2] if tool == "draw_combo" else MIXED_ROWS
+    grounding = ground_chart_call(tool, arguments, profile_of(rows))
     assert grounding.ok
     figure, message = generate_chart(
-        pd.DataFrame(MIXED_ROWS), dict(grounding.chart.spec)
+        pd.DataFrame(rows), dict(grounding.chart.spec)
     )
     assert figure is not None, f"{tool} produced no figure: {message}"
 
 
 # ── aggregation: a rate is averaged, an amount is summed ─────────────────────
+
+
+def test_combo_refuses_to_sum_growth_percentages_across_periods():
+    from ui.chart_functions import generate_chart
+    grounded = ground_chart_call("draw_combo", {
+        "x_category": "Product_Line", "y_amounts": ["Premium"],
+        "secondary_y_rates": ["Growth_%"], "title": "t",
+    }, profile_of(MIXED_ROWS))
+    figure, _ = generate_chart(pd.DataFrame(MIXED_ROWS), dict(grounded.chart.spec))
+    assert figure is None
 
 
 def test_a_rate_measure_is_averaged_not_summed():

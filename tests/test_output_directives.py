@@ -342,45 +342,30 @@ def test_write_insight_skips_prose_without_llm(monkeypatch, presentation):
         def with_config(**kwargs):
             raise AssertionError("insight_writer must not call the LLM when prose is suppressed")
 
-    monkeypatch.setattr(iw.Initialization, "llm_reason", _Boom)
     out = iw.write_insight(
         question="q", route="premium", synthesis_focus="",
-        evidence=_EVIDENCE, presentation=presentation, shape="analyst",
+        evidence=_EVIDENCE, presentation=presentation, shape="analyst", client=_Boom,
     )
     assert out == ""
 
 
-def test_write_insight_shape_selects_the_contract(monkeypatch):
-    """The writer is handed the contract for the turn's shape, not a fixed one."""
+def test_write_insight_shape_selects_supported_claim_count():
     from core.agents.analyst import insight_writer as iw
 
-    captured = {}
-    monkeypatch.setattr(
-        iw.Initialization, "llm_reason",
-        _streaming_llm(captured, "Premium fell **8%**, concentrated in Property."),
-    )
+    class OfflineClient:
+        def bind_tools(self, *args, **kwargs):
+            raise RuntimeError("offline selection uses deterministic fallback")
 
-    direct = iw.write_insight(
-        question="q", route="premium", synthesis_focus="",
-        evidence=_EVIDENCE, presentation="prose", shape="direct",
-    )
-    assert "SHAPE — DIRECT ANSWER" in captured["system"]
-    assert "supporting table" not in captured["system"]
-    assert direct == "Premium fell **8%**, concentrated in Property."
-
-    iw.write_insight(
-        question="q", route="premium", synthesis_focus="",
-        evidence=_EVIDENCE, presentation="prose", shape="driver",
-    )
-    assert "SHAPE — DRIVERS" in captured["system"]
-    assert "RANKED by how much of the movement" in captured["system"]
-
-    # An unknown/stale shape must still produce a contract, not an empty one.
-    iw.write_insight(
-        question="q", route="premium", synthesis_focus="",
-        evidence=_EVIDENCE, presentation="prose", shape="auto",
-    )
-    assert "SHAPE — FULL ANALYSIS" in captured["system"]
+    evidence = [{"flow": "gpr", "sql": "SELECT Premium", "lens": "t",
+                 "rows": [{"Product": "A", "Premium": 100}, {"Product": "B", "Premium": 40}]}]
+    direct = iw.write_insight(question="Premium", route="premium", synthesis_focus="",
+                             evidence=evidence, shape="direct", client=OfflineClient())
+    analysis = iw.write_insight(question="Premium", route="premium", synthesis_focus="",
+                               evidence=evidence, shape="analyst", client=OfflineClient())
+    assert direct.count("was") == 1
+    assert analysis.count("was") == 2
+    assert "$100" in analysis and "$40" in analysis
+    assert "8%" not in analysis
 
 
 # ── end-to-end: insight nodes + follow-ups honor suppression ─────────────────
@@ -392,7 +377,8 @@ def test_gpr_insight_skips_prose_when_suppressed(monkeypatch):
     def _boom(*a, **k):
         raise AssertionError("gpr_insight must not run its predictor when prose is suppressed")
 
-    monkeypatch.setattr(gpr, "_GPR_RESPONSE_NODE", _boom)
+    from core.answers import response_pipeline
+    monkeypatch.setattr(response_pipeline, "write_answer", _boom)
     state = {
         "messages": [type("M", (), {"content": "just the chart for Zurich"})()],
         "routing_context": _pctx(presentation="chart_only", charts="required"),

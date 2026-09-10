@@ -55,6 +55,8 @@ class GoldenTrace:
     answer: str = ""
     table_rows: List[Dict[str, Any]] = field(default_factory=list)
     evidence_rows: List[Dict[str, Any]] = field(default_factory=list)
+    answer_record: Dict[str, Any] = field(default_factory=dict)
+    evidence_sets: List[Dict[str, Any]] = field(default_factory=list)
     duration_ms: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
@@ -136,10 +138,13 @@ def _chart_signature(chart: Any) -> Optional[Dict[str, Any]]:
 
 def _extract_charts(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     specs: List[Dict[str, Any]] = []
-    for key in ("analyst_charts", "gpr_chart", "survey_chart", "combined_chart"):
+    keys = ("analyst_charts",) if state.get("analyst_charts") else ("gpr_chart", "survey_chart", "combined_chart")
+    for key in keys:
         value = state.get(key)
         items = value if isinstance(value, list) else [value]
         for item in items:
+            if isinstance(item, dict) and "chart_data" in item:
+                item = item["chart_data"]
             sig = _chart_signature(item)
             if sig is not None:
                 specs.append(sig)
@@ -211,23 +216,14 @@ def capture_trace(case: Dict[str, Any], *, workflow: Any = None) -> GoldenTrace:
     thread_id = f"golden-{case['id']}-{uuid.uuid4().hex[:8]}"
 
     def _state(text: str) -> Any:
+        from core.state.turn import fresh_turn_outputs
         return AgentState(
             messages=[HumanMessage(content=text)],
             user_id=None,
-            survey_attempts=0,
-            gpr_attempts=0,
-            gimmi_attempts=0,
             custom_peers=None,
             custom_peers_active=False,
             boardroom_mode=False,
-            analyst_charts=[],
-            analyst_evidence=[],
-            survey_chart={},
-            gpr_chart={},
-            combined_chart={},
-            survey_query_result=[],
-            gpr_query_result=[],
-            combined_result=[],
+            **fresh_turn_outputs(),
         )
 
     # Per-turn token snapshot from the observability sink.
@@ -263,6 +259,11 @@ def capture_trace(case: Dict[str, Any], *, workflow: Any = None) -> GoldenTrace:
     trace.selected_skills = sorted(handler.matched)
     trace.chart_specs = _extract_charts(final)
     trace.answer = _extract_answer(final)
+    from core.answers.response_pipeline import response_evidence
+    trace.evidence_sets = list(response_evidence(final, ("gpr", "survey", "gimmi")))
+    trace.answer_record = next((final.get(key) for key in (
+        "gpr_response_record", "survey_response_record", "combined_response_record", "gimmi_response_record"
+    ) if (final.get(key) or {}).get("content") == trace.answer), {})
     trace.table_rows = _extract_table(final)
     trace.evidence_rows = _extract_evidence(final)
     trace.duration_ms = int((time.time() - started) * 1000)

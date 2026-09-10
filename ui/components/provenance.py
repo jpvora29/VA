@@ -45,6 +45,7 @@ from core.answers.provenance import (
     STATE_TONE,
     UNVERIFIED,
     checked_figures,
+    stored_verification_state,
 )
 from core.answers.steps import UNNAMED_SOURCE, Calculation, describe_all
 
@@ -173,6 +174,19 @@ def _figure_row(figure: fig.Figure):
     )
 
 
+def _claim_calculation(claim: dict, facts: dict):
+    inputs = [facts[key] for key in claim.get("fact_ids", []) if key in facts]
+    return html.Div([
+        html.Div(claim.get("text", ""), className="prov-note"),
+        html.Div(claim.get("formula", ""), className="prov-note"),
+        html.Ul([html.Li([
+            html.Strong(f"{fact.get('metric')}: {fact.get('rendered')}"),
+            " — " + " · ".join(str(value) for _, value in fact.get("dimensions", [])),
+            html.Div(fact.get("formula", ""), className="prov-note"),
+        ]) for fact in inputs]),
+    ], className="prov-section")
+
+
 def _figures_section(prov: Dict[str, Any]):
     """Every figure the answer states, with a verdict beside it.
 
@@ -180,6 +194,13 @@ def _figures_section(prov: Dict[str, Any]):
     warning system; showing every figure with its verdict makes it a receipt, and
     the one line of advice underneath says what an absent figure actually means.
     """
+    if prov.get("claims"):
+        facts = {fact["id"]: fact for fact in prov.get("facts", [])}
+        return html.Div(
+            [_heading("How this is calculated", "The exact source facts and calculations used in this answer.")]
+            + [_claim_calculation(claim, facts) for claim in prov["claims"]],
+            className="prov-section",
+        )
     figures = checked_figures(prov)
     state = str(prov.get("state") or UNVERIFIED)
     if not figures:
@@ -333,7 +354,7 @@ def provenance_drawer(prov: Dict[str, Any] | None, *, period: str = ""):
                 [
                     html.I(className="bi bi-chevron-right prov-chevron"),
                     html.Span("Source & calculation", className="prov-summary-text"),
-                    verification_badge(str(prov.get("state") or UNVERIFIED)),
+                    verification_badge(stored_verification_state(prov)),
                     _dataset_chip(dataset_label(prov, period)),
                 ],
                 className="prov-summary",

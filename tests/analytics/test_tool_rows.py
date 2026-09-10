@@ -98,5 +98,7 @@ def test_digest_keeps_the_definition_behind_each_number():
             "rendered": "+8.1%",
             "dims": {"year": 2024},
             "formula": "(a-b)/b",
+            "support": [],
+            "column": "YoY_%",
         }
     ]

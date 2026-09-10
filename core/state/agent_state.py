@@ -65,6 +65,12 @@ class AgentState(TypedDict):
     survey_response: str
     gpr_response: str
     combined_response: str
+    # The exact fact/claim records rendered into each response. Dedicated channels
+    # keep independent premium/survey branches from overwriting each other.
+    gpr_response_record: Dict
+    survey_response_record: Dict
+    combined_response_record: Dict
+    gimmi_response_record: Dict
 
     survey_chart: Dict
     gpr_chart: Dict
@@ -77,9 +83,9 @@ class AgentState(TypedDict):
     gpr_analytics: Optional[Dict]
     survey_analytics: Optional[Dict]
 
-    # Up to 3 chart specs produced by the analyst agent's chart-picker, each
+    # At most one primary chart selected by the analyst agent's chart-picker:
     # {"title", "rows", "chart_data"}. The deterministic rails use the per-flow
-    # *_chart fields above; the analyst path carries its own multi-chart list.
+    # *_chart fields above; the analyst path carries its own chart envelope.
     analyst_charts: List
 
     # ALL evidence the analyst subgraph gathered, each {"flow", "sql", "rows",

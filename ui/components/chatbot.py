@@ -5,14 +5,13 @@ import dash_bootstrap_components as dbc
 from core.answers.commands import COMMANDS
 from core.peers import MIN_CUSTOM_PEERS
 from document_builder.report_generator import PITCH_THEMES, theme_options
-from ui.components.analysis_dock import analysis_dock, dock_reopen_button, view_switch
 from ui.components.answer_actions import (
     AnswerContext,
     answer_footer,
     feedback_panel,
     next_question,
 )
-from ui.components.answer_lead import Lead, key_figures, split_lead
+from ui.components.answer_lead import Lead, split_lead
 from ui.components.contribution import contribution_panel
 from ui.components.evidence import evidence_panel
 from ui.components.provenance import provenance_drawer
@@ -540,7 +539,9 @@ def ai_message(
     # While the prose is being rewritten it must be ONE editable region, or the
     # serialiser saves the body and silently drops the headline above it.
     lead = Lead(body=content) if editing else split_lead(content)
-    head = _lead_block(lead, key_figures(contribution))
+    # A single source for the headline and prose. Independent driver tiles can
+    # describe another cut; keep those numbers in their own driver panel.
+    head = _lead_block(lead, [])
     # A card carrying a chart or a table needs the room; a bare paragraph does
     # not, and stretching every answer to full width makes short ones look empty.
     wide = " has-evidence" if (views is not None or drivers is not None) else ""
@@ -643,6 +644,14 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
     return html.Div(
         [
             dcc.Store(id="chat-store", data={}),
+            dcc.Store(id="chat-cursor", data={}),
+            dcc.Store(id="job-event", data={}),
+            dcc.Store(id="chat-job-ack", data=None),
+            dcc.Store(id="chat-load-ack", data=None),
+            dcc.Store(id="conversation-load", data={}),
+            dcc.Store(id="chat-render", data={}),
+            html.Div("Loading conversation…", id="chat-loading", hidden=True,
+                     role="status", className="chat-loading"),
             dcc.Store(id="trigger-gpt", data=False),  # flag to run GPT call
             dcc.Store(id="trigger-resume", data=False),  # flag to resume a paused HITL thread
             dcc.Store(id="is-thinking", data=False),  # flag to show loader
@@ -659,14 +668,11 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
             # the answer flow in small increments (Claude-like) instead of landing
             # in chunky ~third-second bursts — the read is in-memory, so the cost
             # of polling more often is negligible.
-            dcc.Interval(id="job-poll", interval=120, n_intervals=0, disabled=True),
+            dcc.Interval(id="job-poll", interval=500, n_intervals=0, disabled=True),
             # Which answer the analysis panel is holding open (None means it
             # follows the newest), and how the two columns are arranged.
-            dcc.Store(id="analysis-pin", data=None),
-            dcc.Store(id="analysis-view", data={"open": True, "mode": "chat"}),
             # Below the split breakpoint the two columns cannot both fit, so they
             # become two views of one workspace. Hidden above it.
-            view_switch(),
             html.Div(
                 [
                     html.Div(
@@ -807,12 +813,6 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                                                             "Boardroom Mode",
                                                                             "Answer the next question as a dashboard",
                                                                         ),
-                                                                        _tool_item(
-                                                                            "menu-custom-peers",
-                                                                            "bi bi-people",
-                                                                            "Custom Peers",
-                                                                            "Pick the benchmark set by hand",
-                                                                        ),
                                                                     ],
                                                                     id="composer-add-menu",
                                                                     label=[
@@ -870,8 +870,6 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                         className="chat-column",
                     ),
                     # The evidence, kept in view while the conversation moves on.
-                    analysis_dock(),
-                    dock_reopen_button(),
                 ],
                 id="chat-workspace",
                 className="chat-workspace show-chat",

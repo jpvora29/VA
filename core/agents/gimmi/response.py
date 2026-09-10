@@ -1,69 +1,17 @@
-"""GIMMI response node + gating callable for the conditional GIMMI branch."""
+"""GIMMI graph adapter for the shared, fact-backed answer pipeline."""
 from __future__ import annotations
 
-import logging
 import re
 
-from core.agents.common.directives import prose_suppressed
-from core.llm import Predictor
-from core.observability import log_event
-from core.rules.gimmi import GIMMIRules
-from core.schemas.gimmi import GIMMIResponseSignature
-from core.skills.loader import get_skill_loader
+from core.answers.response_pipeline import write_response
 from core.state.agent_state import AgentState
 from logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class GIMMIResponseNode:
-    """Writes the market-rate commentary. Balanced tier and temperature 0 —
-    GIMMI reports factual rate data, so the wording should not drift."""
-
-    def __init__(self, predictor: Predictor | None = None) -> None:
-        self.predictor = predictor or Predictor(
-            GIMMIResponseSignature, tier="balanced", reasoning=True,
-            label="gimmi_insight", node="gimmi",
-        )
-
-    def __call__(self, user_query, rules, sql_output) -> str:
-        result = self.predictor(
-            rules=rules, user_query=user_query, sql_output=sql_output
-        )
-
-        return result.gimmi_response
-
-
-# Stateless predictor — instantiate once and reuse across turns. GIMMI stays
-# deterministic (balanced tier, temperature 0) since it is factual rate data.
-_GIMMI_RESPONSE_NODE = GIMMIResponseNode()
-
-
-def gimmi_insight(state: AgentState) -> AgentState:
-    # Contract: chart_only / table_only renders the artifact alone — skip the
-    # written market-rate commentary (the premium answer also drops its prose).
-    if prose_suppressed(state.get("routing_context")):
-        log_event(logger, "insight_skipped_by_directive", route="premium", node="gimmi_insight")
-        return {"gimmi_response": ""}
-
-    question = state["messages"][-1].content
-    query_result = state["gimmi_query_result"]
-    skill_rules = get_skill_loader().response("gimmi", question)
-    response_rules = skill_rules if skill_rules else GIMMIRules.response_rules
-
-    try:
-        gimmi_response = _GIMMI_RESPONSE_NODE(
-            user_query=question, rules=response_rules, sql_output=query_result
-        )
-    except Exception as exc:
-        log_event(
-            logger, "gimmi_insight_error", logging.ERROR, route="premium", error=str(exc)
-        )
-        gimmi_response = ""
-
-    logger.debug("GIMMI response: %s", gimmi_response)
-
-    return {"gimmi_response": gimmi_response}
+def gimmi_insight(state: AgentState) -> dict:
+    return write_response(state, "gimmi_response", ("gimmi",))
 
 
 def check_if_gimmi_required(state: AgentState):

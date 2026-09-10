@@ -4,11 +4,11 @@ The analyst gathers evidence as several executed queries across analytical lense
 (peer benchmark, trend, segment mix, …). Unlike the deterministic rails — which
 have exactly one SQL result to chart — the analyst has MANY candidate datasets.
 
-`pick_charts` scores those candidates for "chartability", takes the best 2–3, and
+`pick_charts` scores those candidates for relevance and chartability, then
 asks the SAME chart node the deterministic path uses (`GPRChartNode` /
 `SurveyChartNode`, driven by the shared chart skill catalog) to produce a
-`ChartOutput` spec for each. It returns a list of `{title, rows, chart_data}`
-dicts the UI renders one chart per entry.
+`ChartOutput` spec. At most two candidates are attempted and only one chart is
+returned, as a `{title, rows, chart_data}` entry.
 
 Best-effort by construction: any failure (bad rows, LLM error) is logged and
 skipped, and the function returns `[]` rather than raising, so charting can never
@@ -34,7 +34,7 @@ logger = get_logger(__name__)
 
 # How many charts an analyst answer may carry, and how many rows we hand the LLM
 # when asking for a spec (the full rows are still used to render).
-MAX_CHARTS = 3
+MAX_CHARTS = 1
 _LLM_ROW_CAP = 60
 
 # Column-name hints that make a dataset more worth charting (time series, peer
@@ -82,7 +82,22 @@ def _chartability(rows: List[Dict[str, Any]]) -> float:
 
 
 def _dedup_key(ev: Evidence) -> str:
-    return re.sub(r"\s+", " ", (ev.get("sql") or "")).strip().lower()
+    from core.answers.facts import stable_id
+    return stable_id("chart_", [ev.get("flow"), ev.get("scope"), ev.get("rows")])
+
+
+def _relevance(question: str, ev: Evidence) -> float:
+    """Prefer a chart that answers the request over a larger incidental table."""
+    text = " ".join([ev.get("lens") or "", *_columns(ev.get("rows") or [])]).lower().replace("_", " ")
+    words = set(re.findall(r"[a-z]+", question.lower())) - {"the", "and", "of", "for", "in", "a", "by"}
+    score = 2 * len(words & set(re.findall(r"[a-z]+", text)))
+    intents = ((r"trend|over time|year|quarter|growth", r"year|quarter|month|date|period|trend"),
+               (r"peer|benchmark|compar", r"peer|carrier|benchmark"),
+               (r"mix|breakdown|product|segment", r"mix|product|segment|breakdown"))
+    for intent, column in intents:
+        if re.search(intent, question, re.I) and re.search(column, text):
+            score += 10
+    return score
 
 
 def _norm_field(value: Any) -> tuple:
@@ -131,9 +146,10 @@ def pick_charts(question: str, evidence: List[Evidence]) -> List[Dict[str, Any]]
     best_by_sql: Dict[str, tuple[float, Evidence]] = {}
     for ev in evidence:
         rows = ev.get("rows") or []
-        score = _chartability(rows)
-        if score <= 0:
+        chartability = _chartability(rows)
+        if chartability <= 0:
             continue
+        score = chartability + _relevance(question, ev)
         key = _dedup_key(ev)
         if key not in best_by_sql or score > best_by_sql[key][0]:
             best_by_sql[key] = (score, ev)
@@ -153,7 +169,7 @@ def pick_charts(question: str, evidence: List[Evidence]) -> List[Dict[str, Any]]
     # is the richer one and later duplicates are dropped.
     seen_signatures: set[tuple] = set()
 
-    for _score, ev in ranked:
+    for _score, ev in ranked[:2]:
         if len(charts) >= MAX_CHARTS:
             break
         flow = ev.get("flow") or "gpr"
@@ -183,6 +199,7 @@ def pick_charts(question: str, evidence: List[Evidence]) -> List[Dict[str, Any]]
                 {
                     "title": chart_data.get("title") or ev.get("lens", "") or "Analysis",
                     "rows": rows,
+                    "lens": ev.get("lens") or "",
                     "chart_data": chart_data,
                 }
             )

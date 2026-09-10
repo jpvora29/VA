@@ -9,7 +9,8 @@ context to each other, for context isolation and reliability:
       -> dispatch (Send fan-out) ──▶ peer_solver_node    ─┐
                                  ──▶ generic_solver_node ─┴─▶ join_node
       -> join_node               (run dependency-bound steps serially)
-      -> writer_node             (single-shot synthesis -> final Markdown)
+      -> writer_node             (facts -> calculated claims -> select IDs -> text)
+      -> chart_picker_node       (one relevant chart from the evidence)
       -> END
 
 Independent lenses (no `depends_on`) run in parallel via the LangGraph `Send`
@@ -41,7 +42,7 @@ from core.agents.common.directives import (
     presentation_mode,
 )
 from core.agents.analyst.generic_solver import solve_generic
-from core.agents.analyst.insight_writer import write_insight
+from core.agents.analyst.insight_writer import grounded_insight
 from core.agents.analyst.peer_solver import solve_peer
 from core.agents.analyst.schema_identifier import identify_schema
 from core.agents.analyst.common import digest_evidence
@@ -79,6 +80,7 @@ class AnalystState(TypedDict):
     # add-reducer so parallel solver nodes merge their evidence instead of racing.
     evidence: Annotated[List[Evidence], add]
     answer: str
+    answer_record: dict
     # Up to 3 chart specs picked from the gathered evidence (title/rows/chart_data).
     charts: List[dict]
 
@@ -227,11 +229,12 @@ def join_node(state: AnalystState) -> dict:
 
 
 def writer_node(state: AnalystState) -> dict:
-    """Synthesize the final Markdown answer from all gathered evidence."""
+    """Build a grounded answer and record from all gathered evidence."""
     plan: AnalysisPlan = state.get("plan") or AnalysisPlan()
     rc = state.get("routing_context")
-    evidence = list(state.get("evidence", []))
-    answer = write_insight(
+    evidence = [dict(item, scope=item.get("scope") or resolved_filters_of(rc))
+                for item in state.get("evidence", [])]
+    result = grounded_insight(
         question=state["question"],
         route=state["route"],
         synthesis_focus=plan.synthesis_focus,
@@ -239,7 +242,7 @@ def writer_node(state: AnalystState) -> dict:
         presentation=presentation_mode(rc),
         shape=answer_shape(rc),
     )
-    return {"answer": scrub_peer_names(answer, evidence, state)}
+    return {"answer": scrub_peer_names(result.text, evidence, state), "answer_record": result.as_dict()}
 
 
 def scrub_peer_names(answer: str, evidence: List[Evidence], state: AnalystState) -> str:
@@ -276,7 +279,7 @@ def scrub_peer_names(answer: str, evidence: List[Evidence], state: AnalystState)
 
 
 def chart_picker_node(state: AnalystState) -> dict:
-    """Pick and build up to 3 charts from the gathered evidence (best-effort)."""
+    """Pick and build one primary chart from gathered evidence (best-effort)."""
     # Query-contract gate: "don't generate a chart" means exactly that.
     if charts_suppressed(state.get("routing_context")):
         log_event(

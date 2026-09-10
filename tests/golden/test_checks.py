@@ -45,6 +45,16 @@ def _verdict(name, trace, case=CASE):
     return next(r for r in C.run_checks(trace, case) if r.name == name)
 
 
+def test_grounded_trace_checks_the_carrier_even_when_the_number_is_unchanged():
+    from core.answers.grounded import AnswerRequest, compose_answer
+    evidence = [{"flow": "gpr", "rows": [{"Carrier_Group": "Zurich", "Premium": 100}]}]
+    answer = compose_answer(AnswerRequest("premium", tuple(evidence)))
+    trace = _trace(answer=answer.text, answer_record=answer.as_dict(), evidence_sets=evidence)
+    assert _verdict("numbers_trace_to_evidence", trace).passed
+    trace.evidence_sets = [{"flow": "gpr", "rows": [{"Carrier_Group": "AIG", "Premium": 100}]}]
+    assert not _verdict("numbers_trace_to_evidence", trace).passed
+
+
 # ── confidentiality: the reported bug ────────────────────────────────────────
 
 def test_a_peer_name_in_the_prose_fails():

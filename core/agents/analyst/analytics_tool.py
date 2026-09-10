@@ -146,13 +146,18 @@ def build_compute_tool(
             )
 
         rows = facts_to_rows(result.facts)
+        from core.analytics.tools.rows import public_facts_digest
+        visible_rows = redactor.rows(rows) if redactor else rows
+        visible_facts = public_facts_digest(result.facts, redactor)
         provenance = f"-- computed: {grounded.describe()}"
         evidence.append(
             {
                 "flow": flow,
                 "sql": provenance,
-                "rows": redactor.rows(rows) if redactor else rows,
+                "rows": visible_rows,
                 "lens": lens,
+                "scope": dict(grounded.filters),
+                "facts": visible_facts,
             }
         )
         log_event(

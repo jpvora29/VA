@@ -153,7 +153,7 @@ def test_high_cardinality_series_is_capped():
         {"X": [f"p{i % 3}" for i in range(40)], "S": [f"c{i}" for i in range(40)], "V": list(range(40))}
     )
     fig, _ = generate_chart(
-        df, {"chart_type": "bar", "x": "X", "y": ["V"], "series": ["S"], "bar_mode": ["group"], "title": "t"}
+        df, {"chart_type": "bar", "x": "X", "y": ["V"], "series": ["S"], "bar_mode": ["group"], "title": "t", "y_agg": "sum"}
     )
     assert isinstance(fig, go.Figure)
     assert len(fig.data) <= 12  # MAX_SERIES ceiling

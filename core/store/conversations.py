@@ -22,12 +22,7 @@ _TITLE_MAX = 60
 
 
 def _derive_title(chat_history: dict[str, Any]) -> str:
-    """Conversation title: a short LLM-generated label when present, else the first
-    human message truncated.
-
-    A nice title is generated once at the UI layer (`_persist_turn`) and cached on
-    ``chat_history["title"]`` so it survives re-saves (e.g. boardroom edits) instead
-    of being recomputed from the raw question every time."""
+    """Keep saved titles; derive new ones from the first question without an LLM."""
     cached = (chat_history.get("title") or "").strip()
     if cached:
         return cached if len(cached) <= _TITLE_MAX else cached[: _TITLE_MAX - 1] + "…"
@@ -62,7 +57,7 @@ def list_conversations(user_id: int | str) -> list[dict[str, Any]]:
 
 def save_conversation(
     user_id: int | str, conv_id: str, chat_history: dict[str, Any]
-) -> None:
+) -> bool:
     """Upsert the full transcript for ``conv_id`` under ``user_id``.
 
     No-ops when there is nothing worth saving (no id, no messages) so empty
@@ -71,9 +66,9 @@ def save_conversation(
     try:
         uid = int(user_id)
     except (TypeError, ValueError):
-        return
+        return False
     if not conv_id or not (chat_history or {}).get("messages"):
-        return
+        return False
 
     title = _derive_title(chat_history)
     data = json.dumps(chat_history, default=str)
@@ -84,12 +79,35 @@ def save_conversation(
     stmt = stmt.on_conflict_do_update(
         index_elements=[conversations.c.id],
         set_={"title": title, "data": data, "updated_at": func.now()},
+        where=conversations.c.user_id == uid,
     )
     try:
         with app_engine.begin() as conn:
-            conn.execute(stmt)
+            result = conn.execute(stmt)
+        return result.rowcount == 1
     except Exception:  # pragma: no cover - persistence must never break a turn
         logger.exception("Failed to save conversation %s", conv_id)
+        return False
+
+
+def save_chat_edit(user_id: int | str, conv_id: str, chat: dict, *, recovering: bool = False) -> bool:
+    """Update an existing turn only. A stale browser cannot overwrite a newer job.
+
+    The data equality predicate also guards changes between reading and writing;
+    deletion is never treated as an instruction to recreate a conversation.
+    """
+    from sqlalchemy import update
+    with app_engine.begin() as conn:
+        where = (conversations.c.id == conv_id) & (conversations.c.user_id == int(user_id))
+        previous = conn.execute(select(conversations.c.data).where(where)).scalar_one_or_none()
+        if previous is None:
+            return False
+        stored = json.loads(previous)
+        if stored.get("_job_id") != chat.get("_job_id") or (stored.get("_running") and not recovering):
+            return False
+        result = conn.execute(update(conversations).where(where & (conversations.c.data == previous)).values(
+            data=json.dumps(chat, default=str), title=_derive_title(chat), updated_at=func.now()))
+        return result.rowcount == 1
 
 
 def load_conversation(user_id: int | str, conv_id: str) -> Optional[dict[str, Any]]:

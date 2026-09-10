@@ -162,17 +162,6 @@ def _action_button(action: AnswerAction, idx: int, *, primary: bool = False):
     )
 
 
-def _pin_button(idx: int):
-    """Hold this answer's evidence open in the analysis panel."""
-    return html.Button(
-        html.I(className="bi bi-pin-angle"),
-        id={"type": "answer-pin", "idx": idx},
-        n_clicks=0,
-        className="answer-pin-btn",
-        title="Keep this analysis in the panel while you follow up",
-    )
-
-
 def next_question(question: str, idx: int = 0):
     """The single follow-up worth offering under an answer.
 
@@ -297,7 +286,6 @@ def answer_footer(ctx: AnswerContext, *, content: str):
             ),
             html.Div(
                 [
-                    _pin_button(ctx.idx) if ctx.has_analysis else None,
                     dcc.Clipboard(
                         content=content, title="Copy", className="answer-copy"
                     ),

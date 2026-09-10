@@ -77,3 +77,27 @@ def test_keeps_chart_when_node_returns_pydantic_model(monkeypatch):
     cd = charts[0]["chart_data"]
     assert isinstance(cd, dict)  # coerced — JSON-safe for the chat-store
     assert cd["chart_type"] == "line"
+
+
+def test_one_chart_prioritizes_the_requested_trend_over_more_rows(monkeypatch):
+    seen = []
+    def build(**kwargs):
+        seen.append(kwargs["sql_output"])
+        return {"chart_type": "line", "x": "Year", "y": ["Premium"]}
+    monkeypatch.setattr(cp, "_chart_rules", lambda *args: "")
+    monkeypatch.setattr(cp, "_chart_node", lambda *args: build)
+    trend = [{"Year": 2024, "Premium": 100}, {"Year": 2025, "Premium": 125}]
+    evidence = [
+        {"flow": "gpr", "lens": "mix", "sql": "mix", "rows": [{"Product": str(i), "Premium": i} for i in range(40)]},
+        {"flow": "gpr", "lens": "trend", "sql": "trend", "rows": trend},
+        {"flow": "gpr", "lens": "duplicate", "sql": "another query", "rows": trend},
+    ]
+    charts = cp.pick_charts("Show the premium trend over time", evidence)
+    assert len(charts) == 1 and len(seen) == 1
+    assert charts[0]["rows"] == trend
+
+
+def test_harness_reads_nested_analyst_specs():
+    from tests.golden.harness import _extract_charts
+    result = _extract_charts({"analyst_charts": [{"rows": [], "chart_data": {"chart_type": "bar", "x": "Product", "y": ["Premium"]}}]})
+    assert result == [{"type": "bar", "x": "Product", "y": ["Premium"], "series": []}]

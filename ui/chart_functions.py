@@ -19,6 +19,8 @@ Design goals
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -280,13 +282,19 @@ def _prepare_frame(df: pd.DataFrame, spec: _Spec) -> pd.DataFrame:
 
     # Aggregate when multiple rows share the same x/series key.
     if group_cols and df.duplicated(subset=group_cols).any():
-        agg = spec.y_agg if spec.y_agg in _AGGS else "sum"
+        if spec.y_agg not in _AGGS:
+            raise ValueError("Chart dimensions do not uniquely identify rows; choose a more detailed axis or calculate the intended aggregation first.")
+        if spec.y_agg == "sum" and any(re.search(r"score|nps|rank|share|pct|percent|rate|%", c, re.I) for c in measures):
+            raise ValueError("Scores, ranks and percentages cannot be summed across chart rows.")
+        agg = spec.y_agg
         df = df.groupby(group_cols, dropna=False, as_index=False)[measures].agg(agg)
 
     # Cap high-cardinality series: keep the top (MAX_SERIES-1) by total measure,
     # bucket the rest as "Other", so the legend stays readable.
     for s in spec.series:
         if df[s].nunique(dropna=False) > MAX_SERIES:
+            if spec.y_agg not in _AGGS or any(re.search(r"score|nps|rank|share|pct|percent|rate|%", c, re.I) for c in measures):
+                raise ValueError("Too many series to chart without changing the meaning of the measures. Narrow the scope.")
             ranked = (
                 df.groupby(s, dropna=False)[spec.y[0]].sum().sort_values(ascending=False)
             )

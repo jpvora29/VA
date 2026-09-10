@@ -24,6 +24,7 @@ from typing import Any, List
 from langgraph.errors import GraphInterrupt
 
 from core.agents.analyst.answer_table import select_answer_rows
+from core.agents.common.directives import prose_suppressed
 from core.graph.analyst_subgraph import AnalystSubGraph
 from core.observability import latency_timer, log_event
 from core.schemas.analyst_subgraph import Evidence
@@ -59,6 +60,7 @@ def analyst_agent_node(state: AgentState) -> AgentState:
     evidence: List[Evidence] = []
     charts: List[Any] = []
     primary_lens = ""
+    answer_record = {}
     with latency_timer() as timing:
         try:
             # HITL clarification happens upstream in the checkpointed main graph
@@ -69,6 +71,7 @@ def analyst_agent_node(state: AgentState) -> AgentState:
             evidence = result.get("evidence") or []
             charts = result.get("charts") or []
             primary_lens = result.get("primary_lens") or ""
+            answer_record = result.get("answer_record") or {}
         except GraphInterrupt:
             # A clarify MCQ is pending — let it bubble to the checkpointed main
             # graph so the UI can ask and resume. Never swallow this as an error.
@@ -95,7 +98,7 @@ def analyst_agent_node(state: AgentState) -> AgentState:
         duration_ms=timing.get("duration_ms"),
     )
 
-    if not answer:
+    if not answer and not prose_suppressed(state.get("routing_context")):
         # Graceful fallback so the UI still renders something for the route.
         answer = (
             "I couldn't complete the analysis for this question. "
@@ -121,6 +124,7 @@ def analyst_agent_node(state: AgentState) -> AgentState:
     if route == "survey":
         return {
             "survey_response": answer,
+            "survey_response_record": answer_record,
             "survey_query_result": _rows_for("survey"),
             "analyst_charts": charts,
             "analyst_evidence": non_empty_evidence,
@@ -128,6 +132,7 @@ def analyst_agent_node(state: AgentState) -> AgentState:
     if route == "both":
         return {
             "combined_response": answer,
+            "combined_response_record": answer_record,
             "survey_query_result": _rows_for("survey"),
             "gpr_query_result": _rows_for("gpr"),
             "analyst_charts": charts,
@@ -136,6 +141,7 @@ def analyst_agent_node(state: AgentState) -> AgentState:
     # premium (and any default)
     return {
         "gpr_response": answer,
+        "gpr_response_record": answer_record,
         "gpr_query_result": _rows_for("gpr"),
         "analyst_charts": charts,
         "analyst_evidence": non_empty_evidence,

@@ -9,10 +9,12 @@ in the prose is actually present in the rows.
 everything equally, which is the same as telling them nothing. This record lets
 them check the one number they care about.
 
-Three verification states, and each says something different:
+Verification states describe the check that actually ran:
 
-* ``verified``   — evidence was gathered, and every checkable figure in the
-                   prose appears in it.
+* ``verified``   — factual sentences, calculations and input IDs reconstruct
+                   exactly from the current evidence.
+* ``matched``    — legacy prose passes numeric matching only; entity, metric and
+                   calculation identity have not been verified.
 * ``partial``    — evidence was gathered, and at least one figure does not.
                    The unmatched figures are named, so the reader can judge.
 * ``unverified`` — nothing was gathered to check against (an out-of-scope
@@ -33,14 +35,16 @@ from core.definitions import get_glossary
 VERIFIED = "verified"
 PARTIAL = "partial"
 UNVERIFIED = "unverified"
+MATCHED = "matched"
 
 # What each state says on the badge, and the tone it wears.
 STATE_LABEL = {
     VERIFIED: "Verified against the data",
     PARTIAL: "Partly verified",
     UNVERIFIED: "Not verified",
+    MATCHED: "Number match only",
 }
-STATE_TONE = {VERIFIED: "good", PARTIAL: "warn", UNVERIFIED: "neutral"}
+STATE_TONE = {VERIFIED: "good", PARTIAL: "warn", UNVERIFIED: "neutral", MATCHED: "neutral"}
 
 # "Not verified" is the one badge that needs a sentence beside it: on its own it
 # reads as an accusation — the reader assumes the answer failed a check, when in
@@ -98,6 +102,8 @@ class Provenance:
     queries: List[EvidenceQuery] = field(default_factory=list)
     terms: List[TermUsed] = field(default_factory=list)
     figures: List[fig.Figure] = field(default_factory=list)
+    claims: List[Dict[str, Any]] = field(default_factory=list)
+    facts: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def row_count(self) -> int:
@@ -120,6 +126,8 @@ class Provenance:
                 for f in self.figures
             ],
             "coverage": fig.coverage(self.figures),
+            "claims": self.claims,
+            "facts": self.facts,
         }
 
 
@@ -207,7 +215,7 @@ def verification_state(queries: Sequence[EvidenceQuery], checked: Sequence[fig.F
     """
     if not queries or not any(q.row_count for q in queries):
         return UNVERIFIED
-    return PARTIAL if fig.unsupported(checked) else VERIFIED
+    return PARTIAL if fig.unsupported(checked) else MATCHED
 
 
 def reverify(record: Mapping[str, Any], answer: str, rows: Sequence[Any]) -> Dict[str, Any]:
@@ -240,6 +248,8 @@ def reverify(record: Mapping[str, Any], answer: str, rows: Sequence[Any]) -> Dic
     ]
     record["coverage"] = fig.coverage(checked)
     record["edited"] = True
+    record.pop("claims", None)
+    record.pop("facts", None)
     return record
 
 
@@ -255,15 +265,28 @@ def build(state: Mapping[str, Any], answer: str, *, question: str = "") -> Prove
         )
         for item in sets
     ]
-    checked = fig.check(answer, {item["lens"]: item["rows"] for item in sets})
+    # Several queries may share a lens. Keys must identify RESULTS, not lenses.
+    checked = fig.check(answer, {str(i): item["rows"] for i, item in enumerate(sets)})
+    from core.answers.grounded import validate_record
+    from core.answers.response_pipeline import response_evidence
+    sources = response_evidence(state, ("gpr", "survey", "gimmi"))
+    record = next((state.get(key) for key in (
+        "gpr_response_record", "survey_response_record", "combined_response_record", "gimmi_response_record"
+    ) if validate_record(state.get(key) or {}, answer, sources)), {})
+    status = verification_state(queries, checked)
+    if record:
+        checked = [fig.Figure(f.text, f.value, True) for f in checked]
+        status = VERIFIED
     columns = [c for q in queries for c in q.columns]
     return Provenance(
         question=(question or str(state.get("rephrased_user_query") or "")).strip(),
         route=str(state.get("current_route") or ""),
-        state=verification_state(queries, checked),
+        state=status,
         queries=queries,
         terms=terms_used(answer, columns),
         figures=checked,
+        claims=list(record.get("claims") or []),
+        facts=list(record.get("facts") or []),
     )
 
 
@@ -289,3 +312,11 @@ def checked_figures(record: Mapping[str, Any]) -> List[fig.Figure]:
             )
         )
     return out
+
+
+def stored_verification_state(record: Mapping[str, Any]) -> str:
+    """Old saved numeric matches must not inherit the new semantic badge."""
+    status = str(record.get("state") or UNVERIFIED)
+    if status == VERIFIED and not (record.get("facts") and record.get("claims")):
+        return MATCHED
+    return status

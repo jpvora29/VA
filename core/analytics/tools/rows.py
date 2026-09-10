@@ -134,6 +134,23 @@ def facts_digest(facts: Iterable[AnalyticsFact]) -> List[Dict[str, Any]]:
             "rendered": fact.rendered,
             "dims": dict(fact.dims),
             "formula": fact.formula,
+            "support": list(fact.support),
+            "column": column_label(fact),
         }
         for fact in facts
     ]
+
+
+
+def public_facts_digest(facts: Iterable[AnalyticsFact], redactor=None) -> List[Dict[str, Any]]:
+    """The same fact contract at both tool boundaries, with peer aliases applied."""
+    result = facts_digest(facts)
+    if redactor is None:
+        return result
+    for fact in result:
+        fact["dims"] = redactor.rows([fact["dims"]])[0]
+        fact["support"] = redactor.rows(fact["support"])
+    for fact in result:
+        fact["formula"] = redactor.text(fact["formula"])
+        fact["rendered"] = redactor.text(fact["rendered"])
+    return result
