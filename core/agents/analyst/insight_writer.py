@@ -3,13 +3,14 @@ from __future__ import annotations
 
 from core.answers.grounded import AnswerRequest, GroundedAnswer
 from core.answers.writer import write_answer
-from core.answers.scope import DisplayScope
+from core.answers.scope import DisplayScope, defaulted_period
 
 
 def grounded_insight(*, question: str, route: str, synthesis_focus: str,
                      evidence: list, presentation: str = "prose", shape: str = "analyst",
                      client=None, scope: DisplayScope = ()) -> GroundedAnswer:
-    request = AnswerRequest(question, tuple(evidence), shape, presentation, scope)
+    request = AnswerRequest(question, tuple(evidence), shape, presentation, scope,
+                            defaulted_period(evidence))
     return write_answer(request, client=client)
 
 

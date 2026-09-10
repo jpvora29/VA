@@ -11,7 +11,11 @@ from __future__ import annotations
 
 import pytest
 
-from core.analytics import resolve_default_timeframe, timeframe_resolution_enabled
+from core.analytics import (
+    names_a_timeframe,
+    resolve_default_timeframe,
+    timeframe_resolution_enabled,
+)
 
 GPR_YQ = [
     "2023-Q1", "2023-Q2", "2023-Q3", "2023-Q4",
@@ -75,12 +79,40 @@ def test_blank_hint_is_ignored():
 
 # ── flag default ───────────────────────────────────────────────────────────
 
-def test_resolution_flag_defaults_off(monkeypatch):
+def test_resolution_defaults_on_so_a_blank_timeframe_is_never_all_years(monkeypatch):
+    """Defaulted off, the rule was documentation rather than behaviour: a plan
+    that left the timeframe blank summed every year in the warehouse into one
+    figure, and the scope-level paths that apply the same rule were always on."""
     monkeypatch.delenv("ANALYTICS_TIMEFRAME_RESOLUTION", raising=False)
-    assert timeframe_resolution_enabled() is False
+    assert timeframe_resolution_enabled() is True
 
 
 @pytest.mark.parametrize("value, expected", [("on", True), ("shadow", True), ("off", False), ("OFF", False)])
 def test_resolution_flag_reads_env(monkeypatch, value, expected):
     monkeypatch.setenv("ANALYTICS_TIMEFRAME_RESOLUTION", value)
     assert timeframe_resolution_enabled() is expected
+
+
+@pytest.mark.parametrize("query", [
+    "How has Zurich's premium trended?",
+    "Is Zurich's book growing?",
+    "Premium trends for Chubb",
+    "Has Chubb's premium increased?",
+    "Which lines are declining?",
+    "Zurich premium grew how much?",
+])
+def test_an_inflected_movement_word_still_names_a_timeframe(query):
+    """The stems were anchored on both sides, so `\btrend\b` missed "trended" and
+    `\bgrowth\b` missed "growing" — and a movement question got pinned to a single
+    year, which is the one thing it cannot be answered from."""
+    assert names_a_timeframe(query) is True
+
+
+@pytest.mark.parametrize("query", [
+    "What is Zurich's premium in Canada?",
+    "Zurich's rank",
+    "Show me the product mix",
+])
+def test_a_question_with_no_time_reference_still_defaults(query):
+    assert names_a_timeframe(query) is False
+    assert resolve_default_timeframe([2023, 2024, 2025], query) == "2025"

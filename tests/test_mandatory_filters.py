@@ -122,3 +122,30 @@ def test_both_family_spans_flow_columns(gate):
 
 def test_none_routing_context_is_empty(gate):
     assert gate.missing_mandatory_filters(None) == []
+
+
+# ── how the period rule and the gate divide the work ─────────────────────────
+
+
+def test_a_named_carrier_without_a_year_runs_rather_than_asking_for_one(gate):
+    """The two halves of "use the latest year, or ask": a turn that says WHO but
+    not WHEN is scoped, so it runs and the period rule
+    (`core.analytics.tools.scope.pin_latest_year`) picks the latest year for it.
+    Stopping to ask for a year here would interrupt almost every question."""
+    context = _ctx(resolved={"Carrier_Group": ["ZURICH GROUP"]})
+    assert gate.has_scope(context) is True
+    assert gate.missing_mandatory_filters(context) == []
+
+
+def test_a_turn_that_names_nothing_at_all_is_still_asked(gate):
+    """…and the other half: there is no latest year to pick for a question with
+    no subject, so this one goes to a human."""
+    context = _ctx(resolved={})
+    assert gate.has_scope(context) is False
+    assert _roles(gate.missing_mandatory_filters(context)) == ["carrier", "country"]
+
+
+def test_a_year_alone_is_enough_scope_to_run(gate):
+    context = _ctx(resolved={"Year": ["2024"]})
+    assert gate.has_scope(context) is True
+    assert gate.missing_mandatory_filters(context) == []

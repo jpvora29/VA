@@ -35,6 +35,7 @@ from core.analytics.orchestrator import AnalyticsOrchestrator, EvidenceSet
 from core.analytics.primitives import BUILTINS
 from core.analytics.registry import AnalyticsRegistry, UnknownPrimitiveError
 from core.analytics.timeframe import (
+    names_a_timeframe,
     resolve_default_timeframe,
     timeframe_resolution_enabled,
 )
@@ -57,6 +58,7 @@ __all__ = [
     "AnalyticsRegistry",
     "UnknownPrimitiveError",
     "build_default_registry",
+    "names_a_timeframe",
     "resolve_default_timeframe",
     "timeframe_resolution_enabled",
     "compute_breakdown",

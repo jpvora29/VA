@@ -9,13 +9,21 @@ from dataclasses import dataclass, replace
 import re
 
 from core.answers.claims import AnswerClaim, context, period_key
-from core.answers.facts import AnswerFact, PERIOD_COLUMNS, label
+from core.answers.facts import AnswerFact, is_period_column, label
 from core.answers.insights import PRODUCT_COLUMNS, common_dimensions
 from core.answers.scope import DisplayScope, matching_scope_dimensions
 
 
 CARRIER_COLUMNS = {"carrier", "carrier_group", "carrier_name", "insurer", "insurer_name"}
 HIDDEN_COLUMNS = {"grain", "through"}
+
+# Claim kinds whose SENTENCE does not carry the period itself, so their scope
+# suffix has to. A growth sentence already reads "from $300 (2024) to $390
+# (2025)"; a standing sentence says only where a carrier sits, and stripping the
+# period from it leaves a finding with no date on it. Read in both places that
+# decide what a suffix holds, so the suffix a claim was BUILT with is the one
+# this recognises and removes — a mismatch leaves both on the page.
+PERIOD_IN_SUFFIX = {"observation", "peer_gap", "survey_standing", "survey_trailing"}
 
 
 @dataclass(frozen=True)
@@ -76,16 +84,35 @@ def name_subject(text: str, subject: AnswerFact, narration: NarrativeContext, le
 
 def distinguishing_context(dims: dict, kind: str, consumed: set, narration: NarrativeContext) -> list[str]:
     hidden = HIDDEN_COLUMNS | consumed
-    if kind != "observation":
-        hidden = hidden | PERIOD_COLUMNS
-    return list(dict.fromkeys(v for k, v in dims.items() if (k, v) not in narration.shared and k not in hidden))
+    drop_period = kind not in PERIOD_IN_SUFFIX
+    return list(dict.fromkeys(v for k, v in dims.items()
+                              if (k, v) not in narration.shared and k not in hidden
+                              and not (drop_period and is_period_column(k))))
+
+
+def shared_dimensions(facts: tuple[AnswerFact, ...]) -> set[tuple[str, str]]:
+    """What every fact agrees on — the context the reader already has.
+
+    A BENCHMARK is excluded from the vote. A peer average is deliberately not
+    filtered to one carrier, so counting its dimensions makes the carrier "not
+    shared" and every other sentence in the answer starts spelling it out —
+    "CHUBB · Canada" six times over, in an answer that is about Chubb throughout.
+    Its missing carrier is a property of the measure, not of the turn's scope.
+    """
+    from core.answers.benchmark import benchmark_measure
+
+    subjects = [f for f in facts if not benchmark_measure(f.metric)] or list(facts)
+    shared = set(dimensions(subjects[0]).items())
+    for fact in subjects[1:]:
+        shared.intersection_update(dimensions(fact).items())
+    return shared
 
 
 def compact_claim(claim: AnswerClaim, inputs: tuple[AnswerFact, ...],
                   narration: NarrativeContext, *, lead: bool) -> AnswerClaim:
     subject = claim_dimensions(claim, inputs)
     dims, text = dimensions(subject), claim.text
-    old_scope = context(subject, omit_period=claim.kind not in {"observation", "peer_gap"})
+    old_scope = context(subject, omit_period=claim.kind not in PERIOD_IN_SUFFIX)
     suffix = f" ({old_scope})."
     if old_scope and text.endswith(suffix):
         text = text.removesuffix(suffix) + "."
@@ -107,9 +134,7 @@ def compact_claims(claims: tuple[AnswerClaim, ...], facts: tuple[AnswerFact, ...
     if not claims:
         return ()
     by_id = {f.id: f for f in facts}
-    shared = set(dimensions(facts[0]).items())
-    for fact in facts[1:]:
-        shared.intersection_update(dimensions(fact).items())
+    shared = shared_dimensions(facts)
     if not legacy:
         shared.update(matching_scope_dimensions([dimensions(f) for f in facts], scope))
     lead_facts = tuple(by_id[i] for i in claims[0].fact_ids)

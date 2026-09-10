@@ -35,7 +35,13 @@ _QUARTER = re.compile(r"(?i)\bq[1-4]\b|\bquarter")
 _TIME_REFERENCE = re.compile(
     r"(?i)\b("
     r"yoy|y-o-y|year[\s-]*over[\s-]*year|"
-    r"trend|growth|cagr|"
+    # Inflected, because the bare stems were anchored on both sides: `\btrend\b`
+    # does not match "trended" or "trending", and `\bgrowth\b` does not match
+    # "growing". "How has premium trended?" therefore read as naming no timeframe
+    # and got pinned to a single year — which is the one thing a trend cannot be
+    # answered from.
+    r"trend(?:s|ed|ing)?|grow(?:th|ing|n)?|grew|cagr|"
+    r"declin(?:e|es|ed|ing)|increas(?:e|es|ed|ing)|"
     r"over\s+time|across\s+years?|by\s+year|each\s+year|per\s+year|year[\s-]*on[\s-]*year|"
     r"historical|history|"
     r"rolling|ttm|trailing|"
@@ -99,8 +105,14 @@ def resolve_default_timeframe(
 def timeframe_resolution_enabled() -> bool:
     """True when the planner should deterministically fill an empty timeframe.
 
-    ANALYTICS_TIMEFRAME_RESOLUTION = off (default) | shadow | on. Default off =
-    zero behaviour change; flip to `on` (with a live run + the golden harness)
-    before relying on it. Mirrors `core.context.gate.gate_enabled`.
+    ANALYTICS_TIMEFRAME_RESOLUTION = on (default) | shadow | off.
+
+    This shipped defaulted to `off`, which made the rule above documentation
+    rather than behaviour: a plan that left the timeframe blank ran unfiltered
+    and summed every year in the warehouse into one figure. The two paths that
+    apply the same rule at the scope level (`core.analytics.tools.scope`) were
+    always on, so `off` was also inconsistent — the same question answered for one
+    year or for all of them depending on which path took it. `off` remains for
+    reproducing an old run.
     """
-    return os.getenv("ANALYTICS_TIMEFRAME_RESOLUTION", "off").lower() in {"on", "shadow"}
+    return os.getenv("ANALYTICS_TIMEFRAME_RESOLUTION", "on").lower() in {"on", "shadow"}

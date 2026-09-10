@@ -14,6 +14,35 @@ from typing import Any, Mapping, Sequence
 
 
 PERIOD_COLUMNS = {"year", "quarter", "month", "date", "period", "year_quarter", "yearmonth", "yearquarter"}
+
+# …and the qualified spellings of the same thing. The survey flow's year column is
+# `Survey_Year` and GPR's date column is `Billing_Date`, neither of which is in the
+# set above — so on survey evidence NOTHING was a period: no time series, no
+# year-on-year claim, and the year rode along as an ordinary dimension that split
+# one ranking into one per year. The suffix is anchored deliberately: `survey_year`
+# is a period and `year_premium` is a measure, and a substring test cannot tell
+# them apart.
+_PERIOD_SUFFIX = re.compile(r"(?i)(?:^|_)(year|quarter|qtr|month|period|date)$")
+
+# The order period dimensions are read in, coarse to fine, so two facts compare
+# on the same axes. Anything qualified sorts after these, alphabetically.
+_PERIOD_RANK = ("year", "year_quarter", "yearquarter", "yearmonth", "quarter", "month", "date", "period")
+
+
+def is_period_column(name: str) -> bool:
+    """Whether this dimension names WHEN rather than what or who."""
+    key = str(name or "").strip().lower()
+    return key in PERIOD_COLUMNS or bool(_PERIOD_SUFFIX.search(key))
+
+
+def period_rank(name: str) -> tuple:
+    """Sort key putting the plain period names first, in coarse-to-fine order."""
+    key = str(name or "").strip().lower()
+    return (_PERIOD_RANK.index(key), "") if key in _PERIOD_RANK else (len(_PERIOD_RANK), key)
+# The columns that say WHO a figure is about. A benchmark is computed over a peer
+# set rather than one carrier, so this is the dimension a subject and its
+# benchmark are allowed to disagree on (`core.answers.benchmark`).
+CARRIER_COLUMNS = {"carrier", "carrier_group", "carrier_name", "insurer", "insurer_name"}
 DIMENSION_COLUMNS = PERIOD_COLUMNS | {
     "rank_label", "sic_major_class", "sic_minor_class", "client_id", "carrier_id",
     "country_id", "code", "id", "yearmonth", "yearquarter",

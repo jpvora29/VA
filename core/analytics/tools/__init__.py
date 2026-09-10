@@ -10,7 +10,8 @@ Layers, each one testable on its own:
 
 - `catalog`   — primitive -> tool descriptor + JSON schema (registry-derived enums).
 - `grounding` — a selected call -> a runnable call, or a reasoned rejection.
-- `scope`     — the turn's shared filters (contract + plan + timeframe), no LLM.
+- `scope`     — the turn's shared filters (contract + plan + timeframe) and the
+                latest-year default, no LLM.
 - `rows`      — computed facts -> the row dicts the charts/insight/UI already take.
 
 Nothing here imports dspy, LangChain, or the graph: selection (the one LLM step)
@@ -39,7 +40,7 @@ from core.analytics.tools.grounding import (
     ground_filters,
 )
 from core.analytics.tools.rows import column_label, facts_digest, facts_to_rows
-from core.analytics.tools.scope import TurnScope, turn_scope, years_in
+from core.analytics.tools.scope import TurnScope, pin_latest_year, turn_scope, years_in
 
 __all__ = [
     "CATALOG",
@@ -47,6 +48,7 @@ __all__ = [
     "catalog_text",
     "dimension_columns",
     "metric_names",
+    "pin_latest_year",
     "tool_catalog",
     "tool_names",
     "tool_schemas",

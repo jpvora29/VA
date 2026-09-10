@@ -5,7 +5,8 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 import re
 
-from core.answers.facts import AnswerFact, FactPack, PERIOD_COLUMNS, format_value, label, stable_id
+from core.answers.facts import (AnswerFact, FactPack, format_value, is_period_column,
+                               label, period_rank, stable_id)
 
 
 @dataclass(frozen=True)
@@ -23,7 +24,7 @@ class AnswerClaim:
 
 
 def context(fact: AnswerFact, *, omit_period: bool = False) -> str:
-    values = [v for k, v in fact.dimensions if not omit_period or k.lower() not in PERIOD_COLUMNS]
+    values = [v for k, v in fact.dimensions if not omit_period or not is_period_column(k)]
     return " · ".join(dict.fromkeys(values))
 
 
@@ -47,8 +48,14 @@ def observation(fact: AnswerFact, question: str) -> AnswerClaim:
 
 
 def period_key(fact: AnswerFact) -> tuple:
-    dims = {key.lower(): value for key, value in fact.dimensions}
-    return tuple((key, dims[key]) for key in ("year", "year_quarter", "yearquarter", "yearmonth", "quarter", "month", "date", "period") if key in dims)
+    """This fact's period dimensions, coarse to fine — its position in time.
+
+    Read by predicate rather than from a fixed list of names, so a flow that
+    spells its year column `Survey_Year` has a period at all. Ordering is shared
+    (`facts.period_rank`) so two facts always compare on the same axes.
+    """
+    periods = [(key.lower(), value) for key, value in fact.dimensions if is_period_column(key)]
+    return tuple(sorted(periods, key=lambda pair: period_rank(pair[0])))
 
 
 def period_order(fact: AnswerFact) -> tuple:
@@ -83,7 +90,7 @@ def compile_claims(pack: FactPack, question: str) -> tuple[AnswerClaim, ...]:
     groups = defaultdict(list)
     for fact in pack.facts:
         if period_key(fact):
-            dims = tuple((k, v) for k, v in fact.dimensions if k.lower() not in PERIOD_COLUMNS)
+            dims = tuple((k, v) for k, v in fact.dimensions if not is_period_column(k))
             groups[(fact.metric, fact.unit, dims, fact.lens)].append(fact)
     for facts in groups.values():
         # Ambiguous duplicate periods are not a valid time series.
@@ -94,24 +101,9 @@ def compile_claims(pack: FactPack, question: str) -> tuple[AnswerClaim, ...]:
             continue
         ordered = sorted(facts, key=period_order)
         claims.append(change_claim(ordered[-2], ordered[-1], question))
-    by_cut = defaultdict(dict)
-    for fact in pack.facts:
-        by_cut[(fact.dimensions, fact.lens, fact.source_id)][fact.metric.lower()] = fact
-    for metrics in by_cut.values():
-        for name, peer in metrics.items():
-            if not name.startswith("peer_avg_"):
-                continue
-            subject = metrics.get(name.removeprefix("peer_avg_"))
-            if subject is None or subject.unit != peer.unit:
-                continue
-            delta = subject.value - peer.value
-            direction = "above" if delta > 0 else "below" if delta < 0 else "equal to"
-            text = f"{label(subject.metric)} was {subject.rendered}, {direction} the peer average of {peer.rendered}"
-            if delta:
-                unit = "percentage_points" if subject.unit == "percent" else subject.unit
-                text += f" by {format_value(abs(delta), unit)}"
-            text += f" ({context(subject)})." if context(subject) else "."
-            claims.append(AnswerClaim(stable_id("c_", [subject.id, peer.id, "peer_gap"]),
-                text, (subject.id, peer.id), "peer_gap",
-                f"{subject.value:g} - {peer.value:g} = {delta:g}", relevance(question, subject) + 8))
+    # Benchmarks pair across result sets, so they are matched on what makes two
+    # figures comparable rather than on arriving together — see
+    # `core.answers.benchmark`.
+    from core.answers.benchmark import benchmark_claims
+    claims.extend(benchmark_claims(pack.facts, question))
     return tuple(sorted(claims, key=lambda c: (-c.priority, c.id)))

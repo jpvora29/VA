@@ -30,10 +30,8 @@ import os
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple
 
-from core.analytics.library import get_latest_year
 from core.analytics.orchestrator import AnalyticsOrchestrator
 from core.analytics.sql import flow_spec
-from core.analytics.timeframe import names_a_timeframe
 from core.analytics.tools import (
     GroundedCall,
     TurnScope,
@@ -42,10 +40,11 @@ from core.analytics.tools import (
     facts_digest,
     facts_to_rows,
     ground_calls,
+    pin_latest_year,
     tool_schemas,
     turn_scope,
 )
-from core.analytics.types import AnalyticsFact, PrimitiveArgs
+from core.analytics.types import AnalyticsFact
 from core.observability import log_event
 from logger import get_logger
 
@@ -429,36 +428,20 @@ def _pin_latest_year(
     user_query: str,
     engine: Optional[Any] = None,
 ) -> TurnScope:
-    """Default the scope to the latest year in the data when nothing named a period.
+    """The turn scope with the latest year pinned when nothing named a period.
 
     Without this a bare "what is Zurich's premium in Canada?" sums EVERY year in the
-    book into one number. The flows' timeframe skills have always stated the rule —
-    no time reference means the latest year, never an all-years aggregate — but the
-    tool path had no way to apply it: `turn_scope` reads a literal four-digit year out
-    of the plan, so a blank timeframe AND a relative one ("latest year", "most
-    recent") both left the scope unpinned.
-
-    The year is read from the data via `get_latest_year`, not from a hard-coded list,
-    so it stays correct as the warehouse loads forward. A turn that DOES name a
-    timeframe — an explicit year, a quarter, or a multi-period term like YoY or trend
-    — is left exactly as it was: those need more than one year, and pinning one would
-    break them.
+    book into one number. The rule itself lives in `core.analytics.tools.scope` so the
+    analytical path applies exactly the same one — it used to have none at all, which
+    is where an unscoped all-years aggregate actually reached readers.
     """
-    spec = flow_spec(flow)
-    year_column = spec.date_columns.get("year")
-    if not year_column or year_column in scope.filters:
-        return scope
-    if names_a_timeframe(user_query):
-        return scope
-    facts = get_latest_year(
-        PrimitiveArgs(flow=flow, metric="", group_by=(), filters=dict(scope.filters)),
-        engine=engine,
+    filters, year = pin_latest_year(
+        flow, scope.filters, user_query=user_query, engine=engine
     )
-    if not facts:
+    if year is None:
         return scope
-    year = int(facts[0].value)
     logger.info("analytics scope defaulted to latest year %s (%s)", year, flow)
-    return replace(scope, filters={**scope.filters, year_column: year})
+    return replace(scope, filters=filters)
 
 
 def _parse_plan(plan_json: str) -> Dict[str, Any]:

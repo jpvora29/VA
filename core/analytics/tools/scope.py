@@ -101,3 +101,48 @@ def turn_scope(
             filters[year_column] = _collapse(years)
 
     return TurnScope(filters=filters, unmatched=unmatched)
+
+
+def pin_latest_year(
+    flow: str,
+    filters: Mapping[str, Any],
+    *,
+    user_query: str,
+    engine: Optional[Any] = None,
+) -> Tuple[Dict[str, Any], Optional[int]]:
+    """Default a period-less scope to the latest year in the data.
+
+    Both flows' timeframe skills have always stated the rule — a question that
+    names no time reference means the latest year, never an all-years aggregate —
+    and until now only the deterministic rails applied it. The analytical path
+    hands `compute_metric` whatever filters the model wrote, and a model that
+    omits the year gets every year in the book silently summed into one figure.
+    That is the worst kind of wrong answer: plausible, precise, and off by
+    however many years the warehouse holds.
+
+    So the rule lives here, once, and both paths call it. A turn that DOES name a
+    timeframe — an explicit year, a quarter, or a multi-period term like YoY or
+    trend — is returned untouched: those need more than one year and pinning one
+    would break them.
+
+    Returns the filters to use and the year that was pinned, or ``None`` when
+    nothing was. The caller needs that second value: a default the reader cannot
+    see is worse than no default (`core.answers.scope`).
+    """
+    from core.analytics.library import get_latest_year
+    from core.analytics.timeframe import names_a_timeframe
+    from core.analytics.types import PrimitiveArgs
+
+    pinned = dict(filters)
+    year_column = flow_spec(flow).date_columns.get("year")
+    if not year_column or year_column in pinned or names_a_timeframe(user_query):
+        return pinned, None
+    facts = get_latest_year(
+        PrimitiveArgs(flow=flow, metric="", group_by=(), filters=dict(pinned)),
+        engine=engine,
+    )
+    if not facts:
+        return pinned, None
+    year = int(facts[0].value)
+    pinned[year_column] = year
+    return pinned, year

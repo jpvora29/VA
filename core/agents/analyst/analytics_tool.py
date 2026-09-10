@@ -13,7 +13,8 @@ everything the library does not cover, so the solver loses no reach.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional, Sequence
+from dataclasses import replace
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from pydantic import BaseModel, Field
 
@@ -24,6 +25,7 @@ from core.analytics.tools import (
     catalog_text,
     facts_to_rows,
     ground_calls,
+    pin_latest_year,
     tool_names,
 )
 from core.observability import log_event
@@ -75,6 +77,7 @@ def build_compute_tool(
     lens: str,
     *,
     flow: str = "",
+    question: str = "",
     peers: Sequence[str] = (),
     orchestrator: Optional[AnalyticsOrchestrator] = None,
     matcher: Optional[ValueMatcher] = None,
@@ -97,6 +100,17 @@ def build_compute_tool(
 
     runner = orchestrator or AnalyticsOrchestrator()
     pinned_flow = flow
+    # One `SELECT MAX(year)` per distinct scope, not per tool call. A solver makes
+    # several calls over the same slice, and the latest year cannot move mid-turn.
+    latest_year_cache: Dict[Any, Any] = {}
+
+    def scoped_to_latest_year(call_flow: str, filters: Mapping[str, Any]):
+        key = (call_flow, tuple(sorted((str(k), str(v)) for k, v in filters.items())))
+        if key not in latest_year_cache:
+            latest_year_cache[key] = pin_latest_year(
+                call_flow, filters, user_query=question, engine=engine
+            )
+        return latest_year_cache[key]
 
     def compute_metric(
         flow: str,
@@ -121,6 +135,17 @@ def build_compute_tool(
             )
 
         grounded = grounding.calls[0]
+        # The solver writes its own filters, so a sub-question that does not think
+        # to say WHEN would otherwise sum every year in the warehouse into one
+        # figure and present it as this year's. The deterministic rails have always
+        # defaulted a period-less scope to the latest year; this path had no such
+        # rule, which is where the unscoped all-years aggregate actually reached
+        # readers. `question` is the turn's own words, so a query that DOES name a
+        # timeframe (an explicit year, a quarter, YoY, a trend) is left alone.
+        scoped, defaulted = scoped_to_latest_year(flow, grounded.filters)
+        if defaulted is not None:
+            grounded = replace(grounded, filters=scoped)
+            logger.info("solver scope defaulted to latest year %s (%s)", defaulted, flow)
         # A pinned peer set belongs to one flow; a call against the other flow
         # resolves its peers from the Peers table as usual.
         pinned = tuple(peers) if peers and flow == pinned_flow else None
@@ -158,6 +183,9 @@ def build_compute_tool(
                 "lens": lens,
                 "scope": dict(grounded.filters),
                 "facts": visible_facts,
+                # So the answer can SAY it chose the period. A default the reader
+                # cannot see is worse than no default — see `core.answers.scope`.
+                "defaulted_year": defaulted,
             }
         )
         log_event(

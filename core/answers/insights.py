@@ -10,12 +10,34 @@ from dataclasses import dataclass, replace
 import re
 
 from core.answers.claims import AnswerClaim, change_claim, compile_claims, context, period_key, period_order
-from core.answers.facts import AnswerFact, FactPack, PERIOD_COLUMNS, format_value, stable_id
+from core.answers.facts import AnswerFact, FactPack, format_value, is_period_column, stable_id
 
 
 PRODUCT_COLUMNS = {"product", "product_line", "productline", "line_of_business", "lob"}
 PREMIUM_COLUMNS = {"premium", "marsh_premium", "marsh_placed_premium"}
 TOTAL_LABELS = {"all", "total", "overall", "grand total", "all products", "all product lines"}
+
+# Words that make a question explicitly about MOVEMENT. Once the trigger for the
+# whole decomposition below; now it gates one claim only — see the note there.
+MOVEMENT_WORDS = re.compile(r"growth|grow|change|declin|increas|trend|driver", re.I)
+
+
+def asks_about_movement(question: str) -> bool:
+    """Whether the question itself names a movement.
+
+    This used to decide whether the reader got a decomposition at all, and that
+    was the wrong question to ask. "How is Chubb performing?" and "Show Chubb's
+    premium growth" are the same request over the same rows, and only the second
+    one matched, so the first got four bare year-on-year lines and none of the
+    drivers, offsets, breadth, mix or concentration underneath them. What a
+    decomposition needs is two periods and a slice to cut by — a property of the
+    EVIDENCE, which `growth_groups` already checks — not a verb in the prompt.
+
+    An empty question is not a question that failed to mention movement: record
+    verification replays the compiler with no question text, so gating there
+    would withhold a claim the stored answer contains and fail every record.
+    """
+    return not question or bool(MOVEMENT_WORDS.search(question))
 
 
 @dataclass(frozen=True)
@@ -62,7 +84,7 @@ def growth_groups(pack: FactPack, *, combine_sources: bool = False) -> tuple[Gro
         if not product or not period_key(fact) or not all(period_order(fact)):
             continue
         base = tuple((k, v) for k, v in fact.dimensions
-                     if k.lower() not in PERIOD_COLUMNS | PRODUCT_COLUMNS)
+                     if not is_period_column(k) and k.lower() not in PRODUCT_COLUMNS)
         # The recorded metric, lens, non-period scope and cutoff identify a
         # comparison. A different SQL/tool call is not itself a different book.
         # Keep unscoped results isolated because their population is unknown.
@@ -259,9 +281,20 @@ def compile_answer_claims(pack: FactPack, question: str, *, legacy: bool = False
                       and f.support and f.support[0].get("measure_name")
                       and f.support[0].get("prior_year") is not None}
     claims = [c for c in claims if not set(c.fact_ids) & expanded_rates]
-    if question and not re.search(r"growth|grow|change|declin|increas|trend|driver", question, re.I):
+    if not legacy:
+        # Perception has its own decomposition — see `core.answers.survey`. Kept
+        # out of the legacy path so version 2 records still reproduce.
+        from core.answers.survey import compile_survey_claims
+        claims.extend(compile_survey_claims(pack, question))
+    movement = asks_about_movement(question)
+    # Version 2 records reproduce the old wording gate exactly, or they stop
+    # verifying. Everything written since is gated on the EVIDENCE instead.
+    if legacy and not movement:
         return tuple(claims)
-    if not any(c.kind == "change" for c in claims) and pack.facts:
+    # "I cannot compute growth" answers a QUESTION about growth. Telling someone
+    # who did not ask about movement that a movement cannot be computed is noise,
+    # so this one claim stays gated on the wording.
+    if movement and not any(c.kind == "change" for c in claims) and pack.facts:
         ids = tuple(sorted(f.id for f in pack.facts))
         claims.append(AnswerClaim(stable_id("c_", [ids, "comparison_coverage"]),
             "The returned evidence does not identify both comparison periods, so I cannot calculate a full growth breakdown.",

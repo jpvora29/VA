@@ -51,7 +51,13 @@ it best.
 - `already_on_screen_as_filters` — the reader can see these as chips beside your
   answer. Do not restate them in every sentence.
 - `minimum_the_answer_must_convey` — the plain version. Your answer must carry
-  its headline figure; everything else about it is yours to improve on."""
+  its headline figure; everything else about it is yours to improve on.
+- `period_chosen_because_the_question_named_none` — when this is set, the reader
+  did not say WHICH period and the application picked the latest one in the data.
+  Say so once, in the opening sentence, naming the period ("in 2025, the latest
+  year in the data"). A figure for one year read as though it were the whole book
+  is the error this line exists to prevent. When it is empty, say nothing about
+  it — the reader chose the period themselves."""
 
 _CLOSING = """Write the answer now, as Markdown, following the OUTPUT CONTRACT
 above. No preamble, no sign-off, no "based on the data". Every number copied from

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from core.scope import CHIP_RULES, chips_from_state
 
@@ -36,3 +36,17 @@ def matching_scope_dimensions(dimensions: list[dict[str, str]], scope: DisplaySc
         shared.update((key, actual) for dims in dimensions for key, actual in dims.items()
                       if scope_key(key) == kind)
     return shared
+
+
+def defaulted_period(evidence: Sequence[Mapping]) -> str:
+    """The period the turn chose for itself, or "" when the reader named one.
+
+    Every result set records the year it was pinned to when the question named
+    no timeframe (`core.analytics.tools.scope.pin_latest_year`). They agree in
+    practice — one rule, one turn — but a turn that mixed two would have nothing
+    honest to say in one sentence, so a disagreement reports nothing rather than
+    picking a side.
+    """
+    years = {str(item.get("defaulted_year")) for item in evidence or ()
+             if item.get("defaulted_year") is not None}
+    return years.pop() if len(years) == 1 else ""

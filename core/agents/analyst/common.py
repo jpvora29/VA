@@ -275,7 +275,8 @@ def build_tools(
         # benchmarks the same group the prompt directive pins for run_sql.
         computed = [
             build_compute_tool(
-                evidence, lens, flow=flow, peers=peers, redactor=redactor
+                evidence, lens, flow=flow, question=question, peers=peers,
+                redactor=redactor,
             )
         ]
 

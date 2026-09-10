@@ -61,6 +61,7 @@ class NarrationBrief:
     claims: tuple[AnswerClaim, ...] = ()
     facts: tuple[AnswerFact, ...] = ()
     scope: DisplayScope = ()
+    defaulted_period: str = ""
 
     def as_payload(self) -> dict:
         """The brief as JSON, in the words the writer's contract uses."""
@@ -77,6 +78,7 @@ class NarrationBrief:
                 for f in self.facts[:BRIEF_FIGURES]
             ],
             "minimum_the_answer_must_convey": self.ledger,
+            "period_chosen_because_the_question_named_none": self.defaulted_period,
         }
 
 
@@ -97,10 +99,12 @@ Writer = Callable[[NarrationBrief], str]
 
 
 def build_brief(question: str, shape: str, ledger: str, claims: Sequence[AnswerClaim],
-                facts: Sequence[AnswerFact], scope: DisplayScope = ()) -> NarrationBrief:
+                facts: Sequence[AnswerFact], scope: DisplayScope = (),
+                defaulted_period: str = "") -> NarrationBrief:
     """The brief for one answer, in the order the ledger ranked it."""
     return NarrationBrief(question=question, shape=shape, ledger=ledger,
-                          claims=tuple(claims), facts=tuple(facts), scope=tuple(scope))
+                          claims=tuple(claims), facts=tuple(facts), scope=tuple(scope),
+                          defaulted_period=str(defaulted_period or ""))
 
 
 def supported_numbers(claims: Sequence[AnswerClaim],

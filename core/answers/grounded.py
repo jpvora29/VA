@@ -42,6 +42,10 @@ class AnswerRequest:
     shape: str = "analyst"
     presentation: str = "prose"
     scope: DisplayScope = ()
+    #: The period the turn chose because the question named none. The reader has
+    #: to be told: a figure for one year, presented as though it were the whole
+    #: book, is the same failure as an all-years total presented as this year's.
+    defaulted_period: str = ""
 
 
 @dataclass(frozen=True)
@@ -150,7 +154,8 @@ def write_narration(request: AnswerRequest, claims: Sequence[AnswerClaim],
     """
     if narrator is None or not ledger:
         return Narration()
-    brief = build_brief(request.question, request.shape, ledger, claims, facts, request.scope)
+    brief = build_brief(request.question, request.shape, ledger, claims, facts,
+                        request.scope, request.defaulted_period)
     return narrate(brief, narrator)
 
 

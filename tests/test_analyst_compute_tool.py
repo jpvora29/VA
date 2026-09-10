@@ -49,8 +49,9 @@ def matcher(_flow, _column, term):
     return list(_VALUES.get(str(term).strip().lower(), []))
 
 
-def tool_for(evidence, engine, lens="dimensional_breakdown"):
-    return build_compute_tool(evidence, lens, matcher=matcher, engine=engine)
+def tool_for(evidence, engine, lens="dimensional_breakdown", question=""):
+    return build_compute_tool(evidence, lens, matcher=matcher, engine=engine,
+                              question=question)
 
 
 def test_a_named_calculation_returns_computed_rows(engine):
@@ -79,7 +80,7 @@ def test_the_result_joins_the_same_evidence_contract_as_run_sql(engine):
     )
     assert len(evidence) == 1
     entry = evidence[0]
-    assert set(entry) == {"flow", "sql", "rows", "lens", "scope", "facts"}
+    assert set(entry) == {"flow", "sql", "rows", "lens", "scope", "facts", "defaulted_year"}
     assert entry["facts"] and all("support" in fact for fact in entry["facts"])
     assert entry["lens"] == "market_context"
     assert entry["sql"].startswith("--")           # provenance, not an executed query
@@ -139,3 +140,60 @@ def test_a_pinned_peer_set_is_honoured_by_a_computed_peer_average(engine):
     )
     # The pinned CHUBB (500), not the Peers-table AIG (200).
     assert out["rows"][0]["Peer_Avg_Premium"] == 500.0
+
+
+# ── the period the solver forgot to name ─────────────────────────────────────
+
+
+@pytest.fixture
+def two_year_engine(engine):
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                'INSERT INTO GPR (Carrier_Group, Country, Product_Line, Year, Premium) '
+                'VALUES (:cg, :co, :pl, :yr, :pr)'
+            ),
+            [{"cg": "ZURICH GROUP", "co": "Canada", "pl": "Property", "yr": 2025, "pr": 400.0}],
+        )
+    return engine
+
+
+def _call(evidence, engine, question, filters):
+    return json.loads(
+        tool_for(evidence, engine, question=question).invoke(
+            {"flow": "gpr", "name": "compute_breakdown", "metric": "premium", "filters": filters}
+        )
+    )
+
+
+def test_a_call_with_no_year_is_scoped_to_the_latest_one(two_year_engine):
+    """The solver writes its own filters and there is no implicit scope here, so a
+    sub-question that does not say WHEN summed every year in the book into one
+    figure and presented it as this year's."""
+    evidence = []
+    out = _call(evidence, two_year_engine, "How is Zurich performing in Canada?",
+                {"Carrier_Group": "ZURICH GROUP", "Country": "Canada"})
+    assert out["rows"][0]["Premium"] == 400.0        # 2025 alone, not 2025 + 2024
+    assert evidence[0]["scope"]["Year"] == 2025
+    assert evidence[0]["defaulted_year"] == 2025
+
+
+def test_a_question_that_names_its_own_period_is_left_alone(two_year_engine):
+    evidence = []
+    _call(evidence, two_year_engine, "Zurich's Canada premium in 2024",
+          {"Carrier_Group": "ZURICH GROUP", "Country": "Canada", "Year": 2024})
+    assert evidence[0]["scope"]["Year"] == 2024
+    assert evidence[0]["defaulted_year"] is None
+
+
+def test_a_multi_period_question_is_never_pinned_to_one_year(two_year_engine):
+    """YoY, a trend or "across years" need more than one year; pinning one breaks
+    the very analysis being asked for."""
+    for question in ("Zurich's premium growth year on year",
+                     "How has Zurich's premium trended?",
+                     "Zurich premium across years"):
+        evidence = []
+        out = _call(evidence, two_year_engine, question,
+                    {"Carrier_Group": "ZURICH GROUP", "Country": "Canada"})
+        assert evidence[0]["defaulted_year"] is None, question
+        assert out["rows"][0]["Premium"] == 600.0    # both years, as asked
