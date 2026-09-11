@@ -233,6 +233,65 @@ def _bullets(*items):
     return [tuple(item) for item in items]
 
 
+# ── ownership is per SLIDE, not per book ────────────────────────────────────
+
+
+def _overall_book():
+    """The real overall template's shape: the headline page, then the summary page.
+
+    Slide 2 is "Positive Growth and Market Leadership Highlights" and carries ONE prose
+    box (``thesis``) beside its own KPI tiles — premium, premium YoY, country YoY, share
+    of Marsh premium, rank. Slide 3 is "Carrier Trading Summary with Marsh" and carries
+    four (YTD Performance, 2025 Reflections, Carrier Priorities, Key Messages).
+    """
+    def column(slide, i, topic):
+        return B.Column(field_id=f"{slide}.{topic}",
+                        targets=(B.Target(0, f"note:{slide}:{i}:0"),),
+                        topic=topic, node=f"s{slide}-{topic}", bullets=2)
+
+    return (column(2, 34, "thesis"),
+            column(3, 10, "performance"), column(3, 16, "reflections"),
+            column(3, 20, "priorities"), column(3, 22, "key_messages"))
+
+
+def test_the_headline_page_is_not_stripped_of_premium_by_the_next_slide():
+    """The reported bug: the overall page could not mention the KPIs printed on it.
+
+    Allocation ran over a whole BOOK, which spans slides, so ``scale`` — premium and the
+    Marsh pool around it — went to Key Messages on slide 3 and the headline box on slide 2
+    was then forbidden to make that point "in any form". The page's biggest tile is
+    "$xxx.xm Premium written with Marsh" and its only prose box could not discuss it.
+    """
+    columns = _overall_book()
+    plan = E.plan_deck([columns])
+    headline = plan.fields.get("2.thesis")
+    brief = plan.brief("2.thesis")
+    # Slide 2 has one prose box, so there is nobody to divide findings with and nothing to
+    # ban. What matters is that it is not handed another slide's ban list.
+    assert "the size of the book" not in brief, "premium must not be banned on this page"
+    assert headline is None or "scale" not in dict(headline.elsewhere or ())
+
+
+def test_the_summary_slide_still_divides_its_own_findings():
+    """Per-slide allocation must not become no allocation: slide 3's four boxes share out."""
+    plan = E.plan_deck([_overall_book()])
+    owners = {fid: plan.fields[fid].owns for fid in
+              ("3.performance", "3.reflections", "3.priorities", "3.key_messages")
+              if fid in plan.fields}
+    assert owners, "the four-box slide must still be planned"
+    claimed = [t for owns in owners.values() for t in owns]
+    assert len(claimed) == len(set(claimed)), "one finding cannot have two homes on a slide"
+
+
+def test_a_later_slide_reaching_for_the_headline_finding_is_told_to_add_something():
+    """Cross-page repetition is the recap rule's job, and it still runs deck-wide."""
+    plan = E.plan_deck([_overall_book()])
+    briefs = [plan.brief(f"3.{t}") for t in
+              ("performance", "reflections", "priorities", "key_messages")]
+    assert any("ALREADY MADE EARLIER IN THIS DECK" in b for b in briefs), \
+        "slide 3 must know what slide 2 already said"
+
+
 # ── the synthesis field: it may BUILD on an owned finding, not restate it ────
 #
 # The fields the allocation leaves without a topic are the summary ones, and their job is

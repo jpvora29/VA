@@ -113,7 +113,10 @@ _TOPIC_QUESTIONS: Dict[str, Tuple[str, ...]] = {
 # and while ``marsh.yoy`` sat in the demoted block every topic reported a fall in
 # isolation and read like a spreadsheet cell with a verb.
 _TOPIC_EVIDENCE: Dict[str, Tuple[str, ...]] = {
-    "thesis": ("sow.", "carrier.", "marsh.", "rank.", "peer."),
+    # Premium first. ``thesis`` is the headline page's only prose box, and that page prints
+    # premium and premium YoY as its largest tiles — a lead that opened on share of wallet
+    # was arguing beside the numbers rather than about them.
+    "thesis": ("carrier.", "marsh.", "sow.", "rank.", "peer."),
     "key_messages": ("carrier.", "marsh.", "sow.", "peer.", "segment."),
     "performance": ("mover.", "pool.", "trend.", "carrier.", "marsh."),
     "working": ("mover.", "sow.", "segment.", "carrier.", "marsh."),
@@ -191,6 +194,11 @@ _ARGUMENT = (
     "Later bullets may refer back to it — 'that decline', 'the same segment', 'against this' — "
     "where the reference genuinely sharpens the point. Never refer FORWARD to a bullet not yet read, "
     "and never use a reference a reader cannot resolve from the bullets above it. "
+    "A back-reference belongs INSIDE the sentence, never at the start of it: open every bullet on its "
+    "own subject — the segment, the metric or the carrier — and never on 'That is because', "
+    "'That reflects' or any other pointer back. A reader skimming the slide sees the first few words "
+    "of each bullet and nothing else, and a column of them explaining the line above reads as one "
+    "sentence chopped into pieces. "
 )
 
 # Observation -> interpretation -> question. The old text said a result 'can stand alone' and
@@ -439,7 +447,14 @@ _TEMPLATE_OPENERS = re.compile(
     r"^\s*(?:the\s+(?:call(?:\s+here)?\s+is|book\s+wants|reason\s+is|takeaway\s+is|"
     r"story\s+here\s+is|picture\s+here\s+is|question\s+is)"
     r"|what\s+this\s+means\s+is"
-    r"|this\s+(?:suggests|indicates|means)\s+that)\b",
+    r"|this\s+(?:suggests|indicates|means)\s+that"
+    # Permitting back-references inside a bullet ("that decline", "the same segment") let
+    # the reference become the OPENING: a run of bullets each starting "That is because…"
+    # reads as one sentence chopped up, and the first words of a bullet are the only ones
+    # a reader skimming a slide is guaranteed to see. The reference belongs mid-sentence.
+    r"|(?:that|this)\s+is\s+because"
+    r"|(?:that|this)\s+(?:reflects|follows|explains|stems|results)\b"
+    r"|(?:that|this)\s+is\s+(?:why|driven|down\s+to)\b)\b",
     re.I,
 )
 

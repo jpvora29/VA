@@ -40,6 +40,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import (
+    Any,
     Dict,
     Iterable,
     List,
@@ -299,6 +300,9 @@ class PlannedColumn(Protocol):
     field_id: str
     node: str
     topic: str
+    #: Where the column lands. Ownership is allocated per SLIDE, and the slide index is
+    #: carried in the target's role (``note:<slide>:<shape>:<n>``) — see :func:`_page_of`.
+    targets: Tuple[Any, ...]
 
 
 @dataclass(frozen=True)
@@ -392,6 +396,28 @@ def _preferences(column: PlannedColumn) -> Tuple[ClaimTopic, ...]:
     return tuple(dict.fromkeys(t for t in topics if t))
 
 
+def _page_of(column: PlannedColumn) -> Tuple[Any, str]:
+    """The slide a column lands on — ``(value set, slide index)``.
+
+    Read off the first target's role, which is ``note:<slide>:<shape>:<n>``. A column with
+    no target cannot be placed and falls into one bucket, where it is allocated against the
+    other unplaceable ones rather than against a real page.
+    """
+    targets = tuple(getattr(column, "targets", ()) or ())
+    if not targets:
+        return (None, "")
+    parts = str(targets[0].role).split(":")
+    return (targets[0].value_set, parts[1] if len(parts) > 1 else "")
+
+
+def _pages(columns: Sequence[PlannedColumn]) -> List[List[PlannedColumn]]:
+    """``columns`` grouped by slide, in the order the deck reads them."""
+    grouped: Dict[Tuple[Any, str], List[PlannedColumn]] = {}
+    for column in columns:
+        grouped.setdefault(_page_of(column), []).append(column)
+    return list(grouped.values())
+
+
 def _allocate(preferences: Mapping[str, Sequence[ClaimTopic]]) -> Dict[ClaimTopic, str]:
     """``{topic: field_id}`` — a draft pick over the section's columns.
 
@@ -428,7 +454,24 @@ class EditorialPlanBuilder:
         self._first_home: Dict[ClaimTopic, str] = {}
 
     def add_section(self, columns: Sequence[PlannedColumn]) -> "EditorialPlanBuilder":
-        """One page's worth of fields: allocate its topics, then write each field's job."""
+        """One section's fields, allocated PAGE BY PAGE in the order the deck reads.
+
+        A section is a BOOK and spans slides; ownership is a statement about one SLIDE.
+        Allocating over the whole section meant the deck's headline page — "Positive Growth
+        and Market Leadership Highlights", whose printed KPIs are premium and premium YoY —
+        lost ``scale`` to a Key Messages box on the following slide, and was then forbidden
+        to mention the numbers displayed beside it.
+
+        Repetition ACROSS pages is a different rule with a different answer: ``recaps``,
+        which is fed by :meth:`_remember` and still runs deck-wide, so a later page that
+        reaches for what page two already said is told to add something or leave it.
+        """
+        for page in _pages(columns):
+            self._add_page(page)
+        return self
+
+    def _add_page(self, columns: Sequence[PlannedColumn]) -> "EditorialPlanBuilder":
+        """One slide's worth of fields: allocate its topics, then write each field's job."""
         if len(columns) < 2:
             # One field cannot repeat another, and a plan for it would only narrow what a
             # lone column may say. The recap memory is still fed, so a later page knows.
