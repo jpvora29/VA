@@ -206,6 +206,12 @@ _INTERPRETATION = (
     "is offered as a reading of the evidence ('this leaves the carrier...', 'the gap is concentrated in...'). "
     "A cause you cannot measure is asked as a question, never asserted. "
     "Do not pad a bullet that has nothing further to say — a clean observation beats a manufactured 'so what'. "
+    "TAG EVERY BULLET with its kind, because each is checked against a different bar: "
+    "'observation' states what the evidence shows and every figure, scope and period in it must be exact; "
+    "'interpretation' reads meaning into an observation and is checked for following from the evidence "
+    "rather than for appearing in it; 'recommendation' proposes a review or decision and is checked "
+    "against the named finding behind it. Tag by what the sentence actually DOES — calling a restatement "
+    "an interpretation earns it the stricter bar and loses the line. "
 )
 _TENSION = (
     "Explain a divergence when it matters, such as premium growing while share falls. "

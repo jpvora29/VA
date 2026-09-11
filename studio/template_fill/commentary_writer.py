@@ -105,7 +105,8 @@ def compose_with_agent(request: ColumnRequest) -> Tuple[str, ...]:
                                phase="author", fields=(request.topic,))
     if column is None or not column.bullets:
         return ()
-    judged = [V.Judged(text=(b.text or "").strip(), fact_ids=tuple(b.fact_ids or ()), topic=request.topic)
+    judged = [V.Judged(text=(b.text or "").strip(), fact_ids=tuple(b.fact_ids or ()),
+                       topic=request.topic, kind=(b.kind or "observation").strip().lower())
               for b in column.bullets if (b.text or "").strip()]
     verdict = V.verify(judged, request.pack, glossary_brief=glossary_brief,
                        node=f"commentary-{request.topic}")

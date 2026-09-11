@@ -403,14 +403,16 @@ def _judged_by_field(answer, columns: Sequence[Column]) -> Dict[str, List[Any]]:
             logger.info("commentary_batch: ignoring unrequested field %r", field_id)
             continue
         bullets = [V.Judged(text=(b.text or "").strip(), fact_ids=tuple(b.fact_ids or ()),
-                            topic=wanted[field_id].topic)
+                            topic=wanted[field_id].topic,
+                            kind=(b.kind or "observation").strip().lower())
                    for b in (entry.bullets or ()) if (b.text or "").strip()]
         action = (entry.action or "").strip()
         if action and _wants_action(field_id, columns):
             # The action IS the last line of an imperative column — the brief for
             # ``key_messages`` and ``priorities`` says to end on the ask. Landing it in its
             # own schema field and then dropping it would be asking for work and binning it.
-            bullets.append(V.Judged(text=action, fact_ids=(), topic=wanted[field_id].topic))
+            bullets.append(V.Judged(text=action, fact_ids=(), topic=wanted[field_id].topic,
+                                    kind="recommendation"))
         out[field_id] = bullets
     return out
 
@@ -480,10 +482,10 @@ def _verify_section(by_field: Dict[str, List[Any]], pack, glossary_brief: str,
     claims = V.check_claims([j for _, j in survivors], pack, glossary_brief=glossary_brief,
                             node=f"section-{label}")
     claims.log(f"section-{label}")
-    verified: List[Tuple[str, str, Tuple[str, ...]]] = []
+    verified: List[Tuple[str, str, Tuple[str, ...], str]] = []
     for (fid, judged), verdict in zip(survivors, claims.judged):
         if verdict.kept:
-            verified.append((fid, verdict.text, tuple(judged.fact_ids or ())))
+            verified.append((fid, verdict.text, tuple(judged.fact_ids or ()), judged.kind))
         else:
             dropped[fid].append(verdict.reason or "unsupported claim")
 

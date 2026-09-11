@@ -100,7 +100,8 @@ def stub_model(monkeypatch):
 
     def structured(model, system, user, *, tier="balanced", node="ai", phase="other",
                    fields=(), **kw):
-        calls.append({"node": node, "phase": phase, "fields": tuple(fields), "user": user})
+        calls.append({"node": node, "phase": phase, "fields": tuple(fields), "user": user,
+                      "system": system})
         if model is CommentarySections:
             asked = [line.split()[2] for line in user.splitlines()
                      if line.startswith("--- FIELD ")]
@@ -521,6 +522,44 @@ def test_a_real_deck_refuses_to_ship_when_the_model_is_gone(tmp_path, monkeypatc
         assemble_deck(result, out_path=str(tmp_path / "deck.pptx"),
                       work_dir=str(tmp_path / "work"),
                       slides=DeckSlides.only("overall"))
+
+
+def test_the_judge_is_told_each_bullet_s_kind_so_it_can_apply_the_right_bar(monkeypatch):
+    """One KEEP/DROP boolean over one prompt cannot hold three different bars.
+
+    The judge has to see the tag, or an interpretation gets checked for appearing
+    literally in a fact — which is what made every column read like a table with verbs.
+    """
+    import studio.ai.client as client
+
+    seen = []
+
+    def structured(model, system, user, *, tier="balanced", node="ai", phase="other",
+                   fields=(), **kw):
+        if model is CommentarySections:
+            asked = [line.split()[2] for line in user.splitlines()
+                     if line.startswith("--- FIELD ")]
+            return CommentarySections(sections=[
+                CommentarySection(field_id=fid, bullets=[
+                    CommentaryBullet(text=_SENTENCES[0], fact_ids=["period.year"],
+                                     kind="interpretation"),
+                ]) for fid in asked])
+        seen.append(user)
+        return _approved_verdicts(user)
+
+    monkeypatch.setattr(client, "structured", structured)
+    monkeypatch.setattr(client, "llm_available", lambda: True)
+    rewrites.write_all([_value_set(_facts(), topics=("working",))])
+
+    assert seen, "the verifier must have been asked"
+    assert "[kind: interpretation]" in seen[0]
+
+
+def test_the_writer_is_asked_to_tag_the_kind_it_is_making(monkeypatch, stub_model):
+    """A tag the writer is never asked for defaults to the strictest bar and helps nobody."""
+    rewrites.write_all([_value_set(_facts(), topics=("working",))])
+    author = next(c for c in stub_model if c["phase"] == "author")
+    assert "TAG EVERY BULLET" in author["system"]
 
 
 @pytest.mark.e2e

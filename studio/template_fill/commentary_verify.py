@@ -41,6 +41,11 @@ class Judged:
     kept: bool = True
     reason: str = ""
     topic: str = ""
+    #: observation | interpretation | recommendation — the bar this bullet is judged
+    #: against (:class:`studio.ai.models.CommentaryBullet`). Unknown values are treated as
+    #: ``observation``, which is the strictest, so a writer that omits it loses nothing it
+    #: was entitled to.
+    kind: str = "observation"
 
 
 @dataclass(frozen=True)
@@ -139,13 +144,22 @@ _JUDGE_SYSTEM = (
     "Bullets are given in the order they will be read. A later bullet MAY refer back to an earlier one "
     "('that decline', 'the same segment'); judge it together with the bullet it refers to and KEEP it "
     "where the reference resolves. DROP a reference that points forward or to nothing.\n"
-    "Judge OBSERVATIONS and INTERPRETATIONS on different bars. An observation states what the evidence "
-    "shows: its value, direction, scope, period and comparison must be exact. An interpretation reads "
-    "meaning into an observation ('this leaves the carrier below...', 'the gap is concentrated in...') "
-    "and need NOT appear literally in any one fact — KEEP it where it follows from the cited evidence "
-    "and does not contradict it, and DROP it only where the evidence points the other way, where it "
-    "asserts an unmeasurable cause as fact, or where it overstates the certainty the evidence carries. "
-    "A question or a proposed review is not an assertion; judge it on whether the gap it names is real.\n"
+    "EACH BULLET DECLARES ITS KIND, and the kind sets the bar you judge it against. Judging all three "
+    "alike is what makes commentary read like a table with verbs.\n"
+    "  OBSERVATION — states what the evidence shows. Value, direction, scope, period and comparison "
+    "must be exact and present in the cited facts. This is the strictest bar.\n"
+    "  INTERPRETATION — reads meaning into an observation ('this leaves the carrier below the carriers "
+    "it competes with', 'the shortfall is concentrated in two industries'). It need NOT appear literally "
+    "in any fact. KEEP it where it FOLLOWS FROM the cited evidence and does not contradict it. DROP it "
+    "only where the evidence points the other way, where it asserts an unmeasurable cause as established "
+    "fact, or where it claims more certainty than the evidence carries. Do not demand a citation for the "
+    "meaning itself — only for the figures inside it.\n"
+    "  RECOMMENDATION — proposes a review, a decision or a priority following from a named finding. "
+    "KEEP it where the finding it rests on is real and cited and the action plainly follows. DROP generic "
+    "advice, an action with no named finding behind it, or a proposed outcome stated as achievable.\n"
+    "A bullet tagged INTERPRETATION or RECOMMENDATION that in fact only restates an observation adds "
+    "nothing: DROP it and say so. Mis-tagging is not a reason to drop on its own — judge the sentence "
+    "by what it actually does, and apply the stricter bar when the two disagree.\n"
     "DROP individual peer identities or individual peer financials. The subject carrier and Marsh may be named. "
     "Benchmarks must use the actual definition and count; an average per carrier is not combined share.\n"
     "KEEP a clear, material observation that answers its section, even if it begins with Share, Premium, "
@@ -171,8 +185,9 @@ def _judge_payload(judged: Sequence[Judged], pack, glossary_brief: str) -> str:
     lines.append("SENTENCES:")
     for i, item in enumerate(judged, start=1):
         cites = f"  [cites: {', '.join(item.fact_ids)}]" if item.fact_ids else ""
+        kind = f"  [kind: {item.kind or 'observation'}]"
         context = f"\nSECTION: {item.topic}. {_TOPIC_BRIEF.get(item.topic, '')}" if item.topic else ""
-        lines.append(f"{i}. {item.text}{cites}{context}")
+        lines.append(f"{i}. {item.text}{cites}{kind}{context}")
     return "\n".join(lines)
 
 

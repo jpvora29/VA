@@ -170,7 +170,12 @@ def test_a_field_is_told_what_the_other_fields_own_and_that_units_do_not_help():
     for field_id in others:
         brief = plan.brief(field_id)
         assert "in points OR in premium" in brief
-        assert "in ANY form" in brief
+        assert "not in another unit" in brief, "the units clause is the point of the ban"
+        # The ban is on making it YOUR POINT, not on mentioning it: a movement needs the
+        # book it moved against, and forbidding the comparison outright is what left the
+        # overall page unable to mention premium at all.
+        assert "YOUR POINT" in brief
+        assert "MAY cite one in passing" in brief
 
 
 def test_the_allocation_is_deterministic():
@@ -185,18 +190,31 @@ def test_a_page_with_one_field_gets_no_plan_because_it_cannot_repeat_itself():
     assert plan.is_empty()
 
 
-def test_a_field_left_without_a_home_is_not_handed_the_ban_list():
-    """More fields than findings: the surplus writes unplanned rather than with nowhere to go.
+def test_a_field_left_without_a_home_is_given_the_synthesis_job():
+    """More fields than findings: the surplus synthesises rather than writing unplanned.
 
-    Handing it the ban list alone would forbid it every finding on the page and offer it
-    nothing in exchange, which is the one instruction a column cannot act on.
+    It used to get no plan at all — no job and no ban list — because handing it only the
+    ban list forbids every finding on the page and offers nothing in exchange. The
+    consequence was worse than the problem: the fields the allocation leaves over are the
+    summary ones (Key Messages, Carrier Priorities), and unplanned they simply restated
+    the page. That was the reported repetition. They now get the one job no owning field
+    is free to do — the forward view.
     """
     crowded = _columns(("thesis", "key_messages", "performance", "priorities",
                         "reflections", "working", "challenges", "growth"))
     plan = E.plan_deck([crowded])
+    homed = surplus = 0
     for column in crowded:
         brief = plan.brief(column.field_id)
-        assert not brief or "THIS FIELD IS THE HOME FOR" in brief
+        assert brief, "every field on a crowded page now gets a job"
+        if "THIS FIELD IS THE HOME FOR" in brief:
+            homed += 1
+        else:
+            surplus += 1
+            assert "SYNTHESIS" in brief
+            assert "PROTECT" in brief, "the forward view is what it is for"
+            assert "only repeats a finding is a wasted line" in brief
+    assert homed and surplus, "this page must exercise both branches"
 
 
 def test_the_second_page_to_reach_for_a_finding_is_told_to_add_something():
@@ -211,7 +229,67 @@ def test_the_second_page_to_reach_for_a_finding_is_told_to_add_something():
 
 
 def _bullets(*items):
-    return [(field_id, text, ids) for field_id, text, ids in items]
+    """``(field_id, text, fact_ids)`` or ``(field_id, text, fact_ids, kind)``."""
+    return [tuple(item) for item in items]
+
+
+# ── the synthesis field: it may BUILD on an owned finding, not restate it ────
+#
+# The fields the allocation leaves without a topic are the summary ones, and their job is
+# to take the page's findings forward. `claim_of` reads a bullet's identity off its FIRST
+# citation, so the supporting fact a synthesis bullet names matches the owning field's
+# copy — the gate would drop the one field whose purpose is to reference. The bullet's
+# declared KIND is what separates building on a finding from repeating it.
+
+
+def _synthesis_page():
+    """A page crowded enough that the allocation leaves at least one field homeless."""
+    crowded = _columns(("thesis", "key_messages", "performance", "priorities",
+                        "reflections", "working", "challenges", "growth"))
+    plan = E.plan_deck([crowded])
+    owner = next(c.field_id for c in crowded if "peer_gap" in plan.fields[c.field_id].owns)
+    synth = next(c.field_id for c in crowded if plan.fields[c.field_id].synthesis)
+    return plan, owner, synth
+
+
+def test_a_synthesis_field_may_build_on_a_finding_another_field_owns():
+    plan, owner, synth = _synthesis_page()
+    kept, dropped = E.dedupe(_bullets(
+        (owner, "The book sits 1.7pp below the peer average.", ("peer.gap",), "observation"),
+        (synth, "Closing that gap is where the year's plan has to start, and it means "
+                "defending Cyber first.", ("peer.gap",), "recommendation"),
+    ), plan=plan)
+    assert not dropped, "the summary field's job is to build on what the page established"
+    assert len(kept[synth]) == 1
+
+
+def test_a_synthesis_field_restating_a_finding_still_loses_it():
+    """The exemption is for ADDING something, and 'observation' says it added nothing.
+
+    Without this the one-finding-one-page guarantee stops holding the moment a page
+    carries a summary field, which is every page.
+    """
+    plan, owner, synth = _synthesis_page()
+    kept, dropped = E.dedupe(_bullets(
+        (owner, "The book sits 1.7pp below the peer average.", ("peer.gap",), "observation"),
+        (synth, "The book is 1.7pp behind the peer benchmark.", ("peer.gap",), "observation"),
+    ), plan=plan)
+    assert [d.field_id for d in dropped] == [synth]
+    assert kept[synth] == []
+
+
+def test_an_owning_field_gets_no_exemption_however_it_tags_its_bullet():
+    """Only the homeless field synthesises; a field with a topic argues its own finding."""
+    plan = E.plan_deck([_columns()])
+    owner = next(c.field_id for c in _columns()
+                 if "peer_gap" in plan.fields[c.field_id].owns)
+    other = next(c.field_id for c in _columns()
+                 if c.field_id != owner and not plan.fields[c.field_id].synthesis)
+    kept, dropped = E.dedupe(_bullets(
+        (owner, "The book sits 1.7pp below the peer average.", ("peer.gap",), "observation"),
+        (other, "That distance is the year's priority.", ("peer.gap",), "recommendation"),
+    ), plan=plan)
+    assert [d.field_id for d in dropped] == [other]
 
 
 def test_the_home_keeps_the_finding_and_the_other_fields_lose_their_copy():

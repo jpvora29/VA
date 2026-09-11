@@ -61,10 +61,24 @@ class CriticReport(BaseModel):
 
 
 class CommentaryBullet(BaseModel):
-    text: str = Field(description="One independent finding in one or two short complete sentences")
+    text: str = Field(description="One point in one or two short complete sentences")
     fact_ids: List[str] = Field(
         default_factory=list,
         description="Ids of the evidence facts this sentence's figures and claims come from",
+    )
+    # The bar a bullet is judged against depends on what KIND of claim it makes, and one
+    # KEEP/DROP boolean over one prompt cannot apply three different bars. Tagging it here
+    # is what lets the verifier hold an observation to the evidence exactly while letting
+    # an interpretation reach past it — the difference between commentary that reads as
+    # analysis and commentary that reads as a table with verbs.
+    kind: str = Field(
+        default="observation",
+        description=(
+            "observation = states what the evidence shows; "
+            "interpretation = reads meaning into an observation (what it means for this "
+            "carrier's position); "
+            "recommendation = proposes a review or action following from a named finding"
+        ),
     )
 
 

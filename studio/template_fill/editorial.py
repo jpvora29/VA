@@ -312,6 +312,10 @@ class FieldPlan:
     elsewhere: Tuple[Tuple[ClaimTopic, str], ...] = ()
     #: topic -> an earlier page in the deck that already made it.
     recaps: Tuple[Tuple[ClaimTopic, str], ...] = ()
+    #: True for a field the allocation could not give a topic of its own. Its job is to
+    #: SYNTHESISE what the page established rather than to own a finding — see
+    #: :meth:`brief`. Previously such a field got no plan at all, which is why it repeated.
+    synthesis: bool = False
 
     def brief(self) -> str:
         """The field's editorial ask, as a prompt block — empty when it has nothing to say."""
@@ -320,10 +324,25 @@ class FieldPlan:
             parts.append("THIS FIELD IS THE HOME FOR: "
                          + "; ".join(_TOPIC_LABEL.get(t, t) for t in self.owns)
                          + ". Lead on it.")
+        if self.synthesis:
+            # A page carries more fields than there are findings to go round, and the
+            # leftovers are always the summary fields — Key Messages, Priorities. Handing
+            # them nothing and no ban list (what this used to do) is what let them restate
+            # the page. Their real job is the one no owning field can do: the forward view.
+            parts.append(
+                "THIS FIELD OWNS NO FINDING OF ITS OWN — it is the page's SYNTHESIS. Do not "
+                "restate what the fields below established; take it forward. Say which "
+                "products or industries the carrier must PROTECT, where premium or share "
+                "moved against it, and where it trails the benchmark by enough to act on. "
+                "Name the finding you are building on, then add the judgement or the "
+                "decision it points to. A bullet that only repeats a finding is a wasted line.")
         if self.elsewhere:
             parts.append(
-                "ANOTHER FIELD ON THIS PAGE OWNS THESE, so do not make them here in ANY "
-                "form — not in other words, not in another unit, not as a consequence: "
+                "ANOTHER FIELD ON THIS PAGE IS THE HOME FOR THESE, so do not make any of "
+                "them YOUR POINT — not in other words, not in another unit, not as a "
+                "consequence. You MAY cite one in passing as the comparison that gives your "
+                "own point its meaning (a movement needs the book it moved against), but the "
+                "sentence must still be about your finding, not theirs: "
                 + "; ".join(f"{_short(t)} ({node})" for t, node in self.elsewhere) + ".")
         if self.recaps:
             parts.append(
@@ -420,15 +439,16 @@ class EditorialPlanBuilder:
         nodes = {c.field_id: c.node for c in columns}
         for column in columns:
             owns = tuple(t for t, fid in owner.items() if fid == column.field_id)
-            if not owns:
-                # A page can carry more fields than there are findings to go round. A
-                # field with no home of its own must NOT be handed the ban list: that
-                # forbids it every finding on the page and offers it nothing instead,
-                # which is a field with nowhere to go. It writes unplanned, and the gate
-                # still catches it if what it writes turns out to be a repeat.
-                continue
+            # A field with no home of its own used to get NO PLAN — no job and no ban
+            # list — on the reasoning that banning every finding while offering none
+            # leaves it nowhere to go. True, but the consequence was worse: the fields
+            # left over by the allocation are the summary ones (Key Messages, Carrier
+            # Priorities), and an unplanned summary field simply restated the page. It
+            # now gets a plan whose job is synthesis, which is the thing no owning field
+            # is free to do.
             self._fields[column.field_id] = FieldPlan(
                 field_id=column.field_id, node=column.node, owns=owns,
+                synthesis=not owns,
                 elsewhere=tuple((t, nodes[fid]) for t, fid in sorted(owner.items())
                                 if fid != column.field_id),
                 recaps=tuple((t, self._first_home[t]) for t in owns
@@ -482,6 +502,34 @@ class _Bullet:
     field_id: str
     text: str
     fact_ids: Tuple[str, ...] = ()
+    #: observation | interpretation | recommendation, as the writer declared it.
+    kind: str = "observation"
+
+
+def _claim_for(bullet: "_Bullet", plan: EditorialPlan) -> str:
+    """The identity a bullet is deduped on, given the page's plan.
+
+    A SYNTHESIS field's bullets are namespaced to that field, but ONLY when they carry an
+    interpretation or a recommendation. Its job is to build on a finding another field owns
+    and take it forward, and :func:`claim_of` reads identity off the FIRST citation — so the
+    supporting fact it names matches the owning field's copy and the gate would drop it
+    every time. That is the gate deleting the one field whose purpose is to reference.
+
+    The kind is what keeps the exemption honest, and it has to be here rather than left to
+    the judge. A synthesis bullet that is a bare OBSERVATION is a restatement however it is
+    worded, so it keeps the shared identity and loses to the owning field exactly as before
+    — otherwise "one finding, one page" stops holding the moment a page has a summary
+    field. One that interprets or recommends has added the thing the shared claim does not
+    capture, and is judged on whether it really did by the verifier, which reads the text.
+    """
+    claim = claim_of(bullet.fact_ids, bullet.text)
+    if not claim:
+        return claim
+    field_plan = plan.fields.get(bullet.field_id)
+    adds = (bullet.kind or "observation").strip().lower() in ("interpretation", "recommendation")
+    if field_plan is not None and field_plan.synthesis and adds:
+        return f"{claim}@{bullet.field_id}"
+    return claim
 
 
 def dedupe(bullets: Sequence[Tuple[str, str, Sequence[str]]], *,
@@ -489,7 +537,8 @@ def dedupe(bullets: Sequence[Tuple[str, str, Sequence[str]]], *,
            ) -> Tuple[Dict[str, List[str]], List[Repeat]]:
     """One claim per topic per page: ``({field_id: [text]}, [dropped])``.
 
-    ``bullets`` are ``(field_id, text, fact_ids)`` in the page's own order.
+    ``bullets`` are ``(field_id, text, fact_ids)`` — or ``(field_id, text, fact_ids, kind)``
+    — in the page's own order.
 
     Which copy survives is the plan's call — the field the topic was allocated to keeps
     it, so the page's argument lands where it was planned to. With no plan, or when the
@@ -506,11 +555,16 @@ def dedupe(bullets: Sequence[Tuple[str, str, Sequence[str]]], *,
     through the :class:`~studio.template_fill.ledger.ClaimLedger`, so it is not a repeat
     either.
     """
-    items = [_Bullet(fid, text, tuple(ids or ())) for fid, text, ids in bullets]
+    # ``(field_id, text, fact_ids)`` or ``(field_id, text, fact_ids, kind)``. The kind is
+    # optional so a caller that does not track it — the deck-wide sweep, a test — keeps
+    # working and gets the strict reading (``observation``), which is the old behaviour.
+    items = [_Bullet(b[0], b[1], tuple(b[2] or ()),
+                     (b[3] if len(b) > 3 and b[3] else "observation"))
+             for b in bullets]
     # The CLAIM, not the topic. A growth column naming three industries Marsh places and
     # this carrier does not is three findings that share one fact family, and deduping on
     # the family would cut it to one line — the thinning this module is written to avoid.
-    claims = [claim_of(b.fact_ids, b.text) for b in items]
+    claims = [_claim_for(b, plan) for b in items]
     winners = _winners(items, claims, plan)
 
     kept: Dict[str, List[str]] = {b.field_id: [] for b in items}
