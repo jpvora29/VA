@@ -556,10 +556,17 @@ def test_the_judge_is_told_each_bullet_s_kind_so_it_can_apply_the_right_bar(monk
 
 
 def test_the_writer_is_asked_to_tag_the_kind_it_is_making(monkeypatch, stub_model):
-    """A tag the writer is never asked for defaults to the strictest bar and helps nobody."""
+    """A tag the writer is never asked for defaults to the strictest bar and helps nobody.
+
+    And it must be asked for in the KIND FIELD. The first version said only "tag every
+    bullet with its kind" without saying where the tag goes, and the answer came back as
+    "Observation: The carrier grew 12%." — the verifier's machinery, read aloud to a
+    carrier's executives.
+    """
     rewrites.write_all([_value_set(_facts(), topics=("working",))])
     author = next(c for c in stub_model if c["phase"] == "author")
-    assert "TAG EVERY BULLET" in author["system"]
+    assert "SEPARATE 'kind' FIELD" in author["system"]
+    assert "THE KIND IS NOT PART OF THE SENTENCE" in author["system"]
 
 
 @pytest.mark.e2e

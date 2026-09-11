@@ -88,6 +88,30 @@ def test_the_market_keeps_the_word_that_actually_belongs_to_it():
     assert CM._CARRIER_AS_BOOK.search("Its book is concentrated.") is not None
 
 
+def test_a_kind_label_is_stripped_before_anything_judges_the_line():
+    """The tag is the verifier's machinery and must never be prose on a slide.
+
+    Stripped in ``check_numbers`` because every bullet from BOTH writing paths passes
+    through it, so one strip covers the batch writer and the single-column one.
+    """
+    from studio.template_fill.commentary_verify import _KIND_PREFIX as P
+
+    assert P.sub("", "Observation: The carrier grew 12.0%.") == "The carrier grew 12.0%."
+    assert P.sub("", "[Recommendation] Review Services.") == "Review Services."
+    assert P.sub("", "Interpretation - That leaves it behind.") == "That leaves it behind."
+    # A sentence that merely STARTS with one of those words is not a label.
+    plain = "Observations from the year were mixed and worth recording here."
+    assert P.sub("", plain) == plain
+    assert P.sub("", "Finding the right comparison took time.") == \
+        "Finding the right comparison took time."
+
+
+def test_a_kind_label_that_survives_the_strip_still_cannot_ship():
+    """Belt and braces: the strip is a spelling list, the gate is a refusal."""
+    assert CM._accept(["Observation: The carrier grew 12.0% on the year."],
+                      wanted=1, node="t") is None
+
+
 def test_a_line_calling_the_carrier_a_book_does_not_reach_a_slide():
     """The gate, not just the prompt — the prompt's version of this rule decayed once."""
     assert CM._accept(["The book grew 12.0% against a pool at 6.0%."],
@@ -259,10 +283,15 @@ def test_each_bullet_names_its_metric_and_the_comparison_that_gives_it_meaning()
 
 def test_examples_are_explicitly_illustrative_and_include_a_supported_action():
     system = CM.deck_voice("balanced", "Zurich")
-    assert "Good opening bullet" in system and "Poor," in system and "invented" in system
-    assert "Good proposed priority" in system
+    assert "STYLE EXAMPLES ONLY" in system and "Poor," in system and "invented" in system
+    assert "A proposed priority" in system
     # The examples carry the shape, so they must show an interpretation and a back-reference.
-    assert "Good interpretation" in system and "Good back-reference" in system
+    assert "reads meaning into that" in system and "referring back" in system
+    # ...and their labels must NOT be the kind names. Labelling an example "Good
+    # interpretation:" put "Interpretation:" on the slide, because the model copied the
+    # label with the sentence — which is what an example is for.
+    for leak in ("Good interpretation", "Good observation", "Good recommendation"):
+        assert leak not in system, f"an example label the model can copy as prose: {leak}"
 
 
 def test_the_prompt_distinguishes_marsh_placements_from_the_total_market():

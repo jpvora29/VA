@@ -226,12 +226,15 @@ _INTERPRETATION = (
     "is offered as a reading of the evidence ('this leaves the carrier...', 'the gap is concentrated in...'). "
     "A cause you cannot measure is asked as a question, never asserted. "
     "Do not pad a bullet that has nothing further to say — a clean observation beats a manufactured 'so what'. "
-    "TAG EVERY BULLET with its kind, because each is checked against a different bar: "
+    "Set each bullet's SEPARATE 'kind' FIELD, because each kind is checked against a different bar: "
     "'observation' states what the evidence shows and every figure, scope and period in it must be exact; "
     "'interpretation' reads meaning into an observation and is checked for following from the evidence "
     "rather than for appearing in it; 'recommendation' proposes a review or decision and is checked "
-    "against the named finding behind it. Tag by what the sentence actually DOES — calling a restatement "
-    "an interpretation earns it the stricter bar and loses the line. "
+    "against the named finding behind it. Set it by what the sentence actually DOES — calling a "
+    "restatement an interpretation earns it the stricter bar and loses the line. "
+    "THE KIND IS NOT PART OF THE SENTENCE. It goes in the 'kind' field and nowhere else. Never begin "
+    "a bullet with 'Observation:', 'Interpretation:', 'Recommendation:' or any other label — the text "
+    "is read aloud to a carrier's executives, who are not reading your working. "
 )
 _TENSION = (
     "Explain a divergence when it matters, such as premium growing while share falls. "
@@ -242,15 +245,20 @@ _TENSION = (
 # for: facts combined into one point, an interpretation that reads as a reading rather than
 # a finding, and a second bullet that refers back to the first.
 _EXAMPLES = (
-    "STYLE EXAMPLES ONLY; their figures are invented and must never be copied: "
-    "Good opening bullet, two facts in one point: 'The carrier's Marsh-placed Services premium fell "
-    "16.7% to $10M while Marsh's Services premium grew 25%, taking its share from 15.0% to 10.0%.' "
-    "Good interpretation: 'That leaves the carrier 8.5 points below the 18.5% average of the three "
-    "largest carriers in this scope, on a book where each point of share is worth $1M.' "
-    "Good back-reference in a later bullet: 'Most of that share loss sits in Manufacturing, "
-    "where placements fell $4M of the $5M decline.' "
-    "Good proposed priority: 'Review placement outcomes in Services to establish where share was lost "
-    "and whether those accounts remain within appetite.' "
+    # The labels below are deliberately NOT the kind names. Labelling an example
+    # "Good interpretation:" put "Interpretation:" on the slide — the model copied the
+    # label along with the sentence, which is exactly what an example is for.
+    "STYLE EXAMPLES ONLY. Copy the SHAPE, never the label in front of it and never the "
+    "figures, which are invented: "
+    "An opening bullet carrying two facts as one point — 'The carrier's Marsh-placed Services "
+    "premium fell 16.7% to $10M while Marsh's Services premium grew 25%, taking its share from "
+    "15.0% to 10.0%.' "
+    "A bullet that reads meaning into that — 'That leaves the carrier 8.5 points below the 18.5% "
+    "average of the three largest carriers in this scope, where each point of share is worth $1M.' "
+    "A later bullet referring back — 'Most of that share loss sits in Manufacturing, where "
+    "placements fell $4M of the $5M decline.' "
+    "A proposed priority — 'Review placement outcomes in Services to establish where share was "
+    "lost and whether those accounts remain within appetite.' "
     "Poor, a number with no comparison: 'Marsh-placed premium was $10M in 2025.' "
     "Poor, an unmeasurable cause asserted: 'The decline reflects a narrowing risk appetite.' "
     "Poor: 'The carrier should capture all premium placed elsewhere.' "
@@ -479,6 +487,15 @@ _TEMPLATE_OPENERS = re.compile(
 # the rule was dropped once already in a rewrite and nothing noticed.
 _CARRIER_AS_BOOK = re.compile(r"(?<!Marsh )(?<!renewal )(?<!survey )\bbooks?\b", re.I)
 
+# The verifier's machinery, written into the prose. A bullet's KIND belongs in its own
+# schema field; "Observation: The carrier grew 12%." is the model showing its working to
+# a carrier's executive team. Stripped in ``commentary_verify.check_numbers`` before this
+# ever fires, so a line reaching here means the strip missed a spelling and the line is
+# refused rather than shipped with the label on it.
+_KIND_LABEL = re.compile(
+    r"^\s*(?:[\[(]\s*(?:observation|interpretation|recommendation|action|finding)\s*[\])]"
+    r"|(?:observation|interpretation|recommendation|action|finding)\s*[:—-])", re.I)
+
 
 def _is_whole_sentence(line: str) -> bool:
     """A finished sentence, not a label or a fragment: it ends in a full stop."""
@@ -505,6 +522,7 @@ def _line_rules() -> Tuple[_LineRule, ...]:
         _LineRule("ai_tell", lambda ln: _AI_TELLS.search(ln) is not None),
         _LineRule("template_opener", lambda ln: _TEMPLATE_OPENERS.match(ln) is not None),
         _LineRule("carrier_called_a_book", lambda ln: _CARRIER_AS_BOOK.search(ln) is not None),
+        _LineRule("kind_label_in_prose", lambda ln: _KIND_LABEL.match(ln) is not None),
         _LineRule("unclear_comparison", lambda ln: commentary_metrics.clarity_issue(ln) is not None),
     )
 

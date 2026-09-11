@@ -48,7 +48,7 @@ logger = get_logger(__name__)
 #: Bumped when the prompt below changes in a way that should invalidate cached commentary.
 #: Read by :mod:`studio.template_fill.commentary_cache` — a better prompt must not be
 #: shadowed by yesterday's answer.
-PROMPT_VERSION = "icg-argument-v6"
+PROMPT_VERSION = "icg-argument-v7"
 
 #: How many repair rounds a section gets.
 #:
@@ -531,6 +531,15 @@ def cache_key(section: Section, column: Column, pack, plan=None):
     The editorial brief is part of the key. A field that owned the peer gap yesterday and
     is asked to leave it to another field today is being asked a different question, and
     serving it yesterday's answer would put the repetition straight back on the page.
+
+    So is THE VOICE ITSELF, and that was missing. ``style`` is the word "balanced"; the
+    instruction the model actually receives is :func:`commentary.deck_voice`, hundreds of
+    words of craft and faithfulness rules. While only the style NAME was keyed, rewriting
+    those rules changed nothing a cached field could notice: the fix shipped, the cache
+    served yesterday's prose, and the author saw no difference — which is how "I changed
+    the prompt and the deck did not move" happens twice before anyone looks here.
+    ``PROMPT_VERSION`` still exists for changes OUTSIDE the prompt text, but it is no
+    longer the thing standing between a better prompt and the page.
     """
     from studio.template_fill import commentary as C
     from studio.template_fill import commentary_cache as cache
@@ -541,7 +550,9 @@ def cache_key(section: Section, column: Column, pack, plan=None):
         subject=section.subject, topic=column.topic, bullets=column.bullets,
         evidence=cache.evidence_digest((pack.as_brief(), _glossary_brief(pack))),
         brief=C.column_rules(column.topic, column.bullets) + plan.brief(column.field_id),
-        style=section.style, prompt_version=PROMPT_VERSION, tier=C._COMMENTARY_TIER,
+        style=cache.evidence_digest((section.style,
+                                     C.deck_voice(section.style, section.subject))),
+        prompt_version=PROMPT_VERSION, tier=C._COMMENTARY_TIER,
         deployment=_deployment(), draft=cache.evidence_digest(column.draft),
     )
 

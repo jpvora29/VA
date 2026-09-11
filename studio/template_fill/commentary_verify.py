@@ -67,6 +67,16 @@ class Verdict:
             logger.info("commentary_verify: %s dropped %.60r — %s", node, j.text, j.reason)
 
 
+#: The bullet's KIND, written into the sentence instead of into its own schema field.
+#: Asking the writer to tag each bullet produced "Observation: The carrier grew 12%." on
+#: the slide — the tag is machinery for the verifier and must never be prose. Stripped
+#: here because every bullet from both writing paths passes through
+#: :func:`check_numbers`, so one strip covers the batch writer and the single-column one.
+_KIND_PREFIX = re.compile(
+    r"^\s*(?:[\[(]\s*(?:observation|interpretation|recommendation|action|finding)\s*[\])]\s*[:—-]?"
+    r"|(?:observation|interpretation|recommendation|action|finding)\s*[:—-])\s*", re.I)
+
+
 def check_numbers(judged: Sequence[Judged], pack) -> Verdict:
     """Drop any bullet carrying a figure its CITED facts do not contain.
 
@@ -82,7 +92,7 @@ def check_numbers(judged: Sequence[Judged], pack) -> Verdict:
 
     out: List[Judged] = []
     for item in judged:
-        item = replace(item, text=html.unescape(item.text).strip())
+        item = replace(item, text=_KIND_PREFIX.sub("", html.unescape(item.text).strip()))
         unknown = [fid for fid in item.fact_ids if pack.get(fid) is None]
         if unknown:
             out.append(replace(item, kept=False, reason="unknown citation: " + ", ".join(unknown)))
