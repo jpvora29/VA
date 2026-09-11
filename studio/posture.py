@@ -108,7 +108,7 @@ def _losing_ground(x: PostureInput) -> Optional[str]:
     if not (shrinking or giving_back):
         return None
     moved = "fell" if shrinking else "grew"
-    return (f"the book {moved} {abs(x.growth_pct):.1f}% against a Marsh book that grew "
+    return (f"the carrier {moved} {abs(x.growth_pct):.1f}% against a Marsh book that grew "
             f"{x.pool_growth_pct:.1f}%")
 
 
@@ -123,11 +123,11 @@ def _holds_a_lead(x: PostureInput) -> Optional[str]:
     if not (leads_on_rank or leads_on_share):
         return None
     if leads_on_rank:
-        return f"the book ranks #{int(x.rank)} in the Marsh book"
+        return f"the carrier ranks #{int(x.rank)} in the Marsh book"
     if x.share is not None and x.peer_share is not None:
-        return (f"the book holds {x.share:.1f}% of the wallet against a top-5 peer average "
+        return (f"the carrier holds {x.share:.1f}% of the wallet against a top-5 peer average "
                 f"of {x.peer_share:.1f}%")
-    return "the book writes more than the top-5 peer average"
+    return "the carrier writes more than the top-5 peer average"
 
 
 def _winning_share(x: PostureInput) -> Optional[str]:
@@ -143,7 +143,7 @@ def _winning_share(x: PostureInput) -> Optional[str]:
         from studio.template_fill.units import points
 
         return f"share of wallet rose {points(x.share_change)} to {x.share:.1f}%"
-    return (f"the book grew {x.growth_pct:.1f}% against a Marsh book that grew "
+    return (f"the carrier grew {x.growth_pct:.1f}% against a Marsh book that grew "
             f"{x.pool_growth_pct:.1f}%, and the rank moved with it")
 
 
@@ -157,9 +157,9 @@ def _tracking(x: PostureInput) -> Optional[str]:
     if x.growth_pct is None:
         return None
     if x.share is not None:
-        return (f"the book holds {x.share:.1f}% of the wallet and is neither gaining nor "
+        return (f"the carrier holds {x.share:.1f}% of the wallet and is neither gaining nor "
                 f"losing it materially")
-    return f"the book grew {x.growth_pct:.1f}%, broadly with its pool"
+    return f"the carrier grew {x.growth_pct:.1f}%, broadly with its pool"
 
 
 _TESTS: Tuple[Tuple[Posture, Callable[[PostureInput], Optional[str]]], ...] = (

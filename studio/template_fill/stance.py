@@ -17,7 +17,7 @@ import hashlib
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 
 from logger import get_logger
 from studio.posture import Posture, PostureInput, call_phrase, posture_for
@@ -66,7 +66,7 @@ def book_posture_point(facts: Dict[str, Any], name: str = "") -> Optional[str]:
     instruction that does not say where is advice true of anyone. Where the scope has been
     decomposed, the call is anchored to the segment carrying the most premium behind it.
     """
-    label = name or str(facts.get("subject") or "").strip() or "the book"
+    label = name or str(facts.get("subject") or "").strip() or "the carrier"
     call = posture_for(_input_from_facts(facts, label))
     if call is None:
         return None
@@ -217,7 +217,7 @@ def portfolio_posture_point(result) -> Optional[str]:
             grouped[posture].append(f"{name} ({_money(premium)})")
         parts = [f"{posture.value.lower()} {_and(names)}"
                  for posture, names in grouped.items()]
-        return "The book's first calls are to " + _and(parts) + "."
+        return "The carrier's first calls are to " + _and(parts) + "."
     except Exception as exc:  # noqa: BLE001 — the stance never breaks the deck
         logger.warning("stance: no portfolio posture (%s)", exc)
         return None
@@ -273,7 +273,7 @@ def narrative_for(facts: Dict[str, Any], topic: str, *, name: str = "",
         interpretation=said[1] if len(said) > 1 else "",
         management_implication=said[2] if len(said) > 2 else "",
         recommended_action=(f"{call.posture.value} {name}." if call and name
-                            else (f"{call.posture.value} this book." if call else "")),
+                            else (f"{call.posture.value} this line." if call else "")),
         posture=call.posture if call else None,
         confidence=Confidence.UNVALIDATED if opportunity else Confidence.EVIDENCED,
         open_question=(qualifier_for(level_from_premium_only()).capitalize() + "."
@@ -352,16 +352,34 @@ def _product_posture_lines(inputs: List[PostureInput], limit: int = 4) -> List[s
     ]
 
 
-def _standing_lines(inputs: List[PostureInput]) -> List[str]:
-    """Where the book stands across its lines — claims needing every product at once."""
+def _standing_lines(inputs: List[PostureInput],
+                    overall: Optional[Mapping[str, Any]] = None) -> List[str]:
+    """Where the book stands across its lines — claims needing every product at once.
+
+    The count is stated ONCE. "inside the top five in 5 of its 10 lines and outside it in
+    5" says the same fact twice, because the complement of 5 out of 10 is arithmetic the
+    reader does not need performed for them, and a slide bullet is read in one pass.
+    """
     lines: List[str] = []
+    if overall and overall.get("current"):
+        # The carrier's own rank across the whole scope — the headline page prints it as a
+        # KPI tile, so the prose beside it should say what it is rather than leave the
+        # reader to pair a number with an unexplained "#".
+        field = f" of {int(overall['of_n'])} carriers" if overall.get("of_n") else ""
+        moved = overall.get("delta")
+        movement = ""
+        if moved:
+            movement = (f", up {int(abs(moved))} place{'s' if abs(moved) != 1 else ''}"
+                        if moved > 0 else
+                        f", down {int(abs(moved))} place{'s' if abs(moved) != 1 else ''}")
+        lines.append(f"Carrier ranks #{int(overall['current'])}{field} "
+                     f"by Marsh-placed premium{movement}.")
     ranked = [x for x in inputs if x.rank is not None]
     if len(ranked) >= 3:
         inside = [x for x in ranked if x.rank <= 5]
         if inside and len(inside) < len(ranked):
-            lines.append(
-                f"The carrier sits inside the top five in {len(inside)} of its "
-                f"{len(ranked)} lines and outside it in {len(ranked) - len(inside)}.")
+            lines.append(f"Carrier ranked top 5 in {len(inside)} product lines "
+                         f"out of {len(ranked)}.")
     sized = sorted((x for x in inputs if x.premium), key=lambda x: -(x.premium or 0.0))
     total = sum(x.premium or 0.0 for x in sized)
     if len(sized) >= 3 and total:
@@ -435,6 +453,22 @@ def _penetration_lines(inputs: List[PostureInput]) -> List[str]:
     return lines
 
 
+def _overall_rank(result) -> Mapping[str, Any]:
+    """The carrier's rank across the whole scope, or ``{}`` when it cannot be read.
+
+    Best-effort like everything else here: a missing rank costs one sentence, never a deck.
+    """
+    from studio.compute import rank_movement
+    from studio.template_fill.bindings import reporting_filters
+
+    try:
+        return rank_movement(result.flow, reporting_filters(result), result.engine,
+                             result.subject) or {}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("stance: no overall rank (%s)", exc)
+        return {}
+
+
 def portfolio_extras(result) -> PortfolioExtras:
     """The extra lines for this run's overall pages — one breakdown query, reused.
 
@@ -447,7 +481,7 @@ def portfolio_extras(result) -> PortfolioExtras:
             return PortfolioExtras()
         return PortfolioExtras(
             priorities=tuple(_product_posture_lines(inputs)),
-            standing=tuple(_standing_lines(inputs)),
+            standing=tuple(_standing_lines(inputs, _overall_rank(result))),
             movement=tuple(_movement_lines(inputs)),
             positioning=tuple(_positioning_lines(inputs)),
             penetration=tuple(_penetration_lines(inputs)),

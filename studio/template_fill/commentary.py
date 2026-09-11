@@ -160,12 +160,20 @@ _VOICE = (
 # hedged, clause-stuffed and disconnected — which was the complaint.
 _CRAFT = (
     "One POINT per bullet, in one or two short sentences. A point may rest on several facts: "
-    "a movement and the book it is measured against belong in one sentence, not two. "
+    "a movement and the Marsh book it is measured against belong in one sentence, not two. "
     "Name the carrier, product, industry or client segment and the exact metric. "
     "Set every figure against the comparison that gives it meaning — a premium change next to "
     "the Marsh movement over the same period, a share next to its prior or the benchmark. "
     "Use the two or three figures the point needs; the rest belongs in the chart. "
     "Say 'Marsh-placed premium' or 'share of Marsh placements' with the relevant segment. "
+    # Restored, and stated with its reason. An earlier version of this prompt banned the
+    # word flatly; a ban with no reason gets dropped the next time the prompt is rewritten,
+    # which is exactly what happened. In insurance a "book" is a whole market's placements,
+    # so calling the subject's own premium "the book" silently promotes one carrier to the
+    # market and makes every share sentence ambiguous about its denominator.
+    "NEVER call the subject carrier 'the book'. A book is a market's placements, not one "
+    "carrier's: say 'the carrier', 'the carrier's premium' or name it. 'The Marsh book' is "
+    "correct, because that IS the market. Avoid 'pool', 'flow' and 'placement base' too. "
 )
 _FAITHFULNESS = (
     "Every bullet must cite its supporting fact IDs. Copy numerical display values exactly from those facts; "
@@ -182,6 +190,10 @@ _DEFINITIONS = (
 _POINTER = (
     "Lead with the meaningful observed finding. Prefer a current/prior share comparison when available. "
     "Identify the segment by name, never 'the client segment that averaged ...'. "
+    "NAME THE PRODUCT LINE whenever a segment fact carries one (a '.product' fact): an industry on a "
+    "multi-product page is a total across products, and 'Transportation & Public Utilities fell' does "
+    "not tell a reader whether the fall is Marine or Property. Say which. Where no product fact is "
+    "given, the finding spans products — say so plainly rather than guessing at one. "
     "If a necessary name, denominator or comparison is missing, omit that finding and flag the data gap. "
 )
 # The column is ONE argument, not a list of answers to separate questions. Connectives are
@@ -232,7 +244,7 @@ _TENSION = (
 _EXAMPLES = (
     "STYLE EXAMPLES ONLY; their figures are invented and must never be copied: "
     "Good opening bullet, two facts in one point: 'The carrier's Marsh-placed Services premium fell "
-    "16.7% to $10M while Marsh's Services book grew 25%, taking its share from 15.0% to 10.0%.' "
+    "16.7% to $10M while Marsh's Services premium grew 25%, taking its share from 15.0% to 10.0%.' "
     "Good interpretation: 'That leaves the carrier 8.5 points below the 18.5% average of the three "
     "largest carriers in this scope, on a book where each point of share is worth $1M.' "
     "Good back-reference in a later bullet: 'Most of that share loss sits in Manufacturing, "
@@ -459,6 +471,15 @@ _TEMPLATE_OPENERS = re.compile(
 )
 
 
+# Calling the SUBJECT CARRIER "the book". In insurance a book is a whole market's
+# placements, so the word silently promotes one carrier to the market and leaves every
+# share sentence ambiguous about its denominator. "The Marsh book" is correct and must
+# survive, as must "renewal book" — hence the lookbehinds rather than a flat ban on the
+# word. The prompt asks for this too; the gate is here because the prompt's version of
+# the rule was dropped once already in a rewrite and nothing noticed.
+_CARRIER_AS_BOOK = re.compile(r"(?<!Marsh )(?<!renewal )(?<!survey )\bbooks?\b", re.I)
+
+
 def _is_whole_sentence(line: str) -> bool:
     """A finished sentence, not a label or a fragment: it ends in a full stop."""
     return line.rstrip().endswith((".", "?", "!"))
@@ -483,6 +504,7 @@ def _line_rules() -> Tuple[_LineRule, ...]:
         _LineRule("fragment", lambda ln: not _is_whole_sentence(ln)),
         _LineRule("ai_tell", lambda ln: _AI_TELLS.search(ln) is not None),
         _LineRule("template_opener", lambda ln: _TEMPLATE_OPENERS.match(ln) is not None),
+        _LineRule("carrier_called_a_book", lambda ln: _CARRIER_AS_BOOK.search(ln) is not None),
         _LineRule("unclear_comparison", lambda ln: commentary_metrics.clarity_issue(ln) is not None),
     )
 

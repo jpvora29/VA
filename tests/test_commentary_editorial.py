@@ -481,10 +481,10 @@ def repeating_model(monkeypatch):
         asked = [line.split()[2] for line in user.splitlines()
                  if line.startswith("--- FIELD ")]
         renderings = [
-            "The book sits below the peer average, and closing that is the year's "
+            "The carrier sits below the peer average, and closing that is the year's "
             "work.",
             "Reaching peer parity is what the plan has to be built around this year.",
-            "The distance to the peer benchmark is the single thing holding the book back.",
+            "The distance to the peer benchmark is the single thing holding the carrier back.",
         ]
         return CommentarySections(sections=[
             CommentarySection(field_id=field_id, bullets=[

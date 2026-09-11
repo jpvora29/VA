@@ -1166,6 +1166,6 @@ def test_a_model_that_echoes_a_kept_line_does_not_ship_it_twice():
     """The prompt says not to repeat; the merge does not rely on it obeying."""
     from studio.template_fill.commentary_batch import _merged
 
-    merged = _merged({"f": ("The book grew.",)},
-                     {"f": ("the  book   grew", "And then it held.")})
-    assert merged["f"] == ["The book grew.", "And then it held."]
+    merged = _merged({"f": ("The carrier grew.",)},
+                     {"f": ("the  carrier   grew", "And then it held.")})
+    assert merged["f"] == ["The carrier grew.", "And then it held."]

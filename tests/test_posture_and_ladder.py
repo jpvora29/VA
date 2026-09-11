@@ -147,7 +147,7 @@ def test_what_the_carrier_already_writes_is_not_counted_as_unwritten():
 # ── on the page ──────────────────────────────────────────────────────────────
 
 
-def test_the_deck_states_a_portfolio_call_and_a_book_call(tmp_path):
+def test_the_deck_states_a_portfolio_call_and_a_per_line_call(tmp_path):
     """End to end: the overall page opens its priorities on the portfolio's stance, and a
     key-messages column opens on the book's own."""
     from pptx import Presentation
@@ -166,7 +166,7 @@ def test_the_deck_states_a_portfolio_call_and_a_book_call(tmp_path):
     text = "\n".join(sh.text_frame.text for s in Presentation(out).slides
                      for sh in s.shapes if sh.has_text_frame)
 
-    assert "The book's first calls are to" in text, "no portfolio stance on the deck"
+    assert "The carrier's first calls are to" in text, "no portfolio stance on the deck"
     # The BOOK-level stance is asserted by what it says, not by the six words it
     # used to open with. "The call here is to ..." was a fixed template, so a
     # ten-product deck opened ten pages identically — the tell that it was
@@ -178,7 +178,7 @@ def test_the_deck_states_a_portfolio_call_and_a_book_call(tmp_path):
     calls = {call_phrase(p).split()[0].lower() for p in Posture}
     assert any(c in text.lower() for c in calls), "no book-level stance on the deck"
     # The stance vocabulary is closed: every call uses one of the five verbs.
-    portfolio = next(l for l in text.split("\n") if "The book's first calls are to" in l)
+    portfolio = next(l for l in text.split("\n") if "The carrier's first calls are to" in l)
     assert any(v in portfolio for v in
                ("defend", "scale", "fix", "selectively pursue", "validate"))
     # ...and an instruction now names what is at stake. "Across the book the call is to

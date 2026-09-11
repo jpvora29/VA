@@ -20,7 +20,7 @@ re-words it behind the faithfulness verifier.
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from logger import get_logger
 from studio import compute as C
@@ -413,6 +413,7 @@ def _facts(result, filters: Dict[str, Any]) -> Dict[str, Any]:
     peer = _safe(C.peer_average_totals, result.flow, filters, result.engine) or {}
     movers = _safe(C.movement_by_dim, result.flow, dim, filters, result.engine, top=8) or []
     pool = _safe(C.movement_by_dim, result.flow, dim, base, result.engine, top=8) or []
+    segments = _segment_facts(result, filters)
     return {"subject": str(subject or ""), "scope": dict(base), "carrier": carrier, "marsh": marsh, "rank": rank,
             "sow": sow, "peer": peer, "movers": movers, "pool": pool,
             # The two families that are not another reading of the headline: HOW the book
@@ -420,8 +421,34 @@ def _facts(result, filters: Dict[str, Any]) -> Dict[str, Any]:
             # from the same six numbers, which is why every column read alike.
             "mix": facts_mix.load(result, filters),
             "trend": facts_trend.load(result, filters, annual_pct=carrier.get("pct")),
-            "segments": _segment_facts(result, filters),
-            "segments_track": _tracks_its_parent(result, filters)}
+            "segments": segments,
+            "segments_track": _tracks_its_parent(result, filters),
+            # Which PRODUCT each named segment is really about. Empty on a product page,
+            # where the scope already pins it (:mod:`studio.segment_drivers`).
+            "segment_drivers": _segment_driver_facts(result, filters, segments)}
+
+
+def _segment_driver_facts(result, filters: Dict[str, Any],
+                          segments: Mapping[str, Any]) -> Dict[str, Any]:
+    """``{dim label: {segment: SegmentDriver}}`` for the segments a column may name.
+
+    Takes the decomposition rather than recomputing it — it is the caller's own, already
+    built — and asks only for the values that were classified into a finding, so the query
+    never widens beyond what the commentary can cite.
+    """
+    from studio import segment_drivers as SD
+
+    if not segments or SD.scope_pins_one_product(filters):
+        return {}
+    year = C._current_year(filters)
+    out: Dict[str, Any] = {}
+    for dim, found in segments.items():
+        names = [row.name for row in getattr(found, "rows", ()) if getattr(row, "name", "")]
+        drivers = SD.drivers_for(result.flow, dim, filters, result.engine,
+                                 subject=result.subject, names=names, year=year)
+        if drivers:
+            out[getattr(found, "label", dim)] = drivers
+    return out
 
 
 # ── deterministic text composition (every claim carries its figure) ──────────
@@ -616,7 +643,7 @@ def _working_points(f: Dict[str, Any]) -> List[str]:
     c, m, r, s = f["carrier"], f.get("marsh") or {}, f["rank"], f["sow"]
     parts: List[str] = []
     if (c.get("pct") or 0) > 0:
-        line = (f"{_subject(f, opening=True)} grew its book with Marsh {_mag(c['pct'])} "
+        line = (f"{_subject(f, opening=True)} grew its Marsh-placed premium {_mag(c['pct'])} "
                 f"year on year to {_money(c['current'])}")
         if m.get("pct") is not None and m["pct"] < c["pct"]:
             line += f", compared with total Marsh-placed premium that {_moved(m['pct'])}"
@@ -625,7 +652,7 @@ def _working_points(f: Dict[str, Any]) -> List[str]:
         parts.append(line + ".")
     risers = _named_moves(f.get("movers") or [], rising=True, floor=_material_floor(f))
     if risers and (c.get("delta") or 0) > 0:
-        parts.append(f"The increase was led by {risers}, out of a total book movement of "
+        parts.append(f"The increase was led by {risers}, out of a total movement of "
                      f"{_money(c['delta'])}.")
     if (r.get("delta") or 0) > 0:
         parts.append(f"Rank within the Marsh book improved {_places(int(r['delta']))} to "
@@ -644,7 +671,7 @@ def _working_points(f: Dict[str, Any]) -> List[str]:
     parts += P.points(_segments(f), SEG.Placement.STRONG, subject=_subject(f), limit=2)
 
     if not parts and c.get("current") and c.get("pct") == 0:
-        parts.append(f"{_subject(f, opening=True)} held its book with Marsh at "
+        parts.append(f"{_subject(f, opening=True)} held its Marsh-placed premium at "
                      f"{_money(c['current'])}.")
     return parts
 
@@ -659,7 +686,7 @@ def _challenges_points(f: Dict[str, Any]) -> List[str]:
     c, m, r, s = f["carrier"], f.get("marsh") or {}, f["rank"], f["sow"]
     parts: List[str] = []
     if (c.get("pct") or 0) < 0:
-        line = (f"{_subject(f, opening=True)}'s book with Marsh fell {_mag(c['pct'])} "
+        line = (f"{_subject(f, opening=True)}'s Marsh-placed premium fell {_mag(c['pct'])} "
                 f"year on year to {_money(c['current'])}")
         if m.get("pct") is not None and m["pct"] > c["pct"]:
             line += f", while the wider Marsh book {_moved(m['pct'])}, so this is lost share"
@@ -696,7 +723,7 @@ def _challenges_points(f: Dict[str, Any]) -> List[str]:
     gap = _peer_share_gap(f)
     point = _point_of_share(f)
     if gap is not None:
-        line = (f"At {s['current']:.1f}% share of wallet the book sits {U.points(gap)} "
+        line = (f"At {s['current']:.1f}% share of wallet the carrier sits {U.points(gap)} "
                 f"below the {_benchmark(f)} of {f['peer']['sow']:.1f}%")
         parts.append(line + ".")
     return parts
@@ -719,7 +746,7 @@ def _concentration_point(f: Dict[str, Any]) -> Optional[str]:
             continue
         slipping = next((r for r in findings.written[:3] if (r.sow_delta or 0) < 0), None)
         tail = f", and share slipped in {slipping.name}" if slipping else ""
-        return (f"The book's three largest {findings.label} groups carry {top3:.0f}% "
+        return (f"The carrier's three largest {findings.label} groups carry {top3:.0f}% "
                 f"of everything it writes here{tail}.")
     return None
 
@@ -832,7 +859,7 @@ def _defending_lead(f: Dict[str, Any]) -> Optional[str]:
     theirs = (f.get("peer") or {}).get("sow")
     if mine is None or theirs is None or mine <= theirs:
         return None
-    return (f"At {mine:.1f}% share of wallet the book sits {U.points(mine - theirs)} above "
+    return (f"At {mine:.1f}% share of wallet the carrier sits {U.points(mine - theirs)} above "
             f"the {_benchmark(f)} of {theirs:.1f}%, so the task here is defending a lead "
             f"rather than closing a gap.")
 

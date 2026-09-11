@@ -85,9 +85,33 @@ def test_every_extra_is_a_whole_sentence_carrying_a_number(line):
 # ── what each bucket actually claims ─────────────────────────────────────────
 
 
-def test_standing_counts_the_lines_inside_and_outside_the_top_five():
+def test_standing_counts_the_lines_inside_the_top_five_once():
+    """The complement is arithmetic, and a slide bullet is read in one pass.
+
+    "inside the top five in 2 of its 6 lines and outside it in 4" states one fact twice:
+    a reader given 2 of 6 does not need the other 4 performed for them.
+    """
     said = " ".join(S._standing_lines(_book()))
-    assert "inside the top five in 2 of its 6 lines and outside it in 4" in said
+    assert "Carrier ranked top 5 in 2 product lines out of 6." in said
+    assert "outside it in" not in said
+
+
+def test_standing_leads_with_the_overall_rank_the_headline_page_prints():
+    """The page shows "#x Carrier's overall rank" as a tile; the prose must say what it is."""
+    said = " ".join(S._standing_lines(_book(), {"current": 4, "of_n": 31, "delta": 2}))
+    assert "Carrier ranks #4 of 31 carriers by Marsh-placed premium, up 2 places." in said
+
+
+def test_the_overall_rank_is_skipped_rather_than_guessed_at():
+    for absent in ({}, None, {"current": None}, {"delta": 3}):
+        said = " ".join(S._standing_lines(_book(), absent))
+        assert "Carrier ranks #" not in said
+
+
+def test_a_rank_that_did_not_move_claims_no_movement():
+    said = " ".join(S._standing_lines(_book(), {"current": 4, "of_n": 31, "delta": 0}))
+    assert "Carrier ranks #4 of 31 carriers by Marsh-placed premium." in said
+    assert "up 0" not in said and "down 0" not in said
 
 
 def test_standing_names_where_the_book_concentrates():

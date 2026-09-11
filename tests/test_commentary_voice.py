@@ -68,6 +68,40 @@ def test_no_point_reads_as_generated(point):
     assert CM._AI_TELLS.search(point) is None
 
 
+@pytest.mark.parametrize("point", _ALL_POINTS)
+def test_no_point_calls_the_carrier_a_book(point):
+    """In insurance a BOOK is a market's placements, not one carrier's.
+
+    Calling the subject's own premium "the book" promotes one carrier to the whole market
+    and leaves every share sentence ambiguous about its denominator — which denominator a
+    reader assumes is the difference between 4.9% and 100%.
+    """
+    assert CM._CARRIER_AS_BOOK.search(point) is None, point
+
+
+def test_the_market_keeps_the_word_that_actually_belongs_to_it():
+    """The rule must not be a flat ban: "the Marsh book" is correct and load-bearing."""
+    assert CM._CARRIER_AS_BOOK.search("Zurich holds 4.9% of the Marsh book.") is None
+    assert CM._CARRIER_AS_BOOK.search("It grew 12.0% against a Marsh book that grew 6.0%.") is None
+    assert CM._CARRIER_AS_BOOK.search("Defend the renewal book in Marine.") is None
+    assert CM._CARRIER_AS_BOOK.search("The book grew 12.0%.") is not None
+    assert CM._CARRIER_AS_BOOK.search("Its book is concentrated.") is not None
+
+
+def test_a_line_calling_the_carrier_a_book_does_not_reach_a_slide():
+    """The gate, not just the prompt — the prompt's version of this rule decayed once."""
+    assert CM._accept(["The book grew 12.0% against a pool at 6.0%."],
+                      wanted=1, node="t") is None
+
+
+def test_the_writer_is_told_why_book_is_wrong_rather_than_only_that_it_is():
+    """A ban with no reason is what gets dropped in the next prompt rewrite."""
+    voice = CM.deck_voice("balanced", "Zurich")
+    assert "NEVER call the subject carrier 'the book'" in voice
+    assert "A book is a market's placements" in voice
+    assert "'The Marsh book' is correct" in voice
+
+
 def test_a_shrinking_book_is_not_told_it_offset_gains():
     """"Offsetting the gains elsewhere" is only true of a book that made gains; on a book
     that shrank, the lines given back ARE the decline."""
@@ -135,7 +169,7 @@ def _draft(n: int) -> str:
 
 
 def test_a_rewrite_that_keeps_the_bullets_whole_is_accepted():
-    lines = ["The account grew its book 12.0%.",
+    lines = ["The account grew its premium 12.0%.",
              "One point of wallet share came back, worth 1.0pp."]
     assert CM._accept(lines, wanted=2, node="t") == "\n".join(lines)
 
@@ -162,7 +196,7 @@ def test_a_rewrite_that_reads_as_generated_is_refused():
 
 
 def test_one_merged_bullet_is_allowed():
-    lines = ["The book grew 12.0% while wallet share came back 1.0pp.",
+    lines = ["The carrier grew 12.0% while wallet share came back 1.0pp.",
              "Cyber carried the gain.", "Marine gave premium back."]
     assert CM._accept(lines, wanted=4, node="t") == "\n".join(lines)
 
@@ -186,8 +220,8 @@ def test_naming_the_carrier_on_each_line_is_allowed():
 
 
 def test_naming_the_carrier_once_is_how_a_column_introduces_itself():
-    lines = ["Zurich grew its book 12.0% on the year.",
-             "The book ranks 2nd and holds 11.6% of the wallet."]
+    lines = ["Zurich grew its premium 12.0% on the year.",
+             "The carrier ranks 2nd and holds 11.6% of the wallet."]
     assert CM._accept(lines, wanted=2, node="t", subject="Zurich") == "\n".join(lines)
 
 
@@ -402,7 +436,7 @@ def _stub_model(monkeypatch, column, *, verdicts=None):
 
 
 def test_the_model_writes_the_column_from_the_evidence(monkeypatch):
-    written = ("The book outgrew the Marsh pool by nearly nineteen points, taking $46M more "
+    written = ("The carrier outgrew the Marsh book by nearly nineteen points, taking $46M more "
                "premium in a market that grew 9.9%.",
                "At 9.1% of the wallet it still sits behind a largest-carrier average of 10.8%.")
     _stub_model(monkeypatch, _column(*written))
@@ -413,10 +447,10 @@ def test_the_model_writes_the_column_from_the_evidence(monkeypatch):
 def test_an_invented_figure_is_dropped_before_the_judge_ever_sees_it(monkeypatch):
     """The numeric verifier runs FIRST — cheap, exact, and it removes the worst failure."""
     _stub_model(monkeypatch, _column(
-        "The book grew to $208M with Marsh, taking share as it went.",
+        "The carrier grew to $208M with Marsh, taking share as it went.",
         "Share of wallet reached 44.4%, well clear of the field."))          # invented
     out = CM._rewrite(_draft(2), node="t", subject="Zurich", facts=_facts())
-    assert out == "The book grew to $208M with Marsh, taking share as it went."
+    assert out == "The carrier grew to $208M with Marsh, taking share as it went."
 
 
 def test_the_claim_judge_drops_an_unsupported_claim(monkeypatch):
@@ -424,9 +458,9 @@ def test_the_claim_judge_drops_an_unsupported_claim(monkeypatch):
     the deterministic verifier cannot see and the model verifier exists for."""
     from studio.ai.models import CommentaryVerdict, CommentaryVerdicts
 
-    kept = ("The book outgrew the Marsh pool and took $46M more premium than a year ago.",
+    kept = ("The carrier outgrew the Marsh book and took $46M more premium than a year ago.",
             "Cyber carried $22M of that, so the renewal there is what to defend first.",
-            "At 9.1% of the wallet the book still trails a largest-carrier average of 10.8%.")
+            "At 9.1% of the wallet the carrier still trails a largest-carrier average of 10.8%.")
     _stub_model(
         monkeypatch,
         _column(*kept, "That makes the carrier the market leader in this segment."),

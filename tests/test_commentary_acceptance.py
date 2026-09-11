@@ -33,9 +33,9 @@ from studio.template_fill.feedback import (
 SUBJECT = "Zurich"
 
 GOOD = [
-    "The book grew 12% to $12.4M, and that growth sits almost entirely in Property.",
+    "The carrier grew 12% to $12.4M, and that growth sits almost entirely in Property.",
     "Casualty fell away over the same period, which is why rank was flat despite the gain.",
-    "Cyber remains thin at under 4% of the book.",
+    "Cyber remains thin at under 4% of the carrier's premium.",
 ]
 
 # The four habits the per-line rules exist to catch.
@@ -83,14 +83,14 @@ def test_an_over_long_column_is_trimmed_not_refused():
 # ── the subject-opening cap ──────────────────────────────────────────────────
 
 def test_the_carrier_may_open_one_line():
-    lines = [f"{SUBJECT} grew its book 12% to $12.4M on the back of Property.", *GOOD[1:]]
+    lines = [f"{SUBJECT} grew its premium 12% to $12.4M on the back of Property.", *GOOD[1:]]
     assert len(_lines(_accept(lines, wanted=3, node="n", subject=SUBJECT))) == 3
 
 
 def test_explicit_carrier_names_are_preserved():
     """Naming the carrier on every line is the roll-call the rule exists to stop."""
     lines = [
-        f"{SUBJECT} grew its book 12% to $12.4M on the back of Property.",
+        f"{SUBJECT} grew its premium 12% to $12.4M on the back of Property.",
         f"{SUBJECT} lost ground in Casualty over the same period, which held rank flat.",
         GOOD[2],
     ]

@@ -120,7 +120,7 @@ def breakdown_takeaways(section) -> List[Point]:
         sow = (f", where the account holds {top['sow']:.1f}% of the wallet"
                if top.get("sow") is not None else "")
         pts.append({"label": "Leader.",
-                    "text": f"{top['name']} is the largest book at {money(top['premium'])}{sow}.",
+                    "text": f"{top['name']} is the largest line at {money(top['premium'])}{sow}.",
                     "tone": "good"})
     hi, lo = _significant_movers(rows)
     if hi:
@@ -171,7 +171,7 @@ def build_swot(result):
     if rank:
         strengths.append(f"The account ranks {rank} within the Marsh book.")
     strengths += [
-        f"{r['name']} carries {money(r['premium'])} of the book, "
+        f"{r['name']} carries {money(r['premium'])} of the carrier's premium, "
         f"{(r.get('premium') or 0) / total_prem * 100:.0f}% of everything written."
         for r in top_prem if (r.get("premium") or 0) > 0
     ]
@@ -182,7 +182,7 @@ def build_swot(result):
 
     weaknesses = [f"The account holds only {r['sow']:.1f}% of the wallet in {r['name']}, so "
                   f"most of that market is placed elsewhere." for r in low_sow]
-    weaknesses += [f"The book is eroding in {m}." for m in lo]
+    weaknesses += [f"The carrier is losing premium in {m}." for m in lo]
 
     opportunities = [O.describe(_observed(w), money=money) for w in result.whitespace[:3]]
     if hi:
@@ -198,8 +198,8 @@ def build_swot(result):
                        f"relationship easy to displace.")
 
     return SwotBlock(
-        strengths=strengths[:4] or ["The account has an established book in its core lines."],
-        weaknesses=weaknesses[:4] or ["The book is concentrated in a few lines."],
+        strengths=strengths[:4] or ["The carrier has an established position in its core lines."],
+        weaknesses=weaknesses[:4] or ["The carrier's premium is concentrated in a few lines."],
         opportunities=opportunities[:4] or ["There is room to deepen existing relationships."],
         threats=threats[:4] or ["Competitive pricing pressure is a standing risk."],
     )

@@ -317,7 +317,7 @@ def _mix_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
     out: List[Evidence] = []
     _add(out, "mix.concentration",
          f"How {subject}'s premium is spread across the {label} it writes",
-         f"{lead} is the largest at {mix['lead_share']:.1f}% of the book; the top three "
+         f"{lead} is the largest at {mix['lead_share']:.1f}% of the carrier's premium; the top three "
          f"carry {mix['top3']:.0f}% of {int(mix['n'])} {label}",
          "concentration")
     return out
@@ -441,6 +441,31 @@ _SEGMENT_RENDER: Dict[str, Tuple[str, Any, str]] = {
 }
 
 
+def _add_driver(out: List[Evidence], f: Mapping[str, Any], label: str,
+                fid: str, name: str) -> None:
+    """Name the PRODUCT a segment finding is about, where one product carries it.
+
+    Without this an industry finding on a multi-product page is a total across products,
+    and "Transportation & Public Utilities is absent" leaves the reader to work out
+    whether the gap is Marine or Property. The fact is only emitted when one product
+    genuinely carries the segment (:data:`segment_drivers.MIN_SHARE`) — naming the largest
+    of an even spread would trade one misleading summary for another.
+    """
+    driver = ((f.get("segment_drivers") or {}).get(label) or {}).get(name)
+    if driver is None or not driver.concentrated:
+        return
+    _add(out, fid + ".product",
+         f"{name}: the product line carrying most of this, and Marsh's premium in it",
+         f"{driver.product} ({_money(driver.marsh)}, {driver.marsh_share:.0f}% of "
+         f"{name} placements)",
+         "product_driver", value=driver.marsh, unit="currency", entity=driver.product)
+    if driver.carrier:
+        _add(out, fid + ".product_carrier",
+             f"{name} in {driver.product}: premium the carrier writes",
+             _money(driver.carrier), "premium",
+             value=driver.carrier, unit="currency", entity=driver.product)
+
+
 def _segment_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
     """The scope's industry / client-segment decomposition as citable facts."""
     out: List[Evidence] = []
@@ -456,7 +481,7 @@ def _segment_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
         top3 = getattr(found, "top3_share", None)
         if top3 is not None:
             _add(out, f"segment.{_slug(label)}.concentration",
-                 f"Share of the book its three largest {label} groups carry",
+                 f"Share of the carrier's premium its three largest {label} groups carry",
                  f"{top3:.0f}%", "concentration")
         seen: Dict[str, int] = {}
         for row in rows:
@@ -469,6 +494,7 @@ def _segment_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
             fid = _fact_id(label, kind, row.name)
             _add(out, fid, template.format(name=row.name, subject=subject), render(row), term,
                  value=getattr(row, "stake", None), unit="currency_scenario", entity=row.name)
+            _add_driver(out, f, label, fid, row.name)
             for suffix, metric, value in (
                 ("carrier_current", "Carrier premium", row.carrier),
                 ("carrier_prior", "Carrier premium in comparison year", getattr(row, "prior_carrier", None)),

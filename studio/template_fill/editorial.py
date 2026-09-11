@@ -91,13 +91,13 @@ _TOPIC_OF_PREFIX: Tuple[Tuple[str, ClaimTopic], ...] = (
 _TOPIC_LABEL: Dict[ClaimTopic, str] = {
     "peer_gap": "the distance to the peer benchmark — in percentage points, in premium, "
                 "or as 'reaching parity'; all three are the same finding",
-    "standing": "where the book stands — rank and share of wallet, and their movement",
-    "movement": "what moved the book and how the Marsh pool moved with it",
+    "standing": "where the carrier stands — rank and share of wallet, and their movement",
+    "movement": "what moved the carrier's premium and how the Marsh book moved with it",
     "momentum": "the trajectory — whether the year's move is still running",
     "headroom": "headroom: premium another carrier already writes, and what taking it "
                 "would be worth",
-    "concentration": "how concentrated the book is, and in what",
-    "scale": "the size of the book and of the Marsh pool around it",
+    "concentration": "how concentrated the carrier's premium is, and in what",
+    "scale": "the size of the carrier's premium and of the Marsh book around it",
 }
 
 #: The same topics, named briefly — for the list of what a field may NOT say, which is as
@@ -110,11 +110,11 @@ _TOPIC_LABEL: Dict[ClaimTopic, str] = {
 _TOPIC_SHORT: Dict[ClaimTopic, str] = {
     "peer_gap": "the peer gap, in points OR in premium OR as 'parity'",
     "standing": "rank and share of wallet",
-    "movement": "what moved the book, and the pool around it",
+    "movement": "what moved the carrier, and the Marsh book around it",
     "momentum": "the trajectory",
     "headroom": "headroom and what taking it is worth",
-    "concentration": "how concentrated the book is",
-    "scale": "the size of the book",
+    "concentration": "how concentrated the carrier is",
+    "scale": "the size of the carrier's premium",
 }
 
 
@@ -345,7 +345,7 @@ class FieldPlan:
                 "ANOTHER FIELD ON THIS PAGE IS THE HOME FOR THESE, so do not make any of "
                 "them YOUR POINT — not in other words, not in another unit, not as a "
                 "consequence. You MAY cite one in passing as the comparison that gives your "
-                "own point its meaning (a movement needs the book it moved against), but the "
+                "own point its meaning (a movement needs the Marsh book it moved against), but the "
                 "sentence must still be about your finding, not theirs: "
                 + "; ".join(f"{_short(t)} ({node})" for t, node in self.elsewhere) + ".")
         if self.recaps:
