@@ -34,19 +34,19 @@ def catalogue(pack) -> Tuple[Finding, ...]:
     if yoy and yoy.value is not None:
         side = "working" if yoy.value > 0 else "challenges" if yoy.value < 0 else "performance"
         add(("carrier.yoy", "carrier.delta", "carrier.premium", "carrier.prior", "marsh.yoy"),
-            "How did carrier premium change, and did it grow faster or slower than Marsh placements?",
+            "The carrier's premium movement, set against the Marsh book over the same period.",
             (*_GENERAL, side), 100)
     share = pack.get("sow.delta")
     if share:
         falling = "fell" in share.label.lower()
         add(("sow.delta", "sow.current", "sow.prior", "marsh.yoy", "carrier.yoy"),
-            "Did the carrier gain or lose share of Marsh placements? Keep share and premium distinct.",
+            "The movement in share of Marsh placements. Keep share and premium distinct.",
             (*_GENERAL, "challenges" if falling else "working", "priorities"), 95)
     gap = pack.get("peer.gap")
     if gap:
         below = "below" in gap.label.lower()
         add(("peer.gap", "sow.current", "peer.sow", "peer.basis", "peer.gap_value"),
-            "How does carrier share compare with the defined largest-carrier average? "
+            "The carrier's share against the defined largest-carrier average. "
             "Any premium equivalent is a constant-denominator scenario, not winnable premium.",
             (*_GENERAL, "challenges" if below else "working", *(('growth', 'priorities') if below else ())), 80)
     for item in pack.items:
@@ -55,7 +55,7 @@ def catalogue(pack) -> Tuple[Finding, ...]:
             name = fid[len("mover."):]
             side = "working" if (item.value or 0) > 0 else "challenges"
             add((fid, fid + ".current", fid + ".prior", "pool." + name),
-                f"Where did premium change materially? Name {item.entity or name} and distinguish carrier from Marsh.",
+                f"Material premium movement in {item.entity or name}. Name it and distinguish carrier from Marsh.",
                 (*_GENERAL, side, "priorities"), abs(item.value or 0))
         elif fid.startswith("segment.") and len(fid.split(".")) == 4:
             kind = fid.split(".")[2]
@@ -73,7 +73,7 @@ def catalogue(pack) -> Tuple[Finding, ...]:
     if quarter:
         side = "working" if (quarter.value or 0) > 0 else "challenges" if (quarter.value or 0) < 0 else "performance"
         add(("trend.quarter", "trend.quarter_yoy", "trend.comparison_note"),
-            "How did the latest comparable quarter differ from the SAME quarter last year? "
+            "The latest comparable quarter against the SAME quarter last year. "
             "This is an observation, not a trend or annual run rate.", (*_GENERAL, side), 60)
     if pack.get("mix.concentration"):
         add(("mix.concentration",), "Describe material concentration without asserting future losses.", _GENERAL, 40)
@@ -107,5 +107,10 @@ def brief(pack, topic: str) -> str:
                 f"evidence limitation and cite [{availability}]. Do not claim unmeasured risks are absent."
                 if pack.get(availability) else
                 "No qualifying finding or availability fact: return no bullets and flag insufficient evidence.")
-    return ("SELECTED FINDINGS FOR THIS SECTION (choose the strongest distinct ones; other evidence is context):\n"
+    # Stated as the material AVAILABLE to the column, not as a list of questions to answer.
+    # Interrogatives got answered one per bullet, which is how a column of unrelated replies
+    # reached the slide; the writer's job is to choose among these and build one argument.
+    return ("MATERIAL AVAILABLE TO THIS SECTION — choose what carries the column's "
+            "argument and leave the rest. Covering all of it is not the goal; making the "
+            "strongest supported point is. Two of these often belong in one bullet:\n"
             + "\n".join(f"- Cite [{', '.join(f.fact_ids)}]: {f.question}" for f in findings))

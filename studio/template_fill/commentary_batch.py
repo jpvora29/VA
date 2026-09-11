@@ -48,7 +48,7 @@ logger = get_logger(__name__)
 #: Bumped when the prompt below changes in a way that should invalidate cached commentary.
 #: Read by :mod:`studio.template_fill.commentary_cache` — a better prompt must not be
 #: shadowed by yesterday's answer.
-PROMPT_VERSION = "icg-findings-v5"
+PROMPT_VERSION = "icg-argument-v6"
 
 #: How many repair rounds a section gets.
 #:

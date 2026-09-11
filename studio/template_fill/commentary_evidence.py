@@ -92,7 +92,9 @@ class EvidencePack:
             "LEAD FROM THESE — the facts this column exists to report:",
             *(e.as_line() for e in lead),
             "",
-            "ALSO TRUE, for context or a closing line — do not build the column on them:",
+            "ALSO TRUE — use these to frame, compare and explain the findings above. "
+            "They are not the column's subject, but a lead finding usually needs one of them "
+            "to mean anything:",
             *(e.as_line() for e in rest),
         ])
 

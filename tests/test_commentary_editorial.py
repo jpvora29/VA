@@ -362,7 +362,7 @@ def repeating_model(monkeypatch):
 def test_every_field_is_told_its_editorial_job_in_the_prompt(repeating_model):
     B.write_deck([_value_set(_facts())])
     author = next(c for c in repeating_model if c["phase"] == "author")
-    assert "SELECTED FINDINGS FOR THIS SECTION" in author["user"]
+    assert "MATERIAL AVAILABLE TO THIS SECTION" in author["user"]
     assert "section relevance takes priority over variety" in author["user"]
 
 

@@ -108,15 +108,19 @@ _TOPIC_QUESTIONS: Dict[str, Tuple[str, ...]] = {
     "reflections": ("What did the reported results establish, and what remains uncertain?",),
 }
 
+# The families a column LEADS from. ``marsh.`` earns a place in almost every one of
+# these: a carrier movement means nothing until it is set against the book it sits in,
+# and while ``marsh.yoy`` sat in the demoted block every topic reported a fall in
+# isolation and read like a spreadsheet cell with a verb.
 _TOPIC_EVIDENCE: Dict[str, Tuple[str, ...]] = {
-    "thesis": ("sow.", "rank.", "carrier.", "peer."),
-    "key_messages": ("carrier.", "sow.", "peer.", "segment."),
-    "performance": ("mover.", "pool.", "trend.", "carrier."),
-    "working": ("mover.", "sow.", "segment.", "carrier."),
-    "challenges": ("segment.", "sow.", "peer.", "mover."),
-    "growth": ("segment.", "headroom", "peer.gap"),
-    "priorities": ("segment.", "peer.gap", "mover."),
-    "reflections": ("trend.", "mover.", "sow."),
+    "thesis": ("sow.", "carrier.", "marsh.", "rank.", "peer."),
+    "key_messages": ("carrier.", "marsh.", "sow.", "peer.", "segment."),
+    "performance": ("mover.", "pool.", "trend.", "carrier.", "marsh."),
+    "working": ("mover.", "sow.", "segment.", "carrier.", "marsh."),
+    "challenges": ("carrier.", "marsh.", "sow.", "peer.", "segment.", "mover."),
+    "growth": ("segment.", "headroom", "peer.gap", "share.point_value"),
+    "priorities": ("segment.", "peer.gap", "mover.", "share.point_value"),
+    "reflections": ("trend.", "mover.", "sow.", "carrier."),
 }
 _EVIDENCE_ALIAS = {"strengths": "working", "weaknesses": "challenges",
                    "opportunities": "growth", "threats": "challenges"}
@@ -146,14 +150,19 @@ _VOICE = (
     "Use direct, natural business English that a stakeholder understands on first reading. "
     "Exercise judgement through selecting and explaining the right finding, not through dramatic language. "
 )
+# What good looks like, stated as craft rather than as a ban list. The prohibitions that
+# survive here are the ones that were being BROKEN; the rest moved into _FAITHFULNESS and
+# _DEFINITIONS, which is where the non-negotiable guardrails belong. A prompt whose bulk is
+# "do not" spends the model's attention on not tripping rules, and what comes back is
+# hedged, clause-stuffed and disconnected — which was the complaint.
 _CRAFT = (
-    "One finding per bullet, normally in one or two short sentences. Name the carrier, product, "
-    "industry or client segment and the exact metric. State the relevant comparison plainly. "
-    "Use only the two or three figures needed to understand it; other detail belongs in the chart. "
-    "A clear observed result can stand alone. Do not force a 'so what', a cause or an action onto every bullet. "
-    "Avoid 'the book', 'pool', 'flow', 'placement base', 'pressure sat', and 'ground given back'. "
+    "One POINT per bullet, in one or two short sentences. A point may rest on several facts: "
+    "a movement and the book it is measured against belong in one sentence, not two. "
+    "Name the carrier, product, industry or client segment and the exact metric. "
+    "Set every figure against the comparison that gives it meaning — a premium change next to "
+    "the Marsh movement over the same period, a share next to its prior or the benchmark. "
+    "Use the two or three figures the point needs; the rest belongs in the chart. "
     "Say 'Marsh-placed premium' or 'share of Marsh placements' with the relevant segment. "
-    "Avoid filler such as robust, strategic, showcasing or underscoring. "
 )
 _FAITHFULNESS = (
     "Every bullet must cite its supporting fact IDs. Copy numerical display values exactly from those facts; "
@@ -172,23 +181,52 @@ _POINTER = (
     "Identify the segment by name, never 'the client segment that averaged ...'. "
     "If a necessary name, denominator or comparison is missing, omit that finding and flag the data gap. "
 )
+# The column is ONE argument, not a list of answers to separate questions. Connectives are
+# allowed, but only BACKWARD and never in the opening bullet: `_salvage` ships a column that
+# lost lines and `_repair` appends lines written in a later call, so any bullet can end up
+# first, and a forward reference would then decode to nothing.
 _ARGUMENT = (
-    "Each bullet must stand on its own. Order findings by importance but do not use 'also', 'the same book' "
-    "or other references that require another bullet to decode the meaning. "
+    "Write the column as ONE argument in priority order, not as separate answers. "
+    "The opening bullet must stand entirely on its own and carry the column's most material point. "
+    "Later bullets may refer back to it — 'that decline', 'the same segment', 'against this' — "
+    "where the reference genuinely sharpens the point. Never refer FORWARD to a bullet not yet read, "
+    "and never use a reference a reader cannot resolve from the bullets above it. "
+)
+
+# Observation -> interpretation -> question. The old text said a result 'can stand alone' and
+# then told the writer not to force a 'so what', which read as an instruction to stop at the
+# number. A consultant's value is the middle step, so it is asked for explicitly here and
+# judged on its own bar in commentary_verify (an interpretation must not CONTRADICT the
+# evidence; it is not required to be literally present in one fact).
+_INTERPRETATION = (
+    "Where the evidence supports it, take the bullet past the number: state the observation, "
+    "then what it means for this carrier's position with Marsh, then — only where it follows — "
+    "the question it raises or the review it warrants. "
+    "Mark the shift in certainty with your words. An observation is stated flatly. An interpretation "
+    "is offered as a reading of the evidence ('this leaves the carrier...', 'the gap is concentrated in...'). "
+    "A cause you cannot measure is asked as a question, never asserted. "
+    "Do not pad a bullet that has nothing further to say — a clean observation beats a manufactured 'so what'. "
 )
 _TENSION = (
     "Explain a divergence when it matters, such as premium growing while share falls. "
     "Use a measured decomposition for contribution; operational causes require operational evidence. "
     "Superlatives such as fastest-growing or largest require a complete relevant comparison and a cited ranking. "
 )
+# Examples carry more of the voice than the rules do, so they show the SHAPE being asked
+# for: facts combined into one point, an interpretation that reads as a reading rather than
+# a finding, and a second bullet that refers back to the first.
 _EXAMPLES = (
     "STYLE EXAMPLES ONLY; their figures are invented and must never be copied: "
-    "Good: 'The carrier's share of Marsh's Services premium fell from 25.7% to 16.8%, "
-    "while Marsh's Services premium grew 38.6%.' "
-    "Good: 'Property accounted for most of the premium increase, contributing $4M of the $5M gain.' "
+    "Good opening bullet, two facts in one point: 'The carrier's Marsh-placed Services premium fell "
+    "16.7% to $10M while Marsh's Services book grew 25%, taking its share from 15.0% to 10.0%.' "
+    "Good interpretation: 'That leaves the carrier 8.5 points below the 18.5% average of the three "
+    "largest carriers in this scope, on a book where each point of share is worth $1M.' "
+    "Good back-reference in a later bullet: 'Most of that share loss sits in Manufacturing, "
+    "where placements fell $4M of the $5M decline.' "
     "Good proposed priority: 'Review placement outcomes in Services to establish where share was lost "
     "and whether those accounts remain within appetite.' "
-    "Poor: 'The pressure sat in a rising placement base.' "
+    "Poor, a number with no comparison: 'Marsh-placed premium was $10M in 2025.' "
+    "Poor, an unmeasurable cause asserted: 'The decline reflects a narrowing risk appetite.' "
     "Poor: 'The carrier should capture all premium placed elsewhere.' "
 )
 
@@ -208,8 +246,9 @@ def _openings_rule(subject: str) -> str:
 
 
 def deck_voice(style: Optional[str], subject: str = "") -> str:
-    return (_VOICE + _CRAFT + _FAITHFULNESS + _DEFINITIONS + _POINTER
-            + _ARGUMENT + _TENSION + _EXAMPLES + _openings_rule(subject) + _style_directive(style))
+    return (_VOICE + _CRAFT + _INTERPRETATION + _ARGUMENT + _TENSION
+            + _FAITHFULNESS + _DEFINITIONS + _POINTER
+            + _EXAMPLES + _openings_rule(subject) + _style_directive(style))
 
 
 def column_rules(topic: str, wanted: int) -> str:

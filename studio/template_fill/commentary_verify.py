@@ -133,7 +133,19 @@ _JUDGE_SYSTEM = (
     "DROP for wrong section: a positive result alone is not a challenge; an unqualified placement gap "
     "is not a winnable opportunity; a concentration alone does not establish a future loss. "
     "DROP generic advice, empty consequence clauses and unsupported superlatives such as 'fastest-growing'. "
-    "DROP a bullet with more than one unrelated finding or so many comparisons that the point is obscured.\n"
+    "DROP a bullet that strings together UNRELATED findings, or so many comparisons that the point is "
+    "obscured. Combining RELATED facts into one point is correct and must be kept: a movement and the "
+    "book it is measured against, or a share and the benchmark it is short of, belong in one bullet.\n"
+    "Bullets are given in the order they will be read. A later bullet MAY refer back to an earlier one "
+    "('that decline', 'the same segment'); judge it together with the bullet it refers to and KEEP it "
+    "where the reference resolves. DROP a reference that points forward or to nothing.\n"
+    "Judge OBSERVATIONS and INTERPRETATIONS on different bars. An observation states what the evidence "
+    "shows: its value, direction, scope, period and comparison must be exact. An interpretation reads "
+    "meaning into an observation ('this leaves the carrier below...', 'the gap is concentrated in...') "
+    "and need NOT appear literally in any one fact — KEEP it where it follows from the cited evidence "
+    "and does not contradict it, and DROP it only where the evidence points the other way, where it "
+    "asserts an unmeasurable cause as fact, or where it overstates the certainty the evidence carries. "
+    "A question or a proposed review is not an assertion; judge it on whether the gap it names is real.\n"
     "DROP individual peer identities or individual peer financials. The subject carrier and Marsh may be named. "
     "Benchmarks must use the actual definition and count; an average per carrier is not combined share.\n"
     "KEEP a clear, material observation that answers its section, even if it begins with Share, Premium, "
@@ -141,8 +153,13 @@ _JUDGE_SYSTEM = (
     "A specific proposed investigation of a supported gap is allowed: asking to review appetite does not "
     "assert that appetite is the cause. Distinguish a recommendation from a proven solution. "
     "An evidenced absence is a placement observation and does not prove a lack of appetite. "
-    "When support or meaning is uncertain, DROP with a precise repair instruction naming the missing "
-    "entity, comparison, evidence or incorrect interpretation. Do not approve to fill space."
+    "When the SUPPORT or the MEANING is uncertain — you cannot tell what is being compared, or the "
+    "cited facts do not carry the claim — DROP with a precise repair instruction naming the missing "
+    "entity, comparison, evidence or incorrect interpretation. Do not approve to fill space. "
+    "But do not DROP merely because a supported bullet reaches past the number, reads as prose rather "
+    "than a data point, or draws a conclusion you would have worded differently: the column is meant to "
+    "read as an argument by an experienced consultant, and a defensible reading of the cited evidence is "
+    "the point of the exercise, not a risk to be edited out."
 )
 
 
@@ -176,10 +193,25 @@ def check_claims(judged: Sequence[Judged], pack, *, glossary_brief: str = "",
     # Pinned to the deterministic tier, deliberately NOT the warm one the column itself
     # is written on: this call returns a verdict per sentence, and a judge that answers
     # the same evidence differently on two runs is not a judge.
-    report = client.structured(
-        CommentaryVerdicts, _JUDGE_SYSTEM,
-        _judge_payload(items, pack, glossary_brief),
-        tier=commentary._VERIFIER_TIER, node=f"{node}-verify", phase="verify")
+    payload = _judge_payload(items, pack, glossary_brief)
+
+    def ask(attempt: int):
+        return client.structured(
+            CommentaryVerdicts, _JUDGE_SYSTEM, payload,
+            tier=commentary._VERIFIER_TIER,
+            node=f"{node}-verify" if attempt == 1 else f"{node}-verify-retry",
+            phase="verify")
+
+    # A verdict list that does not line up with the sentences cannot approve anything, so
+    # the fallback below drops the whole column — which is the right SAFETY answer and the
+    # wrong answer to a transient miscount, because under ai_required it refuses the deck.
+    # The judge is asked once more before that verdict stands. Still fail-closed; it just
+    # no longer turns one malformed answer into a failed build.
+    report = ask(1)
+    if report is not None and len(report.verdicts) != len(items):
+        logger.info("commentary_verify: %s judge returned %d verdict(s) for %d sentence(s) "
+                    "— asking once more", node, len(report.verdicts), len(items))
+        report = ask(2)
     if report is None or len(report.verdicts) != len(items):
         if report is not None:
             logger.info("commentary_verify: %s judge returned %d verdict(s) for %d "

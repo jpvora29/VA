@@ -212,16 +212,23 @@ def test_the_prompt_explains_the_quality_contract():
     assert "Do not add filler" in system and "current/prior share" in system
 
 
-def test_each_bullet_names_its_metric_and_comparison_without_a_forced_cause():
+def test_each_bullet_names_its_metric_and_the_comparison_that_gives_it_meaning():
     system = CM.deck_voice("balanced", "Zurich")
-    for rule in ("One finding per bullet", "exact metric", "comparison plainly", "Do not force a 'so what'"):
+    for rule in ("One POINT per bullet", "exact metric", "the comparison that gives it meaning"):
         assert rule in system
+    # A point may rest on several facts: the movement and the book it is measured against
+    # are one thought, and splitting them was what produced a column of orphan numbers.
+    assert "A point may rest on several facts" in system
+    # Still no padding: reaching past the number is asked for only where evidence carries it.
+    assert "Do not pad a bullet that has nothing further to say" in system
 
 
 def test_examples_are_explicitly_illustrative_and_include_a_supported_action():
     system = CM.deck_voice("balanced", "Zurich")
-    assert "Good:" in system and "Poor:" in system and "invented" in system
+    assert "Good opening bullet" in system and "Poor," in system and "invented" in system
     assert "Good proposed priority" in system
+    # The examples carry the shape, so they must show an interpretation and a back-reference.
+    assert "Good interpretation" in system and "Good back-reference" in system
 
 
 def test_the_prompt_distinguishes_marsh_placements_from_the_total_market():
@@ -301,7 +308,8 @@ def test_the_verifiers_stay_deterministic_while_the_writer_runs_warm():
 def test_qbr_policy_does_not_inherit_conflicting_chat_instructions():
     prompt = CM._style_system("balanced", topic="performance", wanted=3, subject="Zurich")
     assert CM._analyst_principles() == ""
-    assert "One finding per bullet" in prompt and "Each bullet must stand on its own" in prompt
+    assert "One POINT per bullet" in prompt
+    assert "The opening bullet must stand entirely on its own" in prompt
 
 
 def test_the_chat_analyst_still_gets_every_principle():
@@ -320,18 +328,29 @@ def test_missing_chat_principles_do_not_stop_qbr_prompts(monkeypatch):
     assert "Insurer Consulting Group" in CM._style_system("balanced", topic="working", wanted=2)
 
 
-def test_bullets_are_independent_and_divergences_need_evidence():
+def test_the_column_is_one_argument_with_references_that_only_point_backwards():
+    """The column argues; it does not list.
+
+    The previous contract required every bullet to stand alone and banned connectives
+    outright, which is a specification for a column of unrelated sentences — the
+    "disconnected" complaint this replaced. Connectives are now allowed, but only
+    BACKWARD: `_salvage` ships a column that lost lines and `_repair` appends lines
+    written in a later call, so any bullet can end up first and a forward reference
+    would decode to nothing.
+    """
     prompt = CM._style_system("balanced", topic="performance", wanted=3, subject="Zurich")
-    assert "Each bullet must stand on its own" in prompt
+    assert "ONE argument" in prompt
+    assert "The opening bullet must stand entirely on its own" in prompt
+    assert "Later bullets may refer back" in prompt
+    assert "Never refer FORWARD" in prompt
     assert "Explain a divergence when it matters" in prompt
-    assert "ONE ARGUMENT" not in prompt
 
 
 def test_every_topic_carries_the_qbr_quality_contract():
     for topic in CM._TOPIC_BRIEF:
         prompt = CM._style_system("balanced", topic=topic, wanted=3, subject="Zurich")
         assert "Every bullet must cite its supporting fact IDs" in prompt
-        assert "One finding per bullet" in prompt
+        assert "One POINT per bullet" in prompt
 
 
 # ── the model now writes from EVIDENCE, and both verifiers rule on it ────────
