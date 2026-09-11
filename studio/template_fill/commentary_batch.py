@@ -593,15 +593,20 @@ def write_section(section: Section, plan=None) -> Dict[Target, str]:
     """One section's columns, written and verified — ``{target: text}``.
 
     Every column that cannot be written by a model keeps its deterministic draft in ``auto``
-    mode and raises in ``ai_required`` (:mod:`studio.commentary_mode`) — the decision lives
-    there, so this function never has to know which mode it is in.
+    mode. In ``ai_required`` the outcome depends on WHY it could not be written: a field
+    whose evidence ran out ships EMPTY, and only a model or checker that could not run
+    fails the build (:mod:`studio.commentary_mode`, :func:`omit` vs :func:`refuse`).
     """
     from studio import telemetry
-    from studio.commentary_mode import refuse
+    from studio.commentary_mode import ai_required, omit, refuse
 
     pack = _pack_for(section)
     if pack is None:                       # nothing citable — a model would be inventing
-        refuse(f"section {section.label} has no citable evidence", retryable=False)
+        if ai_required():
+            # No evidence is an answer, not a breakage: ship the boxes blank rather than
+            # throwing the deck away. ``auto``/``off`` still take the deterministic draft.
+            omit(f"section {section.label} has no citable evidence")
+            return _blanks(section.columns)
         return _drafts(section.columns)
 
     text, pending = _from_cache(section, pack, plan)
@@ -634,10 +639,43 @@ def write_section(section: Section, plan=None) -> Dict[Target, str]:
     _log_section(section, text, failed, risks=_risk_flags(answer, pending))
     _report_repeats(section, text)
     if failed:
-        refuse(f"{len(failed)} field(s) in section {section.label} could not be written",
-               retryable=True,
-               detail="; ".join(f.brief() for f in failed))
+        blocked = _blocked_by_checks(failed)
+        if blocked:
+            # A checker that could not RUN has established nothing about whether this field
+            # had something to say, so it is still a refusal — blanking here would be a
+            # silent lie rather than an honest omission.
+            refuse(f"{len(blocked)} field(s) in section {section.label} could not be verified",
+                   retryable=True,
+                   detail="; ".join(f.brief() for f in blocked))
+        # Everything else is evidence exhaustion: the model wrote, the verifiers ruled, and
+        # nothing survived. The box ships empty and the remaining columns still ship.
+        # Only in ``ai_required``: ``auto`` and ``off`` keep their deterministic draft, which
+        # is the whole point of those modes and must not be blanked out from under them.
+        if ai_required():
+            for failure in failed:
+                text.setdefault(failure.column.field_id, "")
+                telemetry.count("commentary_empty_fields", 1)
+            logger.warning("commentary_batch: section %s shipping %d field(s) empty — %s",
+                           section.label, len(failed),
+                           "; ".join(f.brief() for f in failed))
     return _placed(section.columns, text)
+
+
+#: A drop reason meaning the CHECK could not run, rather than the evidence running out.
+#: That difference decides whether an empty field is a blank box or a refused build, so the
+#: marker is named once here instead of being matched at the call site.
+_CHECK_UNAVAILABLE = "semantic verification unavailable"
+
+
+def _blocked_by_checks(failed: Sequence[Failure]) -> Tuple[Failure, ...]:
+    """The failures caused by a verifier that could not run, not by exhausted evidence."""
+    return tuple(f for f in failed
+                 if any(_CHECK_UNAVAILABLE in reason for reason in f.reasons))
+
+
+def _blanks(columns: Sequence[Column]) -> Dict[Target, str]:
+    """Every column empty — the honest answer when nothing citable reached the section."""
+    return _placed(columns, {column.field_id: "" for column in columns})
 
 
 def _report_repeats(section: Section, text: Mapping[str, str]) -> None:
@@ -803,9 +841,19 @@ def _drafts(columns: Sequence[Column]) -> Dict[Target, str]:
 
 
 def _placed(columns: Sequence[Column], text: Mapping[str, str]) -> Dict[Target, str]:
-    """Written text where there is any, the draft where there is not — keyed by target."""
-    return {target: text.get(column.field_id) or column.draft_text
-            for column in columns for target in column.targets}
+    """Written text where there is any, the draft where there is none — keyed by target.
+
+    A field PRESENT in ``text`` wins even when it is EMPTY. ``ai_required`` blanks a column
+    whose evidence ran out (:func:`write_section`), and an empty string that fell through to
+    ``or column.draft_text`` would put the deterministic prose on the slide that the mode
+    exists to keep off it — the blank has to survive being placed, or blanking is a no-op.
+    """
+    def value(column: Column) -> str:
+        if column.field_id in text:
+            return text[column.field_id]
+        return column.draft_text
+
+    return {target: value(column) for column in columns for target in column.targets}
 
 
 def _log_section(section: Section, text: Mapping[str, str], failed: Sequence[Failure],

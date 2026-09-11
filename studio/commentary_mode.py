@@ -1,6 +1,8 @@
 """Choose how Studio authors and verifies QBR commentary.
 
-COMMENTARY_MODE=ai_required (default): verified AI in every requested field, or fail.
+COMMENTARY_MODE=ai_required (default): nothing reaches a slide that a model did not write
+and both verifiers did not pass. A field whose evidence cannot support a verified line
+ships EMPTY (:func:`omit`); only a broken model or checker fails the build (:func:`refuse`).
 COMMENTARY_MODE=auto: explicitly permit a deterministic fallback after an AI failure.
 COMMENTARY_MODE=off: deterministic preview; no model calls.
 STUDIO_AI=off takes precedence. Every AI mode writes from facts, not fallback prose.
@@ -106,6 +108,26 @@ def refuse(reason: str, *, retryable: bool = True, detail: str = "") -> None:
             retryable=retryable,
         )
     logger.info("commentary: %s — keeping the deterministic draft", message)
+
+
+def omit(reason: str, *, detail: str = "") -> None:
+    """A field had nothing it could verifiably say. Log it and carry on — never fail.
+
+    The counterpart to :func:`refuse`, and the distinction is the whole point of having
+    both. ``ai_required`` guarantees that no UNVERIFIED prose reaches a slide. It does not
+    guarantee that every box is full, and treating those as the same thing is what threw a
+    thirty-column deck away because one column's evidence ran out.
+
+    A column whose pack holds nothing citable, or whose every sentence the verifiers
+    dropped, has one honest answer: nothing. The box ships blank, the guarantee is intact,
+    and the other columns ship.
+
+    Infrastructure failures stay with :func:`refuse` — a model that cannot be reached or a
+    checker that could not run has established nothing about whether there was something
+    to say, so a blank box there would be a silent lie rather than an honest omission.
+    """
+    logger.info("commentary: %s%s — leaving the field empty", reason,
+                f" ({detail})" if detail else "")
 
 
 def authorship(written: bool) -> str:

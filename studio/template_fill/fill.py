@@ -408,7 +408,15 @@ def _write_bullets(frame, text: str, *, template_paragraph=None, ink=None) -> No
     """
     from copy import deepcopy
 
-    lines = [ln for ln in str(text).split("\n")]
+    # Blank lines are dropped so a trailing newline cannot leave a bulleted empty paragraph.
+    # A wholly empty column is a real outcome — ``ai_required`` blanks a field whose evidence
+    # could not support a verified line — and it has to read as an EMPTY box rather than as a
+    # lone bullet glyph. One paragraph still has to survive: a txBody with no <a:p> is
+    # invalid, so the box keeps a single blank, unbulleted paragraph.
+    lines = [ln for ln in str(text).split("\n") if ln.strip()]
+    blank = not lines
+    if blank:
+        lines = [""]
     paras = list(frame.paragraphs)
     source = template_paragraph if template_paragraph is not None else (paras[0] if paras else None)
     # Read the box's marker BEFORE any paragraph is rewritten, from the authored
@@ -425,7 +433,8 @@ def _write_bullets(frame, text: str, *, template_paragraph=None, ink=None) -> No
         else:
             target = frame.add_paragraph()
         _set_paragraph_text(target, line)
-        _set_bullet(target, bulleted=not _HEADING_LINE.search(line), bullet=bullet)
+        _set_bullet(target, bulleted=not blank and not _HEADING_LINE.search(line),
+                    bullet=bullet)
 
     for extra in paras[len(lines):]:
         extra._p.getparent().remove(extra._p)

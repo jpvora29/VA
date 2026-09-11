@@ -669,9 +669,11 @@ def write_column(pending) -> str:
 
     def call() -> Optional[str]:
         pack = E.build_pack(pending.facts or {})
-        if not pack.items:                  # nothing to cite — the draft is all we have
-            mode.refuse(f"{node} has no citable evidence", retryable=False)
-            return None
+        if not pack.items:                  # nothing to cite — a model would be inventing
+            if mode.ai_required():
+                mode.omit(f"{node} has no citable evidence")
+                return ""                   # an empty column, not a failed build
+            return None                     # ``auto``/``off`` keep the deterministic draft
         write = W.make_writer()
         lines = list(write(W.ColumnRequest(
             topic=topic, pack=pack, draft=draft, subject=subject, style=style or "balanced",
@@ -682,6 +684,12 @@ def write_column(pending) -> str:
         accepted = _accept([_LEADING_BULLET.sub("", ln).strip() for ln in lines],
                            wanted=wanted, node=node, subject=subject)
         if accepted is None:
+            # Written and ruled on: the verifiers had their say and nothing survived. That
+            # is an answer about the evidence, so the column ships empty rather than taking
+            # the whole deck with it.
+            if mode.ai_required():
+                mode.omit(f"{node} was written but did not survive verification")
+                return ""
             mode.refuse(f"{node} was written but did not survive verification",
                         retryable=True)
         return accepted

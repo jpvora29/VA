@@ -523,6 +523,50 @@ def test_a_real_deck_refuses_to_ship_when_the_model_is_gone(tmp_path, monkeypatc
                       slides=DeckSlides.only("overall"))
 
 
+@pytest.mark.e2e
+def test_a_real_deck_still_ships_when_a_column_has_nothing_verifiable_to_say(tmp_path,
+                                                                            monkeypatch):
+    """The whole point of the change, proved at the export seam rather than in a unit.
+
+    The model here writes only fragments, so every column is emptied by the gates — the
+    worst case short of the model being gone. The build must produce a deck: an author who
+    cannot support one column has not lost the right to the other thirty. What must NOT
+    appear is the rejected text or the deterministic draft it would have fallen back to.
+    """
+    import studio.ai.client as client
+    from pptx import Presentation
+
+    from studio.compute import compute_overall
+    from studio.template_fill.assemble import assemble_deck
+
+    def fragments(model, system, user, *, tier="balanced", node="ai", phase="other",
+                  fields=(), **kw):
+        if model is not CommentarySections:
+            return _approved_verdicts(user)
+        asked = [line.split()[2] for line in user.splitlines()
+                 if line.startswith("--- FIELD ")]
+        return CommentarySections(sections=[
+            CommentarySection(field_id=fid, bullets=[
+                CommentaryBullet(text="Momentum: Cyber", fact_ids=["period.year"])])
+            for fid in asked])
+
+    monkeypatch.setenv("COMMENTARY_MODE", "ai_required")
+    monkeypatch.setenv("STUDIO_MAX_WORKERS", "1")
+    monkeypatch.setattr(client, "llm_available", lambda: True)
+    monkeypatch.setattr(client, "structured", fragments)
+
+    result = compute_overall(filters={"carrier": "Zurich", "country": ["Singapore"]})
+    out = tmp_path / "deck.pptx"
+    assemble_deck(result, out_path=str(out), work_dir=str(tmp_path / "work"),
+                  slides=DeckSlides.only("overall"))
+
+    assert out.exists(), "an emptied column must not cost the author the deck"
+    text = "\n".join(shape.text_frame.text
+                     for slide in Presentation(str(out)).slides
+                     for shape in slide.shapes if shape.has_text_frame)
+    assert "Momentum: Cyber" not in text, "the rejected fragment must never reach a slide"
+
+
 def test_a_risk_flag_reaches_the_audit_line_rather_than_being_asked_for_and_binned(
         monkeypatch, caplog):
     """The schema asks for a risk read; something has to look at it or it is dead tokens."""
@@ -701,10 +745,11 @@ def test_the_repair_is_told_why_the_first_answer_was_rejected(unusable_model):
 def unusable_model(monkeypatch):
     """A model whose every line is a fragment — nothing survives, so nothing can ship.
 
-    This is the case that must still refuse in strict mode. A field that came up SHORT is
-    now salvaged (see the salvage tests below); a field with no verified line at all has
-    nothing to salvage, and shipping deterministic prose under ``ai_required`` is the very
-    thing that mode exists to prevent.
+    A field that came up SHORT is salvaged (see the salvage tests below); a field with no
+    verified line at all has nothing to salvage. That field now ships EMPTY under
+    ``ai_required`` rather than failing the build: shipping deterministic prose is what the
+    mode exists to prevent, and a blank box prevents it just as completely as a refusal did
+    without costing the author every other column in the deck.
     """
     import studio.ai.client as client
 
@@ -728,16 +773,62 @@ def unusable_model(monkeypatch):
     return calls
 
 
-def test_a_strict_refusal_says_why_the_field_could_not_be_written(monkeypatch,
-                                                                  unusable_model):
+def test_a_field_with_nothing_verifiable_ships_empty_instead_of_failing_the_deck(
+        monkeypatch, unusable_model):
+    """Evidence exhaustion blanks ONE box; it does not throw the whole deck away.
+
+    Every line this model writes is a fragment, so nothing survives the gates. The old
+    contract refused the build, which meant one column with no supportable point cost the
+    author the other thirty. ``ai_required`` guarantees that no UNVERIFIED prose reaches a
+    slide — an empty box honours that exactly as a refusal did, and still ships the deck.
+    """
     monkeypatch.setenv("COMMENTARY_MODE", "ai_required")
+    written = rewrites.write_all([_one_growth_field()])[0]
+    assert list(written.values())[0] == ""
+
+
+def test_an_emptied_field_does_not_fall_back_to_the_deterministic_draft(monkeypatch,
+                                                                       unusable_model):
+    """The blank must SURVIVE being placed, or blanking silently ships rule prose.
+
+    ``_placed`` reads "written text, or the draft" — and an empty string is falsy, so the
+    obvious spelling of that sentence hands the slide the very prose ``ai_required`` exists
+    to keep off it. A field present in the written map wins even when it is empty.
+    """
+    monkeypatch.setenv("COMMENTARY_MODE", "ai_required")
+    written = list(rewrites.write_all([_one_growth_field()])[0].values())[0]
+    assert written == ""
+    assert "growth line" not in written, "the deterministic draft must not reappear"
+
+
+def test_a_verifier_that_could_not_run_still_refuses_the_build(monkeypatch):
+    """The whole point of the omit/refuse split.
+
+    "The evidence carried no supportable point" is an ANSWER, and blanks a box. "The judge
+    never answered" is a BREAKAGE — it establishes nothing about whether there was
+    something to say, so laundering it into a confident blank would be a silent lie.
+    """
+    import studio.ai.client as client
+    from studio.ai.models import CommentaryVerdicts
+
+    def structured(model, system, user, *, tier="balanced", node="ai", phase="other",
+                   fields=(), **kw):
+        if model is CommentarySections:
+            asked = [line.split()[2] for line in user.splitlines()
+                     if line.startswith("--- FIELD ")]
+            return CommentarySections(sections=[
+                CommentarySection(field_id=fid, bullets=[
+                    CommentaryBullet(text=_SENTENCES[0], fact_ids=["period.year"]),
+                ]) for fid in asked])
+        return CommentaryVerdicts(verdicts=[])     # never lines up, retry included
+
+    monkeypatch.setattr(client, "structured", structured)
+    monkeypatch.setattr(client, "llm_available", lambda: True)
+    monkeypatch.setenv("COMMENTARY_MODE", "ai_required")
+
     with pytest.raises(mode.CommentaryUnavailable) as raised:
         rewrites.write_all([_one_growth_field()])
-
-    message = str(raised.value)
-    assert "feedback-growth" in message or "commentary-growth" in message
-    assert "fragment" in message, "the refusal must be actionable, not just an id"
-    assert "line(s) survived" in message, "and say how short the column came up"
+    assert "could not be verified" in str(raised.value)
     assert raised.value.retryable is True
 
 
@@ -859,8 +950,13 @@ def test_a_whole_sub_deck_of_flaky_fields_still_builds(monkeypatch):
         assert text.splitlines() == list(_SENTENCES[:1])
 
 
-def test_a_field_the_model_cannot_write_still_stops_the_deck(monkeypatch):
-    """The mode still means what it says — the spare is tolerance, not a bypass."""
+def test_a_field_the_model_cannot_write_ships_empty_and_never_ships_its_rejects(monkeypatch):
+    """The mode still means what it says — the spare is tolerance, not a bypass.
+
+    The deck no longer stops (that cost thirty good columns to save one bad box), but the
+    guarantee underneath is unchanged and is what this asserts: neither the fragment the
+    gate rejected nor the deterministic draft may reach the slide. The box is simply empty.
+    """
     monkeypatch.setenv("COMMENTARY_MODE", "ai_required")
     _model_writing_one_bad_line(monkeypatch, bad=_SENTENCES[0])   # every line a duplicate
     import studio.ai.client as client
@@ -878,12 +974,19 @@ def test_a_field_the_model_cannot_write_still_stops_the_deck(monkeypatch):
             ]) for fid in asked])
 
     monkeypatch.setattr(client, "structured", all_fragments)
-    with pytest.raises(mode.CommentaryUnavailable):
-        rewrites.write_all([_one_growth_field()])
+    written = list(rewrites.write_all([_one_growth_field()])[0].values())[0]
+    assert written == ""
+    assert "Momentum: Cyber" not in written, "the rejected fragment must not reach the slide"
+    assert "growth line" not in written, "nor the deterministic draft"
 
 
-def test_the_fields_that_were_written_are_cached_before_the_refusal(monkeypatch):
-    """So a re-run only re-attempts what failed, instead of paying for the deck again."""
+def test_the_fields_that_were_written_are_cached_even_when_one_comes_up_empty(monkeypatch):
+    """So a re-run only re-attempts what failed, instead of paying for the deck again.
+
+    An emptied field is deliberately NOT cached: blanking is this run's verdict on this
+    evidence, and a later run with a repaired prompt or a better model must be free to try
+    the column again rather than inherit the blank.
+    """
     monkeypatch.setenv("COMMENTARY_MODE", "ai_required")
     import studio.ai.client as client
 
@@ -904,8 +1007,7 @@ def test_the_fields_that_were_written_are_cached_before_the_refusal(monkeypatch)
     monkeypatch.setattr(client, "structured", one_bad_field)
     monkeypatch.setattr(client, "llm_available", lambda: True)
 
-    with pytest.raises(mode.CommentaryUnavailable):
-        rewrites.write_all([_value_set(_facts())])
+    rewrites.write_all([_value_set(_facts())])
 
     from studio.template_fill import commentary_cache as cache
 
