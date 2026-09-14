@@ -90,6 +90,19 @@ def check_numbers(judged: Sequence[Judged], pack) -> Verdict:
     """
     from studio.ai.verifier import allowed_numbers, verify_bullets
 
+    # The page's PERIOD and SCOPE are always allowed, cited or not.
+    #
+    # Scoping the allowed figures to a bullet's own citations is right, and it is what
+    # stops the peer average being quoted under the carrier's premium. It is wrong for the
+    # period: "the carrier grew 12% in 2025" carries the token 2025, which is not in
+    # ``carrier.yoy``, so a correct sentence was dropped for DATING ITSELF unless the model
+    # also remembered to cite ``period.year``. The same for the product and country a page
+    # is about. These facts carry no carrier figure, so allowing them enables no swap —
+    # they are the label on the page, not a claim about it, and demanding a citation for
+    # them cost whole bullets to protect nothing.
+    context = tuple(e.rendered for e in pack.items
+                    if e.fact_id.startswith(("period.", "scope.")))
+
     out: List[Judged] = []
     for item in judged:
         item = replace(item, text=_KIND_PREFIX.sub("", html.unescape(item.text).strip()))
@@ -102,7 +115,7 @@ def check_numbers(judged: Sequence[Judged], pack) -> Verdict:
             continue
         sources = pack.rendered_values(item.fact_ids) if item.fact_ids else \
             pack.rendered_values()
-        allowed = allowed_numbers(*sources)
+        allowed = allowed_numbers(*sources, *context)
         clean, issues = verify_bullets([item.text], allowed)
         direction_issue = _direction_issue(item, pack)
         if direction_issue:

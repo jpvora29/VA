@@ -554,8 +554,12 @@ def test_two_different_books_are_still_written_separately(repeating_model):
     other = _facts()
     other["carrier"]["current"] = 51_000_000.0
     B.write_deck([_value_set(_facts()), _value_set(other)])
+    # Count the INITIAL asks, not every author call: a short or repeated column is now
+    # topped up, and repairs are author calls too. What this guards is that two different
+    # books are written as two sections, which is about the first ask for each.
     authors = [c for c in repeating_model if c["phase"] == "author"]
-    assert sum(call["user"].count("--- FIELD ") == 3 for call in authors) == 2
+    initial = [c for c in authors if "REJECTED" not in c["user"]]
+    assert len(initial) == 2, "two books, two sections, two opening asks"
     assert all(call["user"].count("--- FIELD ") <= 3 for call in authors)
 
 

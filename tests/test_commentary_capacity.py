@@ -149,3 +149,68 @@ def test_a_column_whose_page_shows_no_tiles_gets_no_such_line():
                       topic="performance", node="commentary-performance", bullets=3,
                       draft=("draft.",))
     assert "THIS PAGE DISPLAYS" not in B._column_block(column, show_draft=False)
+
+
+# ── what the numeric check may and may not demand a citation for ────────────
+#
+# The reported drop reasons were "not getting the year" and "cannot verify the premium
+# numbers". They are the same mechanism: every numeric token in a bullet is matched
+# against the rendered text of the facts THAT BULLET CITES. Scoping to citations is right
+# and catches a figure quoted from the wrong fact — but it was also dropping correct
+# sentences for dating themselves, because "2025" is not inside ``carrier.yoy``.
+
+
+def _pack():
+    from studio.template_fill import commentary_evidence as E
+
+    return E.build_pack({
+        "subject": "Zurich",
+        "scope": {"Product_Line": "Environmental", "Country": "Singapore"},
+        "carrier": {"current_year": 2025, "current": 10_000_000, "prior": 12_000_000,
+                    "pct": -16.6667, "delta": -2_000_000},
+        "marsh": {"current": 100_000_000, "prior": 80_000_000, "pct": 25},
+        "sow": {"current": 10, "delta": -5}, "rank": {},
+        "peer": {"sow": 18.5, "n_carriers": 3, "benchmark_count": 3},
+    })
+
+
+def _judge(text, cites):
+    from studio.template_fill import commentary_verify as V
+
+    return V.check_numbers([V.Judged(text=text, fact_ids=tuple(cites))], _pack()).judged[0]
+
+
+def test_a_bullet_is_not_dropped_for_dating_itself():
+    """The period is the label on the page, not a claim about it."""
+    assert _judge("Marsh-placed premium fell 16.7% in 2025.", ("carrier.yoy",)).kept
+
+
+def test_a_bullet_may_name_the_scope_it_reports_on():
+    assert _judge("Environmental premium in Singapore fell 16.7%.", ("carrier.yoy",)).kept
+
+
+def test_a_figure_whose_fact_is_not_cited_is_still_refused():
+    """The allowance is for period and scope ONLY — the real check is untouched.
+
+    Widening it to the whole pack would let the peer average be quoted as the carrier's
+    own premium, which is the failure the citation scoping exists to catch.
+    """
+    judged = _judge("Premium fell 16.7% while Marsh grew 25.0%.", ("carrier.yoy",))
+    assert not judged.kept and "25.0%" in judged.reason
+
+
+def test_the_same_bullet_passes_once_it_cites_both_facts():
+    assert _judge("Premium fell 16.7% while Marsh grew 25.0%.",
+                  ("carrier.yoy", "marsh.yoy")).kept
+
+
+def test_the_writer_is_told_the_citation_rule_mechanically():
+    """The check is mechanical, so the instruction has to be — 'cite your sources' is not.
+
+    Combining related facts into one point is asked for elsewhere in the same prompt, and
+    every extra figure in a bullet is another fact that must be cited or the whole bullet
+    goes.
+    """
+    voice = CM.deck_voice("balanced", "Zurich")
+    assert "CITE THE FACT ID BEHIND EVERY FIGURE" in voice
+    assert "the whole bullet is dropped" in voice

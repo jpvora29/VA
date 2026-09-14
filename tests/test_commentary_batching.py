@@ -979,9 +979,15 @@ def test_one_unusable_line_no_longer_refuses_a_strict_build(monkeypatch):
     written = rewrites.write_all([_one_growth_field()])[0]
 
     text = list(written.values())[0]
-    assert text.splitlines() == list(_SENTENCES[:1]), "one verified finding needs no padding"
+    assert text.splitlines() == list(_SENTENCES[:1]), "the verified finding still ships"
     assert "growth line one." not in text, "and no deterministic prose was substituted"
-    assert len([c for c in calls if c["phase"] == "author"]) == 1, "no repair was needed"
+    # A column SHORT of what its box holds is now topped up before it ships: one line in a
+    # two-bullet box is what left a four-bullet summary showing a quarter of a page. The
+    # top-up asks only for the missing line, and when the model cannot supply one the
+    # salvage pass ships the survivor anyway — so the strictness costs a call, not content.
+    authored = [c for c in calls if c["phase"] == "author"]
+    assert len(authored) > 1, "a short column must be offered a top-up"
+    assert any("REJECTED" in c["user"] or "ALREADY WRITTEN" in c["user"] for c in authored[1:])
 
 
 def test_a_whole_sub_deck_of_flaky_fields_still_builds(monkeypatch):

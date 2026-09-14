@@ -534,8 +534,12 @@ def _accepted(kept: Mapping[str, Sequence[str]], columns: Sequence[Column],
     text: Dict[str, str] = {}
     failed: List[Failure] = []
     for column in columns:
+        # Judged against what the BOX holds, not against "one line is better than none".
+        # A column short of its capacity becomes a Failure carrying its survivors, so the
+        # repair round tops it up instead of the page shipping a quarter-full box.
         verdict = C.judge_column(kept.get(column.field_id, ()), wanted=column.bullets,
-                                 node=column.node, subject=subject)
+                                 node=column.node, subject=subject,
+                                 floor=C.target_lines(column.bullets))
         if verdict.text:
             text[column.field_id] = verdict.text
         else:

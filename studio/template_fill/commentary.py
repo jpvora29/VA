@@ -50,8 +50,26 @@ _STYLE_DIRECTIVE: Dict[str, str] = {
 
 
 def min_lines(wanted: int) -> int:
-    """A single material finding is enough; empty output still needs repair."""
+    """The floor for SHIPPING: a single material finding beats an empty box."""
     return 1 if wanted > 0 else 0
+
+
+def target_lines(wanted: int) -> int:
+    """The floor for ACCEPTING a column as finished, before repair is offered.
+
+    These are two different questions and conflating them is what left a four-bullet box
+    showing one line. ``min_lines`` answers "is this worth shipping?" — yes, one verified
+    finding beats a blank. It was also being used to answer "is this column DONE?", so a
+    column that came back with one of the four bullets it was asked for was recorded as a
+    success, never became a :class:`~commentary_batch.Failure`, and never reached the
+    repair round — even though repair is a TOP-UP that asks only for the missing lines and
+    exists precisely for this.
+
+    A column is finished when it has what the box has room for. Short of that it is topped
+    up; if repair cannot fill it, ``_salvage`` still ships the survivors at
+    :data:`SALVAGE_FLOOR`, so the strictness costs calls rather than content.
+    """
+    return max(1, int(wanted))
 
 
 def ask_lines(wanted: int) -> int:
@@ -213,6 +231,16 @@ _LEAD_IN = (
     "nothing to name, and a column of invented labels is harder to read than none. "
 )
 _FAITHFULNESS = (
+    # The citation rule has to be MECHANICAL, because the check is. Every figure in a
+    # sentence is matched against the rendered text of the facts that sentence cites, and
+    # nothing else — so a bullet that names premium, its movement and the Marsh comparison
+    # needs all three fact IDs. Citing the main one and writing three figures is the single
+    # largest source of dropped bullets, and it gets worse the more a bullet does the thing
+    # this prompt asks for: combining related facts into one point.
+    "CITE THE FACT ID BEHIND EVERY FIGURE YOU WRITE, not only the main one. If a sentence "
+    "names a premium, a percentage and a comparison, it cites the fact for each of the three. "
+    "A figure whose fact is not cited is treated as invented and the whole bullet is dropped, "
+    "however true it is. When in doubt, cite more. "
     "Every bullet must cite its supporting fact IDs. Copy numerical display values exactly from those facts; "
     "never recalculate, round or invent figures. Preserve direction and distinguish percentages from percentage points. "
     "Only the subject carrier and Marsh may be named; comparison carriers remain aggregate. "
