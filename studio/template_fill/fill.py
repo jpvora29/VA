@@ -205,6 +205,13 @@ def _style_commentary_paragraphs(paragraphs, ink=None) -> None:
         for r in p.runs:
             r.font.name = _COMMENTARY_FONT_NAME
             r.font.size = Pt(_COMMENTARY_FONT_PT)
+            # Weight is NOT inherited. ``_set_paragraph_text`` reuses the authored run and
+            # keeps its ``rPr`` on purpose, which is right for colour and for think-cell
+            # fields and wrong for weight: a panel whose placeholder text was typed bold
+            # ("What's working well" in the shipped templates) turned every line of real
+            # commentary bold, while the panel beside it stayed normal. Commentary reads
+            # at one weight.
+            r.font.bold = False
             if ink is not None:
                 r.font.color.rgb = ink
             # Some template placeholders carry a yellow <a:highlight> — real
@@ -435,54 +442,11 @@ def _write_bullets(frame, text: str, *, template_paragraph=None, ink=None) -> No
         _set_paragraph_text(target, line)
         _set_bullet(target, bulleted=not blank and not _HEADING_LINE.search(line),
                     bullet=bullet)
-        _embolden_lead_in(target, line)
 
     for extra in paras[len(lines):]:
         extra._p.getparent().remove(extra._p)
     _style_commentary_paragraphs(frame.paragraphs, ink)
     _anchor_commentary_top(frame)
-
-
-def _embolden_lead_in(paragraph, line: str) -> None:
-    """Bold a ``Theme: finding`` bullet's label, so the column can be scanned.
-
-    The label is what makes the shape worth having — a reader sees what each bullet covers
-    before reading it — and that only works if it is visually distinct. Split into two runs
-    rather than written as one: the second run inherits the first's ``rPr`` by copy, so the
-    template's font, size and colour survive and only the weight differs.
-
-    Best-effort and silent. A bullet with no lead-in, a paragraph the split does not fit,
-    or any failure at all leaves the line exactly as it was written — emphasis is a
-    refinement on top of correct text, never a condition of it.
-    """
-    from studio.template_fill import commentary_metrics
-
-    if commentary_metrics.lead_in_issue(line) is not None:
-        return                                   # malformed; the gate refuses it anyway
-    label = commentary_metrics.lead_in_label(line)
-    if not label:
-        return
-    try:
-        runs = list(paragraph.runs)
-        if len(runs) != 1 or runs[0].text != line:
-            return                               # rebuilt or multi-run: leave it alone
-        _split_bold_prefix(paragraph, runs[0], len(label) + 1)
-    except Exception as exc:  # noqa: BLE001 — emphasis must never break a fill
-        logger.warning("template_fill: lead-in emphasis skipped (%s)", exc)
-
-
-def _split_bold_prefix(paragraph, run, cut: int) -> None:
-    """Split ``run`` at ``cut`` into a bold head and a plain tail, keeping formatting."""
-    from copy import deepcopy
-
-    head, tail = run.text[:cut], run.text[cut:]
-    if not head or not tail:
-        return
-    clone = deepcopy(run._r)
-    run._r.addnext(clone)
-    run.text = head
-    run.font.bold = True
-    paragraph.runs[1].text = tail
 
 
 def _write_commentary(shape, where: List[Any], text: str, ink=None) -> None:

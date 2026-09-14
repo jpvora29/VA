@@ -87,7 +87,7 @@ def test_the_judge_is_told_the_shape_is_allowed():
     assert "KEEP that shape" in V._JUDGE_SYSTEM
 
 
-# ── the slide: the label is what makes it scannable ─────────────────────────
+# ── the slide: one weight, whatever the template placeholder carried ────────
 
 
 def _one_paragraph_frame():
@@ -101,33 +101,31 @@ def _one_paragraph_frame():
     return frame
 
 
-def test_the_label_is_emboldened_and_the_finding_is_not():
+def test_commentary_never_inherits_a_bold_placeholder():
+    """A panel whose example text was typed bold turned every real line bold.
+
+    ``_set_paragraph_text`` reuses the authored run and keeps its ``rPr`` deliberately —
+    right for colour and think-cell fields, wrong for weight, because one panel then reads
+    bold while the panel beside it reads normal. Commentary is one weight.
+    """
     from studio.template_fill import fill
 
     frame = _one_paragraph_frame()
-    fill._write_bullets(frame, GOOD)
-    para = frame.paragraphs[0]
-    assert para.text == GOOD, "emphasis must not change a single character of the text"
-    bold = [r for r in para.runs if r.font.bold]
-    assert bold and bold[0].text.startswith("Manufacturing growth")
-    assert any(not r.font.bold and "premium" in r.text for r in para.runs)
-
-
-def test_a_bullet_with_no_label_is_written_as_one_run():
-    from studio.template_fill import fill
-
-    frame = _one_paragraph_frame()
-    fill._write_bullets(frame, PLAIN)
-    para = frame.paragraphs[0]
-    assert para.text == PLAIN
-    assert not any(r.font.bold for r in para.runs), "nothing to emphasise here"
-
-
-def test_emphasis_never_breaks_a_fill():
-    """A refinement on top of correct text is never allowed to be a condition of it."""
-    from studio.template_fill import fill
-
-    frame = _one_paragraph_frame()
-    fill._embolden_lead_in(object(), GOOD)      # not a paragraph at all
+    frame.paragraphs[0].runs[0].font.bold = True       # the author's bold placeholder
     fill._write_bullets(frame, GOOD)
     assert frame.paragraphs[0].text == GOOD
+    assert not any(r.font.bold for r in frame.paragraphs[0].runs),         "a bold placeholder must not make the commentary bold"
+
+
+def test_a_lead_in_is_plain_text_not_emphasis():
+    """The label earns its place by being FIRST, not by being heavy.
+
+    Emphasis was tried and removed: it read as bold noise down a narrow panel, and the
+    label is already doing its job by opening the bullet.
+    """
+    from studio.template_fill import fill
+
+    frame = _one_paragraph_frame()
+    fill._write_bullets(frame, GOOD)
+    assert frame.paragraphs[0].text == GOOD
+    assert not any(r.font.bold for r in frame.paragraphs[0].runs)

@@ -82,13 +82,16 @@ _TOPIC_BRIEF: Dict[str, str] = {
               "State the most material result and its comparison; explain a tradeoff only if evidenced. ",
     "key_messages": "THIS COLUMN: the two or three findings leadership should remember. "
                     "Prioritize the material performance result, competitive position or specific next step. ",
-    "challenges": "THIS COLUMN: material premium declines, share losses or benchmark shortfalls. "
+    "challenges": "KEEP EACH BULLET SHORT — one sentence, and prefer fewer words to more; this is a narrow panel read at a glance, not a paragraph. "
+                  "THIS COLUMN: material premium declines, share losses or benchmark shortfalls. "
                   "Name where each occurs and the comparison. Growth alone is not a challenge. "
                   "Do not infer the cause, a failed renewal or persistence into the future from premium. ",
-    "working": "THIS COLUMN: material successes. Distinguish absolute premium growth from share gain. "
+    "working": "KEEP EACH BULLET SHORT — one sentence, and prefer fewer words to more; this is a narrow panel read at a glance, not a paragraph. "
+               "THIS COLUMN: material successes. Distinguish absolute premium growth from share gain. "
                "Name the contributing product, industry or client segment where evidenced. "
                "Matching Marsh growth can be a positive absolute result; describe its relative position accurately. ",
-    "growth": "THIS COLUMN: named gaps in Marsh placements that warrant investigation. "
+    "growth": "KEEP EACH BULLET SHORT — one sentence, and prefer fewer words to more; this is a narrow panel read at a glance, not a paragraph. "
+              "THIS COLUMN: named gaps in Marsh placements that warrant investigation. "
               "Distinguish unplaced-with-this-carrier premium from realistic opportunity. "
               "Benchmark parity is an illustrative scenario, not a forecast. "
               "A specific review of appetite, capacity or placement access is a proposed next step, not a known cause. ",
@@ -197,12 +200,17 @@ _LEAD_IN = (
     "the finding: 'Manufacturing growth: Marsh-placed premium there rose 18% while the "
     "carrier's share of it fell 2.1 points.' It makes a column scannable, because a reader "
     "sees what each bullet covers before reading it. "
-    "Three rules. The label is at most four words and names the THING, never the column "
+    "Four rules. The label is at most four words and names the THING, never the column "
     "('Challenges:' and 'Opportunity:' are not labels, they are the heading repeated). "
     "What follows the colon is a COMPLETE SENTENCE that would still stand if the label were "
-    "removed — never a caption like 'Momentum: Cyber +97%'. And do not label every bullet: "
-    "a bullet about the whole carrier has nothing to name, and a column of invented labels "
-    "is harder to read than none. "
+    "removed — never a caption like 'Momentum: Cyber +97%'. "
+    "EVERYTHING AFTER THE LABEL MUST BE ABOUT THE LABEL. A bullet headed 'Manufacturing' "
+    "carries only what is true of Manufacturing; a point about another segment, or about the "
+    "carrier overall, is a SEPARATE BULLET with its own label or none. Never gather unrelated "
+    "findings under one theme because they happen to be in the same column — a reader who "
+    "reads 'Manufacturing:' and then meets Marine halfway through the sentence has been "
+    "misled by the label. And do not label every bullet: a bullet about the whole carrier has "
+    "nothing to name, and a column of invented labels is harder to read than none. "
 )
 _FAITHFULNESS = (
     "Every bullet must cite its supporting fact IDs. Copy numerical display values exactly from those facts; "
@@ -432,22 +440,42 @@ def _page_kpis(slide: Slide) -> Tuple[str, ...]:
     return tuple(dict.fromkeys(out))
 
 
+#: Wrapped lines one bullet occupies in a column of this width, at these font sizes. Two
+#: short sentences in a 2.5-inch column is about three lines; used to turn a box's HEIGHT
+#: into a number of bullets.
+_LINES_PER_BULLET = 3
+#: Fallback line height as a multiple of font size, for a box whose font we cannot read.
+_LINE_SPACING = 1.25
+_EMU_PER_INCH = 914400.0
+
+
 def _box_capacity(shape: Shape) -> int:
-    """How many bullets this prose box was AUTHORED to hold.
+    """How many bullets this prose box has ROOM for.
 
-    The template author laid the box out with example bullets, and how many they wrote is
-    the only honest statement anyone has made about how much the box holds. A box with
-    four example lines wants four; one with a single paragraph of running prose wants one.
+    Driven by geometry, with the authored paragraph count as a floor. Counting authored
+    paragraphs alone was wrong in the one place it mattered most: the headline page's box
+    is the tallest prose box in the deck — 5.2 inches, room for twenty-odd lines — and
+    carries ONE example paragraph because the template author typed one sentence into it.
+    Read as capacity 1, it could never explain the five KPI tiles printed beside it, and
+    no prompt could have widened it.
 
-    This exists because the number was previously read off the DETERMINISTIC DRAFT — the
-    model was asked for exactly as many bullets as the rule composers happened to produce,
-    after the claim ledger had removed whatever an earlier page already said. A summary
-    box on a four-bullet slide was routinely asked for one line, and no prompt could have
-    fixed that. Capacity is a property of the SLIDE; it has nothing to do with how much
-    the fallback had left to say.
+    So: how many bullets FIT, floored by how many the author laid out, capped at what a
+    column can be read at. A box we cannot measure falls back to the authored count.
     """
     written = [p for p in (shape.paragraphs or []) if p and p.strip()]
-    return max(1, min(len(written) or _MAX_COLUMN_BULLETS, _MAX_COLUMN_BULLETS))
+    room = _bullets_that_fit(shape)
+    return max(1, min(max(room, len(written)) or _MAX_COLUMN_BULLETS, _MAX_COLUMN_BULLETS))
+
+
+def _bullets_that_fit(shape: Shape) -> int:
+    """Bullets the box's HEIGHT allows, or 0 when it cannot be measured."""
+    if not shape.h or not shape.font_size_pt:
+        return 0
+    line_inches = (shape.font_size_pt * _LINE_SPACING) / 72.0
+    if line_inches <= 0:
+        return 0
+    lines = int((shape.h / _EMU_PER_INCH) / line_inches)
+    return max(0, lines // _LINES_PER_BULLET)
 
 
 def _prose_targets(template: Template) -> List[Dict[str, Any]]:

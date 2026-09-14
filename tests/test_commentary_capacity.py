@@ -30,12 +30,35 @@ def overall():
 # ── capacity comes from the SLIDE, not from the fallback ────────────────────
 
 
-def test_capacity_is_what_the_template_author_laid_out(overall):
-    """A box with three example bullets holds three; one paragraph holds one."""
+def test_capacity_is_the_room_the_box_has_not_the_example_the_author_typed(overall):
+    """The headline box is the TALLEST prose box in the deck and carried one example line.
+
+    Counting authored paragraphs read that as capacity 1, so the box beside five KPI tiles
+    could never explain more than one of them — and no prompt could have widened it,
+    because the cap was upstream of the prompt.
+    """
     by_topic = {t["topic"]: t["capacity"] for t in CM.prose_targets(overall)}
-    assert by_topic["thesis"] == 1, "the headline box is a single authored paragraph"
+    assert by_topic["thesis"] == CM._MAX_COLUMN_BULLETS, \
+        "a 5-inch box holds more than the one sentence its author typed into it"
     for topic in ("performance", "reflections", "priorities", "key_messages"):
-        assert by_topic[topic] == 3, topic
+        assert by_topic[topic] >= 3, topic
+
+
+def test_a_box_too_small_to_hold_bullets_is_not_asked_for_them():
+    from studio.template_fill.analyze import Shape
+
+    tiny = Shape(shape_id=1, name="x", kind="text", h=int(0.4 * 914400),
+                 font_size_pt=11.0, paragraphs=["one line"])
+    assert CM._box_capacity(tiny) == 1
+
+
+def test_an_unmeasurable_box_falls_back_to_what_the_author_laid_out():
+    """No height or no font size is not a licence to guess at four."""
+    from studio.template_fill.analyze import Shape
+
+    unmeasured = Shape(shape_id=1, name="x", kind="text",
+                       paragraphs=["a", "b"])           # no h, no font size
+    assert CM._box_capacity(unmeasured) == 2
 
 
 def test_a_column_is_asked_for_its_capacity_not_its_draft_length():
@@ -56,8 +79,8 @@ def test_a_pending_with_no_capacity_still_falls_back_to_the_draft():
 def test_capacity_never_exceeds_what_a_column_can_be_read_at():
     from studio.template_fill.analyze import Shape
 
-    roomy = Shape(shape_id=1, name="x", kind="text",
-                  paragraphs=[f"bullet {i}" for i in range(12)])
+    roomy = Shape(shape_id=1, name="x", kind="text", h=int(20 * 914400),
+                  font_size_pt=10.0, paragraphs=[f"bullet {i}" for i in range(12)])
     assert CM._box_capacity(roomy) == CM._MAX_COLUMN_BULLETS
 
 
