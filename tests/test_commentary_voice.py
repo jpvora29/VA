@@ -10,6 +10,8 @@ Pure and hermetic: synthetic fact sets, no DB, no LLM.
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from studio.template_fill import commentary as CM
@@ -86,6 +88,41 @@ def test_the_market_keeps_the_word_that_actually_belongs_to_it():
     assert CM._CARRIER_AS_BOOK.search("Defend the renewal book in Marine.") is None
     assert CM._CARRIER_AS_BOOK.search("The book grew 12.0%.") is not None
     assert CM._CARRIER_AS_BOOK.search("Its book is concentrated.") is not None
+
+
+def test_no_bullet_opens_by_pointing_at_the_line_above_it():
+    """Enumerating the verbs was the mistake, and it shipped.
+
+    "That is because" and "That reflects" were banned; "That leaves the carrier…" was not,
+    and that is what a shipped column opened on. A bullet opening on THAT or THIS points at
+    the line above it whatever verb follows — so the OPENER is the thing to refuse.
+    """
+    for banned in ("That leaves the carrier 8.5 points below the average.",
+                   "That decline sits mostly in Manufacturing.",
+                   "This suggests that appetite narrowed.",
+                   "That is because premium fell."):
+        assert CM._TEMPLATE_OPENERS.match(banned) is not None, banned
+    # A pointer at a PERIOD is not a back-reference.
+    for allowed in ("This year the carrier grew 12.0%.",
+                    "That quarter closed ahead of the prior one.",
+                    "The carrier grew 12.0% while the Marsh book grew 6.0%."):
+        assert CM._TEMPLATE_OPENERS.match(allowed) is None, allowed
+
+
+def test_no_style_example_opens_the_way_the_examples_forbid():
+    """The model copies examples — that is what they are for, so they must obey the rules.
+
+    A worked example that opened "That leaves the carrier…" taught the model to open on a
+    back-reference, and the phrase reached a shipped deck almost verbatim.
+    """
+    # Matched on the QUOTE MARK that opens each worked example rather than by parsing the
+    # whole block: the surrounding rules are full of apostrophes ("the carrier's premium"),
+    # so naive quote-pairing reads half a rule as an example and fails on the wrong thing.
+    openers = re.findall(r"'(\w+\s+\w+)", CM._EXAMPLES)
+    assert openers, "the examples must be quoted so the model can tell them from the rules"
+    for opening in openers:
+        assert CM._TEMPLATE_OPENERS.match(opening) is None, \
+            f"a worked example opens the way the rules forbid: {opening!r}"
 
 
 def test_a_kind_label_is_stripped_before_anything_judges_the_line():

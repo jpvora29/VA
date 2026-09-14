@@ -282,8 +282,9 @@ _EXAMPLES = (
     "An opening bullet carrying two facts as one point — 'The carrier's Marsh-placed Services "
     "premium fell 16.7% to $10M while Marsh's Services premium grew 25%, taking its share from "
     "15.0% to 10.0%.' "
-    "A bullet that reads meaning into that — 'That leaves the carrier 8.5 points below the 18.5% "
-    "average of the three largest carriers in this scope, where each point of share is worth $1M.' "
+    "A bullet that reads meaning into that — 'At 10.0% the carrier now sits 8.5 points below the "
+    "18.5% average of the three largest carriers in this scope, where each point of share is "
+    "worth $1M.' "
     "A later bullet referring back — 'Most of that share loss sits in Manufacturing, where "
     "placements fell $4M of the $5M decline.' "
     "A proposed priority — 'Review placement outcomes in Services to establish where share was "
@@ -555,9 +556,13 @@ _TEMPLATE_OPENERS = re.compile(
     # the reference become the OPENING: a run of bullets each starting "That is because…"
     # reads as one sentence chopped up, and the first words of a bullet are the only ones
     # a reader skimming a slide is guaranteed to see. The reference belongs mid-sentence.
-    r"|(?:that|this)\s+is\s+because"
-    r"|(?:that|this)\s+(?:reflects|follows|explains|stems|results)\b"
-    r"|(?:that|this)\s+is\s+(?:why|driven|down\s+to)\b)\b",
+    # Enumerating the verbs was the mistake: "That is because" and "That reflects" were
+    # banned and "That leaves the carrier…" walked straight through, which is what a run
+    # of shipped bullets then opened on. A bullet opening on THAT or THIS is pointing at
+    # the line above it whatever verb follows, so the opener is what to ban — except where
+    # it points at a PERIOD ("This year…", "That quarter…"), which is not a back-reference
+    # at all.
+    r"|(?:that|this)\b(?!\s+(?:year|quarter|month|period|half|renewal)\b))",
     re.I,
 )
 
