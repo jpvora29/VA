@@ -1,0 +1,155 @@
+# What evidence an analytical question is entitled to, by intent.
+#
+# This file answers one question the chatbot previously never asked explicitly:
+# "what would make this answer complete?" Without it, every question got whatever
+# the lens planner happened to select, and an answer that omitted the quarterly
+# comparison was indistinguishable from one where the data had none.
+#
+# The contract is deliberately per-intent, not one report template. A lookup is
+# complete with one value; a performance assessment is not complete without its
+# movement, its contributors and its timing. Adding a new kind of question means
+# adding an `intents:` entry, not editing planner code (open/closed).
+#
+# A requirement is a statement about EVIDENCE, never about wording. It says which
+# figures must exist and be validated before the writer is allowed to claim the
+# question was answered. When the data cannot support one, the answer carries an
+# explicit limitation — which is a different outcome from silently omitting it.
+#
+# Fields
+#   requirements.<key>
+#     label        what a reader/limitation calls it
+#     source       gpr | survey   — which dataset can satisfy it
+#     evidence     the figures that satisfy it, in business terms
+#     limitation   the sentence to publish when it cannot be satisfied
+#   intents.<key>
+#     aliases      other names for the same analytical operation
+#     required     requirement keys that must be satisfied or explicitly limited
+#     conditional  requirement key -> the condition name that admits it
+#   policy
+#     product decisions that are NOT derivable from the data; see section 2 of
+#     docs/chatbot-improvements-implementation-plan.md
+
+policy:
+  # Which datasets an UNQUALIFIED performance question draws on. An explicit user
+  # restriction ("premium only", "just the survey") always overrides this.
+  # Set to [gpr] for a premium-only default.
+  performance_sources: [gpr, survey]
+
+  # Survey evidence joins a performance answer only where the same scope has
+  # comparable survey data. Never fabricate the assessment from an annual score.
+  survey_requires_comparable_data: true
+
+  # Whitespace discovery inside a performance answer. Off until the meaningful-book
+  # and low-participation thresholds are calibrated with ICG; the requirement is
+  # declared so the gap is visible rather than forgotten.
+  whitespace_in_performance: false
+
+requirements:
+  direct_value:
+    label: Requested value
+    source: gpr
+    evidence: the single figure the question named, on the exact requested scope
+    limitation: The requested figure is not available for this scope.
+
+  annual_movement:
+    label: Annual movement
+    source: gpr
+    evidence: >-
+      premium for the reporting year and the year before it on the same filters,
+      with the absolute and percentage change between them
+    limitation: >-
+      Only one comparable year is available for this scope, so the annual movement
+      cannot be stated.
+
+  product_contributors:
+    label: Product contributors
+    source: gpr
+    evidence: >-
+      premium by product for both years, the change per product, and each
+      product's contribution to the headline change — including products that
+      moved the other way
+    limitation: >-
+      The product split does not reconcile to the headline total for this scope,
+      so contributions are not reported.
+
+  quarterly_comparison:
+    label: Quarterly comparison
+    source: gpr
+    evidence: >-
+      each quarter of the reporting year against the SAME quarter of the prior
+      year, so the timing of the movement is visible
+    limitation: >-
+      Quarterly detail is not available for both years on this scope, so the
+      timing of the movement cannot be established.
+
+  industry_concentration:
+    label: Industry concentration
+    source: gpr
+    evidence: >-
+      premium by industry for both years within the product selected from the
+      validated product findings, and the change per industry
+    limitation: >-
+      No product moved materially enough to justify an industry breakdown.
+
+  whitespace:
+    label: Whitespace
+    source: gpr
+    evidence: >-
+      slices where the Marsh book has meaningful premium and this carrier's
+      participation is absent or materially thin, on identical filters
+    limitation: >-
+      Whitespace thresholds are not calibrated for this scope, so no whitespace
+      finding is reported.
+
+  survey_movement:
+    label: Survey movement
+    source: survey
+    evidence: >-
+      comparable survey years for the same carrier and country, the practice or
+      attribute scores behind the movement in points, and the response counts
+      that make them reportable
+    limitation: >-
+      Comparable survey data is not available for this scope, so no perception
+      assessment is included.
+
+intents:
+  lookup:
+    aliases: [direct value, what is, how much, retrieve]
+    required: [direct_value]
+    conditional: {}
+
+  performance_assessment:
+    aliases:
+      - performance
+      - how did they do
+      - how is it performing
+      - review
+      - assessment
+    required:
+      - annual_movement
+      - product_contributors
+      - quarterly_comparison
+    conditional:
+      industry_concentration: material_product_movement
+      survey_movement: comparable_survey_data
+      whitespace: whitespace_enabled
+
+  movement_explanation:
+    aliases: [why did it change, what drove, drivers, explain the change]
+    required:
+      - annual_movement
+      - product_contributors
+    conditional:
+      quarterly_comparison: quarterly_data_available
+      industry_concentration: material_product_movement
+
+  breakdown:
+    aliases: [break down, split by, by product, by industry, across]
+    required: [product_contributors]
+    conditional:
+      annual_movement: comparable_years_available
+
+  perception_assessment:
+    aliases: [survey, perception, score, how do brokers rate]
+    required: [survey_movement]
+    conditional: {}

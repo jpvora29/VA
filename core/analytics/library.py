@@ -30,7 +30,15 @@ from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core.analytics import pandas_library as P
-from core.analytics.frames import as_frame_source
+from core.analytics.frames import as_frame_source, on_frames
+from core.analytics.periods import (
+    PERIODS_PER_YEAR,
+    period_expr,
+    period_in_year_expr,
+    period_label,
+    without_period_filters,
+    year_expr,
+)
 from core.analytics.sql import (
     flow_spec,
     peer_country_column,
@@ -40,27 +48,44 @@ from core.analytics.sql import (
     safe_column,
     where_clause,
 )
+from core.analytics.movement import compute_aligned_periods, compute_contribution
 from core.analytics.types import AnalyticsFact, PrimitiveArgs
 
 
-def _on_frames(pandas_fn: Callable) -> Callable:
-    """Route a primitive to ``pandas_fn`` when its engine is a ``FrameSource``.
+# ── Whitespace policy ───────────────────────────────────────────────────────
+# The one approved participation rule, named once so the primitive, the lens
+# prose and the glossary cannot drift apart (implementation plan, Phase 1.7).
+#
+# What SHIPS is absence: the carrier has no premium at all in a slice the market
+# writes. The plan's wider definition — "absent OR materially thin" — needs a
+# calibrated thinness threshold and a rule for distinguishing a genuine zero from
+# unknown participation, neither of which ICG has settled. Rather than encode an
+# invented threshold as though it were approved, the knobs stay explicit and the
+# default stays at the rule the data can actually support.
 
-    The whole two-executor seam, in one decorator: the SQL body below each of these
-    is untouched and still runs for every real engine. Tuning kwargs (``grain``,
-    ``top_n``…) pass through unchanged, so both executors take the same call.
-    """
-    def decorate(sql_fn: Callable) -> Callable:
-        @wraps(sql_fn)
-        def run(args: PrimitiveArgs, *, engine: Optional[Any] = None, **kwargs):
-            source = as_frame_source(engine)
-            if source is not None:
-                return pandas_fn(source, args, **kwargs)
-            return sql_fn(args, engine=engine, **kwargs)
+#: Carrier premium at or below this counts as no participation. 0.0 means
+#: "literally absent" and is deliberately NOT a thinness threshold.
+ABSENT_PARTICIPATION = 0.0
 
-        run.on_sql = sql_fn                     # the SQL body, for parity tests
-        return run
-    return decorate
+#: Marsh-book premium above this counts as a market worth noting. 0.0 means "any
+#: premium at all" — a placeholder for the uncalibrated meaningful-book size, not
+#: a business judgement that every non-empty slice is material.
+ANY_MARKET_PRESENCE = 0.0
+
+#: How a returned whitespace fact may be described in prose.
+ABSENT = "absent"
+THIN = "thin"
+
+
+def whitespace_rule(near_zero: float, material: float) -> str:
+    """Which participation claim the applied thresholds actually support."""
+    return ABSENT if near_zero <= ABSENT_PARTICIPATION else THIN
+
+
+#: The two-executor routing decorator, now shared with `core.analytics.movement`
+#: (see `core.analytics.frames.on_frames`). Kept under the old private name so the
+#: dozens of decorated primitives below read exactly as they did.
+_on_frames = on_frames
 
 
 def _num(value: Any) -> float:
@@ -541,13 +566,21 @@ def find_whitespace(
     *,
     engine: Optional[Any] = None,
     top_n: int = 3,
-    near_zero: float = 0.0,
-    material: float = 0.0,
+    near_zero: float = ABSENT_PARTICIPATION,
+    material: float = ANY_MARKET_PRESENCE,
 ) -> List[AnalyticsFact]:
-    """Whitespace: cuts where the carrier's premium is ~0 but the market is
-    materially present. Composes `compute_breakdown` (carrier premium, carrier
-    filter retained) and `compute_market_presence` (market premium, carrier
-    excluded); owns ONLY the gap rule — no premium/market math of its own.
+    """Whitespace: cuts where the carrier is absent but the market is present.
+
+    Composes `compute_breakdown` (carrier premium, carrier filter retained) and
+    `compute_market_presence` (market premium, carrier excluded); owns ONLY the
+    gap rule — no premium/market math of its own.
+
+    The two thresholds are the whole business policy, and both ship uncalibrated
+    (see `ABSENT_PARTICIPATION` / `ANY_MARKET_PRESENCE`). Each returned fact
+    records the rule that actually admitted it, so prose can say "writes nothing
+    in X" when the rule was absence and cannot claim "materially thin" — a
+    stronger, different statement — unless a caller raised `near_zero` to make it
+    true.
     """
     eng = resolve_engine(engine)
     premium_args = replace(args, metric="premium")
@@ -556,6 +589,7 @@ def find_whitespace(
         for fact in compute_breakdown(premium_args, engine=eng)
     }
     market = compute_market_presence(premium_args, engine=eng)
+    rule = whitespace_rule(near_zero, material)
 
     gaps = [
         AnalyticsFact(
@@ -563,9 +597,17 @@ def find_whitespace(
             value=fact.value,
             unit=fact.unit,
             rendered=fact.rendered,
-            dims=dict(fact.dims),
+            dims=dict(
+                fact.dims,
+                carrier_premium=carrier_premium.get(fact.dims_key, 0.0),
+                participation=rule,
+                near_zero=near_zero,
+                material=material,
+            ),
             support=fact.support,
-            formula="carrier premium ~0 AND market premium material",
+            formula=(
+                f"carrier premium <= {near_zero:g} AND market premium > {material:g}"
+            ),
         )
         for fact in market
         if carrier_premium.get(fact.dims_key, 0.0) <= near_zero and fact.value > material
@@ -618,27 +660,6 @@ def find_service_gaps(
 # ── Tier 1 — atomic, temporal (sub-year periods from the date column) ────────
 
 
-def _period_expr(spec, grain: str) -> Optional[str]:
-    """SQLite expression bucketing the flow's date column into a period label.
-
-    ``month`` → ``YYYY-MM``; ``quarter`` → ``YYYY-Qn`` (n from the calendar
-    month). Returns None when the flow declares no ``date`` column, so callers
-    degrade gracefully (no monthly signal) rather than raise.
-    """
-    date_col = spec.date_columns.get("date")
-    if not date_col:
-        return None
-    safe = safe_column(spec, date_col)
-    if grain == "month":
-        return f"strftime('%Y-%m', \"{safe}\")"
-    if grain == "quarter":
-        return (
-            f"strftime('%Y', \"{safe}\") || '-Q' || "
-            f"CAST((CAST(strftime('%m', \"{safe}\") AS INTEGER) + 2) / 3 AS INTEGER)"
-        )
-    raise ValueError(f"unknown period grain {grain!r}")
-
-
 @_on_frames(P.compute_period_series)
 def compute_period_series(
     args: PrimitiveArgs, *, grain: str = "month", engine: Optional[Any] = None
@@ -651,7 +672,7 @@ def compute_period_series(
     spec = flow_spec(args.flow)
     eng = resolve_engine(engine)
     column, agg = resolve_measure(spec, args.metric)
-    pexpr = _period_expr(spec, grain)
+    pexpr = period_expr(spec, grain)
     if pexpr is None:
         return []
     params: Dict[str, Any] = {}
@@ -687,7 +708,7 @@ def compute_period_change(
     spec = flow_spec(args.flow)
     eng = resolve_engine(engine)
     column, agg = resolve_measure(spec, args.metric)
-    pexpr = _period_expr(spec, grain)
+    pexpr = period_expr(spec, grain)
     if pexpr is None:
         return []
     params: Dict[str, Any] = {}
@@ -765,72 +786,6 @@ def compute_ttm(args: PrimitiveArgs, *, engine: Optional[Any] = None) -> List[An
 # three answer "how far does the data go?" deterministically, and compare only the
 # span both years share.
 
-_PERIODS_PER_YEAR = {"quarter": 4, "month": 12}
-
-
-def _period_columns(spec) -> frozenset:
-    """The flow's date-ish column names (year, quarter, month, date)."""
-    return frozenset(str(name) for name in spec.date_columns.values() if name)
-
-
-def _without_period_filters(spec, filters: Dict[str, Any]) -> Dict[str, Any]:
-    """The scope minus its period filters.
-
-    "What is the latest quarter?" has to be answered over the whole history: with the
-    turn's year still applied, the primitive would only ever hand back the year it was
-    given. Every OTHER filter stays, because the latest period genuinely can differ by
-    carrier or market — one carrier's book may be loaded a quarter behind another's.
-    """
-    blocked = {name.lower() for name in _period_columns(spec)}
-    return {k: v for k, v in (filters or {}).items() if str(k).lower() not in blocked}
-
-
-def _year_expr(spec) -> Optional[str]:
-    """SQL for the calendar year — the declared year column, else read off the date."""
-    year = spec.date_columns.get("year")
-    if year:
-        return f'CAST("{safe_column(spec, year)}" AS INTEGER)'
-    date_col = spec.date_columns.get("date")
-    if date_col:
-        return f"CAST(strftime('%Y', \"{safe_column(spec, date_col)}\") AS INTEGER)"
-    return None
-
-
-def _period_in_year_expr(spec, grain: str) -> Optional[str]:
-    """SQL for the period's position WITHIN its year: 1-4 quarterly, 1-12 monthly.
-
-    Prefers a declared quarter column (GIMMI stores ``Quarter``, as "Q2" or 2 — the
-    strip handles both), else derives it from the flow's date column. Returns None
-    when the flow carries neither, so a year-only flow (the survey has just
-    ``Survey_Year``) degrades to "no period alignment" instead of raising.
-    """
-    quarter = spec.date_columns.get("quarter")
-    date_col = spec.date_columns.get("date")
-    if grain == "quarter":
-        if quarter:
-            col = safe_column(spec, quarter)
-            return f"CAST(replace(replace(\"{col}\", 'Q', ''), 'q', '') AS INTEGER)"
-        if date_col:
-            col = safe_column(spec, date_col)
-            return f"((CAST(strftime('%m', \"{col}\") AS INTEGER) + 2) / 3)"
-        return None
-    if grain == "month":
-        if date_col:
-            col = safe_column(spec, date_col)
-            return f"CAST(strftime('%m', \"{col}\") AS INTEGER)"
-        return None
-    raise ValueError(f"unknown period grain {grain!r}")
-
-
-def _period_label(grain: str, position: Any) -> str:
-    """``2`` → "Q2" (quarterly) or "M02" (monthly) — the span a comparison ran to."""
-    try:
-        number = int(position)
-    except (TypeError, ValueError):
-        return ""
-    return f"Q{number}" if grain == "quarter" else f"M{number:02d}"
-
-
 @_on_frames(P.get_latest_year)
 def get_latest_year(
     args: PrimitiveArgs, *, engine: Optional[Any] = None
@@ -838,11 +793,11 @@ def get_latest_year(
     """The most recent year the data actually reaches for this scope."""
     spec = flow_spec(args.flow)
     eng = resolve_engine(engine)
-    year_sql = _year_expr(spec)
+    year_sql = year_expr(spec)
     if year_sql is None:
         return []
     params: Dict[str, Any] = {}
-    where = where_clause(spec, _without_period_filters(spec, args.filters), params)
+    where = where_clause(spec, without_period_filters(spec, args.filters), params)
     rows = run_rows(
         eng, f'SELECT MAX({year_sql}) AS yr FROM "{spec.primary_table}"{where}', params
     )
@@ -874,11 +829,11 @@ def get_latest_quarter(
     """
     spec = flow_spec(args.flow)
     eng = resolve_engine(engine)
-    year_sql, pin_sql = _year_expr(spec), _period_in_year_expr(spec, grain)
+    year_sql, pin_sql = year_expr(spec), period_in_year_expr(spec, grain)
     if year_sql is None or pin_sql is None:
         return []
     params: Dict[str, Any] = {}
-    where = where_clause(spec, _without_period_filters(spec, args.filters), params)
+    where = where_clause(spec, without_period_filters(spec, args.filters), params)
     sql = f"""
         WITH base AS (
             SELECT {year_sql} AS yr, {pin_sql} AS pin
@@ -895,8 +850,8 @@ def get_latest_quarter(
         return []
     row = rows[0]
     year, position = int(row["yr"]), int(row["pin_max"])
-    label = _period_label(grain, position)
-    complete = position >= _PERIODS_PER_YEAR[grain]
+    label = period_label(grain, position)
+    complete = position >= PERIODS_PER_YEAR[grain]
     return [
         AnalyticsFact(
             name=f"latest_{grain}",
@@ -933,12 +888,12 @@ def compute_yoy_to_date(
     spec = flow_spec(args.flow)
     eng = resolve_engine(engine)
     column, agg = resolve_measure(spec, args.metric)
-    year_sql, pin_sql = _year_expr(spec), _period_in_year_expr(spec, grain)
+    year_sql, pin_sql = year_expr(spec), period_in_year_expr(spec, grain)
     if year_sql is None or pin_sql is None:
         return []
     cuts = _cut_columns(spec, args.group_by)
     params: Dict[str, Any] = {}
-    where = where_clause(spec, _without_period_filters(spec, args.filters), params)
+    where = where_clause(spec, without_period_filters(spec, args.filters), params)
     cut_sel = ", ".join(f'"{c}"' for c in cuts)
     cut_tail = ", " + cut_sel if cut_sel else ""
     partition = f"PARTITION BY {cut_sel} " if cut_sel else ""
@@ -971,7 +926,7 @@ def compute_yoy_to_date(
         if prev in (None, 0) or _num(prev) == 0.0:
             continue
         pct = round((_num(row["measure"]) - _num(prev)) / _num(prev) * 100, 1)
-        through = _period_label(grain, row.get("pin_max"))
+        through = period_label(grain, row.get("pin_max"))
         facts.append(
             AnalyticsFact(
                 name="yoy_to_date",
@@ -1003,6 +958,8 @@ LIBRARY: Dict[str, Any] = {
     "compute_rank": compute_rank,
     "compute_yoy": compute_yoy,
     "compute_yoy_to_date": compute_yoy_to_date,
+    "compute_aligned_periods": compute_aligned_periods,
+    "compute_contribution": compute_contribution,
     "get_latest_year": get_latest_year,
     "get_latest_quarter": get_latest_quarter,
     "compute_period_series": compute_period_series,

@@ -57,7 +57,35 @@ it best.
   Say so once, in the opening sentence, naming the period ("in 2025, the latest
   year in the data"). A figure for one year read as though it were the whole book
   is the error this line exists to prevent. When it is empty, say nothing about
-  it — the reader chose the period themselves."""
+  it — the reader chose the period themselves.
+- `lead_with` — what the planner decided this answer should open on. Follow it
+  unless the findings plainly say otherwise; it is the turn's own read of what
+  the reader asked for. Empty means the choice is yours.
+- `this_answer_should_cover` — the evidence this KIND of question owes its
+  reader. It is a checklist for completeness, NOT a set of headings: cover each
+  one where the findings support it, in whatever structure reads best.
+- `could_not_be_established` — gaps the turn already knows about, written as
+  reader-facing sentences. State each one plainly, once, near the claim it
+  limits. Do not soften them, do not bury them in a closing caveat, and never
+  write around a gap so the answer reads complete. An answer that quietly omits
+  what it could not find is the failure this field exists to prevent.
+- `kind` on a finding — `observation` is a value that was measured; `change`,
+  `peer_gap` and the rest are comparisons the application derived. Keep the two
+  apart in your wording: what the data SAYS is not the same as what it MEANS.
+
+[WHAT AN ANALYTICAL ANSWER OWES]
+When the question is about performance or a movement, lead with the headline
+movement, then what contributed most to it — INCLUDING anything that moved the
+other way and offset it. A decomposition reported as losses alone is wrong, not
+merely incomplete. Then timing, then any deeper concentration the findings
+support. Do not restate every figure the brief holds: explain the movement.
+
+[OBSERVATION, INTERPRETATION, NEXT STEP]
+Say which you are doing. An observation is in the findings. An interpretation is
+yours, and should read as one ("this suggests", "consistent with") — attach the
+evidence it rests on. A next step is what the evidence does NOT settle and what
+would settle it. Never present an interpretation as a measured fact, and never
+assert a cause because two numbers moved together."""
 
 _CLOSING = """Write the answer now, as Markdown, following the OUTPUT CONTRACT
 above. No preamble, no sign-off, no "based on the data". Every number copied from

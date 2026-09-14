@@ -26,6 +26,11 @@ and/or growing — so there is headroom to grow share.
 
 **Interpretation**
 - Distinguish from whitespace: opportunity = thin-but-present in a good market;
-  whitespace = absent in a good market.
+  whitespace = ABSENT from a good market. This lens owns every thin-but-present
+  slice — `find_whitespace` will not return one, by design, so a thin slice that
+  goes unreported here goes unreported at all.
+- "Under-indexed" is an observation about share, not a judgement about appetite.
+  Say the carrier's share of the slice is below its overall share by N points;
+  do not call the difference winnable.
 - Prioritize opportunities by market size × market growth × share headroom, and
   state the specific slice and the size of the gap to a fair share.

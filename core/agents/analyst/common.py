@@ -575,12 +575,25 @@ def run_solver(
 
 
 def digest_evidence(evidence: List[Evidence], *, limit: int = _TOOL_ROW_PREVIEW) -> str:
-    """Compact JSON digest of gathered evidence for a dependent step or the writer."""
+    """Compact JSON digest of gathered evidence for a dependent step or the writer.
+
+    Carries each record's `evidence_id` so a dependent step can cite the exact
+    evidence it built on and a repair can name the record it is replacing. The
+    rows stay truncated: the digest is a summary to reason over, and anything
+    needing the full set fetches it by id rather than being handed it again.
+
+    Records that found nothing are kept, with their status and no rows. Dropping
+    them would let a dependent step read "no evidence about Marine" as "Marine
+    was never queried", and try it again.
+    """
     return json.dumps(
         [
             {
+                "evidence_id": e.get("evidence_id", ""),
+                "step_id": e.get("step_id", ""),
                 "lens": e.get("lens", ""),
                 "flow": e["flow"],
+                "status": e.get("status", ""),
                 "sql": e["sql"],
                 "rows": e["rows"][:limit],
             }

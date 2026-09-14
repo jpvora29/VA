@@ -46,6 +46,14 @@ class AnswerRequest:
     #: to be told: a figure for one year, presented as though it were the whole
     #: book, is the same failure as an all-years total presented as this year's.
     defaulted_period: str = ""
+    #: What the analysis planner decided this answer should lead with.
+    synthesis_focus: str = ""
+    #: Requirement keys this kind of question owes its reader, and the sentences
+    #: for the ones the turn could not satisfy. Both reach the claim selector and
+    #: the writer, so "the evidence was not gathered" and "the answer chose not
+    #: to mention it" stop looking identical on the page.
+    requirements: tuple[str, ...] = ()
+    limitations: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -60,12 +68,26 @@ class GroundedAnswer:
     narrated: bool = False
     dropped_figures: tuple[str, ...] = ()
     narration_rejected: str = ""
+    #: What the turn could not establish, as reader-facing sentences.
+    #:
+    #: Deliberately NOT part of `ledger` or `text`. The stored record verifies by
+    #: rebuilding its text from claims that are themselves re-checked against the
+    #: evidence, so everything inside the ledger is derived from something
+    #: verifiable. A limitation is derived from the turn's plan, which the record
+    #: does not carry — folding it in would mean a sentence that verification
+    #: cannot actually check, which is worse than one it does not cover. It rides
+    #: alongside instead, and the narrator is told to state it in the prose.
+    limitations: tuple[str, ...] = ()
 
     def as_dict(self) -> dict:
+        # `limitations` is additive: `validate_record` reads named keys and
+        # ignores the rest, so older records stay valid and this needs no
+        # version bump.
         return {"version": ANSWER_VERSION, "content": self.text, "facts": [f.as_dict() for f in self.facts],
                 "claims": [c.as_dict() for c in self.claims], "limitation": self.limitation,
                 "selection_rejected": self.selection_rejected, "scope": self.scope,
-                "ledger": self.ledger or self.text, "narrated": self.narrated}
+                "ledger": self.ledger or self.text, "narrated": self.narrated,
+                "limitations": list(self.limitations)}
 
 
 ClaimSelector = Callable[[tuple[AnswerClaim, ...]], Sequence[str]]
@@ -139,7 +161,8 @@ def compose_answer(request: AnswerRequest, *, select: ClaimSelector | None = Non
     return GroundedAnswer(narration.text or ledger, used, claims, rejected, scope=request.scope,
                           ledger=ledger, narrated=narration.accepted,
                           dropped_figures=narration.dropped,
-                          narration_rejected=narration.rejected)
+                          narration_rejected=narration.rejected,
+                          limitations=tuple(request.limitations))
 
 
 def write_narration(request: AnswerRequest, claims: Sequence[AnswerClaim],
@@ -155,7 +178,10 @@ def write_narration(request: AnswerRequest, claims: Sequence[AnswerClaim],
     if narrator is None or not ledger:
         return Narration()
     brief = build_brief(request.question, request.shape, ledger, claims, facts,
-                        request.scope, request.defaulted_period)
+                        request.scope, request.defaulted_period,
+                        synthesis_focus=request.synthesis_focus,
+                        requirements=request.requirements,
+                        limitations=request.limitations)
     return narrate(brief, narrator)
 
 

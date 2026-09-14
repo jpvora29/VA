@@ -25,6 +25,11 @@ from core.answers.narrator import AnswerNarrator
 class ClaimSelectionClient:
     question: str
     client: Any
+    #: What this kind of question owes its reader. The selector used to rank
+    #: claims against the question text alone, so a performance question whose
+    #: evidence held a quarterly comparison could drop it for another product
+    #: line and nothing downstream noticed.
+    requirements: tuple[str, ...] = ()
 
     def __call__(self, candidates: tuple[AnswerClaim, ...]) -> list[str]:
         from langchain_core.messages import HumanMessage, SystemMessage
@@ -48,10 +53,15 @@ class ClaimSelectionClient:
                 "For a breakdown, cover the different product lines rather than stopping at the total. "
                 f"Select up to {ANALYST_CLAIM_LIMIT} distinct insights when the evidence supports them. "
                 "Avoid repeating observations already explained by a comparison. "
+                "`must_cover` lists what this kind of question owes its reader: where a statement "
+                "supports one of those, prefer it over an equally interesting statement that "
+                "supports none. A movement that is offset by growth elsewhere needs BOTH sides "
+                "selected — choosing only the losses states the change wrongly, not partially. "
                 "All statements were calculated by the application. You may select their IDs only. "
                 "Do not write, calculate, or infer additional claims."
             )),
             HumanMessage(content=json.dumps({"question": self.question,
+                                             "must_cover": list(self.requirements),
                                              "statements": [{"id": c.id, "text": c.text} for c in options]})),
         ])
         calls = getattr(response, "tool_calls", None) or []
@@ -60,9 +70,10 @@ class ClaimSelectionClient:
         return calls[0].get("args", {}).get("claim_ids", [])
 
 
-def selection_client(question: str, client: Any) -> ClaimSelectionClient:
+def selection_client(question: str, client: Any,
+                     requirements: tuple[str, ...] = ()) -> ClaimSelectionClient:
     """Picks which verified claims answer the question. Structured output only."""
-    return ClaimSelectionClient(question, client or _tier("balanced"))
+    return ClaimSelectionClient(question, client or _tier("balanced"), requirements)
 
 
 def narration_client(client: Any) -> AnswerNarrator:
@@ -85,7 +96,8 @@ def write_answer(request: AnswerRequest, *, client: Any = None) -> GroundedAnswe
     if request.shape in {"lookup", "direct"} or request.presentation in {"table_only", "chart_only"}:
         return compose_answer(request)
     answer = compose_answer(request,
-                            select=selection_client(request.question, client),
+                            select=selection_client(request.question, client,
+                                                    request.requirements),
                             narrator=narration_client(client))
     log_answer(request, answer)
     return answer

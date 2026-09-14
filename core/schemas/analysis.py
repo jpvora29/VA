@@ -8,7 +8,7 @@ referenced lens, then synthesizes across them.
 """
 from __future__ import annotations
 
-from typing import List
+from typing import Any, Dict, List
 
 from core.llm import InputField, OutputField, Signature
 from pydantic import BaseModel, Field
@@ -36,6 +36,41 @@ class DerivedAnalysis(BaseModel):
     rationale: str = Field(
         default="",
         description="Why this lens adds value for the user's query.",
+    )
+
+    # ── Phase 4: identity and outcome ──────────────────────────────────────
+    # Everything below is filled deterministically AFTER the model plans, never
+    # by the model itself. A planner asked to invent stable ids produces
+    # colliding ones, and a planner asked to predict an outcome produces a
+    # prediction rather than a result.
+    step_id: str = Field(
+        default="",
+        description=(
+            "LEAVE EMPTY. Stable identity assigned downstream, so evidence, "
+            "failures and repairs can all name the same step."
+        ),
+    )
+    requirement: str = Field(
+        default="",
+        description=(
+            "LEAVE EMPTY. The evidence requirement this step is meant to satisfy "
+            "(a key from core/analysis/intents.yaml), attached downstream."
+        ),
+    )
+    source: str = Field(
+        default="",
+        description='LEAVE EMPTY. Dataset the step runs against: "gpr" or "survey".',
+    )
+    scope: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="LEAVE EMPTY. The filters this step executes under.",
+    )
+    priority: int = Field(
+        default=0,
+        description=(
+            "LEAVE EMPTY. Lower runs first within a wave. Set downstream from "
+            "whether the step answers a required part of the question."
+        ),
     )
 
 

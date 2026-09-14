@@ -695,6 +695,96 @@ def compute_yoy_to_date(source: FrameSource, args: PrimitiveArgs,
     return facts
 
 
+# ── Movement decomposition ───────────────────────────────────────────────────
+#
+# These two build the same ``{yr, pin, *cuts, measure}`` rows the SQL bodies select,
+# then hand them to the SHARED assemblers in `core.analytics.movement`. Only the
+# retrieval differs between the backends; everything that decides what a fact says
+# is written once, so the two cannot drift into different answers.
+
+
+def _movement_rows(
+    source: FrameSource, args: PrimitiveArgs, *, grain: str = ""
+) -> Tuple[Optional[List[Dict[str, Any]]], List[str], str]:
+    """``(rows, cuts, measure column)`` for a movement primitive, or (None, …).
+
+    ``grain`` empty means year-only rows (the contribution case); a grain adds the
+    within-year position the aligned comparison needs. Period filters are dropped
+    for the same reason the SQL drops them: a comparison needs both years, so a
+    turn pinned to one of them would have nothing to compare against.
+    """
+    spec = flow_spec(args.flow)
+    _spec, frame, column, agg = _prepared(
+        args, source, drop=_period_filter_columns(spec)
+    )
+    cuts = _cuts(spec, _primary(source, spec), args.group_by)
+    if frame is None or cuts is None or frame.empty:
+        return None, [], ""
+    years = _year_series(frame, spec)
+    if years is None or years.dropna().empty:
+        return None, [], ""
+
+    keys = {"_mv_year": years[frame.index]}
+    if grain:
+        positions = _position_series(frame, spec, grain)
+        if positions is None:
+            return None, [], ""
+        keys["_mv_position"] = positions[frame.index]
+
+    marked = frame.assign(**keys)
+    totals = _aggregate(marked, column, agg, [*keys, *cuts])
+    rows = [
+        {
+            "yr": dims["_mv_year"],
+            "pin": dims.get("_mv_position"),
+            **{cut: dims[cut] for cut in cuts},
+            "measure": value,
+        }
+        for dims, value in totals
+        if dims.get("_mv_year") is not None
+    ]
+    return rows, cuts, column
+
+
+def compute_aligned_periods(
+    source: FrameSource,
+    args: PrimitiveArgs,
+    *,
+    grain: str = "quarter",
+    current_year: Optional[int] = None,
+    prior_year: Optional[int] = None,
+) -> List[AnalyticsFact]:
+    """Each period position of one year against the same position a year earlier."""
+    from core.analytics.movement import assemble_aligned
+
+    rows, cuts, column = _movement_rows(source, args, grain=grain)
+    if rows is None:
+        return []
+    return assemble_aligned(
+        rows, cuts=cuts, column=column, grain=grain,
+        current_year=current_year, prior_year=prior_year,
+    )
+
+
+def compute_contribution(
+    source: FrameSource,
+    args: PrimitiveArgs,
+    *,
+    current_year: Optional[int] = None,
+    prior_year: Optional[int] = None,
+) -> List[AnalyticsFact]:
+    """Each slice's contribution to the headline year-on-year change."""
+    from core.analytics.movement import assemble_contribution
+
+    rows, cuts, column = _movement_rows(source, args)
+    if rows is None:
+        return []
+    return assemble_contribution(
+        rows, cuts=cuts, column=column,
+        current_year=current_year, prior_year=prior_year,
+    )
+
+
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 # Primitive name → its pandas implementation. ``library`` reads this map to decide
 # what it can route; a name absent here simply stays on SQL.
@@ -713,4 +803,6 @@ PANDAS_LIBRARY: Dict[str, Any] = {
     "compute_nps": compute_nps,
     "compute_period_series": compute_period_series,
     "compute_period_change": compute_period_change,
+    "compute_aligned_periods": compute_aligned_periods,
+    "compute_contribution": compute_contribution,
 }

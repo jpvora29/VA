@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
 from core.agents.common.chart_spec import normalize_chart_spec
 from core.agents.gpr.chart import GPRChartNode
@@ -137,10 +138,75 @@ def _chart_rules(flow: str, question: str) -> str:
     )
 
 
-def pick_charts(question: str, evidence: List[Evidence]) -> List[Dict[str, Any]]:
-    """Select and build up to `MAX_CHARTS` charts from gathered analyst evidence."""
+@dataclass(frozen=True)
+class ChartFocus:
+    """What the written answer actually led with, for the chart to agree with.
+
+    Without this the picker ranked on chartability and word overlap alone, so the
+    chart beside an answer about Property's decline could just as easily be the
+    peer table — both chartable, both mentioning words from the question. The
+    chart and the commentary have to be about the same thing, and only the writer
+    knows what that thing turned out to be.
+    """
+
+    #: Evidence the selected claims were actually built from. The strongest
+    #: signal there is: this is not "related to the answer", it IS the answer.
+    evidence_ids: tuple = ()
+    #: Dimension values the lead claim is about (e.g. Product_Line=Property).
+    subject: tuple = ()
+    #: Requirement keys the turn owed, so a required comparison can be preferred.
+    requirements: tuple = ()
+
+    @property
+    def is_empty(self) -> bool:
+        return not (self.evidence_ids or self.subject or self.requirements)
+
+
+def _has_two_years(rows: List[Dict[str, Any]]) -> bool:
+    """Whether the rows carry at least two distinct years to compare."""
+    years = set()
+    for row in rows[:200]:
+        for key, value in (row or {}).items():
+            if re.fullmatch(r"(?i)(fy)?(19|20)\d{2}", str(key)):
+                years.add(str(key))
+            elif re.search(r"(?i)\byear\b", str(key)) and value is not None:
+                years.add(str(value))
+    return len(years) >= 2
+
+
+def _is_period_cut(rows: List[Dict[str, Any]]) -> bool:
+    return bool(re.search(r"(?i)quarter|period|month", " ".join(_columns(rows))))
+
+
+def _focus_alignment(ev: Evidence, focus: ChartFocus) -> float:
+    """How well one evidence set matches the finding the answer led with."""
+    if focus.is_empty:
+        return 0.0
+    rows = ev.get("rows") or []
+    score = 0.0
+    if ev.get("evidence_id") and ev["evidence_id"] in focus.evidence_ids:
+        score += 15.0
+    text = " ".join(str(v) for row in rows[:50] for v in (row or {}).values()).lower()
+    score += 5.0 * sum(1 for _key, value in focus.subject
+                       if value and str(value).lower() in text)
+    # The motivating case: when the turn owed a quarterly comparison and this set
+    # carries quarters across two years, it IS that comparison. Prefer it.
+    if "quarterly_comparison" in focus.requirements and _is_period_cut(rows) and _has_two_years(rows):
+        score += 10.0
+    return score
+
+
+def pick_charts(question: str, evidence: List[Evidence],
+                focus: Optional[ChartFocus] = None) -> List[Dict[str, Any]]:
+    """Select and build up to `MAX_CHARTS` charts from gathered analyst evidence.
+
+    `focus` is what the answer led with. It is optional so every existing caller
+    keeps working unchanged; supplying it is what makes the chart and the prose
+    agree rather than merely coexist.
+    """
     if not evidence:
         return []
+    focus = focus or ChartFocus()
 
     # Rank distinct (by SQL) evidence sets by chartability, best first.
     best_by_sql: Dict[str, tuple[float, Evidence]] = {}
@@ -149,7 +215,7 @@ def pick_charts(question: str, evidence: List[Evidence]) -> List[Dict[str, Any]]
         chartability = _chartability(rows)
         if chartability <= 0:
             continue
-        score = chartability + _relevance(question, ev)
+        score = chartability + _relevance(question, ev) + _focus_alignment(ev, focus)
         key = _dedup_key(ev)
         if key not in best_by_sql or score > best_by_sql[key][0]:
             best_by_sql[key] = (score, ev)

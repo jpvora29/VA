@@ -152,15 +152,21 @@ whitespace:
   label: Whitespace
   aliases: [gaps, openings, unwritten segments]
   definition: >-
-    Segments where the Marsh book has meaningful premium and this carrier writes little or
-    none. An observation about where the carrier is absent, nothing more.
-  formula: segments ranked by Marsh book premium where carrier premium is zero or thin
+    Segments where the Marsh book has premium and this carrier writes NONE. An observation
+    about where the carrier is absent, nothing more. Thin-but-present participation is not
+    whitespace — that is headroom, and the two must not be merged.
+  formula: >-
+    segments ranked by Marsh book premium where carrier premium is zero, on identical
+    country / product / industry / period filters (core.analytics.library.find_whitespace)
   say: >-
     Say "the carrier writes nothing in X, where Marsh placed $Y". Name the segment and the
     Marsh figure.
   never: >-
     Never qualify it as addressable or as an opportunity the carrier can take without
-    appetite, capacity or validation evidence to cite alongside it.
+    appetite, capacity or validation evidence to cite alongside it. Never call a slice
+    whitespace on the strength of a small carrier figure: the shipped rule is absence, and
+    a thinness threshold has not been calibrated. Never treat a missing row as a confirmed
+    zero when the source cannot distinguish the two.
   unit: currency
 
 reporting_year:

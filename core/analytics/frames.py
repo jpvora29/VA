@@ -21,7 +21,8 @@ Two rules the SQL path cannot follow, and the reason this exists:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Optional
+from functools import wraps
+from typing import Any, Callable, Dict, Mapping, Optional
 
 import pandas as pd
 
@@ -67,3 +68,31 @@ def frame_source(tables: Dict[str, pd.DataFrame], *, label: str = "frames") -> F
         tables={name: frame for name, frame in tables.items() if frame is not None},
         label=label,
     )
+
+
+def on_frames(pandas_fn: Callable) -> Callable:
+    """Route a primitive to ``pandas_fn`` when its engine is a ``FrameSource``.
+
+    The whole two-executor seam, in one decorator: the SQL body it wraps is
+    untouched and still runs for every real engine. Tuning kwargs (``grain``,
+    ``top_n``, ``current_year``…) pass through unchanged, so both executors take
+    the same call.
+
+    It lives here rather than beside the primitives because more than one
+    primitive module needs it, and importing it from ``library`` would make every
+    such module import ``library`` — which ``library`` itself imports. The
+    decorator belongs with the seam it implements, not with the first caller.
+    """
+
+    def decorate(sql_fn: Callable) -> Callable:
+        @wraps(sql_fn)
+        def run(args, *, engine: Optional[Any] = None, **kwargs):
+            source = as_frame_source(engine)
+            if source is not None:
+                return pandas_fn(source, args, **kwargs)
+            return sql_fn(args, engine=engine, **kwargs)
+
+        run.on_sql = sql_fn  # the SQL body, for parity tests
+        return run
+
+    return decorate

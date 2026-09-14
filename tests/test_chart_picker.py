@@ -101,3 +101,52 @@ def test_harness_reads_nested_analyst_specs():
     from tests.golden.harness import _extract_charts
     result = _extract_charts({"analyst_charts": [{"rows": [], "chart_data": {"chart_type": "bar", "x": "Product", "y": ["Premium"]}}]})
     assert result == [{"type": "bar", "x": "Product", "y": ["Premium"], "series": []}]
+
+
+# --------------------------------------------------------------------------- #
+# Phase 8 — the chart answers the question the answer led with
+# --------------------------------------------------------------------------- #
+
+from core.agents.analyst.chart_picker import ChartFocus, _focus_alignment
+
+
+def _ev(evidence_id, rows, lens="trend"):
+    return {"flow": "gpr", "lens": lens, "sql": "s", "rows": rows,
+            "evidence_id": evidence_id}
+
+
+def test_the_evidence_the_answer_was_written_from_outranks_a_related_set():
+    """Not "related to the answer" — this IS the answer."""
+    focus = ChartFocus(evidence_ids=("ev_lead",))
+    lead = _ev("ev_lead", [{"Year": 2024, "Premium": 1.0}])
+    other = _ev("ev_other", [{"Year": 2024, "Premium": 1.0}])
+    assert _focus_alignment(lead, focus) > _focus_alignment(other, focus)
+
+
+def test_a_required_quarterly_comparison_is_preferred_when_both_years_are_present():
+    """The motivating case: quarters across two years IS the required comparison."""
+    focus = ChartFocus(requirements=("quarterly_comparison",))
+    quarterly = _ev("ev_q", [{"period": "Q1", "2024": 425.0, "2025": 425.0},
+                             {"period": "Q2", "2024": 425.0, "2025": 420.0}])
+    products = _ev("ev_p", [{"Product_Line": "Property", "Premium": 900.0},
+                            {"Product_Line": "Cyber", "Premium": 190.0}])
+    assert _focus_alignment(quarterly, focus) > _focus_alignment(products, focus)
+
+
+def test_a_single_year_quarterly_set_is_not_the_required_comparison():
+    focus = ChartFocus(requirements=("quarterly_comparison",))
+    one_year = _ev("ev_q", [{"period": "Q1", "Year": 2025, "Premium": 425.0},
+                            {"period": "Q2", "Year": 2025, "Premium": 420.0}])
+    assert _focus_alignment(one_year, focus) == 0.0
+
+
+def test_evidence_about_the_leading_subject_scores_above_evidence_that_is_not():
+    focus = ChartFocus(subject=(("Product_Line", "Property"),))
+    on_subject = _ev("ev_a", [{"Product_Line": "Property", "Premium": 900.0}])
+    off_subject = _ev("ev_b", [{"Product_Line": "Marine", "Premium": 500.0}])
+    assert _focus_alignment(on_subject, focus) > _focus_alignment(off_subject, focus)
+
+
+def test_no_focus_changes_no_ranking():
+    """Every existing caller passes none, and must behave exactly as before."""
+    assert _focus_alignment(_ev("ev", [{"Year": 2024, "Premium": 1.0}]), ChartFocus()) == 0.0

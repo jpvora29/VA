@@ -110,6 +110,38 @@ _SPECS: Tuple[ToolSpec, ...] = (
         options=_GRAIN,
     ),
     ToolSpec(
+        name="compute_aligned_periods",
+        summary=(
+            "Each quarter (or month) of one year against the SAME quarter a year "
+            "earlier — Q1 2025 vs Q1 2024, Q2 vs Q2 — as an absolute change."
+        ),
+        use_when=(
+            "the question asks WHEN a movement happened, or an annual change needs "
+            "its timing explained. This is the only tool that compares corresponding "
+            "periods: compute_period_change compares each quarter with the one "
+            "BEFORE it, which answers a different question."
+        ),
+        flows=("gpr",),
+        default_metric={"gpr": "premium"},
+        options=_GRAIN + ("current_year", "prior_year"),
+    ),
+    ToolSpec(
+        name="compute_contribution",
+        summary=(
+            "Each slice's contribution to the headline year-on-year change, in "
+            "points of the prior-year total, plus the headline itself."
+        ),
+        use_when=(
+            "the question asks WHAT drove a change, or which products/industries "
+            "explain it. Prefer this over compute_yoy for drivers: percentages per "
+            "slice cannot be added together and rank tiny slices above large ones, "
+            "while these contributions sum to the headline and keep offsets visible."
+        ),
+        flows=("gpr", "survey"),
+        default_metric={"gpr": "premium", "survey": "score"},
+        options=("current_year", "prior_year"),
+    ),
+    ToolSpec(
         name="get_latest_year",
         summary="The most recent year the data actually reaches.",
         use_when=(

@@ -98,6 +98,17 @@ class Evidence(TypedDict):
     writer, the shown table and the charts -- names no individual peer.
     `redacted_peers` is the vocabulary that was removed, so the final prose can
     be scrubbed against exactly the names this turn actually touched.
+
+    Everything below `facts` is the Phase 2 provenance contract, and every field
+    is `NotRequired` so an evidence dict built the old way stays valid. They are
+    written by `core.analysis.evidence_ledger`, never by hand.
+
+    The field worth explaining is the split between `scope` and `actual_scope`.
+    `scope` is what the turn ASKED for; `actual_scope` is what the query it ran
+    actually filtered on. Keeping one field for both is what allows a comparison
+    to quietly drop a country filter and still describe itself as scoped -- the
+    divergence is undetectable once the two are the same field, and detecting it
+    is the entire job of the Phase 7 scope check.
     """
 
     flow: str
@@ -107,3 +118,32 @@ class Evidence(TypedDict):
     redacted_peers: NotRequired[Tuple[str, ...]]
     scope: NotRequired[Dict[str, Any]]
     facts: NotRequired[List[Dict[str, Any]]]
+
+    #: Stable identity. Two runs of the same call under the same scope produce
+    #: the same id, which is what makes a retry idempotent rather than additive.
+    evidence_id: NotRequired[str]
+    #: The plan step that asked for this, linking evidence back to a requirement.
+    step_id: NotRequired[str]
+    #: "run_sql" | "compute_metric" | the primitive name -- how it was obtained.
+    tool: NotRequired[str]
+    #: Arguments the tool was called with, for reproduction.
+    parameters: NotRequired[Dict[str, Any]]
+    #: The filters the executed query really applied. See the note above.
+    actual_scope: NotRequired[Dict[str, Any]]
+    #: Measure and unit, so a score is never summed like a premium.
+    metric: NotRequired[str]
+    unit: NotRequired[str]
+    #: Periods the rows actually cover, so a part year is visible as one.
+    period_coverage: NotRequired[List[Any]]
+    #: Wall-clock time the query RAN. Deliberately not called a data timestamp:
+    #: when the source exposes no version, that limitation is recorded rather
+    #: than a snapshot identifier being invented.
+    retrieved_at: NotRequired[str]
+    #: Source version when the source publishes one; absent otherwise.
+    source_version: NotRequired[str]
+    #: validated | no_data | failed | skipped -- distinct outcomes, never merged.
+    status: NotRequired[str]
+    #: Why a non-validated record ended that way.
+    note: NotRequired[str]
+    #: Monotonic per evidence_id, so a re-run supersedes rather than duplicates.
+    version: NotRequired[int]

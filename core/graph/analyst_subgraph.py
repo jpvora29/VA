@@ -21,14 +21,13 @@ so concurrent writes merge safely. Dependency-bound steps run serially in
 from __future__ import annotations
 
 import logging
-from operator import add
 from typing import List, Optional
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 from typing_extensions import Annotated, TypedDict
 
-from core.agents.analyst.chart_picker import pick_charts
+from core.agents.analyst.chart_picker import ChartFocus, pick_charts
 from core.agents.common.contract import resolved_filters_of, unresolved_terms_of
 from core.agents.common.peer_privacy import (
     build_policy,
@@ -43,14 +42,38 @@ from core.agents.common.directives import (
 )
 from core.agents.analyst.generic_solver import solve_generic
 from core.agents.analyst.insight_writer import grounded_insight
+from core.answers.claims import AnswerClaim
+from core.answers.facts import AnswerFact
 from core.answers.scope import answer_scope
+from core.answers.verification import (
+    UNSUPPORTED_CAUSATION,
+    VerificationInput,
+    limitations_for,
+    strip_unsupported_causation,
+    verdict,
+    verify_answer,
+)
 from core.agents.analyst.peer_solver import solve_peer
 from core.agents.analyst.schema_identifier import identify_schema
 from core.agents.analyst.common import digest_evidence
-from core.analysis import plan_analysis
+from core.analysis import build_contract, plan_analysis
+from core.analysis.evidence_ledger import merge_evidence
+from core.analysis.operation import detect_operation, detect_source_restriction
+from core.analysis.progress import (
+    Budget,
+    PlanProgress,
+    StepOutcome,
+    assign_identity,
+    NO_DATA,
+    SATISFIED,
+    decide_next_steps,
+    stop_reason,
+)
+from core.analysis.requirements import EvidenceContract, performance_sources
+from core.analysis.validation import plan_limit, validate_plan
 from core.initialization import Initialization
 from core.observability import log_event
-from core.schemas.analysis import AnalysisPlan
+from core.schemas.analysis import AnalysisPlan, DerivedAnalysis
 from core.schemas.analyst_subgraph import Evidence, SchemaSlice
 from core.schemas.routing import RoutingContext
 from logger import get_logger
@@ -60,6 +83,11 @@ logger = get_logger(__name__)
 # The one lens whose work routes to the peer-comparison specialist; everything
 # else goes to the generic solver.
 _PEER_LENS = "peer_benchmark"
+
+# The cut a product drill-down goes down into. Named once here rather than
+# spelled into the sub-question, so the industry column this system reasons in
+# is changed in one place.
+_DRILL_DIMENSION = "industry"
 
 
 class AnalystState(TypedDict):
@@ -78,8 +106,18 @@ class AnalystState(TypedDict):
     # own result set apart from the supporting lenses' (see `answer_table`).
     primary_lens: str
     schema_slice: SchemaSlice
-    # add-reducer so parallel solver nodes merge their evidence instead of racing.
-    evidence: Annotated[List[Evidence], add]
+    # Identity-keyed merge, not `operator.add`. Parallel solvers still merge
+    # without racing, and the same query recorded twice — by two solvers that
+    # happened to need it, or by a step re-run after a failure — collapses to
+    # one record instead of reading downstream as two confirmations of the same
+    # number. See `core.analysis.evidence_ledger`.
+    evidence: Annotated[List[Evidence], merge_evidence]
+    # What this turn's question is entitled to be answered with, and what it has
+    # established so far. The contract decides how many steps the plan may have
+    # and which drill-downs are admissible; the progress record decides when the
+    # loop stops and what the answer has to admit it could not establish.
+    contract: EvidenceContract
+    progress: Optional[PlanProgress]
     answer: str
     answer_record: dict
     # Up to 3 chart specs picked from the gathered evidence (title/rows/chart_data).
@@ -90,9 +128,43 @@ def _model():
     return Initialization.llm
 
 
+def build_turn_contract(state: AnalystState) -> EvidenceContract:
+    """What this turn's question is entitled to be answered with.
+
+    Reads the operation off the question, resolves which datasets may serve it
+    (an explicit "premium only" beating the configured default), and asks the
+    requirement library for the contract. The conditions supplied here are the
+    ones knowable BEFORE any retrieval — a drill-down is not among them, because
+    admitting it depends on a result that does not exist yet.
+    """
+    rc = state.get("routing_context")
+    question = state["question"]
+    depth = getattr(rc, "analysis_depth", "") or ""
+    operation = detect_operation(question, depth="analytical" if depth == "analytical" else depth)
+    restricted = detect_source_restriction(question)
+    allowed = performance_sources(requested=restricted)
+    # The router already decided which families this turn may touch; a survey
+    # requirement on a premium-only route is unsatisfiable by construction.
+    if state["route"] == "premium":
+        allowed = tuple(source for source in allowed if source == "gpr") or ("gpr",)
+    elif state["route"] == "survey":
+        allowed = ("survey",)
+    return build_contract(operation, allowed_sources=allowed)
+
+
 def planner_node(state: AnalystState) -> dict:
-    """Select and order the analytical lenses for the question (existing planner)."""
+    """Select and order the analytical lenses, bounded by the turn's contract."""
+    contract = build_turn_contract(state)
     plan = plan_analysis(state["question"], state.get("routing_context"), mode="chat")
+    # Re-bound the plan against the contract: a performance question needs more
+    # steps than the flat default, and the planner's own cap is deliberately
+    # generous rather than requirement-aware.
+    plan = validate_plan(
+        plan, {d.lens for d in plan.derived}, limit=plan_limit(contract)
+    )
+    plan = assign_identity(
+        plan, contract=contract, scope=resolved_filters_of(state.get("routing_context"))
+    )
     log_event(
         logger,
         "analysis_planned",
@@ -101,8 +173,17 @@ def planner_node(state: AnalystState) -> dict:
         flow=state["flow"],
         lenses=[d.lens for d in plan.derived],
         derived_count=len(plan.derived),
+        intent=contract.intent,
+        requirements=list(contract.keys()),
+        deferred=[r.key for r in contract.deferred],
+        step_limit=plan_limit(contract),
     )
-    return {"plan": plan, "primary_lens": plan.derived[0].lens if plan.derived else ""}
+    return {
+        "plan": plan,
+        "contract": contract,
+        "progress": PlanProgress(contract=contract, budget=Budget(max_steps=plan_limit(contract))),
+        "primary_lens": plan.derived[0].lens if plan.derived else "",
+    }
 
 
 def schema_identifier_node(state: AnalystState) -> dict:
@@ -140,17 +221,25 @@ def _target_for(lens: str) -> str:
     return "peer_solver_node" if lens == _PEER_LENS else "generic_solver_node"
 
 
-def _payload(state: AnalystState, sub_question: str, lens: str) -> dict:
-    """Self-contained input for a solver node (Send replaces channel state)."""
+def _payload(state: AnalystState, step) -> dict:
+    """Self-contained input for a solver node (Send replaces channel state).
+
+    Carries the STEP, not just its sub-question, so the evidence a parallel
+    solver returns can be attributed to the requirement that asked for it. A
+    `Send` payload replaces channel state entirely, so anything the solver's
+    evidence needs to be stamped with has to travel in here.
+    """
     return {
         "question": state["question"],
-        "sub_question": sub_question,
-        "lens": lens,
-        "flow": state["flow"],
+        "sub_question": step.sub_question,
+        "lens": step.lens,
+        "flow": step.source or state["flow"],
         "route": state["route"],
         "schema_slice": state["schema_slice"],
         "custom_peers": state.get("custom_peers"),
         "custom_peers_active": state.get("custom_peers_active", False),
+        "step": step,
+        "scope": dict(step.scope or {}),
     }
 
 
@@ -159,74 +248,229 @@ def dispatch(state: AnalystState) -> List[Send]:
     plan: AnalysisPlan = state["plan"]
     if not plan.derived:
         # No plan — answer the literal question with one generic solver.
-        return [Send("generic_solver_node", _payload(state, state["question"], ""))]
-    sends: List[Send] = []
-    for i in _independent_indices(plan):
-        d = plan.derived[i]
-        sends.append(Send(_target_for(d.lens), _payload(state, d.sub_question, d.lens)))
-    return sends
+        literal = DerivedAnalysis(
+            lens="", sub_question=state["question"], step_id="s0_literal"
+        )
+        return [Send("generic_solver_node", _payload(state, literal))]
+    return [
+        Send(_target_for(plan.derived[i].lens), _payload(state, plan.derived[i]))
+        for i in _independent_indices(plan)
+    ]
+
+
+def _solve(solver, payload: dict) -> dict:
+    """Run one solver on a Send payload and stamp its step onto the evidence."""
+    rows = solver(
+        model=_model(),
+        question=payload["question"],
+        sub_question=payload["sub_question"],
+        lens=payload["lens"],
+        flow=payload["flow"],
+        route=payload["route"],
+        schema_slice=payload["schema_slice"],
+        custom_peers=payload.get("custom_peers"),
+        custom_peers_active=payload.get("custom_peers_active", False),
+    )
+    step = payload.get("step")
+    if step is None:
+        return {"evidence": rows}
+    return {"evidence": [stamp_step(row, step, payload.get("scope")) for row in rows]}
 
 
 def peer_solver_node(payload: dict) -> dict:
     """Run the peer-comparison specialist on one sub-question (parallel-safe)."""
-    rows = solve_peer(
-        model=_model(),
-        question=payload["question"],
-        sub_question=payload["sub_question"],
-        lens=payload["lens"],
-        flow=payload["flow"],
-        route=payload["route"],
-        schema_slice=payload["schema_slice"],
-        custom_peers=payload.get("custom_peers"),
-        custom_peers_active=payload.get("custom_peers_active", False),
-    )
-    return {"evidence": rows}
+    return _solve(solve_peer, payload)
 
 
 def generic_solver_node(payload: dict) -> dict:
     """Run the generic per-lens solver on one sub-question (parallel-safe)."""
-    rows = solve_generic(
+    return _solve(solve_generic, payload)
+
+
+def run_step(state: AnalystState, step, *, prior: List[Evidence], scope=None) -> List[Evidence]:
+    """Execute one plan step and stamp its identity onto the evidence it returns.
+
+    A step is a plain function of the state and the step, so it is callable on
+    its own in a test. It never calls another step — ordering lives in
+    `join_node` and nowhere else.
+    """
+    solver = solve_peer if step.lens == _PEER_LENS else solve_generic
+    rows = solver(
         model=_model(),
-        question=payload["question"],
-        sub_question=payload["sub_question"],
-        lens=payload["lens"],
-        flow=payload["flow"],
-        route=payload["route"],
-        schema_slice=payload["schema_slice"],
-        custom_peers=payload.get("custom_peers"),
-        custom_peers_active=payload.get("custom_peers_active", False),
+        question=state["question"],
+        sub_question=step.sub_question,
+        lens=step.lens,
+        flow=step.source or state["flow"],
+        route=state["route"],
+        schema_slice=state["schema_slice"],
+        prior_digest=digest_evidence(prior),
+        custom_peers=state.get("custom_peers"),
+        custom_peers_active=state.get("custom_peers_active", False),
     )
-    return {"evidence": rows}
+    return [stamp_step(row, step, scope) for row in rows]
+
+
+def stamp_step(row: Evidence, step, scope=None) -> Evidence:
+    """Attach the asking step's identity and scope to a solver's raw evidence.
+
+    The solver knows what it ran; only the caller knows WHY, and the link from a
+    number back to the requirement that asked for it is what lets an unmet
+    requirement name a specific failure instead of a generic one.
+    """
+    from core.analysis.evidence_ledger import identity_of, now_iso
+
+    stamped: Evidence = dict(row)  # type: ignore[assignment]
+    stamped.setdefault("scope", dict(scope or step.scope or {}))
+    stamped.setdefault("actual_scope", dict(stamped.get("scope") or {}))
+    stamped.setdefault("tool", "run_sql" if row.get("sql") else "")
+    stamped.setdefault("status", "validated" if row.get("rows") else "no_data")
+    stamped.setdefault("retrieved_at", now_iso())
+    stamped.setdefault("version", 1)
+    stamped["step_id"] = step.step_id
+    stamped["evidence_id"] = identity_of(stamped)
+    return stamped
+
+
+def outcome_for(step, rows: List[Evidence]) -> StepOutcome:
+    """What a step achieved, keeping "found nothing" apart from "did not run".
+
+    A step that returned rows is satisfied. One that ran and returned none is
+    `no_data` — a real finding about the scope, and the thing an honest
+    limitation is written from. Neither is an error.
+    """
+    from core.analysis.evidence_ledger import VALIDATED
+
+    produced = [row for row in rows if row.get("status") == VALIDATED and row.get("rows")]
+    if produced:
+        return StepOutcome(
+            step_id=step.step_id,
+            status=SATISFIED,
+            requirement=step.requirement,
+            evidence_ids=tuple(str(row.get("evidence_id", "")) for row in produced),
+        )
+    return StepOutcome(
+        step_id=step.step_id,
+        status=NO_DATA,
+        requirement=step.requirement,
+        detail=(
+            f"No rows were returned for {step.sub_question!r} on the requested scope."
+        ),
+    )
 
 
 def join_node(state: AnalystState) -> dict:
-    """Run dependency-bound steps serially, fed the parallel wave's evidence."""
+    """Run dependent steps, then whatever the results themselves justify.
+
+    Three phases, in one place so the order is readable and reorderable:
+
+      1. the plan's dependency-bound steps, fed the parallel wave's evidence;
+      2. drill-downs admitted by what those results actually showed — the
+         industry cut follows the product that moved, not the question's wording;
+      3. a recorded stop reason, so a partial answer can say why it stopped.
+
+    The loop is bounded by the turn's `Budget`, and every exit writes a reason.
+    """
     plan: AnalysisPlan = state["plan"]
-    independent = set(_independent_indices(plan))
-    dependent = [i for i in range(len(plan.derived)) if i not in independent]
-    if not dependent:
-        return {}
+    progress: PlanProgress = state.get("progress") or PlanProgress(
+        contract=state.get("contract") or EvidenceContract(intent="")
+    )
+    scope = resolved_filters_of(state.get("routing_context"))
 
     accumulated: List[Evidence] = list(state.get("evidence", []))
     new_rows: List[Evidence] = []
-    for i in dependent:
-        d = plan.derived[i]
-        solver = solve_peer if d.lens == _PEER_LENS else solve_generic
-        rows = solver(
-            model=_model(),
-            question=state["question"],
-            sub_question=d.sub_question,
-            lens=d.lens,
-            flow=state["flow"],
-            route=state["route"],
-            schema_slice=state["schema_slice"],
-            prior_digest=digest_evidence(accumulated),
-            custom_peers=state.get("custom_peers"),
-            custom_peers_active=state.get("custom_peers_active", False),
-        )
-        accumulated.extend(rows)
+
+    # Wave 1 already ran in the solver nodes; record what it achieved so the
+    # follow-up decision sees a complete picture.
+    record_parallel_outcomes(progress, plan, accumulated)
+
+    independent = set(_independent_indices(plan))
+    progress.begin_round()
+    for index in range(len(plan.derived)):
+        if index in independent:
+            continue
+        step = plan.derived[index]
+        rows = run_step(state, step, prior=accumulated, scope=scope)
+        progress.record(outcome_for(step, rows))
+        accumulated = merge_evidence(accumulated, rows)
         new_rows.extend(rows)
-    return {"evidence": new_rows}
+
+    followups = run_followups(state, progress, accumulated, scope)
+    accumulated = merge_evidence(accumulated, followups)
+    new_rows.extend(followups)
+
+    progress.stop_reason = stop_reason(progress)
+    log_event(
+        logger,
+        "analysis_progress",
+        node="analyst_join",
+        route=state["route"],
+        steps_run=progress.steps_run,
+        rounds=progress.rounds,
+        satisfied=list(progress.satisfied_requirements()),
+        limitations=list(progress.limitations()),
+        stop_reason=progress.stop_reason,
+    )
+    return {"evidence": new_rows, "progress": progress}
+
+
+def record_parallel_outcomes(
+    progress: PlanProgress, plan: AnalysisPlan, evidence: List[Evidence]
+) -> None:
+    """Attribute the parallel wave's evidence back to the steps that asked for it."""
+    by_step: dict = {}
+    for row in evidence:
+        by_step.setdefault(str(row.get("step_id", "")), []).append(row)
+    for index in _independent_indices(plan):
+        step = plan.derived[index]
+        progress.record(outcome_for(step, by_step.get(step.step_id, [])))
+
+
+def run_followups(
+    state: AnalystState, progress: PlanProgress, evidence: List[Evidence], scope
+) -> List[Evidence]:
+    """Drill-downs the observed results justify, within the remaining budget.
+
+    Returns nothing when the contract asks for no drill-down, when nothing moved
+    materially, or when the budget is spent — all three are complete answers, and
+    the reason is recorded by the caller.
+    """
+    from core.analysis.observations import observe
+
+    findings, headline = observe(evidence)
+    steps = decide_next_steps(progress, findings, headline=headline)
+    if not steps:
+        return []
+
+    plan: AnalysisPlan = state["plan"]
+    produced: List[Evidence] = []
+    for offset, follow in enumerate(steps):
+        progress.begin_round()
+        step = DerivedAnalysis(
+            lens="dimensional_breakdown",
+            sub_question=(
+                f"Within {follow.value}, how did premium move by "
+                f"{_DRILL_DIMENSION} between the two years?"
+            ),
+            rationale=follow.reason,
+            step_id=f"f{len(plan.derived) + offset}_{follow.requirement}",
+            requirement=follow.requirement,
+            source=state["flow"],
+            scope={**(scope or {}), **follow.scope},
+            priority=len(plan.derived) + offset,
+        )
+        log_event(
+            logger,
+            "drilldown_admitted",
+            node="analyst_join",
+            route=state["route"],
+            requirement=follow.requirement,
+            target=follow.value,
+            reason=follow.reason,
+        )
+        rows = run_step(state, step, prior=evidence, scope=step.scope)
+        progress.record(outcome_for(step, rows))
+        produced.extend(rows)
+    return produced
 
 
 def writer_node(state: AnalystState) -> dict:
@@ -235,6 +479,8 @@ def writer_node(state: AnalystState) -> dict:
     rc = state.get("routing_context")
     evidence = [dict(item, scope=item.get("scope") or resolved_filters_of(rc))
                 for item in state.get("evidence", [])]
+    progress = state.get("progress")
+    contract = state.get("contract")
     result = grounded_insight(
         question=state["question"],
         route=state["route"],
@@ -243,6 +489,12 @@ def writer_node(state: AnalystState) -> dict:
         presentation=presentation_mode(rc),
         shape=answer_shape(rc),
         scope=answer_scope(state),
+        # What this question owed its reader, and what the turn could not
+        # establish. Without the second of these a missing quarterly comparison
+        # is invisible on the page: the answer simply does not mention quarters,
+        # and reads exactly like one that had nothing to say about them.
+        requirements=contract.keys() if contract else (),
+        limitations=progress.limitations() if progress else (),
     )
     return {"answer": scrub_peer_names(result.text, evidence, state), "answer_record": result.as_dict()}
 
@@ -280,6 +532,91 @@ def scrub_peer_names(answer: str, evidence: List[Evidence], state: AnalystState)
     return scrubbed
 
 
+def verify_node(state: AnalystState) -> dict:
+    """Check the written answer's MEANING, repair what can be repaired, publish.
+
+    The figure check inside the writer already proved every number came from the
+    evidence. This asks the questions that check cannot: is each number attached
+    to the right subject, did a query quietly widen its scope, was a required
+    investigation silently skipped, does a sentence assert a cause the data
+    cannot show.
+
+    One bounded pass, and never a re-run: the only repair applied here is the
+    deterministic one — deleting an overclaiming sentence, which leaves the
+    findings underneath intact. Everything else becomes a stated limitation,
+    because publishing a validated subset with its gaps named is a better answer
+    than either a silent gap or no answer at all.
+    """
+    record = dict(state.get("answer_record") or {})
+    answer = state.get("answer") or ""
+    if not answer or not record:
+        return {}
+
+    progress = state.get("progress")
+    contract = state.get("contract")
+    data = VerificationInput(
+        text=answer,
+        claims=tuple(_claims_of(record)),
+        facts=tuple(_facts_of(record)),
+        evidence=tuple(state.get("evidence") or []),
+        requirements=tuple(contract.keys()) if contract else (),
+        satisfied=tuple(progress.satisfied_requirements()) if progress else (),
+        limitations=tuple(progress.limitations()) if progress else (),
+    )
+    result = verify_answer(data)
+    if result.passed:
+        return {}
+
+    repaired, removed = strip_unsupported_causation(answer, result.failures)
+    remaining = verdict(f for f in result.failures if f.kind != UNSUPPORTED_CAUSATION)
+    limitations = tuple(dict.fromkeys(
+        (*(record.get("limitations") or ()), *limitations_for(remaining))
+    ))
+    record["content"] = repaired or answer
+    record["limitations"] = list(limitations)
+    record["verification"] = result.as_dicts()
+
+    log_event(
+        logger,
+        "answer_verified",
+        logging.WARNING,
+        node="analyst_verifier",
+        route=state["route"],
+        stage=result.stage,
+        failures=[f.kind for f in result.failures],
+        causal_sentences_removed=removed,
+        limitations=len(limitations),
+    )
+    return {"answer": repaired or answer, "answer_record": record}
+
+
+def _claims_of(record: dict) -> List[AnswerClaim]:
+    """Rebuild the typed claims from a stored record, tolerating a partial one."""
+    out = []
+    for raw in record.get("claims") or []:
+        try:
+            out.append(AnswerClaim(**{**raw, "fact_ids": tuple(raw.get("fact_ids", ())),
+                                      "focus_ids": tuple(raw.get("focus_ids", ()))}))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _facts_of(record: dict) -> List[AnswerFact]:
+    """Rebuild the typed facts from a stored record, tolerating a partial one."""
+    out = []
+    for raw in record.get("facts") or []:
+        try:
+            out.append(AnswerFact(**{
+                **raw,
+                "dimensions": tuple(tuple(pair) for pair in raw.get("dimensions", ())),
+                "support": tuple(raw.get("support", ())),
+            }))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def chart_picker_node(state: AnalystState) -> dict:
     """Pick and build one primary chart from gathered evidence (best-effort)."""
     # Query-contract gate: "don't generate a chart" means exactly that.
@@ -291,7 +628,11 @@ def chart_picker_node(state: AnalystState) -> dict:
             route=state["route"],
         )
         return {"charts": []}
-    charts = pick_charts(state["question"], list(state.get("evidence", [])))
+    charts = pick_charts(
+        state["question"],
+        list(state.get("evidence", [])),
+        chart_focus(state),
+    )
     log_event(
         logger,
         "analyst_charts_done",
@@ -300,6 +641,35 @@ def chart_picker_node(state: AnalystState) -> dict:
         chart_count=len(charts),
     )
     return {"charts": charts}
+
+
+def chart_focus(state: AnalystState) -> ChartFocus:
+    """What the written answer led with, so the chart agrees with the prose.
+
+    Built from the answer RECORD rather than the plan: the plan is what the turn
+    intended to say and the record is what it actually said, and only the second
+    of those is what the reader is looking at next to the chart.
+    """
+    record = state.get("answer_record") or {}
+    contract = state.get("contract")
+    claims = record.get("claims") or []
+    lead_ids = set(claims[0].get("fact_ids", ())) if claims else set()
+    subject = tuple(
+        pair
+        for fact in record.get("facts") or []
+        if fact.get("id") in lead_ids
+        for pair in (tuple(p) for p in fact.get("dimensions", ()))
+    )
+    cited = {
+        str(fact.get("source_id", ""))
+        for fact in record.get("facts") or []
+        if fact.get("id") in lead_ids
+    }
+    return ChartFocus(
+        evidence_ids=tuple(sorted(i for i in cited if i)),
+        subject=subject,
+        requirements=tuple(contract.keys()) if contract else (),
+    )
 
 
 def build_analyst_subgraph():
@@ -312,6 +682,7 @@ def build_analyst_subgraph():
     graph.add_node("generic_solver_node", generic_solver_node)
     graph.add_node("join_node", join_node)
     graph.add_node("writer_node", writer_node)
+    graph.add_node("verify_node", verify_node)
     graph.add_node("chart_picker_node", chart_picker_node)
 
     graph.add_edge(START, "planner_node")
@@ -324,7 +695,8 @@ def build_analyst_subgraph():
     graph.add_edge("peer_solver_node", "join_node")
     graph.add_edge("generic_solver_node", "join_node")
     graph.add_edge("join_node", "writer_node")
-    graph.add_edge("writer_node", "chart_picker_node")
+    graph.add_edge("writer_node", "verify_node")
+    graph.add_edge("verify_node", "chart_picker_node")
     graph.add_edge("chart_picker_node", END)
 
     return graph.compile()

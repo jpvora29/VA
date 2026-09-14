@@ -10,10 +10,16 @@ primitives:
     group_by: [SIC_Major_Class]
 ---
 
-Whitespace = the carrier has **zero, null, or materially insignificant** premium
-for a slice while the **market (Marsh book) has meaningful premium** for that
-same slice. Use the exact term **"whitespace"** — never "untapped",
+Whitespace = the carrier writes **nothing** in a slice where the **market (Marsh
+book) has premium**. Use the exact term **"whitespace"** — never "untapped",
 "underpenetrated", "uncaptured", or similar synonyms.
+
+**Absent, not thin.** A carrier that writes a little in a large slice is
+*headroom* and belongs to the `opportunity` lens, not this one. The shipped rule
+in `find_whitespace` is carrier premium == 0; a thinness threshold has not been
+calibrated with ICG, so do not describe a slice as "materially thin" unless the
+returned fact's `participation` says `thin`. Each returned fact carries the
+thresholds that admitted it — read them rather than assuming.
 
 **Preferred: compute it, do not query it**
 - `compute_metric(name='find_whitespace', group_by=['SIC_Major_Class'])` applies
@@ -33,5 +39,8 @@ same slice. Use the exact term **"whitespace"** — never "untapped",
 **Interpretation**
 - Only classify whitespace where there is meaningful market/peer participation —
   an industry no one writes is not whitespace.
+- A slice the carrier is simply MISSING from the result set is not proof of zero
+  participation. Say the carrier's premium is not present in this scope; do not
+  upgrade an absent row into a confirmed whitespace finding.
 - Explain the business implication: a portfolio gap in a large, growing market
   the carrier is not capturing.

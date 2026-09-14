@@ -62,14 +62,32 @@ class NarrationBrief:
     facts: tuple[AnswerFact, ...] = ()
     scope: DisplayScope = ()
     defaulted_period: str = ""
+    #: What the turn's planner decided the answer should lead with. It was being
+    #: computed by the analysis planner and dropped on the floor one call short
+    #: of here, so the writer had to re-guess the emphasis from the question.
+    synthesis_focus: str = ""
+    #: The evidence this KIND of question owes its reader
+    #: (`core.analysis.requirements`), so the writer can tell a thin answer from
+    #: a complete one instead of judging by how much text it has.
+    requirements: tuple[str, ...] = ()
+    #: What the turn could NOT establish, already written as reader-facing
+    #: sentences. Present so a gap is stated rather than papered over — an
+    #: answer silently missing its quarterly comparison looks complete.
+    limitations: tuple[str, ...] = ()
 
     def as_payload(self) -> dict:
         """The brief as JSON, in the words the writer's contract uses."""
         return {
             "question": self.question,
+            "lead_with": self.synthesis_focus,
             "already_on_screen_as_filters": [{"field": k, "value": v} for k, v in self.scope],
+            "this_answer_should_cover": list(self.requirements),
             "verified_findings": [
-                {"id": c.id, "statement": c.text, "calculation": c.formula}
+                # `kind` separates an observed value from a derived comparison, so
+                # the writer can tell the reader what was MEASURED apart from what
+                # it MEANS — the observation/interpretation line it otherwise has
+                # no way to draw.
+                {"id": c.id, "statement": c.text, "calculation": c.formula, "kind": c.kind}
                 for c in self.claims[:BRIEF_CLAIMS]
             ],
             "figures_you_may_quote": [
@@ -78,6 +96,7 @@ class NarrationBrief:
                 for f in self.facts[:BRIEF_FIGURES]
             ],
             "minimum_the_answer_must_convey": self.ledger,
+            "could_not_be_established": list(self.limitations),
             "period_chosen_because_the_question_named_none": self.defaulted_period,
         }
 
@@ -100,11 +119,16 @@ Writer = Callable[[NarrationBrief], str]
 
 def build_brief(question: str, shape: str, ledger: str, claims: Sequence[AnswerClaim],
                 facts: Sequence[AnswerFact], scope: DisplayScope = (),
-                defaulted_period: str = "") -> NarrationBrief:
+                defaulted_period: str = "", synthesis_focus: str = "",
+                requirements: Sequence[str] = (),
+                limitations: Sequence[str] = ()) -> NarrationBrief:
     """The brief for one answer, in the order the ledger ranked it."""
     return NarrationBrief(question=question, shape=shape, ledger=ledger,
                           claims=tuple(claims), facts=tuple(facts), scope=tuple(scope),
-                          defaulted_period=str(defaulted_period or ""))
+                          defaulted_period=str(defaulted_period or ""),
+                          synthesis_focus=str(synthesis_focus or ""),
+                          requirements=tuple(requirements),
+                          limitations=tuple(limitations))
 
 
 def supported_numbers(claims: Sequence[AnswerClaim],
