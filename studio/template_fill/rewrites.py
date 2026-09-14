@@ -45,6 +45,16 @@ class PendingRewrite:
     subject: str = ""
     style: str = "balanced"
     facts: Dict[str, Any] = field(default_factory=dict, compare=False)
+    #: How many bullets the TEMPLATE BOX was authored to hold. The model is asked for this
+    #: many — not for however many lines the deterministic draft happens to carry, which is
+    #: what it used to be and which capped a four-bullet summary box at one line whenever
+    #: the claim ledger had already spent its claims on an earlier page. 0 means unknown,
+    #: and the writer falls back to the draft length as before.
+    capacity: int = 0
+    #: The captions of the KPI tiles the column's own PAGE displays. A column that cannot
+    #: see them argues from the same fact pack as every other column and leaves the numbers
+    #: printed beside it unexplained.
+    page_kpis: Tuple[str, ...] = ()
 
     def __str__(self) -> str:
         """The draft — so a pending that is never written still renders as prose."""

@@ -59,6 +59,18 @@ def ask_lines(wanted: int) -> int:
 
 
 def _bullet_rules(wanted: int) -> str:
+    if wanted <= 1:
+        # A one-paragraph box is not a one-bullet list. The template author gave it a
+        # single paragraph beside the page's KPI tiles, so it is the page's THESIS, and
+        # forty-five words of one finding leaves four tiles unexplained. It gets the room
+        # a paragraph needs and is asked to tie the page together rather than pick one
+        # number off it.
+        return ("This box holds ONE PARAGRAPH, not a bullet list. Write a single paragraph "
+                "of three or four sentences that ties this page together: the headline "
+                "result, the comparison that gives it meaning, and where it leaves the "
+                "carrier. It is the page's argument in one breath, so cover the figures the "
+                "page actually displays rather than picking one of them. No line breaks, no "
+                "bullet characters. ")
     return (f"Write between one and {max(wanted, 1)} independent bullets in priority order, "
             "ONE BULLET PER LINE. Use fewer when evidence supports fewer useful findings. "
             "Do not add filler or split a single finding to fill the column. "
@@ -385,6 +397,58 @@ def _topic_key(header: str, section: Section = Section.OTHER) -> str:
     return _SECTION_DEFAULT_TOPIC.get(section, "key_messages")
 
 
+#: A KPI tile's value placeholder — "$xxx.xm", "x.x%", "+xx.x%", "#x". The tiles carry a
+#: placeholder and a caption; the caption is what the prose beside them has to speak to.
+_KPI_PLACEHOLDER = re.compile(
+    r"(?:^|\s)(?:[+\-]?[$£€]?[x]+[.,]?[x]*\s*[%mkbn]?|#x+)(?:\s|$)", re.I)
+
+
+def _page_kpis(slide: Slide) -> Tuple[str, ...]:
+    """The captions of the KPI tiles this slide DISPLAYS, in reading order.
+
+    The commentary beside a row of tiles was arguing from the same fact pack as every
+    other column and never knew which four numbers the reader could see next to it. That
+    is how a headline page ends up discussing a benchmark gap while "Premium written with
+    Marsh" sits unexplained two inches away.
+
+    Read off the TEMPLATE rather than the bound values: what the page will show is a
+    property of the layout and is known before a single figure is computed, and a caption
+    is what the author wrote to describe the number. A tile is recognised by its value
+    PLACEHOLDER (``$xxx.xm``, ``x.x%``, ``#x``), so a template that restyles its tiles
+    keeps working and a paragraph of prose is never mistaken for one.
+    """
+    out: List[str] = []
+    for sh in slide.shapes:
+        if sh.kind != "text":
+            continue
+        lines = [ln.strip() for ln in (sh.paragraphs or []) if ln and ln.strip()]
+        if not lines or not any(_KPI_PLACEHOLDER.search(ln) for ln in lines):
+            continue
+        caption = " ".join(ln for ln in lines if not _KPI_PLACEHOLDER.search(ln)).strip()
+        caption = " ".join(caption.split())
+        if 2 <= len(caption.split()) <= 14:
+            out.append(caption)
+    return tuple(dict.fromkeys(out))
+
+
+def _box_capacity(shape: Shape) -> int:
+    """How many bullets this prose box was AUTHORED to hold.
+
+    The template author laid the box out with example bullets, and how many they wrote is
+    the only honest statement anyone has made about how much the box holds. A box with
+    four example lines wants four; one with a single paragraph of running prose wants one.
+
+    This exists because the number was previously read off the DETERMINISTIC DRAFT — the
+    model was asked for exactly as many bullets as the rule composers happened to produce,
+    after the claim ledger had removed whatever an earlier page already said. A summary
+    box on a four-bullet slide was routinely asked for one line, and no prompt could have
+    fixed that. Capacity is a property of the SLIDE; it has nothing to do with how much
+    the fallback had left to say.
+    """
+    written = [p for p in (shape.paragraphs or []) if p and p.strip()]
+    return max(1, min(len(written) or _MAX_COLUMN_BULLETS, _MAX_COLUMN_BULLETS))
+
+
 def _prose_targets(template: Template) -> List[Dict[str, Any]]:
     """``[{slide_idx, shape_id, topic}]`` for every fillable prose box in a commentary section.
 
@@ -401,7 +465,9 @@ def _prose_targets(template: Template) -> List[Dict[str, Any]]:
         for sh in slide.shapes:
             if _is_prose_slot(sh):
                 out.append({"slide_idx": slide.index, "shape_id": sh.shape_id,
-                            "topic": _topic_key(_column_topic(slide, sh), section)})
+                            "topic": _topic_key(_column_topic(slide, sh), section),
+                            "capacity": _box_capacity(sh),
+                            "page_kpis": _page_kpis(slide)})
     return out
 
 
@@ -698,7 +764,8 @@ _VERIFIER_TIER = "balanced"
 
 
 def plan_rewrite(text: str, *, node: str, style: Optional[str] = None, topic: str = "",
-                 subject: str = "", facts: Optional[Dict[str, Any]] = None):
+                 subject: str = "", facts: Optional[Dict[str, Any]] = None,
+                 capacity: int = 0, page_kpis: Tuple[str, ...] = ()):
     """This column as a :class:`~studio.template_fill.rewrites.PendingRewrite`.
 
     The deterministic draft plus the brief a model needs to better it. Composing a column
@@ -711,7 +778,8 @@ def plan_rewrite(text: str, *, node: str, style: Optional[str] = None, topic: st
     if not text:
         return text
     return rewrites.PendingRewrite(draft=text, node=node, topic=topic, subject=subject,
-                                   style=style or "balanced", facts=facts or {})
+                                   style=style or "balanced", facts=facts or {},
+                                   capacity=capacity, page_kpis=tuple(page_kpis))
 
 
 def write_column(pending) -> str:
@@ -1025,6 +1093,18 @@ def values(template: Template, result, *, ledger=None,
     #
     # The ONE exception is the survey line, which belongs to a page rather than a topic —
     # so the key carries whether this column is the one that gets it.
+    # One answer per question, so its bullet count must fit EVERY box that shows it: the
+    # smallest wins. Asking for the largest would overflow the tightest box on the page,
+    # and a bullet that spills outside its shape is a worse failure than a short column.
+    capacities: Dict[Tuple[str, bool], int] = {}
+    kpis: Dict[Tuple[str, bool], Tuple[str, ...]] = {}
+    for t in targets:
+        key_for = (t["topic"], bool(survey_line) and t["slide_idx"] in survey_slides)
+        room = int(t.get("capacity") or _MAX_COLUMN_BULLETS)
+        capacities[key_for] = min(capacities.get(key_for, room), room)
+        # A topic on two pages sees the union: every tile a reader could have beside it.
+        kpis[key_for] = tuple(dict.fromkeys(kpis.get(key_for, ()) + tuple(t.get("page_kpis") or ())))
+
     cache: Dict[Tuple[str, bool], str] = {}
     for t in targets:
         topic = t["topic"]
@@ -1043,8 +1123,9 @@ def values(template: Template, result, *, ledger=None,
                 # Preserve explicit entity names so each bullet stands on its own.
                 base = bullet_list(said)
                 cache[key] = plan_rewrite(base, node=f"commentary-{topic}", style=style,
-                                          topic=topic, subject=subject,
-                                          facts=facts) if base else ""
+                                          topic=topic, subject=subject, facts=facts,
+                                          capacity=capacities.get(key, 0),
+                                          page_kpis=kpis.get(key, ())) if base else ""
             except Exception as exc:  # noqa: BLE001 — commentary must never break the doc
                 logger.warning("commentary: topic %s failed: %s", topic, exc)
                 cache[key] = ""

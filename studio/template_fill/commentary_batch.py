@@ -89,6 +89,9 @@ class Column:
     node: str
     bullets: int                     # maximum number of independent findings
     draft: Tuple[str, ...] = ()      # explicit deterministic preview/fallback only
+    #: Captions of the KPI tiles this column's PAGE displays, so the prose can speak to the
+    #: numbers a reader can see beside it rather than to the fact pack in the abstract.
+    page_kpis: Tuple[str, ...] = ()
 
     @property
     def draft_text(self) -> str:
@@ -249,9 +252,18 @@ def _columns_from(items: Sequence[Tuple[int, str, Any]]) -> Tuple[Column, ...]:
         draft = tuple(ln for ln in pending.draft.splitlines() if ln.strip())
         if not draft:
             continue
+        # How many bullets to ASK FOR is a property of the slide, not of the fallback.
+        # This used to be ``len(draft)``: the model got exactly as many bullets as the rule
+        # composers had produced, AFTER the claim ledger removed whatever an earlier page
+        # had already said — so a four-bullet summary box was routinely asked for one line
+        # and no prompt could have widened it. ``capacity`` is what the template author
+        # laid the box out to hold; the draft length is only the fallback for a pending
+        # built before capacity was carried.
+        room = int(getattr(pending, "capacity", 0) or 0) or len(draft)
         out.append(Column(field_id=f"{pending.topic or 'column'}.{i}", targets=tuple(targets),
+                          page_kpis=tuple(getattr(pending, "page_kpis", ()) or ()),
                           topic=pending.topic, node=pending.node,
-                          bullets=len(draft), draft=draft))
+                          bullets=room, draft=draft))
     return tuple(out)
 
 
@@ -281,6 +293,14 @@ def _column_block(column: Column, *, show_draft: bool, rejected: Sequence[str] =
         C.top_up_rules(column.topic, remaining) if keep
         else C.column_rules(column.topic, column.bullets),
         editorial_brief,
+        # What the reader can SEE next to this box. A column that does not know its page
+        # displays "Premium written with Marsh" can argue a benchmark gap while the
+        # headline number sits unexplained two inches away — which is what the overall
+        # page did. Named, not valued: the figures are in the evidence, and repeating them
+        # here would give the model a second source to copy from and the verifier none.
+        ("THIS PAGE DISPLAYS these figures beside your text — speak to the ones your "
+         "column is for, and do not leave the page's headline number unexplained: "
+         + "; ".join(column.page_kpis) + ".") if column.page_kpis else "",
         "LEAD FROM these fact families: " + ", ".join(C.evidence_focus(column.topic))
         if C.evidence_focus(column.topic) else "",
     ]
