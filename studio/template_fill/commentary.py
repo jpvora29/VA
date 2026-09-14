@@ -175,6 +175,23 @@ _CRAFT = (
     "carrier's: say 'the carrier', 'the carrier's premium' or name it. 'The Marsh book' is "
     "correct, because that IS the market. Avoid 'pool', 'flow' and 'placement base' too. "
 )
+# A themed lead-in. Offered rather than imposed: forcing every bullet into "Label: text"
+# produces labels invented to satisfy the shape ("Performance:", "Overall:"), which is
+# noise in front of the sentence. It earns its place only where the bullet really is about
+# one named thing, which is most of a Growth column and some of a Trading Summary.
+_LEAD_IN = (
+    "WHERE A BULLET IS ABOUT ONE NAMED THING — an industry, a client segment, a product "
+    "line — you may open it with that name as a short lead-in label, then a colon, then "
+    "the finding: 'Manufacturing growth: Marsh-placed premium there rose 18% while the "
+    "carrier's share of it fell 2.1 points.' It makes a column scannable, because a reader "
+    "sees what each bullet covers before reading it. "
+    "Three rules. The label is at most four words and names the THING, never the column "
+    "('Challenges:' and 'Opportunity:' are not labels, they are the heading repeated). "
+    "What follows the colon is a COMPLETE SENTENCE that would still stand if the label were "
+    "removed — never a caption like 'Momentum: Cyber +97%'. And do not label every bullet: "
+    "a bullet about the whole carrier has nothing to name, and a column of invented labels "
+    "is harder to read than none. "
+)
 _FAITHFULNESS = (
     "Every bullet must cite its supporting fact IDs. Copy numerical display values exactly from those facts; "
     "never recalculate, round or invent figures. Preserve direction and distinguish percentages from percentage points. "
@@ -280,7 +297,7 @@ def _openings_rule(subject: str) -> str:
 
 
 def deck_voice(style: Optional[str], subject: str = "") -> str:
-    return (_VOICE + _CRAFT + _INTERPRETATION + _ARGUMENT + _TENSION
+    return (_VOICE + _CRAFT + _LEAD_IN + _INTERPRETATION + _ARGUMENT + _TENSION
             + _FAITHFULNESS + _DEFINITIONS + _POINTER
             + _EXAMPLES + _openings_rule(subject) + _style_directive(style))
 
@@ -523,6 +540,8 @@ def _line_rules() -> Tuple[_LineRule, ...]:
         _LineRule("template_opener", lambda ln: _TEMPLATE_OPENERS.match(ln) is not None),
         _LineRule("carrier_called_a_book", lambda ln: _CARRIER_AS_BOOK.search(ln) is not None),
         _LineRule("kind_label_in_prose", lambda ln: _KIND_LABEL.match(ln) is not None),
+        _LineRule("malformed_lead_in",
+                  lambda ln: commentary_metrics.lead_in_issue(ln) is not None),
         _LineRule("unclear_comparison", lambda ln: commentary_metrics.clarity_issue(ln) is not None),
     )
 

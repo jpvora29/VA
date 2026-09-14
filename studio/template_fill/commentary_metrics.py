@@ -103,6 +103,76 @@ def is_restatement(bullet: str) -> bool:
     return bool(_MEASURE_OPENER.match(bullet))
 
 
+#: A themed lead-in: a short label naming what the bullet is about, then the finding.
+#: Bounded to the first 40 characters so a colon deeper inside a sentence is ordinary
+#: punctuation and not read as a label.
+_LEAD_IN = re.compile(r"^(?P<label>[^:.!?]{1,40}):\s+(?P<rest>\S.*)$", re.S)
+
+#: How many words a lead-in LABEL may carry. Four covers "Manufacturing growth",
+#: "Renewable Energy" and "Share of wallet"; beyond that it is a clause, and a clause
+#: before a colon is a sentence that happens to contain one.
+_MAX_LABEL_WORDS = 4
+
+#: Words that are never the NAME of anything — they are the column's own heading, and a
+#: bullet labelled with the heading it already sits under has spent a line saying where it
+#: is. Caught here rather than left to the judge because it needs no evidence to see.
+_HEADING_WORDS = frozenset({
+    "challenge", "challenges", "opportunity", "opportunities", "success", "successes",
+    "strength", "strengths", "weakness", "weaknesses", "threat", "threats",
+    "priority", "priorities", "key message", "key messages", "message", "messages",
+    "performance", "growth", "reflection", "reflections", "summary", "overall",
+    "highlight", "highlights", "thesis", "observation", "recommendation",
+})
+
+
+def lead_in_issue(bullet: str):
+    """Why this bullet's ``Theme: finding`` lead-in is malformed, or ``None``.
+
+    The lead-in is allowed because it is genuinely easier to read: a reader scanning a
+    column sees what each bullet is ABOUT before reading it. The failure mode it has to be
+    kept away from is the one the old flat ban on colons existed for — "Momentum: Cyber
+    +97%", a label followed by a chart caption rather than a sentence. So the shape is
+    permitted and policed: a short label, then a whole sentence that could stand without it.
+
+    Returns ``None`` for a bullet with no lead-in at all, which is most of them.
+    """
+    match = _LEAD_IN.match(bullet.strip())
+    if not match:
+        return None
+    label = match.group("label").strip()
+    rest = match.group("rest").strip()
+    if len(label.split()) > _MAX_LABEL_WORDS:
+        return None                     # a sentence containing a colon, not a lead-in
+    if label.strip().lower() in _HEADING_WORDS:
+        return (f"{label!r} is the column's heading, not the name of anything — label the "
+                "industry, segment or product the bullet is about, or drop the label")
+    if not label[:1].isupper():
+        return "Capitalise the lead-in label before the colon"
+    if not rest[:1].isupper():
+        return "Start a full sentence after the lead-in colon"
+    if not rest.endswith((".", "!", "?")):
+        return ("Follow the lead-in with a complete sentence, not a caption "
+                f"({rest[:40]!r})")
+    if len(rest.split()) < 6:
+        return ("The lead-in label is not the finding; the sentence after it must carry "
+                "the point on its own")
+    return None
+
+
+def lead_in_label(bullet: str) -> str:
+    """The lead-in label of a ``Theme: finding`` bullet, or ``""`` when it has none.
+
+    The renderer emboldens exactly this span (:func:`fill._embolden_lead_in`), so the two
+    must agree on where the label ends — which is why it is read off here rather than
+    re-parsed there.
+    """
+    match = _LEAD_IN.match(bullet.strip())
+    if not match or lead_in_issue(bullet) is not None:
+        return ""
+    label = match.group("label").strip()
+    return label if len(label.split()) <= _MAX_LABEL_WORDS else ""
+
+
 def clarity_issue(bullet: str):
     """Concrete ambiguity checks, not a preference for particular sentence openings.
 
