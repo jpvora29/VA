@@ -587,12 +587,28 @@ def _reading_area(head, prose, views):
     return [
         html.Div(
             [
-                html.Div([head, prose], className="answer-points"),
-                html.Div(views, className="answer-visual"),
+                html.Div(
+                    [_column_label("Insight"), head, prose],
+                    className="answer-points",
+                ),
+                html.Div(
+                    [_column_label("Evidence"), views],
+                    className="answer-visual",
+                ),
             ],
             className="answer-split",
         )
     ]
+
+
+def _column_label(text: str):
+    """A quiet heading over each column.
+
+    Two columns of the same weight read as one thing split in half, and the
+    reader has to work out which side is the argument and which is the support.
+    A small label over each says it in one word.
+    """
+    return html.Div(text, className="answer-column-label")
 
 
 def user_message(content: str, *, ts: str = "", initial: str = ""):

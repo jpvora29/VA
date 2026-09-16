@@ -2425,3 +2425,32 @@ button.dock-pin.is-pinned:hover { background: #e2ebff; }
         border-top: 1px solid var(--va-border-soft);
     }
 }
+
+/* ── Naming the two columns ───────────────────────────────────────────────
+   Two columns of equal weight read as one thing cut in half. A quiet label
+   over each says which side is the argument and which is the support, so the
+   reader knows where to start rather than working it out. Small, uppercase and
+   low-contrast on purpose: it is a signpost, not a heading competing with the
+   finding underneath it. */
+.answer-column-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--va-ink-subtle, #7B8AA1);
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--va-border-soft, rgba(12, 25, 58, 0.08));
+}
+
+/* Stacked, the labels become the section headings that separate the prose from
+   the evidence — the same job, doing more work because there is no longer a
+   column boundary to do it for them. */
+@media (max-width: 1100px) {
+    .answer-column-label {
+        margin-bottom: 10px;
+    }
+    .answer-split .answer-visual {
+        margin-top: 18px;
+    }
+}

@@ -293,7 +293,7 @@ def test_the_motivating_question_asks_for_the_evidence_the_plan_names():
     assert contract.intent == "performance_assessment"
     assert contract.keys() == (
         "annual_movement", "product_contributors", "quarterly_comparison",
-        "survey_movement",
+        "positioning", "survey_movement",
     )
 
 

@@ -27,6 +27,7 @@ from typing import Sequence, Tuple
 from core.analysis.requirements import GPR, SURVEY
 
 LOOKUP = "lookup"
+PENETRATION = "penetration_assessment"
 PERFORMANCE = "performance_assessment"
 MOVEMENT = "movement_explanation"
 BREAKDOWN = "breakdown"
@@ -62,6 +63,15 @@ _PERFORMANCE_PATTERNS = (
     re.compile(r"\bhow\s+(?:did|was|were)\b[^.?!]{0,40}\b(?:year|20\d\d|quarter)\b", re.I),
 )
 
+# "where is penetration possible", "headroom", "where can we grow", "whitespace"
+_PENETRATION_PATTERNS = (
+    re.compile(r"\bpenetrat\w*\b", re.I),
+    re.compile(r"\bheadroom\b|\bwhite\s?space\b|\bunder[- ]?indexed\b", re.I),
+    re.compile(r"\bwhere\s+(?:can|could|should)\b[^.?!]{0,40}\b(?:grow|win|expand|focus)\b", re.I),
+    re.compile(r"\b(?:room|scope|potential)\s+to\s+grow\b", re.I),
+    re.compile(r"\bwhere\s+is\b[^.?!]{0,40}\bopportunit", re.I),
+)
+
 # "what is the NPS", "survey score", "how do brokers rate them"
 _PERCEPTION_PATTERNS = (
     re.compile(r"\b(?:nps|net\s+promoter)\b", re.I),
@@ -73,6 +83,9 @@ _PERCEPTION_PATTERNS = (
 # Most specific first. A question matching several operations is named by the
 # first row here, which is why this is a tuple and not a dict.
 _OPERATION_PATTERNS: Tuple[Tuple[str, Tuple[re.Pattern, ...]], ...] = (
+    # Penetration first: "where can we grow in Property" also matches the
+    # breakdown patterns, and the growth question is the one being asked.
+    (PENETRATION, _PENETRATION_PATTERNS),
     (MOVEMENT, _MOVEMENT_PATTERNS),
     (PERCEPTION, _PERCEPTION_PATTERNS),
     (BREAKDOWN, _BREAKDOWN_PATTERNS),

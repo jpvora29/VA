@@ -306,8 +306,10 @@ def test_the_points_come_before_the_visual_so_stacking_keeps_reading_order():
 
     split = _reading_area("HEAD", "PROSE", "VIEWS")[0]
     points, visual = split.children
-    assert points.children == ["HEAD", "PROSE"]
-    assert visual.children == "VIEWS"
+    # Each column opens with its label; the content follows in reading order, so
+    # a stacked layout still puts the argument before the evidence.
+    assert points.children[1:] == ["HEAD", "PROSE"]
+    assert visual.children[1:] == ["VIEWS"]
 
 
 def test_the_stylesheet_collapses_the_split_on_a_narrow_screen():

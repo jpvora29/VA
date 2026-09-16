@@ -262,7 +262,16 @@ def concentration_claim(pack: PositioningPack) -> Optional[Tuple[AnswerClaim, Li
     return claim, facts
 
 
-def compile_positioning(pack: PositioningPack, *, limit: int = 3) -> PositioningClaims:
+#: Claim kinds a penetration question is actually about. Asked "where can we
+#: grow", a reader wants the unheld book and the thin positions first; the
+#: largest line's scale is the answer to a different question.
+PENETRATION_FIRST = ("headroom", "position")
+
+PENETRATION = "penetration"
+
+
+def compile_positioning(pack: PositioningPack, *, limit: int = 3,
+                        focus: str = "") -> PositioningClaims:
     """Every positioning claim this pack supports, strongest first.
 
     `limit` bounds the per-slice sentences so a twelve-product book does not
@@ -275,7 +284,15 @@ def compile_positioning(pack: PositioningPack, *, limit: int = 3) -> Positioning
     claims: List[AnswerClaim] = []
     facts: List[AnswerFact] = []
 
-    notable = [p for p in pack.by_premium() if _notable(p)]
+    # A penetration question is about where the carrier is THIN, so the slices
+    # worth a sentence are ranked by unheld book rather than by size. Asked
+    # "where can we grow", leading with the biggest line answers "where are we
+    # already big" — a true sentence about the wrong thing.
+    if focus == PENETRATION:
+        notable = [p for p in pack.positions if p.headroom]
+        notable.sort(key=lambda p: p.headroom or 0.0, reverse=True)
+    else:
+        notable = [p for p in pack.by_premium() if _notable(p)]
     for position in notable:
         built = scale_and_penetration(position, pack.dimension)
         if built is None:
@@ -304,10 +321,13 @@ def compile_positioning(pack: PositioningPack, *, limit: int = 3) -> Positioning
             facts.extend(cited)
 
     unique_facts = {fact.id: fact for fact in facts}
-    return PositioningClaims(
-        tuple(sorted(claims, key=lambda c: (-c.priority, c.id))),
-        tuple(unique_facts.values()),
-    )
+    ordered = sorted(claims, key=lambda c: (-c.priority, c.id))
+    if focus == PENETRATION:
+        # Re-rank rather than re-score: the claims themselves are unchanged, it
+        # is only which of them answers THIS question that differs.
+        rank = {kind: index for index, kind in enumerate(PENETRATION_FIRST)}
+        ordered = sorted(ordered, key=lambda c: rank.get(c.kind, len(rank)))
+    return PositioningClaims(tuple(ordered), tuple(unique_facts.values()))
 
 
 # --------------------------------------------------------------------------- #
@@ -387,6 +407,18 @@ def positions_from_facts(
     return PositioningPack(positions, dimension)
 
 
+def focus_for(question: str) -> str:
+    """Which reading of a position THIS question is asking for.
+
+    Deterministic and deliberately narrow: only a question that actually asks
+    about growing or penetrating re-ranks the claims. Everything else keeps the
+    default ordering, so a performance answer is unaffected.
+    """
+    from core.analysis.operation import PENETRATION as PENETRATION_INTENT, detect_operation
+
+    return PENETRATION if detect_operation(question) == PENETRATION_INTENT else ""
+
+
 def positioning_claims(pack_facts: Sequence[AnswerFact], question: str = "") -> Tuple[AnswerClaim, ...]:
     """Positioning claims for whatever positions the recorded facts describe.
 
@@ -394,7 +426,7 @@ def positioning_claims(pack_facts: Sequence[AnswerFact], question: str = "") -> 
     gathered no positioning evidence, which is every turn that did not ask for it.
     """
     pack = positions_from_facts(pack_facts)
-    return compile_positioning(pack).claims if pack else ()
+    return compile_positioning(pack, focus=focus_for(question)).claims if pack else ()
 
 
 # --------------------------------------------------------------------------- #

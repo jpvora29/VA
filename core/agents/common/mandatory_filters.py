@@ -84,6 +84,27 @@ def _values_in(entities: Any, field: str) -> bool:
     return any(str(v).strip() for v in (values or []))
 
 
+#: A four-digit year written in the question. The cheapest possible scope
+#: signal, and the one an extraction failure most often loses.
+_YEAR_IN_TEXT = re.compile(r"\b(?:19|20)\d{2}\b")
+
+
+def _fuzzy_matcher(flow: str, column: str, text: str) -> bool:
+    """Whether the question names a stored value of `column`. No LLM, no cache.
+
+    Reuses the same rapidfuzz matcher the contract resolver uses, so "singapore"
+    matches "Singapore" and a misspelling that the resolver would accept is
+    accepted here too. Any failure means "cannot tell", which leaves the decision
+    to the rest of the gate rather than asserting scope that may not exist.
+    """
+    try:
+        from core.mcp.tools import match_column_values
+
+        return bool(match_column_values(flow, column, text))
+    except Exception:  # noqa: BLE001 - a missing warehouse must not force a clarify
+        return False
+
+
 @dataclass(frozen=True)
 class FilterRequirement:
     """A mandatory role the turn is missing and must clarify."""
@@ -105,9 +126,11 @@ class MandatoryFilterGate:
     of the production one.
     """
 
-    def __init__(self, *, registry: Any = None, flows_by_family: dict = _FLOWS_BY_FAMILY) -> None:
+    def __init__(self, *, registry: Any = None, flows_by_family: dict = _FLOWS_BY_FAMILY,
+                 matcher=_fuzzy_matcher) -> None:
         self._registry = registry if registry is not None else get_flow_registry()
         self._flows_by_family = flows_by_family
+        self._matches = matcher
 
     def _columns_for(self, family: str, role: str) -> Tuple[str, ...]:
         """The schema columns a role maps to across the family's flows (registry
@@ -122,13 +145,21 @@ class MandatoryFilterGate:
                 columns.append(column)
         return tuple(columns)
 
-    def has_scope(self, routing_context: Any) -> bool:
+    def has_scope(self, routing_context: Any, question: str = "") -> bool:
         """True when the turn names (or inherits) a carrier, a country or a year.
 
         Resolution is not required. A carrier the user named that failed to match
         still says what the question is about — the "did you mean…?" source owns
         that mismatch, and stopping to ask "which carrier?" on top of it asks the
         same thing twice.
+
+        `question` is the last line of defence, and the reason it exists: every
+        other signal here is written by the extraction step, so a turn whose
+        extraction came back empty looked exactly like a turn that named nothing
+        — and "Explain the performance of AXA in Singapore for 2025" was stopped
+        to ask which carrier and which country. Reading the raw text cannot fix a
+        bad extraction, but it can stop one from interrogating the user about
+        something they plainly said.
         """
         if routing_context is None:
             return False
@@ -146,12 +177,35 @@ class MandatoryFilterGate:
             return True
         # A resolved year has no `entity_columns` role of its own (the registry
         # maps country/carrier/product/segment), so it is matched by column name.
-        return any(
+        if any(
             values and _PERIOD_COLUMN.search(str(column))
             for column, values in resolved.items()
-        )
+        ):
+            return True
+        return self.question_names_scope(question, family)
 
-    def missing_mandatory_filters(self, routing_context: Any) -> List[FilterRequirement]:
+    def question_names_scope(self, question: str, family: str) -> bool:
+        """Whether the raw question text names a year, a carrier or a country.
+
+        Deliberately deterministic and cheap: a regex for the year, and the
+        contract's own fuzzy matcher for the two entity roles. It runs only when
+        every extracted signal is empty, so the usual turn pays nothing for it.
+        """
+        text = (question or "").strip()
+        if not text:
+            return False
+        if _YEAR_IN_TEXT.search(text):
+            return True
+        for role in ("carrier", "country"):
+            for column in self._columns_for(family, role):
+                flow = next(iter(self._flows_by_family.get(family, ())), "")
+                if flow and self._matches(flow, column, text):
+                    return True
+        return False
+
+    def missing_mandatory_filters(
+        self, routing_context: Any, question: str = ""
+    ) -> List[FilterRequirement]:
         """The mandatory roles to ask for — empty unless the turn has NO scope.
 
         A turn scoped by any of carrier / country / year runs as asked. Only a
@@ -165,7 +219,7 @@ class MandatoryFilterGate:
         family = (getattr(routing_context, "table_family", "") or "").lower()
         if family not in self._flows_by_family:  # fallback / out-of-scope
             return []
-        if self.has_scope(routing_context):
+        if self.has_scope(routing_context, question):
             return []
 
         unresolved_kinds = {

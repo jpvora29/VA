@@ -28,6 +28,7 @@ from langgraph.types import Send
 from typing_extensions import Annotated, TypedDict
 
 from core.agents.analyst.chart_picker import ChartFocus, pick_charts
+from core.analytics.dimensions import choose_dimension
 from core.analytics.positioning import build_positioning_comparison
 from core.answers.positioning_claims import LENS as POSITIONING_LENS
 from core.agents.common.contract import resolved_filters_of, unresolved_terms_of
@@ -511,7 +512,16 @@ def run_followups(
 
 #: Requirements whose answer is about standing across a dimension, so the
 #: positioning pack is worth the handful of extra queries it costs.
-_POSITIONING_REQUIREMENTS = frozenset({"product_contributors", "direct_value"})
+_POSITIONING_REQUIREMENTS = frozenset({
+    # The requirement that IS the positioning table.
+    "positioning",
+    # A movement answer carries it too: share of wallet and rank are what turn
+    # "premium fell $300k" into something a reader can act on.
+    "product_contributors",
+    "annual_movement",
+    "direct_value",
+    "whitespace",
+})
 
 
 def positioning_node(state: AnalystState) -> dict:
@@ -537,8 +547,18 @@ def positioning_node(state: AnalystState) -> dict:
     if not subject:
         return {}
 
+    # Cut by the finest level the question has NOT already fixed. Asking about
+    # one product and cutting by product gives a single row whose share of the
+    # book is 100% by construction — the table has nothing to compare, which is
+    # exactly what a penetration question needs it to do.
+    dimension = choose_dimension(scope, flow="gpr")
+    if not dimension:
+        return {}
+
     try:
-        pack = build_positioning_comparison(filters=scope, subject=subject)
+        pack = build_positioning_comparison(
+            dimension=dimension, filters=scope, subject=subject
+        )
     except Exception as exc:  # noqa: BLE001 - positioning is additive, never fatal
         log_event(logger, "positioning_failed", logging.WARNING,
                   node="analyst_positioning", route=state["route"], error=str(exc))

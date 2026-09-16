@@ -101,6 +101,17 @@ requirements:
       Whitespace thresholds are not calibrated for this scope, so no whitespace
       finding is reported.
 
+  positioning:
+    label: Position
+    source: gpr
+    evidence: >-
+      carrier premium, Marsh book premium, share of wallet, share of the
+      carrier's own portfolio and rank for each slice of the finest dimension
+      the question has not already fixed
+    limitation: >-
+      Position cannot be established for this scope, so share of wallet and rank
+      are not reported.
+
   survey_movement:
     label: Survey movement
     source: survey
@@ -118,6 +129,19 @@ intents:
     required: [direct_value]
     conditional: {}
 
+  penetration_assessment:
+    aliases:
+      - penetration
+      - headroom
+      - where can we grow
+      - where is the opportunity
+      - under-penetrated
+    required:
+      - positioning
+    conditional:
+      whitespace: whitespace_enabled
+      annual_movement: comparable_years_available
+
   performance_assessment:
     aliases:
       - performance
@@ -129,6 +153,7 @@ intents:
       - annual_movement
       - product_contributors
       - quarterly_comparison
+      - positioning
     conditional:
       industry_concentration: material_product_movement
       survey_movement: comparable_survey_data

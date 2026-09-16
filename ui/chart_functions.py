@@ -621,6 +621,9 @@ _GRID = "#EEF2F7"
 _AXIS_LINE = "#D1E0EC"
 # Darker than the grid: the zero line is a reference, not another gridline.
 _ZERO_LINE = "#9AA9BF"
+# Tick labels sit a step back from the body text: they are reference, not
+# content, and at full ink they compete with the bars for attention.
+_TICK_INK = "#5A6B82"
 
 
 def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
@@ -652,22 +655,34 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
             y=1.0, yanchor="top", yref="container",
             pad=dict(t=12),
             automargin=True,
-            font=dict(size=15, color=_TITLE_INK, family=_FONT_FAMILY),
+            font=dict(size=14.5, color=_TITLE_INK, family=_FONT_FAMILY,
+                      weight=600),
         ),
-        font=dict(family=_FONT_FAMILY, size=13, color=_INK),
+        font=dict(family=_FONT_FAMILY, size=12.5, color=_INK),
         paper_bgcolor="white",
         plot_bgcolor="white",
-        margin=dict(l=64, r=48 if spec.chart_type == "combo" else 32, t=top_margin, b=64),
+        # The y-axis carries `automargin`, so a fixed 64px left margin was
+        # padding already-reserved space — the plot sat in the middle of the card
+        # with a gutter down the left. Let the axis ask for what it needs.
+        margin=dict(l=8, r=48 if spec.chart_type == "combo" else 24, t=top_margin, b=48),
         colorway=ColorPalette.get_colors(),
-        bargap=0.28,
-        bargroupgap=0.08,
+        # Wider gaps: bars that nearly touch read as a single mass. The grouped
+        # pair stays tight so the two years read as one comparison.
+        bargap=0.38,
+        bargroupgap=0.06,
         showlegend=multi,
         legend=dict(
             orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0,
             font=dict(size=11), title=None,
+            # A legend sitting directly on the plot edge reads as a label of the
+            # topmost bar. Half a line of air separates it from the data.
+            itemsizing="constant", itemwidth=30,
         ),
         hoverlabel=dict(bgcolor="white", font_size=12, font_family=_FONT_FAMILY,
-                        bordercolor=_AXIS_LINE),
+                        bordercolor=_AXIS_LINE, namelength=-1),
+        # A uniform gap between the tallest bar and the plot top, so a chart with
+        # outside value labels does not clip them and one without does not float.
+        uniformtext=dict(minsize=9, mode="hide"),
     )
     # Rounded bar corners (Plotly ≥5.18 / 6.x).
     if spec.chart_type in ("bar", "combo"):
@@ -689,7 +704,7 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
             title=dict(text=spec.x_title or _pretty(spec.x),
                        font=dict(size=12, color="#5A6B82")),
             showgrid=False, showline=True, linecolor=_AXIS_LINE, linewidth=1,
-            ticks="outside", tickcolor=_AXIS_LINE, tickfont=dict(size=11),
+            ticks="", tickfont=dict(size=11, color=_TICK_INK),
             tickangle=tickangle, automargin=True,
         )
         ytitle = spec.y_title or ", ".join(_pretty(c) for c in spec.y)
@@ -702,9 +717,10 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
         show_zero_line = _needs_zero_line(df, spec.y)
         fig.update_yaxes(
             title=dict(text=ytitle, font=dict(size=12, color="#5A6B82")),
-            showgrid=True, gridcolor=_GRID, gridwidth=1,
+            showgrid=True, gridcolor=_GRID, gridwidth=1, griddash="dot",
             zeroline=show_zero_line, zerolinecolor=_ZERO_LINE, zerolinewidth=1.5,
-            showline=False, tickfont=dict(size=11), automargin=True,
+            showline=False, ticks="", tickfont=dict(size=11, color=_TICK_INK),
+            automargin=True,
         )
         # Large amounts get SI-abbreviated ticks (1.2M, 60K) like any BI tool —
         # never six-digit tick labels.

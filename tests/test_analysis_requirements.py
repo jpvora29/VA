@@ -29,6 +29,9 @@ def test_intents_yaml_loads_and_declares_the_performance_contract():
         "annual_movement",
         "product_contributors",
         "quarterly_comparison",
+        # Position is required, not optional: share of wallet and rank are what
+        # turn a premium movement into something a reader can act on.
+        "positioning",
     }
 
 
@@ -63,6 +66,7 @@ def test_performance_requires_movement_contributors_and_timing():
         "annual_movement",
         "product_contributors",
         "quarterly_comparison",
+        "positioning",
     )
 
 

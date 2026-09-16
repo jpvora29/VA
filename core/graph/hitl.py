@@ -229,7 +229,9 @@ class MandatoryFilterSource:
 
     def gather(self, ctx: ClarifyContext) -> List[Dict]:
         questions: List[Dict] = []
-        for req in self._gate.missing_mandatory_filters(ctx.routing_context):
+        # The question text is passed so a turn whose extraction came back
+        # empty is not interrogated about entities it plainly named.
+        for req in self._gate.missing_mandatory_filters(ctx.routing_context, ctx.query):
             column = req.columns[0] if req.columns else ""
             values = self._load_values(req.flow, column) if column else []
             options = (

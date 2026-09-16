@@ -178,7 +178,8 @@ def test_the_default_cap_admits_a_full_performance_contract():
         "performance_assessment",
         conditions=["material_product_movement", "comparable_survey_data"],
     )
-    assert len(contract.selected) == 5
+    # movement, contributors, quarters, position, industry drill-down, survey.
+    assert len(contract.selected) == 6
     assert plan_limit(contract) >= len(contract.selected)
 
 
