@@ -540,6 +540,10 @@ def positioning_node(state: AnalystState) -> dict:
     contract = state.get("contract")
     required = set(contract.keys()) if contract else set()
     if state.get("flow") != "gpr" or not (required & _POSITIONING_REQUIREMENTS):
+        log_event(logger, "positioning_skipped", logging.WARNING,
+                  node="analyst_positioning", route=state["route"],
+                  flow=state.get("flow"), requirements=sorted(required),
+                  reason="this turn asks for no requirement the position table serves")
         return {}
 
     scope = dict(resolved_filters_of(state.get("routing_context")) or {})
@@ -555,6 +559,10 @@ def positioning_node(state: AnalystState) -> dict:
     # exactly what a penetration question needs it to do.
     dimension = choose_dimension(scope, flow="gpr")
     if not dimension:
+        log_event(logger, "positioning_skipped", logging.WARNING,
+                  node="analyst_positioning", route=state["route"],
+                  reason="the question fixes every dimension, so there is nothing to break out",
+                  scope=sorted(scope))
         return {}
 
     try:
@@ -566,6 +574,14 @@ def positioning_node(state: AnalystState) -> dict:
                   node="analyst_positioning", route=state["route"], error=str(exc))
         return {}
     if not pack:
+        # The queries ran and returned nothing usable. Silent until now, which is
+        # why a missing table was impossible to diagnose from the outside: the
+        # reader saw no table and no reason, and neither did the log.
+        log_event(logger, "positioning_empty", logging.WARNING,
+                  node="analyst_positioning", route=state["route"],
+                  dimension=dimension, subject=subject or "(market)",
+                  scope=sorted(scope),
+                  reason="no slice returned a figure for this scope")
         return {}
 
     record = build_evidence(
@@ -579,9 +595,15 @@ def positioning_node(state: AnalystState) -> dict:
         metric="premium",
     )
     plan = _chart_plan_for(state, pack, scope)
+    if pack.missing:
+        log_event(logger, "positioning_partial", logging.WARNING,
+                  node="analyst_positioning", route=state["route"],
+                  missing=list(pack.missing),
+                  reason="these columns could not be computed for this warehouse")
     log_event(logger, "positioning_gathered", node="analyst_positioning",
               route=state["route"], slices=len(pack.positions),
-              missing=list(pack.missing), charts=[spec["title"] for spec in plan])
+              dimension=pack.dimension, subject=subject or "(market)",
+              missing=list(pack.missing), charts=[spec.get("tab") for spec in plan])
     return {"evidence": [record], "chart_plan": plan}
 
 

@@ -394,3 +394,89 @@ def test_a_view_with_no_chart_spec_still_renders_its_rows():
     ]})[0]
     assert view.label == "Raw"
     assert len(view.records) == 2
+
+# --------------------------------------------------------------------------- #
+# A missing table must say why it is missing
+# --------------------------------------------------------------------------- #
+#
+# Three early returns produced no table and no log line, so "the table did not
+# appear" was undiagnosable from the outside. Each now reports its reason.
+
+
+def _events(monkeypatch):
+    seen = []
+    import core.graph.analyst_subgraph as sub
+
+    monkeypatch.setattr(sub, "log_event",
+                        lambda logger, event, *a, **k: seen.append((event, k)))
+    return seen
+
+
+def _state(**overrides):
+    from core.schemas.routing import QueryEntities, RoutingContext
+
+    rc = RoutingContext(
+        table_family="premium", intent_type="new_question",
+        resolved_filters={"Carrier_Group": ["ZURICH GROUP"], "Country": ["Singapore"]},
+        entities=QueryEntities(carriers=["Zurich"]),
+    )
+    state = {"question": "q", "route": "premium", "flow": "gpr",
+             "routing_context": rc, "evidence": []}
+    state.update(overrides)
+    return state
+
+
+def test_a_survey_turn_says_why_it_has_no_premium_table(monkeypatch):
+    import core.graph.analyst_subgraph as sub
+
+    seen = _events(monkeypatch)
+    assert sub.positioning_node(_state(flow="survey")) == {}
+    assert any(event == "positioning_skipped" for event, _ in seen)
+
+
+def test_a_fully_pinned_question_says_there_is_nothing_left_to_break_out(monkeypatch):
+    import core.graph.analyst_subgraph as sub
+    from core.analysis import build_contract
+    from core.schemas.routing import RoutingContext
+
+    seen = _events(monkeypatch)
+    pinned = {column: ["x"] for column in D.LADDER}
+    rc = RoutingContext(table_family="premium", intent_type="new_question",
+                        resolved_filters=pinned)
+    state = _state(routing_context=rc,
+                   contract=build_contract("performance_assessment", allowed_sources=["gpr"]))
+    assert sub.positioning_node(state) == {}
+    reasons = [k.get("reason", "") for event, k in seen if event == "positioning_skipped"]
+    assert any("nothing to break out" in reason for reason in reasons)
+
+
+def test_an_empty_result_says_the_scope_returned_nothing(monkeypatch):
+    import core.graph.analyst_subgraph as sub
+    from core.analysis import build_contract
+    from core.analytics.positioning import PositioningPack
+
+    seen = _events(monkeypatch)
+    monkeypatch.setattr(sub, "build_positioning_comparison",
+                        lambda **k: PositioningPack())
+    state = _state(contract=build_contract("performance_assessment", allowed_sources=["gpr"]))
+    assert sub.positioning_node(state) == {}
+    assert any(event == "positioning_empty" for event, _ in seen)
+
+
+def test_a_partly_computable_warehouse_still_gets_a_table(monkeypatch):
+    """Losing the rank column must not cost the reader the whole table."""
+    import core.graph.analyst_subgraph as sub
+    from core.analysis import build_contract
+    from core.analytics.positioning import PositioningPack, SlicePosition
+
+    seen = _events(monkeypatch)
+    partial = PositioningPack(
+        (SlicePosition("Property", carrier_premium=9.0, marsh_premium=10.0),),
+        "Product_Line", ("Rank",), "ZURICH GROUP",
+    )
+    monkeypatch.setattr(sub, "build_positioning_comparison", lambda **k: partial)
+    out = sub.positioning_node(
+        _state(contract=build_contract("performance_assessment", allowed_sources=["gpr"]))
+    )
+    assert out.get("chart_plan")
+    assert any(event == "positioning_partial" for event, _ in seen)
