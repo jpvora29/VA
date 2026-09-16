@@ -89,7 +89,8 @@ def _frame(rows: Any) -> pd.DataFrame:
 
 
 def build_view(
-    rows: Sequence[Any], chart_data: Optional[Dict[str, Any]], *, label: str
+    rows: Sequence[Any], chart_data: Optional[Dict[str, Any]], *, label: str,
+    note: str = "",
 ) -> Optional[EvidenceView]:
     """One view from one result set, or ``None`` when there is nothing to show.
 
@@ -101,7 +102,7 @@ def build_view(
     if frame.empty:
         return None
 
-    figure, note = None, ""
+    figure, note, fallback_note = None, "", note
     if (chart_data or {}).get("chart_type"):
         try:
             figure, note = generate_chart(df=frame, chart_outputs=chart_data)
@@ -115,7 +116,7 @@ def build_view(
         columns=[str(c) for c in frame.columns],
         records=frame.to_dict("records"),
         figure=figure,
-        note=(note or "").strip() if figure is None else "",
+        note=(note or fallback_note or "").strip() if figure is None else "",
     )
 
 
@@ -135,6 +136,7 @@ def build_views(specs: Sequence[Dict[str, Any]]) -> List[EvidenceView]:
             spec.get("rows"),
             chart_data,
             label=label_for(spec.get("lens") or "", i, naming),
+            note=spec.get("note", ""),
         )
         if view is not None:
             views.append(view)

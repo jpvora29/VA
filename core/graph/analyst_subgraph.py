@@ -543,9 +543,11 @@ def positioning_node(state: AnalystState) -> dict:
         return {}
 
     scope = dict(resolved_filters_of(state.get("routing_context")) or {})
+    # A question that names no carrier still deserves a table — it is a question
+    # about the market, and the pack drops the carrier-specific columns for it
+    # (see `PositioningPack.is_market_view`). Only the columns change, not
+    # whether the reader gets one.
     subject = _subject_carrier(state, scope)
-    if not subject:
-        return {}
 
     # Cut by the finest level the question has NOT already fixed. Asking about
     # one product and cutting by product gives a single row whose share of the
@@ -610,7 +612,35 @@ def _chart_plan_for(state: AnalystState, pack, scope: dict) -> List[dict]:
         log_event(logger, "quarterly_chart_unavailable", logging.WARNING,
                   node="analyst_positioning", route=state["route"], error=str(exc))
 
-    return [spec.as_view() for spec in build_chart_plan(pack, quarterly_rows=quarterly, scope=scope)]
+    views = [
+        spec.as_view()
+        for spec in build_chart_plan(pack, quarterly_rows=quarterly, scope=scope)
+    ]
+    # The positioning table is a VIEW, not only an input to the commentary. It
+    # was being computed, feeding the claims, and then never rendered: the panel
+    # is built from this list alone, so a result set that is not in it does not
+    # reach the reader however carefully it was assembled.
+    views.append(_positioning_view(pack, scope))
+    return views
+
+
+def _positioning_view(pack, scope: dict) -> dict:
+    """The positioning table as a table-only view (no chart spec, so rows render)."""
+    from core.analytics.dimensions import describe_scope, label_for
+
+    level = label_for(pack.dimension)
+    unit = pack.money_suffix()
+    return {
+        "tab": "Position",
+        "title": f"Position by {level}{describe_scope(scope, pack.dimension)}",
+        "rows": pack.rows(),
+        "chart_data": {},
+        "lens": "positioning",
+        "note": (
+            f"Premium in {unit or 'currency units'}"
+            if unit else "Premium in currency units"
+        ),
+    }
 
 
 def _subject_carrier(state: AnalystState, scope: dict) -> str:

@@ -1641,8 +1641,14 @@ def _evidence_specs(state: dict[str, Any], table: str) -> list[dict[str, Any]]:
         return [
             {
                 "rows": chart.get("rows"),
-                "chart_data": normalize_chart_spec(chart.get("chart_data")),
+                # A view with no chart spec is a TABLE view — `ui.evidence`
+                # renders its rows directly. That is how the positioning table
+                # reaches the panel alongside the charts.
+                "chart_data": normalize_chart_spec(chart.get("chart_data"))
+                if chart.get("chart_data") else {},
                 "lens": chart.get("lens") or "",
+                "tab": chart.get("tab") or "",
+                "note": chart.get("note") or "",
             }
             for chart in analyst_charts
         ]

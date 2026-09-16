@@ -43,6 +43,10 @@ CARRIER_PREMIUM = "Carrier premium"
 MARSH_PREMIUM = "Marsh premium"
 SHARE_OF_WALLET = "Share of wallet"
 SHARE_OF_PORTFOLIO = "Share of portfolio"
+#: A market table has no carrier, so each slice is measured against the book
+#: rather than against a carrier's own portfolio. Different denominator,
+#: different name — calling both "share" would invite comparing them.
+SHARE_OF_MARKET = "Share of book"
 RANK = "Rank"
 MOVEMENT = "YoY change"
 CONTRIBUTION = "Contribution"
@@ -168,6 +172,15 @@ class PositioningPack:
     positions: Tuple[SlicePosition, ...] = ()
     dimension: str = ""
     missing: Tuple[str, ...] = ()
+    #: The carrier this table is about. Empty means the question named none, so
+    #: the table describes the MARKET and drops every carrier-specific column —
+    #: share of wallet and rank are undefined without a carrier, and a "carrier
+    #: premium" column would simply repeat the market's.
+    subject: str = ""
+
+    @property
+    def is_market_view(self) -> bool:
+        return not self.subject
 
     def __bool__(self) -> bool:
         return bool(self.positions)
@@ -202,6 +215,16 @@ class PositioningPack:
     def rows(self) -> List[Dict[str, Any]]:
         """The table as a reader sees it: formatted, with absences left blank."""
         ordered = self.by_premium()
+        if self.is_market_view:
+            ordered = sorted(
+                self.positions,
+                key=lambda p: (p.marsh_premium is None, -(p.marsh_premium or 0.0)),
+            )
+            scale, suffix = money_scale([p.marsh_premium for p in ordered])
+            total = sum(p.marsh_premium or 0.0 for p in ordered)
+            return [
+                _market_row(p, self.dimension, total, scale, suffix) for p in ordered
+            ]
         scale, suffix = money_scale(
             [p.marsh_premium for p in ordered] + [p.carrier_premium for p in ordered]
         )
@@ -210,9 +233,10 @@ class PositioningPack:
     def money_suffix(self) -> str:
         """The unit this table's money columns are in ("M", "k", ""), for a header."""
         ordered = self.by_premium()
-        return money_scale(
-            [p.marsh_premium for p in ordered] + [p.carrier_premium for p in ordered]
-        )[1]
+        values = [p.marsh_premium for p in ordered]
+        if not self.is_market_view:
+            values += [p.carrier_premium for p in ordered]
+        return money_scale(values)[1]
 
     def numeric_rows(self) -> List[Dict[str, Any]]:
         """The same table as TYPED numbers, for the fact and claim layers.
@@ -263,6 +287,34 @@ def _row(position: SlicePosition, dimension: str, *, scale: float = 1.0,
         SHARE_OF_PORTFOLIO: _percent(position.share_of_portfolio),
         RANK: _rank_cell(position),
     }
+
+
+def _market_row(position: SlicePosition, dimension: str, total: float,
+                scale: float, suffix: str) -> Dict[str, Any]:
+    """One row of a market table: the book, its share, and its movement.
+
+    Share is computed here rather than by `compute_share_of_portfolio`, whose
+    denominator is a CARRIER's own book — with no carrier in scope that
+    primitive returns a share per carrier, and the column summed to 175%.
+    """
+    share = (position.marsh_premium or 0.0) / total * 100 if total else None
+    return {
+        dimension or SLICE: position.slice,
+        MARSH_PREMIUM: _money(position.marsh_premium, scale, suffix),
+        SHARE_OF_MARKET: _percent(share),
+        MOVEMENT: _movement_cell(position, scale, suffix),
+    }
+
+
+def _movement_cell(position: SlicePosition, scale: float, suffix: str) -> Optional[str]:
+    """A slice's year-on-year movement, with its direction."""
+    if position.movement is None:
+        return None
+    if position.movement == 0:
+        return FLAT
+    glyph = UP if position.movement > 0 else DOWN
+    amount = _money(abs(position.movement), scale, suffix)
+    return f"{glyph} {amount}"
 
 
 def _premium_cell(position: SlicePosition, scale: float, suffix: str) -> Optional[str]:
@@ -354,7 +406,7 @@ def attach_comparison(current: PositioningPack, prior: PositioningPack) -> Posit
         )
         for position in current.positions
     )
-    return PositioningPack(joined, current.dimension, current.missing)
+    return PositioningPack(joined, current.dimension, current.missing, current.subject)
 
 
 _EMPTY = SlicePosition(slice="")
@@ -389,9 +441,19 @@ def build_positioning(
     )
     missing: List[str] = []
 
-    carrier = _keyed(_safe(CARRIER_PREMIUM, lambda: compute_breakdown(args, engine=engine), missing), dimension)
+    # Without a carrier in scope these two would describe the market, not a
+    # carrier: `compute_breakdown` returns the whole book and
+    # `compute_share_of_portfolio` returns a share per carrier that sums well
+    # past 100%. A market table computes its own share instead (`_market_row`).
+    carrier = (
+        _keyed(_safe(CARRIER_PREMIUM, lambda: compute_breakdown(args, engine=engine), missing), dimension)
+        if subject else {}
+    )
     market = _keyed(_safe(MARSH_PREMIUM, lambda: compute_market_presence(args, engine=engine), missing), dimension)
-    appetite = _keyed(_safe(SHARE_OF_PORTFOLIO, lambda: compute_share_of_portfolio(args, engine=engine), missing), dimension)
+    appetite = (
+        _keyed(_safe(SHARE_OF_PORTFOLIO, lambda: compute_share_of_portfolio(args, engine=engine), missing), dimension)
+        if subject else {}
+    )
     wallet = (
         _keyed(_safe(SHARE_OF_WALLET, lambda: compute_share_of_wallet(args, engine=engine), missing), dimension)
         if subject else {}
@@ -420,7 +482,7 @@ def build_positioning(
         )
         for name in slices
     )
-    return PositioningPack(positions, dimension, tuple(dict.fromkeys(missing)))
+    return PositioningPack(positions, dimension, tuple(dict.fromkeys(missing)), subject)
 
 
 def _without_carrier(flow: str, filters: Mapping[str, Any]) -> Dict[str, Any]:

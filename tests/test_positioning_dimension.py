@@ -16,6 +16,7 @@ import pytest
 from core.analysis import build_contract
 from core.analysis.operation import PENETRATION, detect_operation
 from core.analytics import dimensions as D
+from core.analytics import positioning as P
 from core.analytics.positioning import build_positioning_comparison
 from core.answers import positioning_claims as PC
 from tests.evaluation import scenario
@@ -108,8 +109,6 @@ def test_a_single_product_question_produces_a_multi_row_table(engine):
 
 
 def test_that_table_still_carries_every_requested_column(engine):
-    from core.analytics import positioning as P
-
     scope = {**BASE, "Product_Line": "Property"}
     pack = build_positioning_comparison(
         dimension="SIC_Major_Class", filters=scope,
@@ -214,3 +213,184 @@ def test_the_stylesheet_styles_the_column_labels():
 
     css = Path("assets/va_shell_chat.css").read_text(encoding="utf-8")
     assert ".answer-column-label" in css
+
+# --------------------------------------------------------------------------- #
+# A table on most questions, including ones that name no carrier
+# --------------------------------------------------------------------------- #
+
+
+def test_a_question_with_no_carrier_still_gets_a_table(engine):
+    from tests.evaluation import scenario as S
+
+    pack = P.build_positioning_comparison(
+        filters={"Country": S.COUNTRY, "Year": 2025}, subject="", engine=engine
+    )
+    assert pack.is_market_view
+    assert len(pack.rows()) > 1
+
+
+def test_a_market_table_drops_the_columns_a_carrier_would_own(engine):
+    """Share of wallet and rank are undefined without a carrier to measure."""
+    from tests.evaluation import scenario as S
+
+    pack = P.build_positioning_comparison(
+        filters={"Country": S.COUNTRY, "Year": 2025}, subject="", engine=engine
+    )
+    columns = list(pack.rows()[0])
+    assert P.SHARE_OF_WALLET not in columns
+    assert P.RANK not in columns
+    assert P.CARRIER_PREMIUM not in columns
+    assert P.MARSH_PREMIUM in columns
+
+
+def test_a_market_share_column_sums_to_the_whole_book(engine):
+    """The carrier primitive returns a share PER CARRIER; that column hit 175%."""
+    from tests.evaluation import scenario as S
+
+    pack = P.build_positioning_comparison(
+        filters={"Country": S.COUNTRY, "Year": 2025}, subject="", engine=engine
+    )
+    shares = [float(r[P.SHARE_OF_MARKET].rstrip("%")) for r in pack.rows()]
+    assert sum(shares) == pytest.approx(100.0, abs=0.2)
+
+
+def test_the_market_share_column_is_named_differently_from_the_carrier_one():
+    """Two different denominators must not share a heading readers would compare."""
+    assert P.SHARE_OF_MARKET != P.SHARE_OF_PORTFOLIO
+
+
+def test_a_carrier_question_still_gets_the_full_table(engine):
+    from tests.evaluation import scenario as S
+
+    pack = P.build_positioning_comparison(
+        filters={"Country": S.COUNTRY, "Carrier_Group": S.CARRIER, "Year": 2025},
+        subject=S.CARRIER, engine=engine,
+    )
+    assert not pack.is_market_view
+    assert P.SHARE_OF_WALLET in pack.rows()[0]
+
+
+def test_the_node_no_longer_refuses_a_question_with_no_carrier():
+    """The gate that returned nothing for a market question is gone."""
+    import inspect
+
+    from core.graph import analyst_subgraph as sub
+
+    source = inspect.getsource(sub.positioning_node)
+    assert "if not subject:" not in source
+
+
+def test_every_premium_question_shape_reaches_the_table():
+    from core.analysis import build_contract
+    from core.analysis.operation import detect_operation
+    from core.graph.analyst_subgraph import _POSITIONING_REQUIREMENTS as REQUIRED
+
+    questions = [
+        "How was Zurich performance in Singapore in 2025?",
+        "What was Zurich premium in Canada in 2025?",
+        "Why did Zurich premium fall?",
+        "Break down Zurich premium by product",
+        "Where can Zurich grow in Canada?",
+        "Tell me about Zurich in Canada",
+    ]
+    for question in questions:
+        operation = detect_operation(question, depth="analytical")
+        keys = set(build_contract(operation, allowed_sources=["gpr"]).keys())
+        assert keys & REQUIRED, question
+
+
+def test_a_survey_question_does_not_get_a_premium_table():
+    """A premium table answers nothing a perception question asked."""
+    from core.analysis import build_contract
+    from core.analysis.operation import detect_operation
+    from core.graph.analyst_subgraph import _POSITIONING_REQUIREMENTS as REQUIRED
+
+    operation = detect_operation("How do brokers rate Zurich?", depth="analytical")
+    keys = set(build_contract(operation, allowed_sources=["survey"]).keys())
+    assert not (keys & REQUIRED)
+
+# --------------------------------------------------------------------------- #
+# The table has to REACH the reader, not merely be computed
+# --------------------------------------------------------------------------- #
+#
+# It was built, it fed the commentary, and it was never rendered: the evidence
+# panel is assembled from `analyst_charts` alone, so a result set absent from
+# that list does not appear however carefully it was assembled. These tests walk
+# the real path from pack to rendered view.
+
+
+def _panel_views(state):
+    from ui.callbacks import _evidence_specs
+    from ui.evidence import build_views
+
+    import logging
+    logging.disable(logging.INFO)
+    try:
+        return build_views(_evidence_specs(state, "premium"))
+    finally:
+        logging.disable(logging.NOTSET)
+
+
+def _carrier_pack(engine):
+    from tests.evaluation import scenario as S
+
+    return P.build_positioning_comparison(
+        filters={"Country": S.COUNTRY, "Carrier_Group": S.CARRIER, "Year": 2025},
+        subject=S.CARRIER, engine=engine,
+    )
+
+
+def test_the_positioning_table_reaches_a_rendered_view(engine):
+    from core.graph.analyst_subgraph import _positioning_view
+    from tests.evaluation import scenario as S
+
+    scope = {"Country": S.COUNTRY, "Carrier_Group": S.CARRIER, "Year": 2025}
+    view = _panel_views({"analyst_charts": [_positioning_view(_carrier_pack(engine), scope)]})[0]
+    assert view.label == "Position"
+    assert P.SHARE_OF_WALLET in view.columns
+    assert view.records
+
+
+def test_that_view_is_a_table_not_an_empty_chart(engine):
+    """A view with no chart spec renders its rows; one with a broken spec shows nothing."""
+    from core.graph.analyst_subgraph import _positioning_view
+    from tests.evaluation import scenario as S
+
+    scope = {"Country": S.COUNTRY, "Carrier_Group": S.CARRIER, "Year": 2025}
+    view = _panel_views({"analyst_charts": [_positioning_view(_carrier_pack(engine), scope)]})[0]
+    assert not view.has_chart
+    assert view.note
+
+
+def test_the_table_sits_alongside_the_charts(engine):
+    """Three charts and the table, each its own tab."""
+    from core.answers.chart_plan import build_chart_plan
+    from core.graph.analyst_subgraph import _positioning_view
+    from tests.evaluation import scenario as S
+
+    scope = {"Country": S.COUNTRY, "Carrier_Group": S.CARRIER, "Year": 2025}
+    pack = _carrier_pack(engine)
+    quarterly = [{"Quarter": f"Q{i}", "2024": 400.0 + i, "2025": 380.0 + i} for i in range(1, 5)]
+    specs = [s.as_view() for s in build_chart_plan(pack, quarterly_rows=quarterly, scope=scope)]
+    specs.append(_positioning_view(pack, scope))
+
+    views = _panel_views({"analyst_charts": specs})
+    assert [v.label for v in views][-1] == "Position"
+    assert sum(1 for v in views if v.has_chart) >= 1
+
+
+def test_the_short_tab_name_survives_the_ui_layer(engine):
+    """The panel was dropping `tab`, so every tab fell back to a long title."""
+    from core.answers.chart_plan import quarterly_chart
+
+    quarterly = [{"Quarter": f"Q{i}", "2024": 400.0 + i, "2025": 380.0 + i} for i in range(1, 5)]
+    spec = quarterly_chart(quarterly, scope={"Country": "Canada"}).as_view()
+    assert _panel_views({"analyst_charts": [spec]})[0].label == "Quarterly"
+
+
+def test_a_view_with_no_chart_spec_still_renders_its_rows():
+    view = _panel_views({"analyst_charts": [
+        {"tab": "Raw", "rows": [{"A": 1}, {"A": 2}], "chart_data": {}, "lens": "x"}
+    ]})[0]
+    assert view.label == "Raw"
+    assert len(view.records) == 2
