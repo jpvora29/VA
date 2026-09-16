@@ -275,3 +275,62 @@ def test_an_answer_with_no_record_is_left_alone(state):
     state["answer"] = "Premium fell 250."
     state["answer_record"] = {}
     assert subgraph.verify_node(state) == {}
+
+
+# --------------------------------------------------------------------------- #
+# The contract the motivating question actually produces
+# --------------------------------------------------------------------------- #
+
+
+def _contract_for(question, route="both", flow="gpr"):
+    return subgraph.build_turn_contract(
+        {"question": question, "route": route, "flow": flow, "routing_context": None}
+    )
+
+
+def test_the_motivating_question_asks_for_the_evidence_the_plan_names():
+    contract = _contract_for("How was Zurich's performance in Singapore in 2025?")
+    assert contract.intent == "performance_assessment"
+    assert contract.keys() == (
+        "annual_movement", "product_contributors", "quarterly_comparison",
+        "survey_movement",
+    )
+
+
+def test_the_industry_drilldown_waits_for_a_result_to_justify_it():
+    """It is deferred at plan time and admitted later by an observed movement."""
+    contract = _contract_for("How was Zurich's performance in Singapore in 2025?")
+    assert not contract.requires("industry_concentration")
+    assert "industry_concentration" in {r.key for r in contract.deferred}
+
+
+def test_whitespace_stays_out_while_its_thresholds_are_uncalibrated():
+    contract = _contract_for("How was Zurich's performance in Singapore in 2025?")
+    assert "whitespace" in {r.key for r in contract.deferred}
+
+
+def test_premium_only_in_the_question_overrides_the_configured_default():
+    contract = _contract_for("How was Zurich's performance in Singapore? Premium only.")
+    assert not contract.requires("survey_movement")
+    assert contract.sources() == ("gpr",)
+
+
+def test_a_premium_route_cannot_owe_a_survey_finding():
+    contract = _contract_for(
+        "How was Zurich's performance in Singapore in 2025?", route="premium"
+    )
+    assert not contract.requires("survey_movement")
+
+
+def test_a_survey_route_owes_only_the_perception_assessment():
+    contract = _contract_for(
+        "How do brokers rate Zurich in Singapore?", route="survey", flow="survey"
+    )
+    assert contract.keys() == ("survey_movement",)
+
+
+def test_a_lookup_is_not_inflated_into_a_performance_review():
+    contract = _contract_for(
+        "What was Zurich's premium in Singapore in 2025?", route="premium"
+    )
+    assert contract.keys() == ("direct_value",)

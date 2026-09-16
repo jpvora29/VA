@@ -611,6 +611,8 @@ _INK = "#1B222F"
 _TITLE_INK = "#001538"
 _GRID = "#EEF2F7"
 _AXIS_LINE = "#D1E0EC"
+# Darker than the grid: the zero line is a reference, not another gridline.
+_ZERO_LINE = "#9AA9BF"
 
 
 def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
@@ -682,9 +684,17 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
             tickangle=tickangle, automargin=True,
         )
         ytitle = ", ".join(_pretty(c) for c in spec.y)
+        # A chart whose bars cross zero needs the zero line drawn, or a decline
+        # and a small gain look like the same thing pointing different ways.
+        # On an all-positive chart the baseline IS the axis and a second rule
+        # there is clutter, so it is drawn only when the data actually spans
+        # both signs — which is exactly the quarterly-change case.
+        crosses_zero = _spans_zero(df, spec.y)
+        show_zero_line = _needs_zero_line(df, spec.y)
         fig.update_yaxes(
             title=dict(text=ytitle, font=dict(size=12, color="#5A6B82")),
-            showgrid=True, gridcolor=_GRID, gridwidth=1, zeroline=False,
+            showgrid=True, gridcolor=_GRID, gridwidth=1,
+            zeroline=show_zero_line, zerolinecolor=_ZERO_LINE, zerolinewidth=1.5,
             showline=False, tickfont=dict(size=11), automargin=True,
         )
         # Large amounts get SI-abbreviated ticks (1.2M, 60K) like any BI tool —
@@ -712,9 +722,67 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
             bar.textposition = "outside"
             bar.cliponaxis = False
             bar.textfont = dict(size=10.5, color=_INK)
+            # Colour a signed single series by direction. One brand-blue bar for
+            # a -135 and another for a +90 makes the reader decode the axis to
+            # see which way each went; green and red say it before they read a
+            # single number. Only for a MIXED series — colouring an all-negative
+            # chart red adds no information and reads as alarm.
+            if crosses_zero:
+                # `bar.y` is a numpy array here, so `bar.y or []` raises
+                # "truth value of an array is ambiguous" — an explicit None
+                # check is the only safe emptiness test on a trace value.
+                values = [] if bar.y is None else list(bar.y)
+                bar.marker.color = [
+                    ColorPalette.negative if _number_or(v, 0.0) < 0 else ColorPalette.positive
+                    for v in values
+                ]
 
         if spec.chart_type not in ("scatter",):
             fig.update_layout(hovermode="x unified")
+
+
+
+def _number_or(value, default: float) -> float:
+    """A cell as a float, or `default` when it is not a number."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _signs(df, columns) -> tuple:
+    """``(any negative, any positive)`` across the plotted columns.
+
+    Read off the DATA rather than the chart type, so a premium chart and a
+    year-on-year change chart are styled differently without the caller having
+    to say which it is.
+    """
+    saw_negative = saw_positive = False
+    for column in columns or ():
+        if column not in getattr(df, "columns", ()):
+            continue
+        series = pd.to_numeric(df[column], errors="coerce").dropna()
+        if len(series):
+            saw_negative = saw_negative or bool((series < 0).any())
+            saw_positive = saw_positive or bool((series > 0).any())
+    return saw_negative, saw_positive
+
+
+def _needs_zero_line(df, columns) -> bool:
+    """Whether the baseline has to be drawn.
+
+    Any negative value is enough: once a bar hangs below the baseline, the
+    baseline is no longer the bottom of the plot and the reader cannot see where
+    zero is. This is deliberately NOT the same test as the colouring one — a
+    chart of 0, -5, -110, -135 needs the line and does not need two colours.
+    """
+    return _signs(df, columns)[0]
+
+
+def _spans_zero(df, columns) -> bool:
+    """Whether the values run in BOTH directions, so direction is worth colouring."""
+    negative, positive = _signs(df, columns)
+    return negative and positive
 
 
 # ───── PUBLIC API ───────────────────────────────────────────────────────────

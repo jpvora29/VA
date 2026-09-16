@@ -28,6 +28,8 @@ from langgraph.types import Send
 from typing_extensions import Annotated, TypedDict
 
 from core.agents.analyst.chart_picker import ChartFocus, pick_charts
+from core.analytics.positioning import build_positioning
+from core.answers.positioning_claims import LENS as POSITIONING_LENS
 from core.agents.common.contract import resolved_filters_of, unresolved_terms_of
 from core.agents.common.peer_privacy import (
     build_policy,
@@ -57,7 +59,7 @@ from core.agents.analyst.peer_solver import solve_peer
 from core.agents.analyst.schema_identifier import identify_schema
 from core.agents.analyst.common import digest_evidence
 from core.analysis import build_contract, plan_analysis
-from core.analysis.evidence_ledger import merge_evidence
+from core.analysis.evidence_ledger import build_evidence, merge_evidence
 from core.analysis.operation import detect_operation, detect_source_restriction
 from core.analysis.progress import (
     Budget,
@@ -69,7 +71,13 @@ from core.analysis.progress import (
     decide_next_steps,
     stop_reason,
 )
-from core.analysis.requirements import EvidenceContract, performance_sources
+from core.analysis.alignment import QUARTER, available_grains
+from core.analysis.requirements import (
+    GPR,
+    SURVEY,
+    EvidenceContract,
+    performance_sources,
+)
 from core.analysis.validation import plan_limit, validate_plan
 from core.initialization import Initialization
 from core.observability import log_event
@@ -149,7 +157,30 @@ def build_turn_contract(state: AnalystState) -> EvidenceContract:
         allowed = tuple(source for source in allowed if source == "gpr") or ("gpr",)
     elif state["route"] == "survey":
         allowed = ("survey",)
-    return build_contract(operation, allowed_sources=allowed)
+    return build_contract(
+        operation,
+        conditions=turn_conditions(state, allowed),
+        allowed_sources=allowed,
+    )
+
+
+def turn_conditions(state: AnalystState, allowed: tuple) -> tuple:
+    """Conditions knowable BEFORE any retrieval.
+
+    Only two kinds of thing belong here: what the router already decided, and
+    what the registry already knows about a flow's shape. Whether the warehouse
+    actually holds comparable survey years for THIS carrier and country is not
+    knowable yet, and guessing it either way is wrong — admitting the requirement
+    optimistically and letting the step report `no_data` produces a stated
+    limitation, which is the outcome the plan asks for. Deferring it instead
+    would produce silence, which is the outcome it warns against.
+    """
+    conditions = []
+    if SURVEY in allowed and state["route"] in {"both", "survey"}:
+        conditions.append("comparable_survey_data")
+    if QUARTER in available_grains(state.get("flow") or GPR):
+        conditions.append("quarterly_data_available")
+    return tuple(conditions)
 
 
 def planner_node(state: AnalystState) -> dict:
@@ -473,6 +504,70 @@ def run_followups(
     return produced
 
 
+#: Requirements whose answer is about standing across a dimension, so the
+#: positioning pack is worth the handful of extra queries it costs.
+_POSITIONING_REQUIREMENTS = frozenset({"product_contributors", "direct_value"})
+
+
+def positioning_node(state: AnalystState) -> dict:
+    """Gather where the carrier STANDS, deterministically, before the answer is written.
+
+    Everything here is computed by signed-off primitives rather than asked of a
+    solver. The numbers a reader needs to turn "premium was $900k" into something
+    actionable — share of the carrier's own book, share of Marsh's wallet, rank,
+    unheld market — are always the same numbers, so asking a model to remember to
+    fetch them is a reliability problem with no upside.
+
+    Best-effort: a warehouse that cannot answer one of the six leaves that column
+    out (see `core.analytics.positioning`), and a failure here never costs the
+    turn its answer.
+    """
+    contract = state.get("contract")
+    required = set(contract.keys()) if contract else set()
+    if state.get("flow") != "gpr" or not (required & _POSITIONING_REQUIREMENTS):
+        return {}
+
+    scope = dict(resolved_filters_of(state.get("routing_context")) or {})
+    subject = _subject_carrier(state, scope)
+    if not subject:
+        return {}
+
+    try:
+        pack = build_positioning(filters=scope, subject=subject)
+    except Exception as exc:  # noqa: BLE001 - positioning is additive, never fatal
+        log_event(logger, "positioning_failed", logging.WARNING,
+                  node="analyst_positioning", route=state["route"], error=str(exc))
+        return {}
+    if not pack:
+        return {}
+
+    record = build_evidence(
+        flow="gpr",
+        rows=pack.numeric_rows(),
+        lens=POSITIONING_LENS,
+        tool="build_positioning",
+        parameters={"dimension": pack.dimension, "subject": subject},
+        requested_scope=scope,
+        actual_scope=scope,
+        metric="premium",
+    )
+    log_event(logger, "positioning_gathered", node="analyst_positioning",
+              route=state["route"], slices=len(pack.positions), missing=list(pack.missing))
+    return {"evidence": [record]}
+
+
+def _subject_carrier(state: AnalystState, scope: dict) -> str:
+    """The carrier the answer is about, from the turn's resolved filters."""
+    from core.registry import get_flow_registry
+
+    spec = get_flow_registry().get("gpr")
+    column = (getattr(spec, "entity_columns", {}) or {}).get("carrier") if spec else None
+    value = scope.get(column) if column else None
+    if isinstance(value, (list, tuple)):
+        value = value[0] if len(value) == 1 else None
+    return str(value) if value else ""
+
+
 def writer_node(state: AnalystState) -> dict:
     """Build a grounded answer and record from all gathered evidence."""
     plan: AnalysisPlan = state.get("plan") or AnalysisPlan()
@@ -681,6 +776,7 @@ def build_analyst_subgraph():
     graph.add_node("peer_solver_node", peer_solver_node)
     graph.add_node("generic_solver_node", generic_solver_node)
     graph.add_node("join_node", join_node)
+    graph.add_node("positioning_node", positioning_node)
     graph.add_node("writer_node", writer_node)
     graph.add_node("verify_node", verify_node)
     graph.add_node("chart_picker_node", chart_picker_node)
@@ -694,7 +790,8 @@ def build_analyst_subgraph():
     )
     graph.add_edge("peer_solver_node", "join_node")
     graph.add_edge("generic_solver_node", "join_node")
-    graph.add_edge("join_node", "writer_node")
+    graph.add_edge("join_node", "positioning_node")
+    graph.add_edge("positioning_node", "writer_node")
     graph.add_edge("writer_node", "verify_node")
     graph.add_edge("verify_node", "chart_picker_node")
     graph.add_edge("chart_picker_node", END)

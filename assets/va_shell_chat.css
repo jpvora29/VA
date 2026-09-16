@@ -2374,3 +2374,54 @@ button.dock-pin.is-pinned:hover { background: #e2ebff; }
     .starter-chip:hover,
     .answer-next-chip:hover { transform: none; }
 }
+
+/* ── The answer, side by side ─────────────────────────────────────────────
+   The points that explain a finding and the chart that shows it belong next to
+   each other. Stacked — which is how this read before — the chart pushes the
+   explanation below the fold, and the reader scrolls back and forth between a
+   claim and its evidence instead of reading them together.
+
+   The grid only exists when there IS a chart (`_reading_area` in
+   ui/components/chatbot.py returns the plain pair otherwise), so a short prose
+   answer is never half a card of text beside empty space.
+
+   1.1fr / 1fr, not 1/1: the prose is the answer and should have the wider
+   column; the chart is fixed-height and does not benefit from the extra width. */
+.answer-split {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: 22px;
+    align-items: start;
+}
+
+.answer-points { min-width: 0; }
+
+/* min-width:0 on both tracks is load-bearing, not defensive. A grid item's
+   default `min-width:auto` refuses to shrink below its content, and a wide
+   table inside the panel is exactly such content — without this the right
+   column pushes the grid wider than the card and the whole answer overflows. */
+.answer-visual { min-width: 0; }
+
+/* Inside the split the panel is already in its own column, so the separating
+   rule above it is noise — the gap does that job. */
+.answer-split .ev-panel {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+/* Below this the two columns are too narrow to be worth having: the chart
+   becomes unreadable and the prose measures about four words a line. Stacking
+   restores the original reading order, which is why `_reading_area` emits the
+   points before the visual. */
+@media (max-width: 1100px) {
+    .answer-split {
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+    .answer-split .ev-panel {
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px solid var(--va-border-soft);
+    }
+}

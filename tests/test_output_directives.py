@@ -132,7 +132,13 @@ def test_chart_picker_node_runs_normally_without_directive(monkeypatch):
     from core.graph import analyst_subgraph as sub
 
     sentinel = [{"title": "t", "rows": [], "chart_data": {"chart_type": "bar"}}]
-    monkeypatch.setattr(sub, "pick_charts", lambda q, ev: sentinel)
+    seen = {}
+
+    def _pick(question, evidence, focus=None):
+        seen["focus"] = focus
+        return sentinel
+
+    monkeypatch.setattr(sub, "pick_charts", _pick)
     state = {
         "question": "q",
         "route": "premium",
@@ -140,6 +146,9 @@ def test_chart_picker_node_runs_normally_without_directive(monkeypatch):
         "evidence": [],
     }
     assert sub.chart_picker_node(state) == {"charts": sentinel}
+    # The node hands the picker what the answer led with, so the chart and the
+    # prose describe the same finding rather than merely coexisting.
+    assert seen["focus"] is not None
 
 
 # ── presentation directive: chart_only / table_only ──────────────────────────

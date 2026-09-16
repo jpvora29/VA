@@ -286,6 +286,11 @@ def compile_answer_claims(pack: FactPack, question: str, *, legacy: bool = False
         # out of the legacy path so version 2 records still reproduce.
         from core.answers.survey import compile_survey_claims
         claims.extend(compile_survey_claims(pack, question))
+        # Where the carrier STANDS, not only what it wrote — share of wallet,
+        # share of its own book, rank and unheld market. Silent on a turn that
+        # gathered no positioning evidence, which is most of them.
+        from core.answers.positioning_claims import positioning_claims
+        claims.extend(positioning_claims(pack.facts, question))
     movement = asks_about_movement(question)
     # Version 2 records reproduce the old wording gate exactly, or they stop
     # verifying. Everything written since is gated on the EVIDENCE instead.

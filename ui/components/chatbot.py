@@ -548,12 +548,11 @@ def ai_message(
 
     card_class = "message insight-card" if is_insight else "message gpt-message"
     body_class = "insight-card-body" if is_insight else ""
+    prose = _answer_body(lead.body, idx, editing, className=body_class)
     card = html.Div(
         [
             pills,
-            head,
-            _answer_body(lead.body, idx, editing, className=body_class),
-            views,
+            *_reading_area(head, prose, views),
             drivers,
             drawer,
             footer,
@@ -566,6 +565,34 @@ def ai_message(
         [assistant_header(source=source, ts=ts), card],
         className="turn turn-assistant",
     )
+
+
+def _reading_area(head, prose, views):
+    """The finding and the picture of it, side by side when there is a picture.
+
+    Stacked, a chart pushes the points that explain it below the fold, and the
+    reader scrolls between the claim and its evidence. Side by side they are read
+    together, which is how an analyst presents: the argument on the left, the
+    thing it is an argument about on the right.
+
+    The split only happens when there IS something to put on the right. A prose
+    answer with no chart keeps the full column, because half a card of text with
+    empty space beside it reads as a page that failed to load. On a narrow screen
+    the grid collapses back to one column (see `.answer-split` in
+    `assets/va_shell_chat.css`), so the order here is also the stacking order:
+    finding, points, then chart.
+    """
+    if views is None:
+        return [head, prose]
+    return [
+        html.Div(
+            [
+                html.Div([head, prose], className="answer-points"),
+                html.Div(views, className="answer-visual"),
+            ],
+            className="answer-split",
+        )
+    ]
 
 
 def user_message(content: str, *, ts: str = "", initial: str = ""):
