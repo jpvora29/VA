@@ -55,6 +55,8 @@ def build_answer_fact_pack(evidence) -> FactPack:
         normalized = replace(fact, id=stable_id("f_", identity), dimensions=dims)
         unique[normalized.id] = normalized
         values.setdefault((fact.metric, fact.unit, dims), set()).add(fact.value)
-    conflicts.extend("Conflicting normalized evidence" for observed in values.values() if len(observed) > 1)
+    disputed = tuple(key for key, observed in values.items() if len(observed) > 1)
+    conflicts.extend("Conflicting normalized evidence" for _ in disputed)
     return FactPack(tuple(sorted(unique.values(), key=lambda f: (f.dimensions, f.metric, f.source_id))),
-                    pack.row_count, tuple(conflicts))
+                    pack.row_count, tuple(conflicts),
+                    tuple(dict.fromkeys(pack.conflicted + disputed)))

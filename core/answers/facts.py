@@ -71,6 +71,31 @@ class FactPack:
     facts: tuple[AnswerFact, ...]
     row_count: int
     conflicts: tuple[str, ...] = ()
+    #: The (metric, unit, dimensions) identities that disagree. `conflicts` says
+    #: THAT something conflicts; this says WHICH, which is what lets an answer
+    #: drop the affected figures and still be written from the rest. Without it
+    #: a single disagreeing pair discarded the whole answer while the charts —
+    #: built from the same evidence — rendered perfectly well.
+    conflicted: tuple[tuple, ...] = ()
+
+    def usable(self) -> "FactPack":
+        """This pack without the facts whose identity is in dispute."""
+        if not self.conflicted:
+            return self
+        disputed = set(self.conflicted)
+        kept = tuple(
+            fact for fact in self.facts
+            if (fact.metric, fact.unit, fact.dimensions) not in disputed
+        )
+        return FactPack(kept, self.row_count, self.conflicts, self.conflicted)
+
+    def disputed_labels(self) -> tuple[str, ...]:
+        """Human names for what was excluded, for the answer's limitation."""
+        out = []
+        for metric, _unit, dimensions in self.conflicted:
+            where = " · ".join(value for _key, value in dimensions)
+            out.append(f"{label(metric)}{f' ({where})' if where else ''}")
+        return tuple(dict.fromkeys(out))
 
 
 def stable_id(prefix: str, value: Any) -> str:
@@ -192,5 +217,6 @@ def build_fact_pack(evidence: Sequence[Mapping[str, Any]]) -> FactPack:
     for fact in facts:
         key = (fact.metric, fact.unit, fact.dimensions)
         by_identity.setdefault(key, set()).add(fact.value)
-    conflicts = tuple(stable_id("conflict_", key) for key, values in by_identity.items() if len(values) > 1)
-    return FactPack(facts, sum(len(e.get("rows") or []) for e in evidence), conflicts)
+    disputed = tuple(key for key, values in by_identity.items() if len(values) > 1)
+    conflicts = tuple(stable_id("conflict_", key) for key in disputed)
+    return FactPack(facts, sum(len(e.get("rows") or []) for e in evidence), conflicts, disputed)

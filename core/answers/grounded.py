@@ -140,16 +140,69 @@ def render_claims(claims: Sequence[AnswerClaim]) -> str:
     return claims[0].text + ("\n\n" + "\n".join(f"- {c.text}" for c in claims[1:]) if len(claims) > 1 else "")
 
 
+def _conflict_limitations(disputed: Sequence[str]) -> tuple[str, ...]:
+    """What was left out because two results disagreed about it."""
+    if not disputed:
+        return ()
+    return (
+        f"Two results disagreed on {', '.join(disputed)}, so "
+        f"{'that figure was' if len(disputed) == 1 else 'those figures were'} "
+        "left out of this answer.",
+    )
+
+
 def compose_answer(request: AnswerRequest, *, select: ClaimSelector | None = None,
                    narrator: Writer | None = None) -> GroundedAnswer:
     pack = build_answer_fact_pack(request.evidence)
     if request.presentation in {"chart_only", "table_only"}:
         return GroundedAnswer("", pack.facts)
     if not pack.facts:
+        # Distinguish "nothing came back" from "something came back that I could
+        # not turn into verified figures". They look identical to the writer and
+        # entirely different to a reader who is looking at a populated table and
+        # a rendered chart underneath a sentence claiming there was no evidence.
+        rows = sum(len(item.get("rows") or []) for item in request.evidence)
+        if rows:
+            return GroundedAnswer(
+                f"I retrieved {rows} row{'s' if rows != 1 else ''} for this scope but "
+                "could not derive verified figures from them, so the data is shown "
+                "below without a written analysis.",
+                limitation="No verifiable figures",
+                limitations=(
+                    "The retrieved rows carried no numeric measure this answer "
+                    "could verify, so the analysis is the table itself.",
+                ),
+            )
         return GroundedAnswer("I found no usable numeric evidence for this scope. Please check the selected filters or period.")
+    disputed = ()
+    if pack.conflicts and not pack.conflicted:
+        # A conflict with no identity attached is not two sources disagreeing
+        # about one slice — it is a calculation contradicting its own operands
+        # (a stated growth rate its own before/after values do not produce).
+        # Nothing can be salvaged from that by dropping a slice, so it fails
+        # closed exactly as it always has.
+        return GroundedAnswer(
+            "The calculations returned conflicting values for the same metric and "
+            "scope. I cannot give a reliable numerical answer until they are "
+            "reconciled.",
+            pack.facts, limitation="Conflicting evidence",
+        )
     if pack.conflicts:
-        return GroundedAnswer("The calculations returned conflicting values for the same metric and scope. I cannot give a reliable numerical answer until they are reconciled.",
-                              pack.facts, limitation="Conflicting evidence")
+        # A disagreement about ONE figure is not a reason to withhold every
+        # other figure the turn established. The affected identities are dropped,
+        # the rest of the answer is written, and what was excluded is stated —
+        # which is what a reader who waited three minutes deserves instead of a
+        # refusal beside a set of charts drawn from the very same evidence.
+        disputed = pack.disputed_labels()
+        pack = pack.usable()
+        if not pack.facts:
+            return GroundedAnswer(
+                "The calculations returned conflicting values for the same metric "
+                "and scope, and nothing else was established. I cannot give a "
+                "reliable numerical answer until they are reconciled.",
+                limitation="Conflicting evidence",
+                limitations=_conflict_limitations(disputed),
+            )
     candidates = compile_answer_claims(pack, request.question)
     limit = 1 if request.shape in {"lookup", "direct"} else ANALYST_CLAIM_LIMIT
     claims, rejected = select_claims(candidates, limit, select, pack.facts)
@@ -162,7 +215,7 @@ def compose_answer(request: AnswerRequest, *, select: ClaimSelector | None = Non
                           ledger=ledger, narrated=narration.accepted,
                           dropped_figures=narration.dropped,
                           narration_rejected=narration.rejected,
-                          limitations=tuple(request.limitations))
+                          limitations=tuple(request.limitations) + _conflict_limitations(disputed))
 
 
 def write_narration(request: AnswerRequest, claims: Sequence[AnswerClaim],
@@ -219,7 +272,14 @@ def validate_record(record: Mapping, text: str, evidence: Sequence[Mapping] | No
             from core.answers.facts import stable_id
             source = (build_answer_fact_pack if version >= 2 else build_fact_pack)(evidence)
             allowed = {stable_id("", f.as_dict()) for f in source.facts}
-            if source.conflicts or any(stable_id("", f.as_dict()) not in allowed for f in facts):
+            # A conflict elsewhere in the turn does not invalidate an answer
+            # written from figures that did NOT conflict. Reject only when a
+            # fact this record actually uses is one of the disputed identities —
+            # otherwise every partial answer would fail its own verification.
+            disputed = set(source.conflicted)
+            if any((f.metric, f.unit, f.dimensions) in disputed for f in facts):
+                return False
+            if any(stable_id("", f.as_dict()) not in allowed for f in facts):
                 return False
             # A narrator may quote any figure the turn read back, not only the
             # ones a selected claim happens to cite — a per-slice table is the
