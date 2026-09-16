@@ -50,7 +50,7 @@ def _position(pack, name):
 
 
 def _row(pack, name):
-    return next(r for r in pack.rows() if r[pack.dimension] == name)
+    return next(r for r in pack.rows() if r[pack.heading] == name)
 
 
 def _quarterly_rows(prior_flat: bool = True):
@@ -325,7 +325,7 @@ def test_premium_reads_in_millions_at_a_realistic_scale():
 
 def test_the_columns_are_in_the_order_a_reader_reads_them(compared):
     assert list(compared.rows()[0]) == [
-        compared.dimension, P.MARSH_PREMIUM, P.CARRIER_PREMIUM,
+        compared.heading, P.MARSH_PREMIUM, P.CARRIER_PREMIUM,
         P.SHARE_OF_WALLET, P.SHARE_OF_PORTFOLIO, P.RANK,
     ]
 
@@ -387,3 +387,80 @@ def test_alignment_is_decided_from_the_cell_not_the_column_name(cell, aligned):
     from ui.components.evidence import _FIGURE
 
     assert bool(_FIGURE.match(cell)) is aligned
+
+# --------------------------------------------------------------------------- #
+# A null in the axis column must not kill the chart
+# --------------------------------------------------------------------------- #
+#
+# `groupby(dropna=False)` puts NaN in the index, which becomes a null category,
+# and pandas rejects those outright: "Categorical categories cannot be null".
+# One unlabelled row was taking down the whole chart.
+
+
+def _sorted_bar(rows):
+    import logging
+
+    import pandas as pd
+
+    from ui.chart_functions import generate_chart
+
+    logging.disable(logging.INFO)
+    try:
+        return generate_chart(
+            df=pd.DataFrame(rows),
+            chart_outputs={"chart_type": "bar", "x": "Product_Line",
+                           "y": ["Premium"], "title": "t", "sort": "desc"},
+        )
+    finally:
+        logging.disable(logging.NOTSET)
+
+
+NULL_ROWS = [
+    {"Product_Line": "Property", "Premium": 100.0},
+    {"Product_Line": None, "Premium": 50.0},
+    {"Product_Line": "Cyber", "Premium": 30.0},
+]
+
+
+def test_a_null_axis_value_does_not_break_the_chart():
+    figure, note = _sorted_bar(NULL_ROWS)
+    assert figure is not None
+    assert note == "Successful"
+
+
+def test_the_unlabelled_slice_is_named_rather_than_dropped():
+    """Dropping the row would quietly change the total the chart shows."""
+    from ui.chart_functions import UNLABELLED
+
+    figure, _note = _sorted_bar(NULL_ROWS)
+    assert UNLABELLED in list(figure.data[0].x)
+    assert sum(figure.data[0].y) == pytest.approx(180.0)
+
+
+def test_a_blank_string_is_treated_the_same_as_a_null():
+    figure, _note = _sorted_bar([
+        {"Product_Line": "Property", "Premium": 100.0},
+        {"Product_Line": "   ", "Premium": 20.0},
+    ])
+    from ui.chart_functions import UNLABELLED
+
+    assert UNLABELLED in list(figure.data[0].x)
+
+
+def test_a_numeric_axis_is_left_alone():
+    """"Not specified" is not a year, and a missing number has no position."""
+    import pandas as pd
+
+    from ui.chart_functions import label_unlabelled
+
+    frame = pd.DataFrame([{"Year": 2024, "Premium": 1.0}, {"Year": None, "Premium": 2.0}])
+    assert label_unlabelled(frame, "Year")["Year"].isna().any()
+
+
+def test_a_clean_axis_is_unchanged():
+    import pandas as pd
+
+    from ui.chart_functions import label_unlabelled
+
+    frame = pd.DataFrame([{"Product_Line": "Property", "Premium": 1.0}])
+    assert label_unlabelled(frame, "Product_Line") is frame

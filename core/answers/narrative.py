@@ -102,6 +102,11 @@ def shared_dimensions(facts: tuple[AnswerFact, ...]) -> set[tuple[str, str]]:
     from core.answers.benchmark import benchmark_measure
 
     subjects = [f for f in facts if not benchmark_measure(f.metric)] or list(facts)
+    if not subjects:
+        # No facts to share a scope. Reachable when every claim cites evidence
+        # the pack does not hold, which used to raise IndexError and take the
+        # whole turn down — a compaction detail is never worth an answer.
+        return set()
     shared = set(dimensions(subjects[0]).items())
     for fact in subjects[1:]:
         shared.intersection_update(dimensions(fact).items())

@@ -2389,8 +2389,11 @@ button.dock-pin.is-pinned:hover { background: #e2ebff; }
    column; the chart is fixed-height and does not benefit from the extra width. */
 .answer-split {
     display: grid;
-    grid-template-columns: 1.1fr 1fr;
-    gap: 22px;
+    /* The evidence side is the wider one. A six-column financial table needs
+       about 640px before it starts cutting columns off; prose reads fine at
+       480. Weighting the other way is what made the table scroll sideways. */
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+    gap: 20px;
     align-items: start;
 }
 
@@ -2453,4 +2456,72 @@ button.dock-pin.is-pinned:hover { background: #e2ebff; }
     .answer-split .answer-visual {
         margin-top: 18px;
     }
+}
+
+/* A table panel below the split takes the whole card. Six columns of financial
+   figures do not fit beside the prose — at half width the last column is cut
+   off and the reader scrolls sideways through their own evidence. */
+.insight-card > .ev-panel,
+.gpt-message > .ev-panel {
+    margin-top: 18px;
+}
+
+
+/* Inside the answer panel the table is dense reference material: tighter cells
+   than a standalone table, so six columns fit the evidence column without
+   scrolling, and the figures stay on one line each. */
+.answer-visual .ev-panel .dash-cell div,
+.answer-visual .ev-panel .dash-header div {
+    white-space: nowrap;
+}
+.answer-visual .ev-panel td,
+.answer-visual .ev-panel th {
+    padding-left: 9px !important;
+    padding-right: 9px !important;
+}
+
+/* ── Editing must not restructure the answer ──────────────────────────────
+   Outside edit mode the finding is lifted out and set large (`_lead_block`).
+   Editing has to be ONE region or the serialiser saves the body and silently
+   drops the headline above it, so the finding goes back INTO the prose — and
+   with it, back to body size. The card visibly reflowed the moment the pencil
+   was clicked, which reads as "editing broke my answer".
+
+   These rules give the first line of the editable region the same weight it had
+   a moment earlier, so turning editing on changes what you can DO, not what you
+   are looking at. They are scoped to `.answer-body-editing`, so the normal
+   reading view is untouched. */
+.answer-body-editing .insight-card-body > p:first-of-type,
+.answer-body-editing > div > p:first-of-type {
+    font-size: clamp(21px, 2.3vw, 30px);
+    font-weight: 800;
+    line-height: 1.18;
+    letter-spacing: -0.022em;
+    color: var(--va-navy);
+    margin: 0 0 14px;
+    text-wrap: balance;
+}
+
+/* Points keep their markers and spacing while editing. contentEditable strips
+   list styling in some browsers once the node is focused, which is the other
+   half of "one below the other with no formatting". */
+/* The theme already draws a marker with `li::before`; adding `list-style`
+   here produced TWO bullets per point. Keep the theme's marker and only restore
+   the spacing that contentEditable flattens. */
+.answer-body-editing ul {
+    list-style: none;
+    padding-left: 0;
+    margin: 0 0 12px;
+}
+.answer-body-editing ul > li {
+    margin-bottom: 6px;
+}
+.answer-body-editing h3,
+.answer-body-editing h4 {
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--va-ink-subtle, #7B8AA1);
+    margin: 16px 0 8px;
 }

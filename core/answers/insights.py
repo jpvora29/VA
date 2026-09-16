@@ -19,6 +19,11 @@ TOTAL_LABELS = {"all", "total", "overall", "grand total", "all products", "all p
 
 # Words that make a question explicitly about MOVEMENT. Once the trigger for the
 # whole decomposition below; now it gates one claim only — see the note there.
+#: The lens whose facts are compiled by `core.answers.positioning_claims`.
+#: Imported by value rather than by module to keep this file free of the
+#: import cycle that a top-level import would create.
+_POSITIONING_LENS = "positioning"
+
 MOVEMENT_WORDS = re.compile(r"growth|grow|change|declin|increas|trend|driver", re.I)
 
 
@@ -273,7 +278,13 @@ def compile_answer_claims(pack: FactPack, question: str, *, legacy: bool = False
     unique = {}
     for fact in pack.facts:
         unique.setdefault((fact.metric, fact.unit, fact.lens, fact.dimensions, fact.value), fact)
-    comparison_pack = pack if legacy else FactPack(tuple(unique.values()), pack.row_count, pack.conflicts)
+    # Positioning facts have their own compiler, which pairs them into arguments
+    # ("X is 62% of the book and holds 51% of the wallet"). Passing them through
+    # the generic one as well turns every column into a bare observation —
+    # "Marine Mix change was -9.7" — which is the number-stating the positioning
+    # work exists to replace, competing with the sentences that replace it.
+    generic = tuple(f for f in unique.values() if f.lens != _POSITIONING_LENS)
+    comparison_pack = pack if legacy else FactPack(generic, pack.row_count, pack.conflicts)
     claims = list(compile_claims(comparison_pack, question))
     # The period comparison already explains these tool rates. Listing the
     # same percentage again as a standalone observation adds no insight.

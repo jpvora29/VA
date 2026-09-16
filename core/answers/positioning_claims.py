@@ -25,7 +25,7 @@ can reword but never re-derive. Same contract as the rest of `core.answers`.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import List, Optional, Sequence, Tuple
 
 from core.analytics.positioning import PositioningPack, SlicePosition
@@ -344,22 +344,38 @@ def compile_positioning(pack: PositioningPack, *, limit: int = 3,
 # `metric` is the column name lowercased with underscores, and this reads them
 # back.
 
+#: Fact metric -> `SlicePosition` field. Keys are normalised (lowercased, spaces
+#: and underscores collapsed) before lookup, because the SAME figure arrives
+#: under two names: `_fact` writes the internal name ("share_of_wallet") while
+#: the fact layer, reading the evidence rows, writes the column LABEL ("Share of
+#: wallet"). Only the internal names were listed here, so positioning claims
+#: rebuilt in unit tests and silently produced NOTHING in the real pipeline.
 _METRIC_FIELDS = {
-    "carrier_premium": "carrier_premium",
+    "carrier premium": "carrier_premium",
     "premium": "carrier_premium",
-    "marsh_premium": "marsh_premium",
-    "marsh_book_premium": "marsh_premium",
-    "share_of_wallet": "share_of_wallet",
-    "share_of_portfolio": "share_of_portfolio",
+    "marsh premium": "marsh_premium",
+    "marsh book premium": "marsh_premium",
+    "marsh placed premium": "marsh_premium",
+    "share of wallet": "share_of_wallet",
+    "share of portfolio": "share_of_portfolio",
     "rank": "rank",
-    "carriers_in_line": "rank_of",
-    # The prior period. Without these a reloaded answer keeps its levels and
-    # loses every sentence about direction, which is most of the analysis.
-    "prior_premium": "prior_premium",
-    "prior_share_of_wallet": "prior_share_of_wallet",
-    "prior_share_of_portfolio": "prior_share_of_portfolio",
-    "prior_rank": "prior_rank",
+    "carriers in line": "rank_of",
+    "prior carrier premium": "prior_premium",
+    "prior premium": "prior_premium",
+    "prior share of wallet": "prior_share_of_wallet",
+    "prior share of portfolio": "prior_share_of_portfolio",
+    "prior rank": "prior_rank",
 }
+
+
+def _field_for(metric: str) -> str:
+    """The position field a fact's metric names, under either spelling."""
+    key = " ".join(str(metric or "").replace("_", " ").lower().split())
+    # `core.answers.facts.label` prefixes a bare premium with "Marsh-placed";
+    # strip that so the carrier's own figure is not read as the market's.
+    key = key.replace("marsh-placed ", "").replace("marsh placed ", "")
+    return _METRIC_FIELDS.get(key, "")
+
 
 #: Fields `SlicePosition` holds as whole numbers. A float here would make a
 #: rebuilt position compare unequal to the one it was rebuilt from.
@@ -375,8 +391,9 @@ def _slice_of(fact: AnswerFact, dimension: str) -> str:
 
 
 def positions_from_facts(
-    facts: Sequence[AnswerFact], dimension: str = "product_line"
-) -> PositioningPack:
+    facts: Sequence[AnswerFact], dimension: str = "product_line",
+    *, with_origin: bool = False
+):
     """Rebuild a `PositioningPack` from the facts an answer recorded.
 
     Only facts produced by the positioning lens are read, so an ordinary premium
@@ -384,13 +401,15 @@ def positions_from_facts(
     share-of-wallet, and a position without one is not a position.
     """
     by_slice: dict = {}
+    origin: dict = {}
     for fact in facts:
         if fact.lens != LENS:
             continue
-        field_name = _METRIC_FIELDS.get(fact.metric.lower())
-        name = _slice_of(fact, dimension)
+        field_name = _field_for(fact.metric)
+        name = _slice_of(fact, dimension) or _any_slice(fact)
         if not field_name or not name:
             continue
+        origin.setdefault((name, field_name), fact.id)
         value = float(fact.value)
         # Rank and field size are whole positions, and `SlicePosition` compares
         # them as ints; a float here would make a rebuilt position unequal to the
@@ -404,7 +423,8 @@ def positions_from_facts(
         for name, values in sorted(by_slice.items())
         if values
     )
-    return PositioningPack(positions, dimension)
+    pack = PositioningPack(positions, dimension)
+    return (pack, origin) if with_origin else pack
 
 
 def focus_for(question: str) -> str:
@@ -425,8 +445,43 @@ def positioning_claims(pack_facts: Sequence[AnswerFact], question: str = "") -> 
     The entry point `core.answers.insights` calls. Returns nothing when the turn
     gathered no positioning evidence, which is every turn that did not ask for it.
     """
-    pack = positions_from_facts(pack_facts)
-    return compile_positioning(pack, focus=focus_for(question)).claims if pack else ()
+    pack, origin = positions_from_facts(pack_facts, with_origin=True)
+    if not pack:
+        return ()
+    built = compile_positioning(pack, focus=focus_for(question))
+    return _cite_original_facts(built, origin)
+
+
+def _cite_original_facts(built: PositioningClaims, origin: dict) -> Tuple[AnswerClaim, ...]:
+    """Re-point rebuilt claims at the facts the ANSWER actually recorded.
+
+    `compile_positioning` mints its own facts, so a claim rebuilt from recorded
+    evidence cites ids that exist nowhere in the answer's fact pack. Downstream
+    that means no cited fact survives selection — the answer renders empty, and
+    `compact_claims` raises on the empty list. Translating each synthetic id back
+    to the fact it was derived from keeps the claim verifiable against the
+    evidence that produced it.
+    """
+    synthetic = {fact.id: fact for fact in built.facts}
+    remapped = []
+    for claim in built.claims:
+        ids = []
+        for fact_id in claim.fact_ids:
+            fact = synthetic.get(fact_id)
+            if fact is None:
+                continue
+            key = (_slice_of(fact, "product_line") or _any_slice(fact), _field_for(fact.metric))
+            original = origin.get(key)
+            if original:
+                ids.append(original)
+        if ids:
+            remapped.append(replace(claim, fact_ids=tuple(dict.fromkeys(ids))))
+    return tuple(remapped)
+
+
+def _any_slice(fact: AnswerFact) -> str:
+    """The fact's single dimension value, whatever the dimension is called."""
+    return str(fact.dimensions[0][1]) if fact.dimensions else ""
 
 
 # --------------------------------------------------------------------------- #

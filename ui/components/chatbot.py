@@ -528,8 +528,14 @@ def ai_message(
         has_analysis=bool(evidence) or bool((contribution or {}).get("drivers")),
     )
     pills = answer_scope(scope)
-    views = evidence_panel(evidence or [], idx if card_idx is None else card_idx,
-                           pane_ids or []) if evidence else None
+    # ONE panel, charts and table together as tabs. Splitting them put the table
+    # below the prose where it read as an afterthought; the reader wants to flip
+    # between "what moved" and the figures behind it in the same place. The
+    # width problem that split solved is solved instead by letting a table view
+    # break the card's grid (see `.answer-visual:has(.ev-table)` in the
+    # stylesheet), so the table is full width WITHOUT leaving the panel.
+    panel_idx = idx if card_idx is None else card_idx
+    views = evidence_panel(evidence or [], panel_idx, pane_ids or []) if evidence else None
     drivers = contribution_panel(contribution)
     # Between the prose and the actions: the answer states where it came from
     # before it offers you somewhere to take it.
@@ -565,6 +571,18 @@ def ai_message(
         [assistant_header(source=source, ts=ts), card],
         className="turn turn-assistant",
     )
+
+
+def _split_views(views):
+    """Chart views and table views, kept apart because they want different widths.
+
+    A view with no chart IS a table (see `ui.evidence.EvidenceView`), and a table
+    of six financial columns needs the full card. Returning two lists rather than
+    one panel is what lets the caller put them in different places.
+    """
+    charts = [view for view in views if view.has_chart]
+    tables = [view for view in views if not view.has_chart]
+    return charts, tables
 
 
 def _reading_area(head, prose, views):

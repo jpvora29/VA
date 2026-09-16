@@ -642,8 +642,9 @@ def _chart_plan_for(state: AnalystState, pack, scope: dict) -> List[dict]:
     # was being computed, feeding the claims, and then never rendered: the panel
     # is built from this list alone, so a result set that is not in it does not
     # reach the reader however carefully it was assembled.
-    views.append(_positioning_view(pack, scope))
-    return views
+    # The table leads. It is the evidence every sentence above it was written
+    # from, so it is what a reader checks first; a chart is the illustration.
+    return [_positioning_view(pack, scope), *views]
 
 
 def _positioning_view(pack, scope: dict) -> dict:

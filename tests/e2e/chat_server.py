@@ -19,6 +19,10 @@ def fixture_engine():
     engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
     with engine.begin() as conn:
         conn.execute(text("CREATE TABLE GPR (Carrier_Group TEXT, Country TEXT, Product_Line TEXT, Year INTEGER, Premium REAL, Billing_Date TEXT)"))
+        # The positioning table needs a peer group to rank against.
+        conn.execute(text("CREATE TABLE Peers (Carrier_Group TEXT, Overall_Peer_Group TEXT, Country TEXT)"))
+        conn.execute(text("INSERT INTO Peers VALUES ('CHUBB','AIG','Canada'),"
+                          "('CHUBB','ZURICH GROUP','Canada')"))
         conn.execute(text("INSERT INTO GPR VALUES (:a,:b,:c,:d,:e,:f)"),
                      [dict(zip("abcdef", (*row, f"{row[3]}-06-15"))) for row in ROWS if row[0] != "CHUBB"])
         conn.execute(text("INSERT INTO GPR VALUES ('CHUBB','Canada',:Product_Line,:Year,:Premium,:Billing_Date)"),
@@ -57,6 +61,48 @@ def split_tool_evidence(engine):
     return evidence
 
 
+def positioning_turn(engine, query):
+    """A turn that runs the REAL positioning path against the fixture warehouse.
+
+    Everything below the model is production code: the dimension ladder, the
+    positioning pack, the chart plan and the claim compiler. Only the model
+    calls — planning, solving, narration — are absent, which is what makes this
+    runnable without credentials. It exists so the rendered page can be checked
+    against the code that actually builds it, rather than against a hand-written
+    fixture that would pass whatever the page happened to do.
+    """
+    from core.analytics.dimensions import choose_dimension
+    from core.analytics.positioning import build_positioning_comparison
+    from core.answers.chart_plan import build_chart_plan, quarterly_rows_from
+    from core.answers.grounded import AnswerRequest, compose_answer
+    from core.answers.movement_bridge import aligned_rows   # see below
+    from core.graph.analyst_subgraph import _positioning_view
+
+    scope = {"Carrier_Group": "CHUBB", "Country": "Canada", "Year": 2025}
+    dimension = choose_dimension(scope, flow="gpr", engine=engine)
+    pack = build_positioning_comparison(
+        dimension=dimension, filters=scope, subject=scope["Carrier_Group"], engine=engine
+    )
+    # Same order production uses: the figures first, then the charts.
+    views = [_positioning_view(pack, scope), *(
+        s.as_view() for s in build_chart_plan(
+            pack, quarterly_rows=aligned_rows(scope, engine), scope=scope)
+    )]
+
+    answer = compose_answer(AnswerRequest(
+        query, tuple({"flow": "gpr", "lens": "positioning", "sql": "-- positioning",
+                      "rows": pack.numeric_rows()} for _ in (1,)),
+    ))
+    return {
+        "current_route": "premium",
+        "gpr_response": answer.text,
+        "gpr_response_record": answer.as_dict(),
+        "gpr_query_result": pack.rows(),
+        "analyst_charts": views,
+        "analyst_evidence": [],
+    }
+
+
 class FixtureWorkflow:
     def __init__(self):
         self.engine = fixture_engine()
@@ -76,6 +122,10 @@ class FixtureWorkflow:
         if "slow" in query.lower():
             cancel.wait(8)
         if cancel.is_set():
+            return
+        if "position" in query.lower() or "performance" in query.lower():
+            self.states[thread_id] = positioning_turn(self.engine, query)
+            yield {"node": "gpr_insight"}
             return
         turn, primitive, measure = fixture_turn(query)
         turn.update(run_analytics_tools(turn, flow="gpr", engine=self.engine,

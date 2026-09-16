@@ -137,6 +137,27 @@ def _as_dict(spec: Any) -> Dict[str, Any]:
     }
 
 
+#: What an unlabelled slice is called on an axis. Naming it keeps its premium
+#: in the chart; dropping the row would quietly change the total the chart shows.
+UNLABELLED = "Not specified"
+
+
+def label_unlabelled(df: pd.DataFrame, column: str) -> pd.DataFrame:
+    """`column`'s blanks given a visible name, for a non-numeric axis.
+
+    Numeric axes are left alone: "Not specified" is not a year, and a missing
+    number on a numeric axis has no position to be drawn at.
+    """
+    if column not in df.columns or pd.api.types.is_numeric_dtype(df[column]):
+        return df
+    blank = df[column].isna() | (df[column].astype(str).str.strip() == "")
+    if not blank.any():
+        return df
+    df = df.copy()
+    df.loc[blank, column] = UNLABELLED
+    return df
+
+
 def _pretty(name: str) -> str:
     """Human label for a column/title: underscores → spaces, gentle title-casing
     that preserves acronyms (FINPRO, NPS, YoY)."""
@@ -314,12 +335,21 @@ def _prepare_frame(df: pd.DataFrame, spec: _Spec) -> pd.DataFrame:
 
     # Sort the x axis by the first measure when asked.
     if spec.sort in ("asc", "desc") and spec.x in df.columns:
+        # A null in the axis column is real data — a slice the warehouse did not
+        # label — so it is NAMED rather than dropped. It also has to be named
+        # before the sort: `groupby(dropna=False)` puts NaN in the index, which
+        # becomes a null category, and pandas rejects those outright
+        # ("Categorical categories cannot be null"). One unlabelled row was
+        # taking the whole chart down.
+        df = label_unlabelled(df, spec.x)
         order = (
             df.groupby(spec.x, dropna=False)[spec.y[0]].sum()
             .sort_values(ascending=spec.sort == "asc").index
         )
-        df[spec.x] = pd.Categorical(df[spec.x], categories=list(order), ordered=True)
-        df = df.sort_values(spec.x)
+        categories = [value for value in order if pd.notna(value)]
+        if categories:
+            df[spec.x] = pd.Categorical(df[spec.x], categories=categories, ordered=True)
+            df = df.sort_values(spec.x)
 
     return df.reset_index(drop=True)
 
@@ -390,9 +420,11 @@ def _normalize_axes_and_type(
             order = sorted(
                 {int(v) for v in years.dropna()},
             )
-            df[spec.x] = pd.Categorical(
-                df[spec.x], categories=[str(y) for y in order], ordered=True
-            )
+            categories = [str(y) for y in order]
+            if categories:
+                df[spec.x] = pd.Categorical(
+                    df[spec.x], categories=categories, ordered=True
+                )
             df = df.sort_values(spec.x).reset_index(drop=True)
             reasons.append("year→categorical")
 

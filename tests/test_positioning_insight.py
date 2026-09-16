@@ -114,32 +114,40 @@ def test_the_table_carries_every_column_the_reader_asked_for(pack):
     # Category, the market, the carrier, penetration, mix, standing — in that
     # order, with the two movements folded into the figures they belong to.
     assert list(row) == [
-        pack.dimension, P.MARSH_PREMIUM, P.CARRIER_PREMIUM,
+        pack.heading, P.MARSH_PREMIUM, P.CARRIER_PREMIUM,
         P.SHARE_OF_WALLET, P.SHARE_OF_PORTFOLIO, P.RANK,
     ]
 
 
 def test_the_table_leads_with_the_largest_line(pack):
-    assert pack.rows()[0][pack.dimension] == "Property"
+    assert pack.rows()[0][pack.heading] == "Property"
 
 
 def test_an_absent_figure_renders_blank_rather_than_zero(pack):
-    marine = next(r for r in pack.rows() if r[pack.dimension] == "Marine")
+    marine = next(r for r in pack.rows() if r[pack.heading] == "Marine")
     assert marine[P.CARRIER_PREMIUM] is None
     assert marine[P.SHARE_OF_WALLET] is None
     assert marine[P.MARSH_PREMIUM] is not None  # the market IS known
 
 
 def test_numeric_rows_omit_absent_columns_so_no_fact_is_worth_zero(pack):
+    # The machine-facing rows keep the RAW column name; only the display rows
+    # carry the human heading. Two consumers, two renderings, one source.
     marine = next(r for r in pack.numeric_rows() if r[pack.dimension] == "Marine")
     assert P.CARRIER_PREMIUM not in marine
     assert marine[P.MARSH_PREMIUM] > 0
 
 
 def test_the_two_renderings_agree_on_the_same_positions(pack):
-    display = [r[pack.dimension] for r in pack.rows()]
+    """Same slices in the same order; only the column KEY differs by audience."""
+    display = [r[pack.heading] for r in pack.rows()]
     numeric = [r[pack.dimension] for r in pack.numeric_rows()]
     assert display == numeric
+
+
+def test_the_slice_column_is_headed_in_english_not_schema(pack):
+    assert pack.heading == "Product line"
+    assert pack.dimension == "Product_Line"
 
 
 # --------------------------------------------------------------------------- #

@@ -47,6 +47,14 @@ SHARE_OF_PORTFOLIO = "Share of portfolio"
 #: rather than against a carrier's own portfolio. Different denominator,
 #: different name — calling both "share" would invite comparing them.
 SHARE_OF_MARKET = "Share of book"
+
+#: Prior-period columns. Present in `numeric_rows` for the claim layer and
+#: never in `rows`, because a table showing last year beside this year in
+#: every column is unreadable — the movement arrow is the readable form.
+PRIOR_CARRIER_PREMIUM = "Prior carrier premium"
+PRIOR_SHARE_OF_WALLET = "Prior share of wallet"
+PRIOR_SHARE_OF_PORTFOLIO = "Prior share of portfolio"
+PRIOR_RANK = "Prior rank"
 RANK = "Rank"
 MOVEMENT = "YoY change"
 CONTRIBUTION = "Contribution"
@@ -182,6 +190,12 @@ class PositioningPack:
     def is_market_view(self) -> bool:
         return not self.subject
 
+    @property
+    def heading(self) -> str:
+        """The key the slice column uses in `rows()`. One accessor, so a caller
+        never has to know whether the heading is the raw column or its label."""
+        return slice_heading(self.dimension)
+
     def __bool__(self) -> bool:
         return bool(self.positions)
 
@@ -267,8 +281,26 @@ class PositioningPack:
                     row[column] = value
             if position.rank is not None:
                 row[RANK] = position.rank
+            # The prior period rides along unlabelled. `rows()` is what a reader
+            # sees; this is what the claim layer rebuilds from, and a movement
+            # cannot be rebuilt from a current value alone.
+            for column, value in (
+                (PRIOR_CARRIER_PREMIUM, position.prior_premium),
+                (PRIOR_SHARE_OF_WALLET, position.prior_share_of_wallet),
+                (PRIOR_SHARE_OF_PORTFOLIO, position.prior_share_of_portfolio),
+                (PRIOR_RANK, position.prior_rank),
+            ):
+                if value is not None:
+                    row[column] = value
             out.append(row)
         return out
+
+
+def slice_heading(dimension: str) -> str:
+    """"Product_Line" -> "Product line". The one column still headed with a
+    schema name while every other column is already English."""
+    text = (dimension or SLICE).replace("_", " ").strip()
+    return (text[:1].upper() + text[1:].lower()) if text else SLICE
 
 
 def _row(position: SlicePosition, dimension: str, *, scale: float = 1.0,
@@ -280,7 +312,7 @@ def _row(position: SlicePosition, dimension: str, *, scale: float = 1.0,
     thing, and splitting them across the table made the reader reassemble it.
     """
     return {
-        dimension or SLICE: position.slice,
+        slice_heading(dimension): position.slice,
         MARSH_PREMIUM: _money(position.marsh_premium, scale, suffix),
         CARRIER_PREMIUM: _premium_cell(position, scale, suffix),
         SHARE_OF_WALLET: _percent(position.share_of_wallet),
@@ -299,7 +331,7 @@ def _market_row(position: SlicePosition, dimension: str, total: float,
     """
     share = (position.marsh_premium or 0.0) / total * 100 if total else None
     return {
-        dimension or SLICE: position.slice,
+        slice_heading(dimension): position.slice,
         MARSH_PREMIUM: _money(position.marsh_premium, scale, suffix),
         SHARE_OF_MARKET: _percent(share),
         MOVEMENT: _movement_cell(position, scale, suffix),
