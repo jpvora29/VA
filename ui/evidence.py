@@ -59,7 +59,16 @@ class EvidenceView:
 
 
 def label_for(lens: str, index: int, spec: Optional[Dict[str, Any]] = None) -> str:
-    """The tab name for a view: its chart's title, its lens, else its position."""
+    """The tab name for a view: its short name, its chart's title, else its lens.
+
+    A planned chart carries both a `tab` ("Quarterly") and a `title` ("Quarterly
+    premium, 2024 vs 2025 in Singapore"). The tab strip wants the first — a strip
+    of full titles wraps to three lines and stops being a strip — while the chart
+    itself keeps the title that says exactly what it shows.
+    """
+    tab = str((spec or {}).get("tab") or "").strip()
+    if tab:
+        return tab
     title = str((spec or {}).get("title") or "").strip()
     if title:
         return title
@@ -119,10 +128,13 @@ def build_views(specs: Sequence[Dict[str, Any]]) -> List[EvidenceView]:
     views: List[EvidenceView] = []
     for i, spec in enumerate(specs or []):
         chart_data = spec.get("chart_data") or {}
+        # The short tab name lives on the SPEC, not inside `chart_data` (which is
+        # the renderer's contract), so both are offered to the labeller.
+        naming = {**chart_data, "tab": spec.get("tab", "")}
         view = build_view(
             spec.get("rows"),
             chart_data,
-            label=label_for(spec.get("lens") or "", i, chart_data),
+            label=label_for(spec.get("lens") or "", i, naming),
         )
         if view is not None:
             views.append(view)

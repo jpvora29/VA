@@ -129,7 +129,13 @@ def classify_columns(df: pd.DataFrame) -> Dict[str, ColumnRole]:
         card = s.nunique(dropna=True)
         name_l = str(col).strip().lower()
 
-        if n_rows > 1 and card <= 1:
+        # A single distinct value makes a DIMENSION useless — every bar in the
+        # same group, every slice the same colour. It does not make a MEASURE
+        # useless: a prior-year series that happens to be flat is exactly the
+        # comparison a reader asked for, and dropping it leaves a "2024 vs 2025"
+        # chart showing only 2025. So constancy disqualifies a column only when
+        # it is not numeric.
+        if n_rows > 1 and card <= 1 and not pd.api.types.is_numeric_dtype(s):
             kind = "constant"
         elif pd.api.types.is_datetime64_any_dtype(s):
             kind = "temporal"

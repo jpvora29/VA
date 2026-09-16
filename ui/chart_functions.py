@@ -97,6 +97,12 @@ class _Spec:
     sort: str = "none"
     title: str = ""
     intent: str = ""  # original user query, stamped by core.agents.common.chart_spec
+    # Explicit axis titles. A chart whose series ARE the comparison — one column
+    # per year — has a y-axis reading "2024, 2025", which names the series rather
+    # than the measure and tells the reader nothing. A spec that knows its
+    # measure says so; every other chart keeps deriving the label from columns.
+    x_title: str = ""
+    y_title: str = ""
 
 
 def _as_dict(spec: Any) -> Dict[str, Any]:
@@ -265,6 +271,8 @@ def _sanitize_spec(
         sort=str(raw.get("sort") or "none").strip().lower(),
         title=str(raw.get("title") or ""),
         intent=str(raw.get("intent") or ""),
+        x_title=str(raw.get("x_title") or ""),
+        y_title=str(raw.get("y_title") or ""),
     )
 
     df = _prepare_frame(df, spec)
@@ -678,12 +686,13 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
             if longest and (longest > MAX_TICK_LEN or many):
                 tickangle = -30
         fig.update_xaxes(
-            title=dict(text=_pretty(spec.x), font=dict(size=12, color="#5A6B82")),
+            title=dict(text=spec.x_title or _pretty(spec.x),
+                       font=dict(size=12, color="#5A6B82")),
             showgrid=False, showline=True, linecolor=_AXIS_LINE, linewidth=1,
             ticks="outside", tickcolor=_AXIS_LINE, tickfont=dict(size=11),
             tickangle=tickangle, automargin=True,
         )
-        ytitle = ", ".join(_pretty(c) for c in spec.y)
+        ytitle = spec.y_title or ", ".join(_pretty(c) for c in spec.y)
         # A chart whose bars cross zero needs the zero line drawn, or a decline
         # and a small gain look like the same thing pointing different ways.
         # On an all-positive chart the baseline IS the axis and a second rule

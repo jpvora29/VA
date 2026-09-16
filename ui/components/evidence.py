@@ -19,10 +19,12 @@ an answer that produced numbers should never show nothing.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Sequence
 
 from dash import dash_table, dcc, html
 
+from core.analytics.positioning import DOWN, UP
 from ui.evidence import EvidenceView
 
 _TABLE_STYLE = {
@@ -50,6 +52,59 @@ _TABLE_STYLE = {
 # switching views does not jump the page under the reader.
 _PAGE_SIZE = 10
 
+# Rise / fall ink. Matches the chart's semantic colours so a green bar and a
+# green arrow mean the same thing on the same screen.
+_RISE = "#0F7A33"
+_FALL = "#C0393E"
+
+# A cell that reads as a figure: a number, a percentage, a signed change, or
+# one of the direction arrows. Used to decide alignment from the DATA rather
+# than from a list of column names, which would need editing every time a
+# new measure appears.
+_FIGURE = re.compile(r"^[▲▼–+\-$ ]*[\d,.]+ *(?:%|pts)?$")
+
+
+def _figure_columns(view: EvidenceView) -> List[str]:
+    """Columns whose cells read as figures, so they can be right-aligned.
+
+    Decided by looking at the values: a column is a figure column when every
+    non-empty cell in it looks like one. Reading the data rather than the name
+    means a new measure aligns correctly the day it is added, and a dimension
+    that happens to be numeric-looking (a year, a code) is treated as what its
+    cells actually are.
+    """
+    out: List[str] = []
+    for column in view.columns:
+        seen = [row.get(column) for row in view.records]
+        values = [str(v) for v in seen if v not in (None, "")]
+        if values and all(_FIGURE.match(v) for v in values):
+            out.append(column)
+    return out
+
+
+def _direction_styles(columns: Sequence[str]) -> List[Dict[str, Any]]:
+    """Green for a rise, red for a fall, in every column that carries direction.
+
+    Keyed on the arrow glyph the cell already contains rather than on a column
+    name, so a new change column is coloured the moment it exists and a column
+    that merely has "change" in its name is not coloured by accident. The glyph
+    carries the meaning; this only carries the colour, which is why a screen
+    reader and a CSV export lose nothing.
+    """
+    styles: List[Dict[str, Any]] = []
+    for column in columns:
+        styles.extend([
+            {
+                "if": {"column_id": column, "filter_query": f"{{{column}}} contains \"{UP}\""},
+                "color": _RISE, "fontWeight": "600",
+            },
+            {
+                "if": {"column_id": column, "filter_query": f"{{{column}}} contains \"{DOWN}\""},
+                "color": _FALL, "fontWeight": "600",
+            },
+        ])
+    return styles
+
 
 def data_table(view: EvidenceView) -> Any:
     """The rows, sortable and filterable in the browser.
@@ -57,12 +112,20 @@ def data_table(view: EvidenceView) -> Any:
     Native sort and filter cost no callback and no re-render, so the reader can
     interrogate the evidence without asking another question.
     """
+    numeric = _figure_columns(view)
     return dash_table.DataTable(
         columns=[{"name": c, "id": c} for c in view.columns],
         data=view.records,
         page_size=_PAGE_SIZE,
         sort_action="native",
         filter_action="native" if len(view.records) > _PAGE_SIZE else "none",
+        style_data_conditional=_direction_styles(view.columns),
+        # Figures right-align so magnitudes line up down the column; the label
+        # column stays left. A table of right-ragged numbers is unreadable at a
+        # glance, which is the whole job of a table beside a chart.
+        style_cell_conditional=[
+            {"if": {"column_id": c}, "textAlign": "right"} for c in numeric
+        ],
         **_TABLE_STYLE,
     )
 

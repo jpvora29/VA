@@ -286,7 +286,17 @@ def compile_positioning(pack: PositioningPack, *, limit: int = 3) -> Positioning
         if len([c for c in claims if c.kind == "position"]) >= limit:
             break
 
-    for builder in (concentration_claim, headroom_claim):
+    # Cross-metric readings first: they say something no single column does, so
+    # they earn their place ahead of another per-slice description.
+    for position in pack.by_premium():
+        built = ground_claim(position, pack.dimension)
+        if built is not None:
+            claim, cited = built
+            claims.append(claim)
+            facts.extend(cited)
+            break
+
+    for builder in (mix_shift_claim, standing_claim, concentration_claim, headroom_claim):
         built = builder(pack)
         if built is not None:
             claim, cited = built
@@ -323,7 +333,17 @@ _METRIC_FIELDS = {
     "share_of_portfolio": "share_of_portfolio",
     "rank": "rank",
     "carriers_in_line": "rank_of",
+    # The prior period. Without these a reloaded answer keeps its levels and
+    # loses every sentence about direction, which is most of the analysis.
+    "prior_premium": "prior_premium",
+    "prior_share_of_wallet": "prior_share_of_wallet",
+    "prior_share_of_portfolio": "prior_share_of_portfolio",
+    "prior_rank": "prior_rank",
 }
+
+#: Fields `SlicePosition` holds as whole numbers. A float here would make a
+#: rebuilt position compare unequal to the one it was rebuilt from.
+_WHOLE_FIELDS = frozenset({"rank", "rank_of", "prior_rank"})
 
 
 def _slice_of(fact: AnswerFact, dimension: str) -> str:
@@ -356,7 +376,7 @@ def positions_from_facts(
         # them as ints; a float here would make a rebuilt position unequal to the
         # one it was rebuilt from.
         by_slice.setdefault(name, {})[field_name] = (
-            int(value) if field_name in {"rank", "rank_of"} else value
+            int(value) if field_name in _WHOLE_FIELDS else value
         )
 
     positions = tuple(
@@ -375,3 +395,171 @@ def positioning_claims(pack_facts: Sequence[AnswerFact], question: str = "") -> 
     """
     pack = positions_from_facts(pack_facts)
     return compile_positioning(pack).claims if pack else ()
+
+
+# --------------------------------------------------------------------------- #
+# Cross-metric readings — the insight a single column cannot give
+# --------------------------------------------------------------------------- #
+#
+# Everything above describes one measure at a time. These read TWO against each
+# other, which is where the analysis actually lives: premium and share together
+# say whether a decline was the carrier's or the market's; mix and premium
+# together say whether the book is changing shape; rank against premium says
+# whether a fall cost the carrier anything competitively.
+#
+# Each is emitted only when the two measures genuinely disagree or genuinely
+# reinforce — a line that fell while losing share in the ordinary way gets the
+# ordinary movement sentence instead.
+
+#: Share movement below this is noise on a book of any size.
+MATERIAL_POINTS = 1.0
+
+
+def ground_claim(position: SlicePosition, dimension: str) -> Optional[Tuple[AnswerClaim, List[AnswerFact]]]:
+    """Whether a movement was the carrier's own or the whole market's.
+
+    The reading a premium column cannot give. Premium down and share UP means the
+    market fell further and the carrier gained ground; premium up and share DOWN
+    means it grew more slowly than the book around it. Both are the opposite of
+    what the headline number alone suggests, and both are what a reader needs.
+    """
+    change, wallet = position.premium_change_percent, position.wallet_change
+    if change is None or wallet is None or abs(wallet) < MATERIAL_POINTS:
+        return None
+    if position.share_of_wallet is None or position.prior_share_of_wallet is None:
+        return None
+
+    # The premium pair rides along because the sentence states a percentage
+    # change derived from it. A claim that quotes a figure no recorded fact can
+    # reproduce silently loses that clause when the answer is reloaded and
+    # recompiled — the failure the reconstruction test exists to catch.
+    facts = [
+        _fact(position, dimension, "share_of_wallet", position.share_of_wallet, "percent"),
+        _fact(position, dimension, "prior_share_of_wallet", position.prior_share_of_wallet, "percent"),
+        _fact(position, dimension, "premium", position.carrier_premium or 0.0, "currency"),
+        _fact(position, dimension, "prior_premium", position.prior_premium or 0.0, "currency"),
+    ]
+    gained, fell = wallet > 0, change < 0
+    if fell and gained:
+        text = (
+            f"{position.slice} fell {format_value(abs(change), 'percent')} but gained "
+            f"{format_value(abs(wallet), 'percentage_points')} of wallet share, so the "
+            f"wider Marsh book fell further — this is lost volume, not lost position."
+        )
+    elif not fell and not gained:
+        text = (
+            f"{position.slice} grew {format_value(change, 'percent')} yet gave up "
+            f"{format_value(abs(wallet), 'percentage_points')} of wallet share, so it grew "
+            f"more slowly than the Marsh book around it."
+        )
+    elif fell and not gained:
+        text = (
+            f"{position.slice} fell {format_value(abs(change), 'percent')} and gave up "
+            f"{format_value(abs(wallet), 'percentage_points')} of wallet share, so the "
+            f"decline ran ahead of the market's rather than following it."
+        )
+    else:
+        text = (
+            f"{position.slice} grew {format_value(change, 'percent')} and took "
+            f"{format_value(abs(wallet), 'percentage_points')} more of the wallet, "
+            f"outpacing the Marsh book in that line."
+        )
+    claim = AnswerClaim(
+        id=stable_id("c_", [tuple(sorted(f.id for f in facts)), "ground"]),
+        text=text,
+        fact_ids=tuple(sorted(f.id for f in facts)),
+        kind="ground",
+        formula=(
+            f"share of wallet {position.prior_share_of_wallet:g}% -> "
+            f"{position.share_of_wallet:g}%; premium change {change:g}%"
+        ),
+        priority=46.0,
+    )
+    return claim, facts
+
+
+def mix_shift_claim(pack: PositioningPack) -> Optional[Tuple[AnswerClaim, List[AnswerFact]]]:
+    """The line whose share of the carrier's own book moved most.
+
+    A book changing shape is a strategic fact no single premium figure shows:
+    every line can fall while one of them still becomes a bigger part of what the
+    carrier writes.
+    """
+    scored = [p for p in pack.positions if p.portfolio_change is not None]
+    if not scored:
+        return None
+    mover = max(scored, key=lambda p: abs(p.portfolio_change or 0.0))
+    change = mover.portfolio_change or 0.0
+    if abs(change) < MATERIAL_POINTS:
+        return None
+    if mover.share_of_portfolio is None or mover.prior_share_of_portfolio is None:
+        return None
+
+    facts = [
+        _fact(mover, pack.dimension, "share_of_portfolio", mover.share_of_portfolio, "percent"),
+        _fact(mover, pack.dimension, "prior_share_of_portfolio", mover.prior_share_of_portfolio, "percent"),
+    ]
+    direction = "a larger" if change > 0 else "a smaller"
+    text = (
+        f"The book is changing shape: {mover.slice} moved from "
+        f"{format_value(mover.prior_share_of_portfolio, 'percent')} to "
+        f"{format_value(mover.share_of_portfolio, 'percent')} of premium, {direction} "
+        f"part of what the carrier writes."
+    )
+    claim = AnswerClaim(
+        id=stable_id("c_", [tuple(sorted(f.id for f in facts)), "mix_shift"]),
+        text=text,
+        fact_ids=tuple(sorted(f.id for f in facts)),
+        kind="mix_shift",
+        formula=(
+            f"share of portfolio {mover.prior_share_of_portfolio:g}% -> "
+            f"{mover.share_of_portfolio:g}%"
+        ),
+        priority=42.0,
+    )
+    return claim, facts
+
+
+def standing_claim(pack: PositioningPack) -> Optional[Tuple[AnswerClaim, List[AnswerFact]]]:
+    """A rank read against the premium that moved under it.
+
+    "Down 25% but still first in the line" and "up but slipped a place" are both
+    readings that a premium column and a rank column only give together.
+    """
+    for position in pack.by_premium():
+        change, moved = position.premium_change_percent, position.rank_change
+        if change is None or moved is None or position.rank is None:
+            continue
+        if change >= 0 and moved >= 0:
+            continue  # grew and held or improved: the unremarkable case
+        facts = [
+            _fact(position, pack.dimension, "rank", float(position.rank), "rank"),
+            _fact(position, pack.dimension, "prior_rank", float(position.prior_rank or 0), "rank"),
+            _fact(position, pack.dimension, "premium", position.carrier_premium or 0.0, "currency"),
+            _fact(position, pack.dimension, "prior_premium", position.prior_premium or 0.0, "currency"),
+        ]
+        if moved == 0:
+            text = (
+                f"Despite the fall, {position.slice} held {_ordinal(position.rank)} place "
+                f"among carriers in that line — the position survived the volume."
+            )
+        elif moved < 0:
+            text = (
+                f"{position.slice} slipped from {_ordinal(position.prior_rank or 0)} to "
+                f"{_ordinal(position.rank)} among carriers in that line."
+            )
+        else:
+            text = (
+                f"{position.slice} rose from {_ordinal(position.prior_rank or 0)} to "
+                f"{_ordinal(position.rank)} among carriers in that line even as premium fell."
+            )
+        claim = AnswerClaim(
+            id=stable_id("c_", [tuple(sorted(f.id for f in facts)), "standing"]),
+            text=text,
+            fact_ids=tuple(sorted(f.id for f in facts)),
+            kind="standing",
+            formula=f"rank {position.prior_rank} -> {position.rank}",
+            priority=38.0,
+        )
+        return claim, facts
+    return None

@@ -28,7 +28,7 @@ from langgraph.types import Send
 from typing_extensions import Annotated, TypedDict
 
 from core.agents.analyst.chart_picker import ChartFocus, pick_charts
-from core.analytics.positioning import build_positioning
+from core.analytics.positioning import build_positioning_comparison
 from core.answers.positioning_claims import LENS as POSITIONING_LENS
 from core.agents.common.contract import resolved_filters_of, unresolved_terms_of
 from core.agents.common.peer_privacy import (
@@ -130,6 +130,11 @@ class AnalystState(TypedDict):
     answer_record: dict
     # Up to 3 chart specs picked from the gathered evidence (title/rows/chart_data).
     charts: List[dict]
+    # Charts decided from the data rather than picked by a model. When this
+    # is non-empty the picker uses it: a performance answer's charts are not
+    # a judgement call, and a deterministic plan cannot describe a different
+    # slice from the prose beside it.
+    chart_plan: List[dict]
 
 
 def _model():
@@ -533,7 +538,7 @@ def positioning_node(state: AnalystState) -> dict:
         return {}
 
     try:
-        pack = build_positioning(filters=scope, subject=subject)
+        pack = build_positioning_comparison(filters=scope, subject=subject)
     except Exception as exc:  # noqa: BLE001 - positioning is additive, never fatal
         log_event(logger, "positioning_failed", logging.WARNING,
                   node="analyst_positioning", route=state["route"], error=str(exc))
@@ -551,9 +556,41 @@ def positioning_node(state: AnalystState) -> dict:
         actual_scope=scope,
         metric="premium",
     )
+    plan = _chart_plan_for(state, pack, scope)
     log_event(logger, "positioning_gathered", node="analyst_positioning",
-              route=state["route"], slices=len(pack.positions), missing=list(pack.missing))
-    return {"evidence": [record]}
+              route=state["route"], slices=len(pack.positions),
+              missing=list(pack.missing), charts=[spec["title"] for spec in plan])
+    return {"evidence": [record], "chart_plan": plan}
+
+
+def _chart_plan_for(state: AnalystState, pack, scope: dict) -> List[dict]:
+    """The charts this answer should carry, as renderable views.
+
+    The quarterly pair is fetched here rather than reused from the solvers'
+    evidence because the chart needs the two years side by side as columns, and
+    a solver's rows are whatever shape its query returned.
+    """
+    from core.analytics.movement import compute_aligned_periods, resolve_year_pair
+    from core.analytics.types import PrimitiveArgs
+    from core.answers.chart_plan import build_chart_plan, quarterly_rows_from
+
+    quarterly: List[dict] = []
+    try:
+        facts = compute_aligned_periods(
+            PrimitiveArgs(flow="gpr", metric="premium", filters=scope)
+        )
+        if facts:
+            dims = facts[0].dims
+            quarterly = quarterly_rows_from(
+                facts,
+                current_year=int(dims.get("year")),
+                prior_year=int(dims.get("prior_year")),
+            )
+    except Exception as exc:  # noqa: BLE001 - a missing chart never costs the answer
+        log_event(logger, "quarterly_chart_unavailable", logging.WARNING,
+                  node="analyst_positioning", route=state["route"], error=str(exc))
+
+    return [spec.as_view() for spec in build_chart_plan(pack, quarterly_rows=quarterly, scope=scope)]
 
 
 def _subject_carrier(state: AnalystState, scope: dict) -> str:
@@ -723,6 +760,15 @@ def chart_picker_node(state: AnalystState) -> dict:
             route=state["route"],
         )
         return {"charts": []}
+    planned = list(state.get("chart_plan") or [])
+    if planned:
+        # The plan was decided from the data that produced the prose, so there is
+        # nothing for a model to choose between. Falling back to the picker only
+        # when there is no plan keeps every non-performance question working
+        # exactly as it did.
+        log_event(logger, "charts_from_plan", node="analyst_chart_picker",
+                  route=state["route"], chart_count=len(planned))
+        return {"charts": planned}
     charts = pick_charts(
         state["question"],
         list(state.get("evidence", [])),
