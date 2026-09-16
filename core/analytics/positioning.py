@@ -60,16 +60,26 @@ FLAT = "–"
 #: Order the columns appear in. Carrier premium first because it is what was
 #: asked about; the market beside it because that is what makes it mean anything.
 COLUMNS: Tuple[str, ...] = (
-    SLICE, CARRIER_PREMIUM, MARSH_PREMIUM, SHARE_OF_WALLET, WALLET_CHANGE,
-    SHARE_OF_PORTFOLIO, PORTFOLIO_CHANGE, RANK, RANK_CHANGE,
-    MOVEMENT, CONTRIBUTION,
+    SLICE, MARSH_PREMIUM, CARRIER_PREMIUM, SHARE_OF_WALLET, SHARE_OF_PORTFOLIO, RANK,
 )
 
 #: Columns whose value carries a direction, so the table can colour them without
 #: parsing every cell looking for a glyph.
-DIRECTIONAL: Tuple[str, ...] = (
-    WALLET_CHANGE, PORTFOLIO_CHANGE, RANK_CHANGE, MOVEMENT, CONTRIBUTION,
-)
+DIRECTIONAL: Tuple[str, ...] = (CARRIER_PREMIUM, RANK)
+
+#: Money is shown at ONE scale across the whole table, named in the header.
+#: Per-row scaling ("$1.2M" above "$840k") makes a column impossible to compare
+#: down, which is the only thing a column of figures is for.
+SCALES: Tuple[Tuple[float, str], ...] = ((1e9, "bn"), (1e6, "M"), (1e3, "k"))
+
+
+def money_scale(values: Sequence[Optional[float]]) -> Tuple[float, str]:
+    """The divisor and suffix for a column of money, from its largest value."""
+    largest = max((abs(v) for v in values if v is not None), default=0.0)
+    for size, suffix in SCALES:
+        if largest >= size:
+            return size, suffix
+    return 1.0, ""
 
 
 @dataclass(frozen=True)
@@ -191,7 +201,18 @@ class PositioningPack:
 
     def rows(self) -> List[Dict[str, Any]]:
         """The table as a reader sees it: formatted, with absences left blank."""
-        return [_row(position, self.dimension) for position in self.by_premium()]
+        ordered = self.by_premium()
+        scale, suffix = money_scale(
+            [p.marsh_premium for p in ordered] + [p.carrier_premium for p in ordered]
+        )
+        return [_row(p, self.dimension, scale=scale, suffix=suffix) for p in ordered]
+
+    def money_suffix(self) -> str:
+        """The unit this table's money columns are in ("M", "k", ""), for a header."""
+        ordered = self.by_premium()
+        return money_scale(
+            [p.marsh_premium for p in ordered] + [p.carrier_premium for p in ordered]
+        )[1]
 
     def numeric_rows(self) -> List[Dict[str, Any]]:
         """The same table as TYPED numbers, for the fact and claim layers.
@@ -226,61 +247,63 @@ class PositioningPack:
         return out
 
 
-def _row(position: SlicePosition, dimension: str) -> Dict[str, Any]:
-    rank = (
-        f"#{position.rank} of {position.rank_of}"
-        if position.rank is not None and position.rank_of
-        else (f"#{position.rank}" if position.rank is not None else None)
-    )
+def _row(position: SlicePosition, dimension: str, *, scale: float = 1.0,
+         suffix: str = "") -> Dict[str, Any]:
+    """One table row: category, the market, the carrier, and where it stands.
+
+    The two movements are folded into the figures they belong to rather than
+    given columns of their own. A premium and its change are one fact about one
+    thing, and splitting them across the table made the reader reassemble it.
+    """
     return {
         dimension or SLICE: position.slice,
-        CARRIER_PREMIUM: _money(position.carrier_premium),
-        MARSH_PREMIUM: _money(position.marsh_premium),
+        MARSH_PREMIUM: _money(position.marsh_premium, scale, suffix),
+        CARRIER_PREMIUM: _premium_cell(position, scale, suffix),
         SHARE_OF_WALLET: _percent(position.share_of_wallet),
-        WALLET_CHANGE: _arrow(position.wallet_change, "pts"),
         SHARE_OF_PORTFOLIO: _percent(position.share_of_portfolio),
-        PORTFOLIO_CHANGE: _arrow(position.portfolio_change, "pts"),
-        RANK: rank,
-        RANK_CHANGE: _arrow(position.rank_change, "", whole=True),
-        MOVEMENT: _arrow(position.movement, "", money=True),
-        CONTRIBUTION: _arrow(position.contribution_pp, "pts"),
+        RANK: _rank_cell(position),
     }
 
 
-def _arrow(value: Optional[float], suffix: str, *, whole: bool = False,
-           money: bool = False) -> Optional[str]:
-    """A signed figure with its direction glyph, or None when not compared.
+def _premium_cell(position: SlicePosition, scale: float, suffix: str) -> Optional[str]:
+    """The carrier's premium with its year-on-year movement beside it."""
+    amount = _money(position.carrier_premium, scale, suffix)
+    if amount is None:
+        return None
+    change = position.premium_change_percent
+    if change is None:
+        return amount
+    if change == 0:
+        return f"{amount}  {FLAT}"
+    glyph = UP if change > 0 else DOWN
+    return f"{amount}  {glyph} {abs(change):.1f}%"
 
-    None and zero are deliberately different: a blank cell means the two periods
-    were never compared, a dash means they were and nothing moved. Rendering the
-    first as "0" would assert a stability the data never established.
-    """
+
+def _rank_cell(position: SlicePosition) -> Optional[str]:
+    """Rank, with places gained or lost since the prior period."""
+    if position.rank is None:
+        return None
+    text = f"#{position.rank} of {position.rank_of}" if position.rank_of else f"#{position.rank}"
+    moved = position.rank_change
+    if moved is None:
+        return text
+    if moved == 0:
+        return f"{text}  {FLAT}"
+    glyph = UP if moved > 0 else DOWN
+    return f"{text}  {glyph} {abs(moved)}"
+
+
+def _money(value: Optional[float], scale: float = 1.0, suffix: str = "") -> Optional[str]:
+    """A figure at the table's shared scale. None stays None — absent is not zero."""
     if value is None:
         return None
-    if value == 0:
-        return FLAT
-    glyph = UP if value > 0 else DOWN
-    if money:
-        body = f"{abs(value):,.0f}"
-    elif whole:
-        body = f"{abs(int(value))}"
-    else:
-        body = f"{abs(value):.1f}"
-    return f"{glyph} {body}{(' ' + suffix) if suffix else ''}".strip()
-
-
-def _money(value: Optional[float], *, signed: bool = False) -> Optional[str]:
-    if value is None:
-        return None
-    return f"{value:+,.0f}" if signed else f"{value:,.0f}"
+    if scale > 1.0:
+        return f"${value / scale:,.2f}{suffix}"
+    return f"${value:,.0f}"
 
 
 def _percent(value: Optional[float]) -> Optional[str]:
     return None if value is None else f"{value:.1f}%"
-
-
-def _points(value: Optional[float]) -> Optional[str]:
-    return None if value is None else f"{value:+.1f} pts"
 
 
 # --------------------------------------------------------------------------- #

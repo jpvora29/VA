@@ -88,14 +88,15 @@ def test_rank_change_is_positive_when_the_carrier_improves():
 
 
 def test_a_change_cell_carries_its_direction(compared):
-    assert _row(compared, "Property")[P.WALLET_CHANGE].startswith(P.DOWN)
-    assert _row(compared, "Cyber")[P.PORTFOLIO_CHANGE].startswith(P.UP)
+    """The movement sits with the figure it describes, not in a column of its own."""
+    assert P.DOWN in _row(compared, "Property")[P.CARRIER_PREMIUM]
+    assert P.UP in _row(compared, "Cyber")[P.CARRIER_PREMIUM]
 
 
 def test_no_movement_and_no_comparison_render_differently(compared):
     """A dash means compared and unchanged; blank means never compared."""
-    assert _row(compared, "Cyber")[P.RANK_CHANGE] == P.FLAT
-    assert _row(compared, "Marine")[P.RANK_CHANGE] is None
+    assert _row(compared, "Cyber")[P.RANK].endswith(P.FLAT)
+    assert _row(compared, "Marine")[P.RANK] is None
 
 
 def test_a_scope_with_no_prior_year_still_produces_a_table(engine):
@@ -109,7 +110,7 @@ def test_a_scope_with_no_prior_year_still_produces_a_table(engine):
 def test_the_table_colours_direction_from_the_glyph_not_the_column_name():
     from ui.components.evidence import _direction_styles
 
-    queries = [s["if"]["filter_query"] for s in _direction_styles(["SoW change"])]
+    queries = [s["if"]["filter_query"] for s in _direction_styles([P.CARRIER_PREMIUM])]
     assert any(P.UP in q for q in queries)
     assert any(P.DOWN in q for q in queries)
 
@@ -120,12 +121,12 @@ def test_figures_right_align_and_labels_do_not():
 
     view = EvidenceView(
         label="t",
-        columns=["Product line", "Carrier premium", "SoW change", "Rank"],
-        records=[{"Product line": "Property", "Carrier premium": "900",
-                  "SoW change": f"{P.DOWN} 9.2 pts", "Rank": "#1 of 2"}],
+        columns=["Product line", "Marsh premium", "Share of wallet", "Rank"],
+        records=[{"Product line": "Property", "Marsh premium": "$1.77M",
+                  "Share of wallet": "50.8%", "Rank": "#1 of 2"}],
     )
     aligned = _figure_columns(view)
-    assert "Carrier premium" in aligned and "SoW change" in aligned
+    assert "Marsh premium" in aligned and "Share of wallet" in aligned
     assert "Product line" not in aligned and "Rank" not in aligned
 
 
@@ -273,3 +274,116 @@ def test_a_constant_dimension_is_still_treated_as_useless():
 
 def test_a_thin_turn_produces_fewer_charts_never_a_blank_one():
     assert build_chart_plan(P.PositioningPack(), quarterly_rows=[]) == []
+
+# --------------------------------------------------------------------------- #
+# Money scale, column order and table styling
+# --------------------------------------------------------------------------- #
+
+
+def _millions_engine():
+    """The fixture at a realistic scale, so the table renders millions."""
+    from sqlalchemy import create_engine, text
+
+    import tests.evaluation.warehouse as W
+    from tests.evaluation import scenario as S
+
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as conn:
+        for name, columns in (("GPR", W.GPR_COLUMNS), ("Peers", W.PEERS_COLUMNS)):
+            conn.execute(text(f'CREATE TABLE "{name}" ({", ".join(columns)})'))
+        rows = [W.gpr_row(cell) for cell in S.all_cells()]
+        for row in rows:
+            row["Premium"] = row["Premium"] * 1000.0
+        W._insert(conn, "GPR", rows)
+        W._insert(conn, "Peers", W.peers_rows())
+    return engine
+
+
+def test_money_uses_one_scale_across_the_whole_table():
+    """Per-row units ("$1.2M" above "$840k") make a column impossible to compare."""
+    assert P.money_scale([1_770_000.0, 900_000.0]) == (1e6, "M")
+    assert P.money_scale([1_770.0, 900.0]) == (1e3, "k")
+    assert P.money_scale([12.0, 4.0]) == (1.0, "")
+
+
+def test_an_absent_figure_does_not_drag_the_scale_down():
+    assert P.money_scale([2_000_000.0, None]) == (1e6, "M")
+
+
+def test_premium_reads_in_millions_at_a_realistic_scale():
+    from tests.evaluation import scenario as S
+
+    pack = P.build_positioning_comparison(
+        filters={"Country": S.COUNTRY, "Carrier_Group": S.CARRIER, "Year": 2025},
+        subject=S.CARRIER, engine=_millions_engine(),
+    )
+    assert pack.money_suffix() == "M"
+    row = pack.rows()[0]
+    assert row[P.MARSH_PREMIUM] == "$1.77M"
+    assert row[P.CARRIER_PREMIUM].startswith("$0.90M")
+
+
+def test_the_columns_are_in_the_order_a_reader_reads_them(compared):
+    assert list(compared.rows()[0]) == [
+        compared.dimension, P.MARSH_PREMIUM, P.CARRIER_PREMIUM,
+        P.SHARE_OF_WALLET, P.SHARE_OF_PORTFOLIO, P.RANK,
+    ]
+
+
+def test_the_market_comes_before_the_carrier():
+    """The carrier's figure means nothing until the reader has seen the market's."""
+    assert P.COLUMNS.index(P.MARSH_PREMIUM) < P.COLUMNS.index(P.CARRIER_PREMIUM)
+
+
+def test_the_premium_cell_carries_its_own_movement(compared):
+    cell = _row(compared, "Property")[P.CARRIER_PREMIUM]
+    assert P.DOWN in cell and "%" in cell
+
+
+def test_the_rank_cell_carries_its_own_movement(compared):
+    assert _row(compared, "Cyber")[P.RANK].endswith(P.FLAT)
+
+
+def test_a_slice_with_no_prior_period_shows_a_bare_figure():
+    """No comparison is not the same as no movement."""
+    position = P.SlicePosition("X", carrier_premium=5_000_000.0)
+    cell = P._premium_cell(position, 1e6, "M")
+    assert cell == "$5.00M"
+
+
+def test_the_header_is_brand_navy_on_white():
+    from ui.components.evidence import _TABLE_STYLE
+
+    header = _TABLE_STYLE["style_header"]
+    assert header["backgroundColor"] == "#000F47"
+    assert header["color"] == "#FFFFFF"
+
+
+def test_the_rows_are_black_arial_on_white():
+    from ui.components.evidence import _TABLE_STYLE
+
+    cell = _TABLE_STYLE["style_cell"]
+    assert cell["color"] == "#000000"
+    assert cell["fontSize"] == "12px"
+    assert cell["fontFamily"].startswith("Arial")
+    assert cell["backgroundColor"] == "#FFFFFF"
+    assert _TABLE_STYLE["style_data"]["backgroundColor"] == "#FFFFFF"
+
+
+def test_the_filter_row_does_not_inherit_the_navy_header():
+    from ui.components.evidence import _TABLE_STYLE
+
+    assert _TABLE_STYLE["style_filter"]["color"] == "#000000"
+
+
+@pytest.mark.parametrize("cell, aligned", [
+    ("$1.77M", True),
+    ("$0.90M  ▼ 25.0%", True),
+    ("50.8%", True),
+    ("#1 of 2", False),
+    ("Property", False),
+])
+def test_alignment_is_decided_from_the_cell_not_the_column_name(cell, aligned):
+    from ui.components.evidence import _FIGURE
+
+    assert bool(_FIGURE.match(cell)) is aligned

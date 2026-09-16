@@ -27,24 +27,65 @@ from dash import dash_table, dcc, html
 from core.analytics.positioning import DOWN, UP
 from ui.evidence import EvidenceView
 
+#: The header's ground. Brand navy, so the table reads as part of the product
+#: rather than as a default grid dropped into it.
+_HEADER_INK = "#FFFFFF"
+_HEADER_BG = "#000F47"
+
+#: Body text. Black at 12px Arial — a table is reference material, and the
+#: typeface that disappears fastest is the right one for it.
+_BODY_INK = "#000000"
+_BODY_FONT = "Arial, 'Helvetica Neue', Helvetica, sans-serif"
+
+#: The only line in the body. Rows are white with a hairline between them: no
+#: banding, no vertical rules, nothing that competes with the figures.
+_ROW_RULE = "1px solid #E8ECF3"
+
 _TABLE_STYLE = {
     "style_as_list_view": True,
-    "style_table": {"overflowX": "auto", "maxHeight": "440px", "overflowY": "auto"},
+    "style_table": {
+        "overflowX": "auto",
+        "maxHeight": "440px",
+        "overflowY": "auto",
+        "border": "1px solid #E1E6EF",
+        "borderRadius": "8px",
+        # The header is sticky and opaque, so scrolling a long table never
+        # leaves the reader looking at figures whose columns they cannot see.
+        "backgroundColor": "#FFFFFF",
+    },
     "style_cell": {
-        "fontFamily": "'Inter', sans-serif",
-        "fontSize": "13px",
-        "padding": "8px 12px",
+        "fontFamily": _BODY_FONT,
+        "fontSize": "12px",
+        "color": _BODY_INK,
+        "backgroundColor": "#FFFFFF",
+        "padding": "9px 14px",
         "textAlign": "left",
         "border": "none",
-        "borderBottom": "1px solid rgba(12, 25, 58, 0.06)",
+        "borderBottom": _ROW_RULE,
+        "whiteSpace": "nowrap",
     },
     "style_header": {
-        "fontWeight": "600",
-        "fontSize": "12px",
+        "fontFamily": _BODY_FONT,
+        "fontWeight": "700",
+        "fontSize": "11px",
+        "color": _HEADER_INK,
+        "backgroundColor": _HEADER_BG,
         "textTransform": "uppercase",
-        "letterSpacing": "0.04em",
-        "backgroundColor": "#f5f7fb",
-        "borderBottom": "1px solid rgba(12, 25, 58, 0.12)",
+        "letterSpacing": "0.06em",
+        "padding": "10px 14px",
+        "border": "none",
+        "borderBottom": "none",
+        "whiteSpace": "nowrap",
+    },
+    "style_data": {"backgroundColor": "#FFFFFF"},
+    # Native filter inputs inherit the header's navy otherwise, which makes them
+    # look like disabled cells.
+    "style_filter": {
+        "backgroundColor": "#F7F9FC",
+        "color": _BODY_INK,
+        "fontFamily": _BODY_FONT,
+        "border": "none",
+        "borderBottom": _ROW_RULE,
     },
 }
 
@@ -61,7 +102,12 @@ _FALL = "#C0393E"
 # one of the direction arrows. Used to decide alignment from the DATA rather
 # than from a list of column names, which would need editing every time a
 # new measure appears.
-_FIGURE = re.compile(r"^[▲▼–+\-$ ]*[\d,.]+ *(?:%|pts)?$")
+#: A cell that reads as a figure: a number with an optional currency mark,
+#: unit and direction glyph — and possibly TWO of them, since a premium now
+#: carries its own movement ("$0.90M  ▼ 25.0%"). Matching the whole
+#: cell rather than sniffing for digits keeps "#1 of 2" and a product name on
+#: the left where they belong.
+_FIGURE = re.compile(r"^\s*(?:[▲▼–]?\s*\$?\s*[\d,.]+\s*(?:%|pts|bn|M|k)?)(?:\s+[▲▼–]?\s*\$?\s*[\d,.]+\s*(?:%|pts|bn|M|k)?)*\s*$|^–$")
 
 
 def _figure_columns(view: EvidenceView) -> List[str]:
@@ -119,7 +165,13 @@ def data_table(view: EvidenceView) -> Any:
         page_size=_PAGE_SIZE,
         sort_action="native",
         filter_action="native" if len(view.records) > _PAGE_SIZE else "none",
-        style_data_conditional=_direction_styles(view.columns),
+        style_data_conditional=[
+            # A quiet hover tint: enough to track a row across a wide table,
+            # not enough to read as a selection.
+            {"if": {"state": "active"}, "backgroundColor": "#F2F6FC",
+             "border": "none", "color": _BODY_INK},
+            *_direction_styles(view.columns),
+        ],
         # Figures right-align so magnitudes line up down the column; the label
         # column stays left. A table of right-ragged numbers is unreadable at a
         # glance, which is the whole job of a table beside a chart.

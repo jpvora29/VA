@@ -111,9 +111,12 @@ def test_headroom_is_unknown_rather_than_whole_when_participation_is_unknown(pac
 
 def test_the_table_carries_every_column_the_reader_asked_for(pack):
     row = pack.rows()[0]
-    for column in (P.CARRIER_PREMIUM, P.MARSH_PREMIUM, P.SHARE_OF_WALLET,
-                   P.SHARE_OF_PORTFOLIO, P.RANK, P.MOVEMENT):
-        assert column in row
+    # Category, the market, the carrier, penetration, mix, standing — in that
+    # order, with the two movements folded into the figures they belong to.
+    assert list(row) == [
+        pack.dimension, P.MARSH_PREMIUM, P.CARRIER_PREMIUM,
+        P.SHARE_OF_WALLET, P.SHARE_OF_PORTFOLIO, P.RANK,
+    ]
 
 
 def test_the_table_leads_with_the_largest_line(pack):
@@ -124,6 +127,7 @@ def test_an_absent_figure_renders_blank_rather_than_zero(pack):
     marine = next(r for r in pack.rows() if r[pack.dimension] == "Marine")
     assert marine[P.CARRIER_PREMIUM] is None
     assert marine[P.SHARE_OF_WALLET] is None
+    assert marine[P.MARSH_PREMIUM] is not None  # the market IS known
 
 
 def test_numeric_rows_omit_absent_columns_so_no_fact_is_worth_zero(pack):
