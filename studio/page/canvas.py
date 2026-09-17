@@ -16,6 +16,7 @@ from typing import Any, List, Mapping, Optional
 from dash import dcc, html
 
 from studio.page import document as D
+from studio.page import inline_edit as IE
 from studio.page import render
 
 # Palette: label → (icon, widget kind). The first row are governed primitives;
@@ -214,23 +215,86 @@ def _pct(n: int, total: int) -> str:
     return f"{n / total * 100:.4f}%"
 
 
+# ── inline text editing ───────────────────────────────────────────────────────
+# ``edit`` is the owning widget id on the live canvas and ``None`` everywhere the
+# surface is read-only (page thumbnails, library previews). Passing it down is
+# what makes a text node retypeable in place; see ``assets/studio_canvas.js``.
+
+
+def _text_node(
+    value: Any,
+    cls: str,
+    *,
+    edit: Optional[str],
+    path: str,
+    placeholder: str = "",
+    tag: Any = html.Div,
+) -> Any:
+    """One line of canvas text — retyped in place when the surface is editable."""
+    text = str(value or "")
+    if edit is None:
+        return tag(text, className=cls)
+    return tag(
+        text,
+        className=cls + " qs-cv-editable",
+        contentEditable="true",
+        spellCheck="false",
+        # React owns this node's text, so remount it whenever the stored text
+        # changes; otherwise a reverted edit could leave the typed DOM in place.
+        key=f"{edit}|{path}|{text}",
+        **{
+            "data-qs-wid": edit,
+            "data-qs-path": path,
+            "data-qs-ph": placeholder or "Text",
+        },
+    )
+
+
+def _shows(value: Any, edit: Optional[str]) -> bool:
+    """Optional text renders when it has content, or always while editing."""
+    return bool(str(value or "").strip()) or edit is not None
+
+
 # ── per-kind widget content ──────────────────────────────────────────────────
 
 
-def _headline(p: Mapping[str, Any], hero: bool) -> Any:
-    eyebrow = p.get("eyebrow", "")
+def _headline(p: Mapping[str, Any], hero: bool, edit: Optional[str] = None) -> Any:
     cls = "qs-cv-headline" + (" hero" if hero or p.get("hero") else "")
     return html.Div(
         [
-            html.Div(eyebrow, className="qs-cv-eyebrow") if eyebrow else None,
-            html.Div(p.get("text", ""), className="qs-cv-title"),
-            html.Div(p.get("subtitle", ""), className="qs-cv-sub") if p.get("subtitle") else None,
+            _text_node(p.get("eyebrow"), "qs-cv-eyebrow", edit=edit, path="eyebrow",
+                       placeholder="Eyebrow")
+            if _shows(p.get("eyebrow"), edit) else None,
+            _text_node(p.get("text"), "qs-cv-title", edit=edit, path="text",
+                       placeholder="Page title"),
+            _text_node(p.get("subtitle"), "qs-cv-sub", edit=edit, path="subtitle",
+                       placeholder="Subtitle")
+            if _shows(p.get("subtitle"), edit) else None,
         ],
         className=cls,
     )
 
 
-def _text(p: Mapping[str, Any]) -> Any:
+def _point_body(point: Mapping[str, Any], index: int, edit: Optional[str]) -> Any:
+    """One commentary bullet: its optional bold label, then the sentence itself."""
+    label = (point.get("label") or "").strip()
+    if edit is None:
+        return html.Span([html.B(label + " ") if label else None, point.get("text", "")])
+    nodes = []
+    if label:
+        nodes.append(
+            _text_node(label, "qs-cv-point-label", edit=edit, tag=html.B,
+                       path=IE.item_path("points", index, "label"), placeholder="Label")
+        )
+    nodes.append(
+        _text_node(point.get("text"), "qs-cv-point-text", edit=edit, tag=html.Span,
+                   path=IE.item_path("points", index, "text"),
+                   placeholder="Write the commentary")
+    )
+    return html.Span(nodes, className="qs-cv-point-body")
+
+
+def _text(p: Mapping[str, Any], edit: Optional[str] = None) -> Any:
     if p.get("swot"):
         s = p["swot"]
         quads = [("Strengths", s.get("strengths", []), "good"), ("Weaknesses", s.get("weaknesses", []), "danger"),
@@ -242,26 +306,28 @@ def _text(p: Mapping[str, Any]) -> Any:
             className="qs-cv-swot",
         )
     items = []
-    for pt in list(p.get("points", [])):
+    for index, pt in enumerate(list(p.get("points", []))):
         tone = pt.get("tone", "neutral")
-        label = (pt.get("label") or "").strip()
         items.append(html.Div([
             html.Span(className=f"qs-cv-dot {tone}"),
-            html.Span([html.B(label + " ") if label else None, pt.get("text", "")]),
+            _point_body(pt, index, edit),
         ], className="qs-cv-point"))
     return html.Div(
-        [html.Div(p.get("heading", ""), className="qs-cv-h") if p.get("heading") else None,
+        [_text_node(p.get("heading"), "qs-cv-h", edit=edit, path="heading",
+                    placeholder="Heading")
+         if _shows(p.get("heading"), edit) else None,
          html.Div(items, className="qs-cv-points")],
         className="qs-cv-text",
     )
 
 
-def _kpiband(p: Mapping[str, Any]) -> Any:
+def _kpiband(p: Mapping[str, Any], edit: Optional[str] = None) -> Any:
     cells = []
-    for k in list(p.get("items", []))[:6]:
+    for index, k in enumerate(list(p.get("items", []))[:6]):
         tone = k.get("tone", "neutral")
         cells.append(html.Div([
-            html.Div(str(k.get("label", "")).upper(), className="qs-cv-kpi-l"),
+            _text_node(k.get("label", ""), "qs-cv-kpi-l", edit=edit,
+                       path=IE.item_path("items", index, "label"), placeholder="Label"),
             html.Div(str(k.get("value", "")), className="qs-cv-kpi-v"),
             html.Div(k.get("delta", "") or "", className=f"qs-cv-kpi-d {tone}"),
             html.Div(
@@ -279,7 +345,7 @@ def _kpiband(p: Mapping[str, Any]) -> Any:
     return html.Div(cells, className="qs-cv-kpiband")
 
 
-def _chart(p: Mapping[str, Any]) -> Any:
+def _chart(p: Mapping[str, Any], edit: Optional[str] = None) -> Any:
     labels, values = list(p.get("labels", [])), list(p.get("values", []))
     if not values:
         return _empty("Bind data to this chart")
@@ -290,8 +356,9 @@ def _chart(p: Mapping[str, Any]) -> Any:
            else render.bar_chart(labels, values, height=180))
     tag = html.Span("sample", className="qs-cv-sample") if p.get("placeholder") else None
     title = (
-        html.Div(p.get("title", ""), className="qs-cv-chart-title")
-        if p.get("title")
+        _text_node(p.get("title"), "qs-cv-chart-title", edit=edit, path="title",
+                   placeholder="Chart title")
+        if _shows(p.get("title"), edit)
         else None
     )
     return html.Div([tag, title, fig], className="qs-cv-chart")
@@ -340,8 +407,13 @@ def _table(p: Mapping[str, Any]) -> Any:
     )
 
 
-def _advanced_graph(p: Mapping[str, Any], kind: str) -> Any:
-    title = html.Div(p.get("title", ""), className="qs-cv-chart-title") if p.get("title") else None
+def _advanced_graph(p: Mapping[str, Any], kind: str, edit: Optional[str] = None) -> Any:
+    title = (
+        _text_node(p.get("title"), "qs-cv-chart-title", edit=edit, path="title",
+                   placeholder="Chart title")
+        if _shows(p.get("title"), edit)
+        else None
+    )
     if kind == "matrix":
         graph = render.scatter_bubbles(p.get("points", []), height=220)
     elif kind == "heatmap":
@@ -365,44 +437,61 @@ def _advanced_graph(p: Mapping[str, Any], kind: str) -> Any:
     )
 
 
-def _callout(p: Mapping[str, Any]) -> Any:
+def _callout(p: Mapping[str, Any], edit: Optional[str] = None) -> Any:
     return html.Div(
         [
-            html.Div(p.get("label", "EXECUTIVE TAKEAWAY"), className="qs-callout-label"),
-            html.Div(p.get("title", ""), className="qs-callout-title"),
-            html.Div(p.get("body", ""), className="qs-callout-body"),
+            _text_node(p.get("label", "EXECUTIVE TAKEAWAY"), "qs-callout-label",
+                       edit=edit, path="label", placeholder="Label"),
+            _text_node(p.get("title"), "qs-callout-title", edit=edit, path="title",
+                       placeholder="Takeaway"),
+            _text_node(p.get("body"), "qs-callout-body", edit=edit, path="body",
+                       placeholder="Say what it means"),
         ],
         className=f"qs-cv-callout tone-{p.get('tone', 'blue')}",
     )
 
 
-def _actions(p: Mapping[str, Any]) -> Any:
-    rows = []
-    for item in p.get("items", []):
-        status = str(item.get("status", "planned")).lower().replace(" ", "-")
-        rows.append(
-            html.Div(
-                [
-                    html.Span(className=f"qs-status-dot {status}"),
-                    html.Span(item.get("action", ""), className="qs-action-text"),
-                    html.Span(item.get("owner", ""), className="qs-action-owner"),
-                    html.Span(item.get("due", ""), className="qs-action-due"),
-                ],
-                className="qs-action-row",
-            )
-        )
+_ACTION_CELLS = (
+    ("action", "qs-action-text", "Action"),
+    ("owner", "qs-action-owner", "Owner"),
+    ("due", "qs-action-due", "Due"),
+)
+
+
+def _action_row(item: Mapping[str, Any], index: int, edit: Optional[str]) -> Any:
+    """One tracker line: its status dot, then three separately editable columns."""
+    status = str(item.get("status", "planned")).lower().replace(" ", "-")
+    cells = [
+        _text_node(item.get(leaf), cls, edit=edit, tag=html.Span, placeholder=ph,
+                   path=IE.item_path("items", index, leaf))
+        for leaf, cls, ph in _ACTION_CELLS
+    ]
     return html.Div(
-        [html.Div(p.get("title", "Priority actions"), className="qs-cv-h"), *rows],
+        [html.Span(className=f"qs-status-dot {status}"), *cells],
+        className="qs-action-row",
+    )
+
+
+def _actions(p: Mapping[str, Any], edit: Optional[str] = None) -> Any:
+    rows = [
+        _action_row(item, index, edit)
+        for index, item in enumerate(p.get("items", []))
+    ]
+    return html.Div(
+        [_text_node(p.get("title", "Priority actions"), "qs-cv-h", edit=edit,
+                    path="title", placeholder="Heading"), *rows],
         className="qs-cv-actions",
     )
 
 
-def _reco(p: Mapping[str, Any]) -> Any:
+def _reco(p: Mapping[str, Any], edit: Optional[str] = None) -> Any:
     meta = [x for x in (p.get("owner"), p.get("due"),
                         f"{p.get('confidence')} confidence" if p.get("confidence") else None) if x]
     return html.Div([
         html.Div([html.I(className="bi bi-flag-fill"), html.Span("RECOMMENDATION", className="qs-cv-reco-l"),
-                  html.Span(p.get("text", ""), className="qs-cv-reco-t")], className="qs-cv-reco-main"),
+                  _text_node(p.get("text"), "qs-cv-reco-t", edit=edit, path="text",
+                             tag=html.Span, placeholder="State the decision required")],
+                 className="qs-cv-reco-main"),
         html.Div("  ·  ".join(meta), className="qs-cv-reco-meta") if meta else None,
     ], className="qs-cv-reco")
 
@@ -415,36 +504,40 @@ def _placeholder(kind: str, p: Mapping[str, Any]) -> Any:
     ], className="qs-cv-placeholder")
 
 
-def _divider(p: Mapping[str, Any]) -> Any:
-    return html.Div(html.Div(p.get("text", ""), className="qs-cv-div-label"), className="qs-cv-divider")
+def _divider(p: Mapping[str, Any], edit: Optional[str] = None) -> Any:
+    return html.Div(
+        _text_node(p.get("text"), "qs-cv-div-label", edit=edit, path="text",
+                   placeholder="Section name"),
+        className="qs-cv-divider",
+    )
 
 
 def _empty(msg: str) -> Any:
     return html.Div([html.I(className="bi bi-plus-square-dashed"), msg], className="qs-cv-empty")
 
 
-def _content(w: Mapping[str, Any]) -> Any:
+def _content(w: Mapping[str, Any], edit: Optional[str] = None) -> Any:
     kind, p = w["kind"], w.get("props", {})
     if kind == "headline":
-        return _headline(p, p.get("hero", False))
+        return _headline(p, p.get("hero", False), edit)
     if kind == "text":
-        return _text(p)
+        return _text(p, edit)
     if kind in ("kpiband", "kpi"):
-        return _kpiband(p)
+        return _kpiband(p, edit)
     if kind == "chart":
-        return _chart(p)
+        return _chart(p, edit)
     if kind == "table":
         return _table(p)
     if kind == "reco":
-        return _reco(p)
+        return _reco(p, edit)
     if kind in {"matrix", "heatmap", "radar", "radial", "bridge", "timeline"}:
-        return _advanced_graph(p, kind)
+        return _advanced_graph(p, kind, edit)
     if kind == "callout":
-        return _callout(p)
+        return _callout(p, edit)
     if kind == "actions":
-        return _actions(p)
+        return _actions(p, edit)
     if kind == "divider":
-        return _divider(p)
+        return _divider(p, edit)
     if kind == "image":
         return _empty("Image placeholder")
     return _empty(kind)
@@ -482,7 +575,10 @@ def _widget_card(w: Mapping[str, Any], selected: bool, *, interactive: bool = Tr
         if role_style.get("font_color"):
             style[f"--qs-{role}-font-color"] = role_style["font_color"]
         style_classes.append(f"qs-cv-role-{role}")
-    children = [html.Div(_content(w), className="qs-cv-body")]
+    # Text is retypeable on the SELECTED widget only, so a first click anywhere on
+    # an unselected card still starts a drag rather than placing a caret.
+    edit = w["id"] if (interactive and selected) else None
+    children = [html.Div(_content(w, edit), className="qs-cv-body")]
     if interactive:
         children.insert(
             0,

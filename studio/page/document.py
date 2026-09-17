@@ -43,6 +43,7 @@ from studio.deck.model import (
     TableBlock,
     TimelineBlock,
 )
+from studio.page import inline_edit
 
 # Text fields a user may override (kept in lock-step with the inspector/analyst UI).
 EDITABLE_FIELDS = (
@@ -930,6 +931,34 @@ def set_widget_prop(doc, sid: str, wid: str, key: str, value: Any) -> Dict[str, 
                 props[key] = value if value in FONT_FAMILIES else "Inter"
             else:
                 props[key] = value
+            break
+    return doc
+
+
+def set_widget_text(doc, sid: str, wid: str, path: str, value: Any) -> Dict[str, Any]:
+    """Commit one text edit typed straight onto the canvas.
+
+    ``path`` addresses an authored-prose leaf of the widget's props — see
+    :mod:`studio.page.inline_edit`, which decides what is addressable at all.
+    An unknown path leaves the document untouched.
+    """
+    parsed = inline_edit.parse_path(path)
+    if parsed is None:
+        return doc
+    doc = _clone(doc)
+    for w in _ensure_layout(doc, sid):
+        if w["id"] == wid:
+            w["props"] = inline_edit.apply_text(w.get("props") or {}, parsed, value)
+            break
+    return doc
+
+
+def add_commentary_point(doc, sid: str, wid: str, after_index: int) -> Dict[str, Any]:
+    """Insert an empty commentary bullet after ``after_index`` (Enter on the canvas)."""
+    doc = _clone(doc)
+    for w in _ensure_layout(doc, sid):
+        if w["id"] == wid:
+            w["props"] = inline_edit.add_point(w.get("props") or {}, int(after_index))
             break
     return doc
 

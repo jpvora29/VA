@@ -1824,6 +1824,76 @@ FILL_PIPELINE: Pipeline[FillContext] = (
 )
 
 
+# ── retyped text on a delivered deck ─────────────────────────────────────────
+
+
+def _clone_paragraph(text_frame, source):
+    """Append a copy of ``source`` to ``text_frame`` — its formatting, no text.
+
+    An author who adds a bullet expects it to look like the ones around it, so a new
+    paragraph is the previous paragraph's XML rather than a bare, theme-default one.
+    """
+    from copy import deepcopy
+
+    new = deepcopy(source._p)
+    source._p.getparent().append(new)
+    return text_frame.paragraphs[-1]
+
+
+def _drop_paragraph(paragraph) -> None:
+    element = paragraph._p
+    element.getparent().remove(element)
+
+
+def _write_lines(text_frame, lines) -> None:
+    """Make ``text_frame`` say exactly ``lines``, one paragraph each.
+
+    Existing paragraphs are rewritten in place so their run formatting survives;
+    extra lines clone the last paragraph, and paragraphs the author deleted are
+    removed from the end.
+    """
+    paragraphs = list(text_frame.paragraphs)
+    for index, line in enumerate(lines):
+        if index < len(paragraphs):
+            _set_paragraph_text(paragraphs[index], line)
+        else:
+            _set_paragraph_text(_clone_paragraph(text_frame, paragraphs[-1]), line)
+    for paragraph in paragraphs[len(lines):]:
+        _drop_paragraph(paragraph)
+
+
+def apply_text_overrides(src_path: str, edits: Dict[str, Any], out_path: str) -> str:
+    """Write every text box retyped on the canvas into a copy of a delivered deck.
+
+    The assembled QBR is already filled, so there is no pipeline to re-run: each edit
+    names one text box by ``slide:shape`` (:mod:`studio.template_fill.text_edits`) and
+    is written through the same run-preserving primitive the fill engine uses, leaving
+    the deck's formatting, think-cell objects and charts untouched. ``src_path`` is
+    never modified.
+    """
+    from pptx import Presentation
+
+    from studio.template_fill import text_edits as TE
+
+    prs = Presentation(src_path)
+    slides = list(prs.slides)
+    written = 0
+    for slide_idx, by_shape in TE.grouped(edits).items():
+        if not 0 <= slide_idx < len(slides):
+            continue
+        shapes = _index_by_id(slides[slide_idx])
+        for shape_id, lines in by_shape.items():
+            shape = shapes.get(shape_id)
+            if shape is None or not getattr(shape, "has_text_frame", False) or not lines:
+                continue
+            _write_lines(shape.text_frame, lines)
+            written += 1
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    prs.save(out_path)
+    logger.info("template_fill: applied %d retyped text box(es) -> %s", written, out_path)
+    return out_path
+
+
 # ── entry point ──────────────────────────────────────────────────────────────
 
 

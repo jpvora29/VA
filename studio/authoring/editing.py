@@ -8,10 +8,12 @@ and write it back so the deck and the export stay in sync.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from dash import ALL, Input, Output, State, ctx, no_update
 
 from studio.page import document as D
+from studio.page import inline_edit as IE
 
 
 def _apply_color(doc, view, tid, value):
@@ -36,6 +38,36 @@ def _apply_color(doc, view, tid, value):
     if current == str(value).upper():
         return no_update
     return D.set_widget_prop(doc, sid, tid["owner"], tid["prop"], value)
+
+
+def _select(doc, _sid, action):
+    """Clicking a widget only moves the inspector — the document is untouched."""
+    return no_update, action.get("wid")
+
+
+def _geo(doc, sid, action):
+    """A drag or resize: the new grid box the canvas snapped the widget to."""
+    doc = D.set_widget_geo(
+        doc, sid, action["wid"], action["x"], action["y"], action["w"], action["h"]
+    )
+    return doc, action["wid"]
+
+
+def _text(doc, sid, action):
+    """Text retyped straight on the slide, optionally opening the next bullet."""
+    doc = D.set_widget_text(doc, sid, action["wid"], action.get("path"), action.get("value"))
+    if action.get("then") == "point-add":
+        doc = D.add_commentary_point(doc, sid, action["wid"], _point_index(action.get("path")))
+    return doc, action["wid"]
+
+
+def _point_index(path: Any) -> int:
+    """The bullet an Enter was pressed in, so the new one lands right after it."""
+    parsed = IE.parse_path(path)
+    return parsed[1] if parsed is not None and len(parsed) == 3 else -1
+
+
+CANVAS_ACTIONS = {"select": _select, "geo": _geo, "text": _text}
 
 
 def register_editing(app):
@@ -146,16 +178,11 @@ def register_editing(app):
             return no_update, no_update
         view = dict(view or {})
         sid = D.sid_at(doc, int(view.get("idx", 0)))
-        if sid is None:
+        handler = CANVAS_ACTIONS.get(action.get("action"))
+        if sid is None or handler is None:
             return no_update, no_update
-        if action.get("action") == "select":
-            view["sel"] = action.get("wid")
-            return no_update, view
-        if action.get("action") == "geo":
-            doc = D.set_widget_geo(doc, sid, action["wid"], action["x"], action["y"], action["w"], action["h"])
-            view["sel"] = action["wid"]
-            return doc, view
-        return no_update, no_update
+        doc, view["sel"] = handler(doc, sid, action)
+        return doc, view
 
     # ── canvas: add widget from the palette ──────────────────────────────────────
 

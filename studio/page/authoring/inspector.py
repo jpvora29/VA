@@ -556,7 +556,9 @@ def _widget_setup_body(w: Mapping[str, Any]) -> html.Div:
                         area=True,
                     ),
                     html.Div(
-                        "One point per line. Optional: [warn] Label: commentary.",
+                        "One point per line. Optional: [warn] Label: commentary. "
+                        "You can also retype any point on the slide itself — "
+                        "Enter starts the next one, emptying one removes it.",
                         className="qs-control-help",
                     ),
                 ]
@@ -760,8 +762,8 @@ def _select_hint(
                 html.I(className="bi bi-hand-index qs-empty-icon"),
                 html.Div("Select a widget", className="qs-empty-title"),
                 html.P(
-                    "Click any block on the canvas to edit content and appearance. "
-                    "Drag to move, drag a corner to resize.",
+                    "Click a block to select it, then click its text to retype it "
+                    "on the slide. Drag to move, drag a corner to resize.",
                     className="qs-empty-sub",
                 ),
             ],

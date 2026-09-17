@@ -1,13 +1,23 @@
-/* Boardroom Canvas direct manipulation — move, resize, select.
+/* Boardroom Canvas direct manipulation — move, resize, select, and retype text.
    The canvas surface owns all pointer interaction; on drop it writes the result
    to the hidden #qs-cv-sink input, which a Dash callback commits to the shared
-   document. Event delegation on `document` so it survives Dash re-renders. */
+   document. Text nodes carrying data-qs-path are contentEditable: the user types
+   straight on the slide and the new text goes down the same sink on blur.
+   Event delegation on `document` so it survives Dash re-renders. */
 (function () {
   "use strict";
 
+  var EDITABLE = "[data-qs-path]";
+  var POINT_PATH = /^points\.(\d+)\.text$/;
+
   var drag = null;
+  var pendingFocus = null;
 
   function surface() { return document.getElementById("qs-cv-surface"); }
+
+  function closest(node, selector) {
+    return node && node.closest ? node.closest(selector) : null;
+  }
 
   function commit(payload) {
     var sink = document.getElementById("qs-cv-sink");
@@ -27,11 +37,15 @@
     };
   }
 
+  /* ── move / resize ───────────────────────────────────────────────────────── */
+
   document.addEventListener("pointerdown", function (e) {
     var s = surface();
     if (!s) return;
-    var widget = e.target.closest(".qs-cv-widget");
+    var widget = closest(e.target, ".qs-cv-widget");
     if (!widget || !s.contains(widget)) return;
+    // A click on editable text places the caret instead of starting a drag.
+    if (closest(e.target, EDITABLE)) return;
 
     var rect = s.getBoundingClientRect();
     var cols = parseInt(s.getAttribute("data-cols"), 10) || 12;
@@ -40,7 +54,7 @@
     var scaleY = rect.height / (s.offsetHeight || rect.height);
     var cellW = (s.offsetWidth || rect.width) / cols;
     var cellH = (s.offsetHeight || rect.height) / rows;
-    var handle = e.target.closest(".qs-cv-handle");
+    var handle = closest(e.target, ".qs-cv-handle");
     var g = geom(widget);
 
     drag = {
@@ -108,4 +122,100 @@
 
   document.addEventListener("pointerup", endDrag);
   document.addEventListener("pointercancel", endDrag);
+
+  /* ── inline text editing ─────────────────────────────────────────────────── */
+
+  function normalize(text) {
+    return String(text == null ? "" : text).replace(/\s+/g, " ").trim();
+  }
+
+  function caretToEnd(el) {
+    var range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    var selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  /* Dash re-renders the slide after every commit, so the node to focus next does
+     not exist yet. Watch for it, then put the caret in it. */
+  function focusWhenReady(wid, path) {
+    pendingFocus = { wid: wid, path: path, until: Date.now() + 3000 };
+    requestAnimationFrame(tryPendingFocus);
+  }
+
+  function tryPendingFocus() {
+    if (!pendingFocus) return;
+    var el = document.querySelector(
+      '[data-qs-wid="' + pendingFocus.wid + '"][data-qs-path="' + pendingFocus.path + '"]'
+    );
+    if (el) {
+      pendingFocus = null;
+      el.focus();
+      caretToEnd(el);
+      return;
+    }
+    if (Date.now() > pendingFocus.until) { pendingFocus = null; return; }
+    requestAnimationFrame(tryPendingFocus);
+  }
+
+  document.addEventListener("focusin", function (e) {
+    var el = closest(e.target, EDITABLE);
+    if (el) el.setAttribute("data-qs-original", el.textContent);
+  });
+
+  document.addEventListener("focusout", function (e) {
+    var el = closest(e.target, EDITABLE);
+    if (!el) return;
+    var original = el.getAttribute("data-qs-original");
+    var then = el.getAttribute("data-qs-then") || "";
+    el.removeAttribute("data-qs-original");
+    el.removeAttribute("data-qs-then");
+    if (original === null) return;
+    var value = normalize(el.textContent);
+    if (!then && value === normalize(original)) return;
+    commit({
+      action: "text",
+      wid: el.getAttribute("data-qs-wid"),
+      path: el.getAttribute("data-qs-path"),
+      value: value,
+      then: then,
+    });
+  });
+
+  document.addEventListener("keydown", function (e) {
+    var el = closest(e.target, EDITABLE);
+    if (!el) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      el.textContent = el.getAttribute("data-qs-original") || "";
+      el.removeAttribute("data-qs-original");
+      el.removeAttribute("data-qs-then");
+      el.blur();
+      return;
+    }
+    if (e.key !== "Enter" || e.shiftKey) return;
+    e.preventDefault();
+    // Enter inside a commentary bullet starts the next bullet; everywhere else
+    // it simply ends the edit, because a slide text box is one line of prose.
+    var point = POINT_PATH.exec(el.getAttribute("data-qs-path") || "");
+    if (point && normalize(el.textContent)) {
+      el.setAttribute("data-qs-then", "point-add");
+      focusWhenReady(
+        el.getAttribute("data-qs-wid"),
+        "points." + (Number(point[1]) + 1) + ".text"
+      );
+    }
+    el.blur();
+  });
+
+  /* Paste plain text only — a slide never wants the source page's markup. */
+  document.addEventListener("paste", function (e) {
+    var el = closest(e.target, EDITABLE);
+    if (!el || !e.clipboardData) return;
+    e.preventDefault();
+    var text = normalize(e.clipboardData.getData("text/plain"));
+    document.execCommand("insertText", false, text);
+  });
 })();

@@ -1117,12 +1117,12 @@
     font-size: var(--qs-heading-font-size, inherit) !important;
     color: var(--qs-heading-font-color, inherit) !important;
 }
-.qs-cv-role-label :where(.qs-cv-point b, .qs-cv-kpi-l, .qs-cv-reco-l, .qs-cv-div-label, .qs-callout-label) {
+.qs-cv-role-label :where(.qs-cv-point-label, .qs-cv-point b, .qs-cv-kpi-l, .qs-cv-reco-l, .qs-cv-div-label, .qs-callout-label) {
     font-family: var(--qs-label-font-family, inherit) !important;
     font-size: var(--qs-label-font-size, inherit) !important;
     color: var(--qs-label-font-color, inherit) !important;
 }
-.qs-cv-role-body :where(.qs-cv-point > span:last-child, .qs-cv-reco-t, .qs-callout-body, .qs-action-text) {
+.qs-cv-role-body :where(.qs-cv-point-text, .qs-cv-point > span:last-child, .qs-cv-reco-t, .qs-callout-body, .qs-action-text) {
     font-family: var(--qs-body-font-family, inherit) !important;
     font-size: var(--qs-body-font-size, inherit) !important;
     color: var(--qs-body-font-color, inherit) !important;
@@ -1197,6 +1197,28 @@ body.qs-cv-dragging { user-select: none; cursor: grabbing; }
 .qs-cv-widget:hover .qs-cv-tag, .qs-cv-widget.selected .qs-cv-tag { display: inline-flex; }
 .qs-cv-body { width: 100%; height: 100%; overflow: hidden; }
 
+/* inline text editing — every authored line on the canvas is typed in place */
+.qs-cv-editable {
+    cursor: text; outline: none; border-radius: 3px;
+    transition: background 100ms ease, box-shadow 100ms ease;
+}
+.qs-cv-editable:hover { background: rgba(11,75,255,0.08); }
+.qs-cv-editable:focus {
+    background: rgba(11,75,255,0.06);
+    box-shadow: 0 0 0 2px var(--blue); cursor: text;
+}
+/* an empty optional line is only rendered on the selected widget: it prompts for
+   the text it is waiting for, and disappears again when the widget is deselected */
+.qs-cv-editable:empty::before {
+    content: attr(data-qs-ph); color: var(--faint); font-weight: 500; opacity: 0.55;
+}
+.qs-cv-point-body { display: block; }
+.qs-cv-point-label { display: inline; margin-right: 4px; }
+.qs-cv-point-text { display: inline; }
+.qs-cv-dragging .qs-cv-editable { cursor: grabbing; }
+.qs-cv-surface.layout-cover .qs-cv-editable:empty::before,
+.qs-cv-surface.layout-divider .qs-cv-editable:empty::before { color: rgba(255,255,255,0.6); }
+
 /* resize handles */
 .qs-cv-handle {
     position: absolute; width: 10px; height: 10px; background: #fff;
@@ -1222,7 +1244,7 @@ body.qs-cv-dragging { user-select: none; cursor: grabbing; }
 .qs-cv-kpiband { display: flex; gap: 8px; height: 100%; align-items: stretch; }
 .qs-cv-kpi { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 4px 8px; border-right: 1px solid var(--line); }
 .qs-cv-kpi:last-child { border-right: none; }
-.qs-cv-kpi-l { font-size: 8px; font-weight: 700; letter-spacing: 0.05em; color: var(--faint); }
+.qs-cv-kpi-l { font-size: 8px; font-weight: 700; letter-spacing: 0.05em; color: var(--faint); text-transform: uppercase; }
 .qs-cv-kpi-v { font-size: 18px; font-weight: 800; color: var(--navy); line-height: 1.1; }
 .qs-cv-kpi-d { font-size: 9.5px; font-weight: 700; }
 .qs-cv-kpi-d.good { color: var(--good); } .qs-cv-kpi-d.danger { color: var(--danger); } .qs-cv-kpi-d.warn { color: var(--warn); }
@@ -1576,42 +1598,56 @@ body.qs-cv-dragging { user-select: none; cursor: grabbing; }
 .qs-tf-static { color: #33415c; line-height: 1.18; white-space: pre-wrap; }
 .qs-tf-input { width: 100%; border: 1px solid #bcd; border-radius: 4px; padding: 1px 4px; font-size: inherit;
   font-family: inherit; line-height: 1.16; background: rgba(241,248,255,.9); color: #0b1f44; font-weight: 600; box-sizing: border-box; }
-.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay {
-  width: 100%; height: 100%; min-height: 18px; padding: 0; border-color: transparent;
-  border-radius: 2px; background: transparent; color: transparent; caret-color: #0b1f44;
-  box-shadow: none; font-weight: inherit;
-}
-.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay:hover,
-.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay:focus {
-  background: rgba(255,255,255,.88); border-color: rgba(31,95,191,.65);
-  color: #0b1f44; outline: none; box-shadow: 0 0 0 2px rgba(31,95,191,.14);
-}
 .qs-tf-input input { width: 100%; border: 1px solid #bcd; border-radius: 4px; padding: 1px 4px; font-size: 11px;
   background: #f1f8ff; color: #0b1f44; font-weight: 600; }
 .qs-tf-input.placeholder { background: #fff7ec; border-color: #f0cfa0; color: #9a5b07; font-style: italic; font-weight: 500; }
 .qs-tf-input.placeholder input { background: #fff7ec; border-color: #f0cfa0; color: #9a5b07; font-style: italic; font-weight: 500; }
-.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay.placeholder {
-  background: transparent; border-color: transparent; color: transparent; font-style: inherit;
+/* ── editing the delivered deck's words ─────────────────────────────────────
+   Over an exact PowerPoint render the words are already in the PNG, so nothing is
+   drawn on top of them: each text box gets only an invisible click target that
+   opens it in the edit field. Once the author changes the words, THEN the box is
+   painted in the slide's own colours (--qs-tf-paper/--qs-tf-ink, resolved from the
+   panel the text sits on) and the new lines are drawn over the stale ones. */
+.qs-tf-surface.has-rendered-bg .qs-tf-box.is-editable { padding: 0; overflow: visible; }
+.qs-tf-box.is-editable { padding: 0; background: transparent; }
+.qs-tf-pick {
+  position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%;
+  padding: 0; margin: 0; background: transparent; cursor: pointer;
+  border: 1px solid transparent; border-radius: 2px;
+  transition: border-color 90ms ease, background 90ms ease;
 }
-.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay.placeholder:hover,
-.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay.placeholder:focus {
-  background: rgba(255,255,255,.88); border-color: rgba(31,95,191,.65); color: #0b1f44;
+.qs-tf-pick:hover { border-color: rgba(31,95,191,.55); background: rgba(31,95,191,.07); }
+.qs-tf-pick.is-selected,
+.qs-tf-pick:focus-visible {
+  border-color: #1f5fbf; outline: none; box-shadow: 0 0 0 2px rgba(31,95,191,.22);
 }
-/* The PNG already shows every value — over it the editable INNER <input> must be
-   fully transparent (no double text, no stray boxes) and only reveal itself on
-   hover/focus so a user can change a value. dcc.Input styles the inner element,
-   so these rules must target `... input`, not just the wrapper div. */
-.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay input {
-  background: transparent; border: 1px solid transparent; border-radius: 2px;
-  color: transparent; caret-color: #0b1f44; box-shadow: none; padding: 0 2px;
-  height: 100%; width: 100%; box-sizing: border-box;
+/* the author's words, drawn over the ones the render still shows */
+.qs-tf-surface .qs-tf-box.is-edited,
+.qs-tf-surface.has-rendered-bg .qs-tf-box.is-edited {
+  background: var(--qs-tf-paper, #fff); color: var(--qs-tf-ink, #0b1f44);
+  border-left: 2px solid #1f5fbf; border-radius: 2px;
 }
-.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay input::placeholder { color: transparent; }
-.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay input:hover,
-.qs-tf-surface.has-rendered-bg .qs-tf-input.render-overlay input:focus {
-  background: #fff; color: #0b1f44; border-color: #1f5fbf; outline: none;
-  box-shadow: 0 0 0 2px rgba(31,95,191,.18);
+.qs-tf-reflect {
+  position: relative; z-index: 1; display: flex; flex-direction: column;
+  gap: 0.25em; padding: 0 2px; pointer-events: none;
 }
+.qs-tf-reflect-line { line-height: 1.18; white-space: pre-wrap; }
+
+/* the edit field a click opens */
+.qs-tf-side { flex: 0 0 312px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.qs-tf-te { background: #fff; border: 1px solid #e3e8f0; border-radius: 10px; padding: 12px 14px; }
+.qs-tf-te.is-edited { border-color: rgba(31,95,191,.45); }
+.qs-tf-te-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.qs-tf-te-input {
+  width: 100%; margin-top: 8px; box-sizing: border-box; resize: vertical;
+  border: 1px solid #bcd; border-radius: 6px; padding: 8px 10px;
+  font-family: inherit; font-size: 12px; line-height: 1.45; color: #0b1f44;
+  background: #f8fbff;
+}
+.qs-tf-te-input:focus { outline: none; border-color: #1f5fbf; box-shadow: 0 0 0 2px rgba(31,95,191,.16); }
+.qs-tf-te-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.qs-tf-te-foot .qs-tf-fp-note { margin: 0; }
+
 .qs-tf-table { width: 100%; border-collapse: collapse; font-size: 10px; }
 .qs-tf-surface.has-rendered-bg .qs-tf-table { height: 100%; }
 .qs-tf-table td { border: 1px solid #e3e8f0; padding: 1px 3px; vertical-align: top; }
@@ -1681,7 +1717,7 @@ body.qs-cv-dragging { user-select: none; cursor: grabbing; }
 .qs-tf-static.is-ph { color: #9a5b07; font-style: italic; opacity: .8; }
 .qs-tf-td.is-filled { color: #0b1f44; font-weight: 600; }
 
-.qs-tf-fp { flex: 0 0 312px; align-self: stretch; background: #fff; border: 1px solid #e3e8f0;
+.qs-tf-fp { background: #fff; border: 1px solid #e3e8f0;
   border-radius: 12px; padding: 14px; max-height: 72vh; overflow: auto; box-shadow: 0 4px 18px rgba(12,28,60,.06); }
 .qs-tf-fp-title { font-weight: 700; color: #0b1f44; font-size: 14px; display: flex; align-items: center; gap: 6px; }
 .qs-tf-fp-note { color: #6b7a96; font-size: 11px; margin: 4px 0 12px; }
@@ -1699,7 +1735,7 @@ body.qs-cv-dragging { user-select: none; cursor: grabbing; }
   color: #0b1f44; background: #fff; box-sizing: border-box; transition: border-color .12s, box-shadow .12s; }
 .qs-tf-fp-input input:hover { border-color: #aebfdb; }
 .qs-tf-fp-input input:focus { outline: none; border-color: #1f5fbf; box-shadow: 0 0 0 3px rgba(31,95,191,.14); }
-@media (max-width: 1100px) { .qs-tf-workspace { flex-direction: column; } .qs-tf-fp { flex-basis: auto; width: 100%; } }
+@media (max-width: 1100px) { .qs-tf-workspace { flex-direction: column; } .qs-tf-side { flex-basis: auto; width: 100%; } }
 
 /* ============================================================================
    Setup redesign v3 — modern, spacious, consistent. Fixes the two real problems:

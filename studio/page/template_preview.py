@@ -18,6 +18,7 @@ from dash import dcc, html
 from studio.template_fill import registry
 from studio.template_fill import validate as TV
 from studio.template_fill.fill import _label_subs
+from studio.template_fill import text_edits as TE
 from studio.template_fill.model import materialize_fields
 from studio.template_fill.preview_assets import cached_doc_backgrounds
 
@@ -68,7 +69,7 @@ def _font_px(shape, scale: float, w_px: float, h_px: float, *, rendered_backgrou
 # ── one shape → positioned HTML ──────────────────────────────────────────────
 
 
-def _edit_input(slot_key: str, value: str, placeholder: bool, *, render_overlay: bool = False) -> dcc.Input:
+def _edit_input(slot_key: str, value: str, placeholder: bool) -> dcc.Input:
     # The value is ALWAYS the materialized text (placeholder slots show their token);
     # the app only persists an override when the committed value actually differs, so
     # untouched placeholders never become spurious "filled" values.
@@ -76,17 +77,71 @@ def _edit_input(slot_key: str, value: str, placeholder: bool, *, render_overlay:
         id={"type": "qs-tf-edit", "key": slot_key},
         value=value,
         debounce=True,                       # commit on blur / Enter
-        className=(
-            "qs-tf-input"
-            + (" placeholder" if placeholder else "")
-            + (" render-overlay" if render_overlay else "")
-        ),
+        className="qs-tf-input" + (" placeholder" if placeholder else ""),
+    )
+
+
+# ── editing the delivered deck's words ───────────────────────────────────────
+# The assembled deck has no slots to type into, so every text box is offered by
+# WHERE it sits (studio.template_fill.text_edits). Clicking one on the slide opens
+# it in the edit field; the canvas then REFLECTS what was typed, by painting the
+# box in the slide's own colours over the words the render still shows.
+
+
+def _contains(outer, inner) -> bool:
+    """True when ``outer``'s box fully encloses ``inner``'s."""
+    return (outer.x <= inner.x and outer.y <= inner.y
+            and outer.x + outer.w >= inner.x + inner.w
+            and outer.y + outer.h >= inner.y + inner.h)
+
+
+def _panel_fill(shape, slide) -> Optional[str]:
+    """The fill of the nearest backdrop this text sits on.
+
+    An edited box has to be painted over the render's own pixels, so it needs the
+    colour BEHIND the words — which for a divider headline is the full-bleed navy
+    panel, not the text box (which has no fill of its own). The smallest filled
+    shape that encloses this one is that backdrop.
+    """
+    nearest = None
+    for other in slide.shapes:
+        if other is shape or not other.fill_color or not _contains(other, shape):
+            continue
+        if nearest is None or (other.w * other.h) < (nearest.w * nearest.h):
+            nearest = other
+    return nearest.fill_color if nearest else None
+
+
+def _ink(shape, slide) -> Tuple[str, str]:
+    """``(paper, ink)`` for an edited box — the slide's own colours where we know them."""
+    paper = shape.fill_color or _panel_fill(shape, slide) or slide.background_color
+    if not paper:
+        return "#ffffff", "#0b1f44"
+    return f"#{paper}", "#ffffff" if _is_dark(paper) else "#0b1f44"
+
+
+def _pick_target(block: TE.EditableText, selected: bool) -> Any:
+    """The click target that opens this text box in the edit field."""
+    return html.Button(
+        "",
+        id={"type": "qs-tf-pick", "at": block.address.key},
+        n_clicks=0,
+        title="Edit this text",
+        className="qs-tf-pick" + (" is-selected" if selected else ""),
+        **{"aria-label": "Edit this text"},
+    )
+
+
+def _reflection(block: TE.EditableText) -> Any:
+    """The edited words, drawn over the render's stale ones."""
+    return html.Div(
+        [html.Div(line, className="qs-tf-reflect-line") for line in block.lines],
+        className="qs-tf-reflect",
     )
 
 
 def _text_shape(shape, fields_by_target, subs) -> Optional[html.Div]:
-    """Read-only text: filled values and static labels render as text (editing lives
-    in the side panel, so the slide stays a clean preview)."""
+    """Geometry preview: filled values and static labels, as text."""
     children: List[Any] = []
     for i, para in enumerate(shape.paragraphs):
         fld = fields_by_target.get((shape.shape_id, ("para", i)))
@@ -249,9 +304,49 @@ def _chart_svg(shape, values, w_px, h_px, slide_idx: int = 0) -> Any:
     return html.Div([html.I(className="bi bi-bar-chart"), " chart", *cue], className="qs-tf-stub")
 
 
-def _render_shape(shape, fields_by_target, scale, slide_idx, values, subs, *, rendered_background: bool = False) -> Optional[html.Div]:
+def _editable_box(shape, slide, slide_idx, edits, selected, style, font_px) -> Optional[html.Div]:
+    """One text box on a rendered slide: a click target, plus its edits if any.
+
+    Nothing is drawn unless the author has changed the words — the render already
+    shows them, and drawing them twice is what made the slide look broken.
+    """
+    block = TE.editable_text(shape, slide_idx, edits)
+    if block is None:
+        return None
+    children: List[Any] = [_pick_target(block, selected)]
+    if block.edited:
+        children.append(_reflection(block))
+        paper, ink = _ink(shape, slide)
+        style["--qs-tf-paper"], style["--qs-tf-ink"] = paper, ink
+        if font_px:
+            style["fontSize"] = f"{font_px:.1f}px"
+        if shape.font_face:
+            style["fontFamily"] = f"{shape.font_face}, Arial, sans-serif"
+        if shape.bold:
+            style["fontWeight"] = "700"
+        if shape.italic:
+            style["fontStyle"] = "italic"
+        if shape.align:
+            style["textAlign"] = shape.align
+        # Cover at least the words it replaces, and grow past them when the author
+        # wrote more — clipping would hide their own text, and a box that outgrows
+        # the template's is worth seeing before the export.
+        style["minHeight"], style["height"] = style["height"], "auto"
+    return html.Div(
+        children,
+        className="qs-tf-box is-editable" + (" is-edited" if block.edited else "")
+        + (" is-selected" if selected else ""),
+        style=style,
+    )
+
+
+def _render_shape(shape, fields_by_target, scale, slide_idx, values, subs, *,
+                  rendered_background: bool = False, edits=None, slide=None,
+                  selected_key: Optional[str] = None) -> Optional[html.Div]:
     if shape.w <= 0 or shape.h <= 0:
         return None
+    edits = edits or {}
+    selected = selected_key == f"{slide_idx}:{int(shape.shape_id)}"
     w_px, h_px = _emu_to_px(shape.w, scale), _emu_to_px(shape.h, scale)
     style = {
         "left": f"{_emu_to_px(shape.x, scale):.0f}px",
@@ -260,9 +355,15 @@ def _render_shape(shape, fields_by_target, scale, slide_idx, values, subs, *, re
         "height": f"{h_px:.0f}px",
     }
     cls = "qs-tf-box"
-    # Over a pixel-perfect PNG, only non-text decoration would differ — text/tables
-    # are already in the image, so skip them (the side panel handles editing).
-    if rendered_background and shape.kind in ("table", "text", "chart", "picture", "ole"):
+    # Over a pixel-perfect PNG the image already draws everything, so the only shape
+    # worth keeping is a TEXT one — not to draw it again, but to carry the click
+    # target that opens its words in the edit field.
+    if rendered_background and shape.kind == "text":
+        return _editable_box(
+            shape, slide, slide_idx, edits, selected, style,
+            _font_px(shape, scale, w_px, h_px, rendered_background=True),
+        )
+    if rendered_background and shape.kind in ("table", "chart", "picture", "ole"):
         return None
     if shape.kind == "table" and shape.table:
         inner = _table_shape(shape, fields_by_target, slide_idx, subs, values)
@@ -333,40 +434,101 @@ def _field_label(fld: Dict[str, Any]) -> str:
     return (tok[:22] + "…") if len(tok) > 22 else (tok or "Text")
 
 
-def _fields_panel(slide_fields: List[Dict[str, Any]]) -> html.Div:
-    """A labelled, scrollable editor for every fillable value on the current slide —
-    the 'real application' editing surface (no hunting transparent boxes on the slide)."""
-    editable = [f for f in slide_fields if f["value_kind"] != "series"]
-    if not editable:
-        body: Any = html.Div("No editable fields on this slide.", className="qs-tf-fp-empty")
-    else:
-        rows = []
-        for fld in sorted(editable, key=lambda f: (not f["filled"], _field_label(f).lower())):
-            key = f"{fld['slide_idx']}:{fld['shape_id']}:{'-'.join(str(p) for p in fld['where'])}"
-            rows.append(html.Div(
+def _selected_block(slide, slide_idx: int, edits, selected_key) -> Optional[TE.EditableText]:
+    """The text box the author clicked on the slide, if it is still on this page."""
+    address = TE.parse_address(selected_key)
+    if address is None or address.slide_idx != slide_idx:
+        return None
+    shape = next(
+        (sh for sh in slide.shapes if int(sh.shape_id) == address.shape_id), None
+    )
+    return TE.editable_text(shape, slide_idx, edits) if shape is not None else None
+
+
+def _text_editor(block: Optional[TE.EditableText]) -> html.Div:
+    """The edit field for one text box: its lines, to add to, delete or rewrite."""
+    if block is None:
+        return html.Div(
+            [
+                html.Div([html.I(className="bi bi-cursor-text"), " Text"],
+                         className="qs-tf-fp-title"),
+                html.Div("Click any text on the slide to edit it here.",
+                         className="qs-tf-fp-empty"),
+            ],
+            className="qs-tf-te",
+        )
+    return html.Div(
+        [
+            html.Div(
                 [
-                    html.Div(
-                        [html.Span(_field_label(fld), className="qs-tf-fp-label"),
-                         html.Span("placeholder" if fld["placeholder"] else "data",
-                                   className="qs-tf-fp-tag" + ("" if fld["placeholder"] else " ok"))],
-                        className="qs-tf-fp-head",
-                    ),
-                    dcc.Input(
-                        id={"type": "qs-tf-edit", "key": key},
-                        value="" if fld["placeholder"] else str(fld["text"]),
-                        placeholder=str(fld["token"]) if fld["placeholder"] else "",
-                        debounce=True,
-                        className="qs-tf-fp-input",
+                    html.Div([html.I(className="bi bi-cursor-text"), " Text"],
+                             className="qs-tf-fp-title"),
+                    html.Span("edited", className="qs-tf-fp-tag ok") if block.edited else None,
+                ],
+                className="qs-tf-te-head",
+            ),
+            dcc.Textarea(
+                id={"type": "qs-tf-block", "at": block.address.key},
+                value=block.text,
+                rows=max(3, min(16, len(block.lines) + 2)),
+                spellCheck="false",
+                className="qs-tf-te-input",
+            ),
+            html.Div(
+                [
+                    html.Span("One line per paragraph. Add a line to add one, delete "
+                              "a line to remove it.", className="qs-tf-fp-note"),
+                    html.Button(
+                        [html.I(className="bi bi-arrow-counterclockwise"), " Reset"],
+                        id={"type": "qs-tf-reset", "at": block.address.key},
+                        n_clicks=0,
+                        className="qs-tf-addbtn",
+                        disabled=not block.edited,
+                        title="Put this box back to what the deck says",
                     ),
                 ],
-                className="qs-tf-fp-row",
-            ))
-        body = html.Div(rows, className="qs-tf-fp-list")
+                className="qs-tf-te-foot",
+            ),
+        ],
+        className="qs-tf-te" + (" is-edited" if block.edited else ""),
+    )
+
+
+def _fields_panel(slide_fields: List[Dict[str, Any]]) -> Optional[html.Div]:
+    """The slot editor for a template that still HAS slots.
+
+    A delivered (assembled) deck has none — it is already filled — so this is absent
+    there and the text editor above is the whole editing surface.
+    """
+    editable = [f for f in slide_fields if f["value_kind"] != "series"]
+    if not editable:
+        return None
+    rows = []
+    for fld in sorted(editable, key=lambda f: (not f["filled"], _field_label(f).lower())):
+        key = f"{fld['slide_idx']}:{fld['shape_id']}:{'-'.join(str(p) for p in fld['where'])}"
+        rows.append(html.Div(
+            [
+                html.Div(
+                    [html.Span(_field_label(fld), className="qs-tf-fp-label"),
+                     html.Span("placeholder" if fld["placeholder"] else "data",
+                               className="qs-tf-fp-tag" + ("" if fld["placeholder"] else " ok"))],
+                    className="qs-tf-fp-head",
+                ),
+                dcc.Input(
+                    id={"type": "qs-tf-edit", "key": key},
+                    value="" if fld["placeholder"] else str(fld["text"]),
+                    placeholder=str(fld["token"]) if fld["placeholder"] else "",
+                    debounce=True,
+                    className="qs-tf-fp-input",
+                ),
+            ],
+            className="qs-tf-fp-row",
+        ))
     return html.Div(
         [
             html.Div([html.I(className="bi bi-pencil-square"), " Edit fields"], className="qs-tf-fp-title"),
             html.Div("Type a value to fill or override; blank a field to clear it.", className="qs-tf-fp-note"),
-            body,
+            html.Div(rows, className="qs-tf-fp-list"),
         ],
         className="qs-tf-fp",
     )
@@ -436,9 +598,13 @@ def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> h
 
     background_url = rendered_urls[idx] if idx < len(rendered_urls) else getattr(slide, "background_url", None)
     rendered_background = bool(background_url)
+    edits = TE.text_edits(tdoc)
+    selected_key = str(view.get("tf_sel") or "") or None
     shapes = [
         s for s in (
-            _render_shape(sh, by_target, scale, idx, values, subs, rendered_background=rendered_background)
+            _render_shape(sh, by_target, scale, idx, values, subs,
+                          rendered_background=rendered_background, edits=edits,
+                          slide=slide, selected_key=selected_key)
             for sh in slide.shapes
         )
         if s
@@ -458,6 +624,10 @@ def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> h
         style=surface_style,
     )
 
+    slide_edits = sum(
+        1 for key in edits
+        if (address := TE.parse_address(key)) and address.slide_idx == idx
+    )
     filled = sum(1 for f in fields.values() if f["slide_idx"] == idx and f["filled"])
     placeholders = sum(1 for f in fields.values() if f["slide_idx"] == idx and f["placeholder"])
     slide_fields = [f for f in fields.values() if f["slide_idx"] == idx]
@@ -484,6 +654,8 @@ def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> h
                          html.Span([html.I(className="bi bi-dash-circle"), f" {placeholders} placeholder"], className="qs-tf-pill warn"),
                          html.Span([html.I(className="bi bi-image"), " exact render" if rendered_background else " geometry preview"],
                                    className="qs-tf-pill ok" if rendered_background else "qs-tf-pill"),
+                         html.Span([html.I(className="bi bi-pencil"), f" {slide_edits} edited"],
+                                   className="qs-tf-pill ok") if slide_edits else None,
                          html.Button([html.I(className="bi bi-plus-lg"), " Add note"],
                                      id={"type": "qs-tf-add", "slide": idx}, className="qs-tf-addbtn")],
                         className="qs-tf-actions",
@@ -494,7 +666,13 @@ def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> h
             html.Div(
                 [
                     html.Div(surface, className="qs-tf-stage"),
-                    _fields_panel(slide_fields),
+                    html.Div(
+                        [
+                            _text_editor(_selected_block(slide, idx, edits, selected_key)),
+                            _fields_panel(slide_fields),
+                        ],
+                        className="qs-tf-side",
+                    ),
                 ],
                 className="qs-tf-workspace",
             ),

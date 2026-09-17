@@ -61,6 +61,7 @@ class Slide:
     index: int
     layout: str
     background_url: Optional[str] = None
+    background_color: Optional[str] = None   # the slide's own paper, solid fills only
     shapes: List[Shape] = field(default_factory=list)
 
     def title(self) -> str:
@@ -248,6 +249,20 @@ def _solid_fill(shape, palette: Optional[dict] = None) -> Optional[str]:
     return None
 
 
+def _slide_background(slide, palette: Optional[dict] = None) -> Optional[str]:
+    """The slide's paper colour, following what it inherits from layout and master.
+
+    A slide whose background is set on its layout reports no fill of its own, so the
+    chain has to be walked — otherwise a pale-blue page looks white to anything that
+    has to paint over it.
+    """
+    for source in (slide, slide.slide_layout, slide.slide_layout.slide_master):
+        fill = _solid_fill(getattr(source, "background", None), palette)
+        if fill:
+            return fill
+    return None
+
+
 def _first_run_style(shape):
     color = None
     face = None
@@ -322,7 +337,9 @@ def analyze(template_path: str) -> Template:
             except Exception as exc:  # noqa: BLE001 — skip an unreadable shape, keep going
                 logger.warning("analyze: slide %d shape %r unreadable: %s", i, getattr(shape, "name", "?"), exc)
         bg = backgrounds[i] if i < len(backgrounds) else None
-        slides.append(Slide(index=i, layout=str(getattr(s.slide_layout, "name", "")), background_url=bg, shapes=recs))
+        slides.append(Slide(index=i, layout=str(getattr(s.slide_layout, "name", "")),
+                            background_url=bg, background_color=_slide_background(s, palette),
+                            shapes=recs))
     return Template(
         path=str(p),
         width_emu=int(prs.slide_width or 12192000),
