@@ -233,3 +233,22 @@ def test_frame_cube_cascades_like_the_sql_one():
     # A column's own selection is skipped here too.
     assert cube.values("Country", {"Country": "Japan"}) == ["Japan", "Singapore"]
     assert cube.values("Year", {"Country": "Singapore"}) == [2024, 2025]
+
+
+def test_a_selection_outside_the_filter_grain_is_answered_by_sql_not_widened():
+    """A constraint the cube cannot hold must not be silently dropped.
+
+    ``CLIENT_NAME`` is a real column of the book but deliberately outside the cube (client
+    grain). The cube has no way to honour it, and answering anyway would offer carriers and
+    products that the chosen client does not have — a WIDER answer than was asked for, which
+    is wrong rather than merely slow. So the cascade falls back to SQL for that selection.
+    """
+    where = {"Carrier_Group": "Zurich", "CLIENT_NAME": "Acme Ltd"}
+    cube = FC.sql_cube(get_engine(), "GPR", cube_columns("gpr"))
+    assert cube is not None
+    assert cube.can_answer({"Carrier_Group": "Zurich"})
+    assert not cube.can_answer(where)
+
+    served = cascade_options("gpr", ("Country",), where)["Country"]
+    by_sql = dependent_options("gpr", "Country", where)
+    assert served == by_sql

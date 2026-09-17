@@ -26,6 +26,12 @@ from langchain_core.messages import HumanMessage
 
 from core.agents.common.directives import apply_directives
 from core.agents.common.meta_intent import detect_conversation_intent
+from core.analysis.operation import (
+    MOVEMENT,
+    PENETRATION,
+    PERFORMANCE,
+    detect_operation,
+)
 from core.llm import Predictor
 from core.observability import log_event
 from core.schemas.routing import DepthClassifierSignature
@@ -33,6 +39,31 @@ from core.state.agent_state import AgentState
 from logger import get_logger
 
 logger = get_logger(__name__)
+
+#: Operations that CANNOT be answered by one query, so depth is not a judgement
+#: call and must not be left to a model.
+#:
+#: `core.analysis.operation` already reads these off the question deterministically
+#: — it is what builds the turn's evidence contract — but until now it was only
+#: consulted INSIDE the analyst subgraph, i.e. after the router had already decided
+#: whether to go there. A performance question the fast tier happened to label
+#: "lookup" therefore went down the single-query rail, which has no positioning
+#: node: one chart, no position table, however carefully the analyst path was built.
+#:
+#: Deliberately narrow. `breakdown` is NOT here — a plain "premium by product" is a
+#: GROUP BY and genuinely a lookup, which is what the depth signature itself says —
+#: and neither is `perception`, whose survey questions are usually a value read.
+ANALYTICAL_OPERATIONS = frozenset({PERFORMANCE, PENETRATION, MOVEMENT})
+
+
+def analytical_floor(question: str) -> str:
+    """Return "analytical" when the question's OPERATION needs more than one query.
+
+    Returns "" when it does not, meaning "no floor — ask the classifier".
+
+    Pure and deterministic: same question, same answer, no model call and no cost.
+    """
+    return "analytical" if detect_operation(question) in ANALYTICAL_OPERATIONS else ""
 
 
 class DepthClassifierNode:
@@ -98,17 +129,13 @@ class IntentClassifier:
 
         question = state["messages"][-1].content
 
-        # Re-decide analysis_depth with the dedicated classifier. The combined
-        # context-filler call reliably anchored on the "lookup" default, so the
-        # analytical agent path almost never fired. This focused step overwrites
-        # the guess. `fallback` queries keep whatever value — they never route to
-        # the analyst agent anyway.
+        # Re-decide analysis_depth (floor first, then the dedicated classifier —
+        # see `_depth`). The combined context-filler call reliably anchored on the
+        # "lookup" default, so the analytical agent path almost never fired; this
+        # step overwrites the guess. `fallback` queries keep whatever value — they
+        # never route to the analyst agent anyway.
         if routing_context.table_family != "fallback":
-            routing_context.analysis_depth = self._depth_classifier(
-                current_user_query=question,
-                table_family=routing_context.table_family,
-                intent_type=routing_context.intent_type,
-            )
+            routing_context.analysis_depth = self._depth(question, routing_context)
 
         # Deterministic directive overlay: fold every detector over the RAW query
         # (the rephraser may strip "without a chart" later) onto output_directives,
@@ -143,3 +170,29 @@ class IntentClassifier:
         )
 
         return {"routing_context": routing_context}
+
+    def _depth(self, question: str, routing_context) -> str:
+        """The turn's depth: the deterministic floor first, the classifier second.
+
+        The floor sits HERE rather than inside `DepthClassifierNode` because it is
+        a property of the question, not of whichever classifier is injected. A
+        multi-step question must reach the analyst subgraph even when the depth
+        classifier is stubbed, swapped, or wrong — that is the whole point of a
+        floor, and putting it below the injection seam would let a substitution
+        quietly remove it.
+        """
+        floor = analytical_floor(question)
+        if floor:
+            log_event(
+                logger,
+                "depth_floored",
+                node="intent_classifier",
+                operation=detect_operation(question),
+                analysis_depth=floor,
+            )
+            return floor
+        return self._depth_classifier(
+            current_user_query=question,
+            table_family=routing_context.table_family,
+            intent_type=routing_context.intent_type,
+        )

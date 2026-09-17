@@ -62,6 +62,16 @@ class FilterCube:
     def n_rows(self) -> int:
         return self.data.n_rows
 
+    def can_answer(self, selected: Mapping[str, Any]) -> bool:
+        """Whether every constraining column in ``selected`` is one this cube spans.
+
+        The same guard the scope cube has, and for the same reason: a constraint on a column
+        the cube does not hold would be silently DROPPED, and the dropdowns would then offer
+        values that the selection excludes — a wider list than the user asked for, which is a
+        wrong answer rather than a slow one. The caller falls back to the SQL cascade instead.
+        """
+        return not cube_core.unknown_columns(self.columns, selected)
+
     def values(self, column: str, selected: Mapping[str, Any]) -> Optional[List[Any]]:
         """``column``'s values that survive every OTHER selection, or None if unknown here.
 
@@ -123,15 +133,18 @@ def build_frame_cube(frame, columns: Sequence[str]) -> Optional[FilterCube]:
 # ── caching (per source, invalidated when the source changes) ────────────────
 
 _cache: Dict[Any, Optional[FilterCube]] = {}
-_DISK_DIR = Path(__file__).resolve().parent / "_cache"
+
+# ``None`` defers to ``STUDIO_CACHE_DIR`` (see :func:`studio.cube_store.cache_dir`), read at
+# call time. Tests set it to a temporary directory to get a cold disk tier.
+_DISK_DIR: Optional[Path] = None
 
 
 _sql_fingerprint = cube_core.source_fingerprint
 
 
 def disk_dir() -> Path:
-    """Where built cubes are persisted — read through a function so tests can redirect it."""
-    return _DISK_DIR
+    """Where built cubes are persisted — through a function, so tests can redirect it."""
+    return _DISK_DIR or cube_store.cache_dir()
 
 
 def sql_cube(engine, table: str, columns: Sequence[str],
@@ -147,7 +160,7 @@ def sql_cube(engine, table: str, columns: Sequence[str],
         return _cache[key]
 
     data = cube_store.load_or_build_sql(engine, table, columns, measure=measure,
-                                        disk_dir=_DISK_DIR, cap=_MAX_ROWS)
+                                        disk_dir=disk_dir(), cap=_MAX_ROWS)
     cube = None if data is None else FilterCube(data)
     _cache[key] = cube
     return cube
@@ -162,9 +175,14 @@ def frame_cube(dataset_id: str, frame, columns: Sequence[str]) -> Optional[Filte
 
 
 def clear() -> None:
-    """Drop every cached cube and cascade (after a data refresh, or in tests)."""
+    """Drop every cached cube and cascade (after a data refresh, or in tests).
+
+    Reaches the shared store too: the cube itself is held there (one copy for both cubes), so
+    clearing only this module's wrappers would hand back the same arrays.
+    """
     _cache.clear()
     _cascade_cache.clear()
+    cube_store.clear()
 
 
 # ── memoized cascades ────────────────────────────────────────────────────────

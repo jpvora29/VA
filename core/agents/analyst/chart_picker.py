@@ -35,7 +35,12 @@ logger = get_logger(__name__)
 
 # How many charts an analyst answer may carry, and how many rows we hand the LLM
 # when asking for a spec (the full rows are still used to render).
-MAX_CHARTS = 1
+#
+# Three, matching `core.answers.chart_plan.MAX_CHARTS`: an analytical turn gathers
+# several lenses, and showing one of them made the other lenses invisible — the
+# reader got a single picture of a multi-part answer. The two ceilings are equal on
+# purpose, so which path built the charts does not change how many the reader gets.
+MAX_CHARTS = 3
 _LLM_ROW_CAP = 60
 
 # Column-name hints that make a dataset more worth charting (time series, peer
@@ -235,7 +240,10 @@ def pick_charts(question: str, evidence: List[Evidence],
     # is the richer one and later duplicates are dropped.
     seen_signatures: set[tuple] = set()
 
-    for _score, ev in ranked[:2]:
+    # One spare candidate beyond the ceiling, because a spec can be discarded
+    # (unchartable, or a duplicate signature) and stopping at exactly MAX_CHARTS
+    # candidates would then return fewer charts than the evidence supports.
+    for _score, ev in ranked[: MAX_CHARTS + 1]:
         if len(charts) >= MAX_CHARTS:
             break
         flow = ev.get("flow") or "gpr"

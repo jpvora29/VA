@@ -79,7 +79,14 @@ def test_keeps_chart_when_node_returns_pydantic_model(monkeypatch):
     assert cd["chart_type"] == "line"
 
 
-def test_one_chart_prioritizes_the_requested_trend_over_more_rows(monkeypatch):
+def test_the_requested_trend_is_charted_first_and_duplicates_are_dropped(monkeypatch):
+    """Priority and dedupe, which the one-chart ceiling used to hide.
+
+    An analyst answer may now carry up to `MAX_CHARTS` charts, so "only one chart
+    came back" no longer proves the picker ranked the trend above the wider mix.
+    What must hold is that the trend is the chart the reader gets FIRST, and that
+    a second lens drawing the identical picture is dropped rather than shown twice.
+    """
     seen = []
     def build(**kwargs):
         seen.append(kwargs["sql_output"])
@@ -93,7 +100,10 @@ def test_one_chart_prioritizes_the_requested_trend_over_more_rows(monkeypatch):
         {"flow": "gpr", "lens": "duplicate", "sql": "another query", "rows": trend},
     ]
     charts = cp.pick_charts("Show the premium trend over time", evidence)
-    assert len(charts) == 1 and len(seen) == 1
+    # The trend is ranked first, so it is the first spec asked for and the first
+    # chart rendered; the third lens draws the same line and is deduped away.
+    assert seen[0] == trend
+    assert len(charts) == 1
     assert charts[0]["rows"] == trend
 
 

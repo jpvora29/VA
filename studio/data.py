@@ -181,7 +181,7 @@ def cascade_options(
     still honour constraints on the others. A column the cube cannot answer falls back to
     :func:`dependent_options`, so a source too wide to cube still works, just at the old speed.
     """
-    from studio import filter_cube
+    from studio import cube_core, filter_cube
 
     spec = get_flow_registry().get(flow)
     if spec is None:
@@ -190,6 +190,12 @@ def cascade_options(
     selected = {c: v for c, v in (selected or {}).items() if c in spec.columns}
     cube = filter_cube.sql_cube(get_engine(), spec.primary_table, cube_columns(flow),
                                 cube_measure(flow))
+    if cube is not None and not cube.can_answer(selected):
+        # A constraint on a column outside the filter grain would be dropped, and the answer
+        # would then offer values this selection excludes. Slow and right beats fast and wide.
+        logger.warning("cascade_options: selection touches %s, outside the cube — using SQL",
+                       ", ".join(cube_core.unknown_columns(cube.columns, selected)))
+        cube = None
     cascaded = filter_cube.cascade(cube, selected) if cube is not None else {}
 
     out: Dict[str, List[Dict[str, Any]]] = {}

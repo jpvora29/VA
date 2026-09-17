@@ -120,7 +120,14 @@ def build_frame_rollup(frame, columns: Sequence[str], measure: str) -> Optional[
 # ── caching (per source, invalidated when the source changes) ────────────────
 
 _cache: Dict[Any, Optional[ScopeCube]] = {}
-_DISK_DIR = Path(__file__).resolve().parent / "_cache"
+
+# ``None`` defers to ``STUDIO_CACHE_DIR`` — see :func:`studio.filter_cube.disk_dir`.
+_DISK_DIR: Optional[Path] = None
+
+
+def disk_dir() -> Path:
+    """Where built rollups are persisted — the same artifact the filter cube writes."""
+    return _DISK_DIR or cube_store.cache_dir()
 
 
 def sql_rollup(engine, table: str, columns: Sequence[str],
@@ -137,7 +144,7 @@ def sql_rollup(engine, table: str, columns: Sequence[str],
         return _cache[key]
 
     data = cube_store.load_or_build_sql(engine, table, columns, measure=measure,
-                                        disk_dir=_DISK_DIR, cap=_MAX_ROWS)
+                                        disk_dir=disk_dir(), cap=_MAX_ROWS)
     cube = None if data is None else ScopeCube(data)
     _cache[key] = cube
     return cube
@@ -153,5 +160,6 @@ def frame_rollup(dataset_id: str, frame, columns: Sequence[str],
 
 
 def clear() -> None:
-    """Drop every cached rollup (after a data refresh, or in tests)."""
+    """Drop every cached rollup, including the shared store's copy of it."""
     _cache.clear()
+    cube_store.clear()

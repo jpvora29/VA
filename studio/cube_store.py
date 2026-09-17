@@ -16,15 +16,20 @@ at a few million rows that file is hundreds of megabytes and parsing it costs mo
 query it saves. A cube is now a directory of ``.npy`` files loaded with ``mmap_mode="r"`` — no
 parse at all, and the pages the cascade touches are the only ones read.
 
-**One artifact serves both cubes.** The filter cascade and the scope preview are the same
-distinct combinations at the same grain; the rollup just carries a measure alongside. Keyed on
-(database fingerprint, columns, measure), so whichever cube is asked for first builds it and
-the other reads it off the disk tier — one scan of the fact table, not two.
+**One artifact serves both cubes, and only one build ever runs.** The filter cascade and the
+scope preview are the same distinct combinations at the same grain; the rollup just carries a
+measure alongside. They are also SEPARATE Dash callbacks that the browser fires concurrently
+(deliberately — neither should wait on the other), so on a cold cache both asked for the cube at
+the same moment and each started its own ``GROUP BY`` over the whole warehouse. Two long scans
+competing for the same SQLite file, and neither could use the other's artifact because neither
+had finished. Keyed on (database fingerprint, columns, measure) with a per-key BUILD LOCK, so the
+first caller builds and everyone else waits for that one and shares it.
 """
 from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,6 +65,33 @@ def max_rows() -> int:
         logger.warning("cube_store: STUDIO_CUBE_MAX_ROWS=%r is not a number — using %d",
                        raw, _DEFAULT_MAX_ROWS)
         return _DEFAULT_MAX_ROWS
+
+
+def cache_dir() -> Path:
+    """Where cubes are persisted — ``STUDIO_CACHE_DIR``, else ``studio/_cache``.
+
+    Worth overriding when the repo lives on a synced drive (OneDrive, Dropbox): a few hundred
+    megabytes of cube in a sync root is slow to write and can fail outright, and a cube that
+    cannot be persisted is one that gets rebuilt on every launch.
+    """
+    raw = os.getenv("STUDIO_CACHE_DIR", "").strip()
+    return Path(raw) if raw else Path(__file__).resolve().parent / "_cache"
+
+
+# MEASURED AND REJECTED: tuning the build connection's pragmas.
+#
+# The build is one ten-column ``GROUP BY`` over the whole fact table, so the obvious lever is
+# the sort behind it — ``temp_store = MEMORY`` to keep it out of a temp file, a 256 MB
+# ``cache_size`` instead of the 2 MB default, ``mmap_size`` to read the table through a memory
+# map, and ``threads`` for SQLite's parallel sorter. On 8M rows grouping to 206k combinations
+# (the reported shape, scaled down) every one of those made it SLOWER, repeatably:
+#
+#     default pragmas      19.1s          build pragmas        24.8s
+#     default (again)      19.7s          build + threads=4    25.5s
+#
+# So the connection is left alone. The build's cost is SQLite's scan-and-sort rate — about
+# 0.4M rows/s here — and the way to stop paying it is to pay it ONCE (the disk artifact and
+# the build lock below), not to tune it.
 
 
 @dataclass(frozen=True)
@@ -206,6 +238,26 @@ def read_disk(directory: Path, columns: Sequence[str],
                     measures=measures)
 
 
+def writable(directory: Path) -> bool:
+    """Whether a cube built now could actually be persisted at ``directory``.
+
+    Checked BEFORE the scan, not after it: a warehouse that takes minutes to group should not
+    spend them only to fail at the write and do the whole thing again next launch. The failure
+    used to be invisible (a debug line), which reads exactly like "the cache is not working".
+    """
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        probe = directory / ".writable"
+        probe.write_bytes(b"1")
+        probe.unlink()
+        return True
+    except OSError as exc:
+        logger.warning(
+            "cube_store: cannot write the cube cache at %s (%s) — it will be REBUILT on every "
+            "launch. Point STUDIO_CACHE_DIR at a writable local directory.", directory, exc)
+        return False
+
+
 def write_disk(directory: Path, cube: CubeData, measure: Optional[str]) -> None:
     """Persist ``cube`` so the next launch maps it instead of scanning for it."""
     try:
@@ -224,30 +276,76 @@ def write_disk(directory: Path, cube: CubeData, measure: Optional[str]) -> None:
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(meta, fh)
         tmp.replace(directory / _META)                 # last, and atomic: marks it complete
+        logger.info("cube_store: cube persisted at %s", directory)
     except (OSError, TypeError, ValueError) as exc:    # noqa: BLE001 — cache is best-effort
-        logger.debug("cube_store: disk write failed: %s", exc)
+        logger.warning("cube_store: could not persist the cube at %s (%s) — it will be "
+                       "rebuilt next launch", directory, exc)
 
 
 # ── the cached entry point both cubes use ────────────────────────────────────
+#
+# One copy per process, and ONE build at a time per cube. The build lock is what stops the two
+# Setup callbacks — which the browser fires concurrently, by design — from each starting the
+# same multi-minute GROUP BY.
+
+_built: Dict[Any, Optional[CubeData]] = {}
+_build_locks: Dict[Any, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _build_lock(key: Any) -> threading.Lock:
+    with _locks_guard:
+        return _build_locks.setdefault(key, threading.Lock())
+
+
+def clear() -> None:
+    """Forget every built cube (after a data refresh, or in tests)."""
+    _built.clear()
+
+
+def _drop_earlier_generations(key: Any) -> None:
+    """Release the cube built for an EARLIER state of the same source.
+
+    A cube is hundreds of megabytes of arrays. When the database moves under a long-running
+    app, the superseded generation must not be held alongside the new one.
+    """
+    stale = [other for other in _built if other[1:] == key[1:] and other[0] != key[0]]
+    for other in stale:
+        _built.pop(other, None)
+    if stale:
+        logger.info("cube_store: released %d superseded cube(s) for %s",
+                    len(stale), ", ".join(key[1]))
 
 
 def load_or_build_sql(engine, table: str, columns: Sequence[str], *,
                       measure: Optional[str] = None, disk_dir: Path,
                       cap: Optional[int] = None) -> Optional[CubeData]:
-    """The cube for a database table — the disk tier, else one streamed scan.
+    """The cube for a database table — this process, then disk, then one streamed scan.
 
-    No memory tier here on purpose: each cube keeps its own (it caches the wrapper, not the
-    arrays), and the arrays themselves are mapped, so a second reader is a page-table entry
-    rather than a copy.
+    Both cubes and every callback come through here, so the memory tier means one copy per
+    process and the lock means one build per cube however many callers arrive at once. A
+    caller that arrives mid-build waits for it rather than starting a second one.
     """
     fingerprint = cube_core.source_fingerprint(engine, table)
-    directory = artifact_dir(disk_dir, fingerprint, columns, measure)
-    cube = read_disk(directory, columns, measure)
-    if cube is not None:
-        logger.info("cube_store: %s cube mapped from disk (%d combinations)",
-                    table, cube.n_rows)
+    key = (fingerprint, tuple(columns), measure)
+    if key in _built:
+        return _built[key]
+
+    with _build_lock(key):
+        if key in _built:                      # built while this caller waited for the lock
+            return _built[key]
+        directory = artifact_dir(disk_dir, fingerprint, columns, measure)
+        cube = read_disk(directory, columns, measure)
+        if cube is not None:
+            logger.info("cube_store: %s cube mapped from disk (%d combinations)",
+                        table, cube.n_rows)
+        else:
+            logger.info("cube_store: no cube for %s at %s — building it now, one-time for "
+                        "this database", table, directory)
+            persistable = writable(directory)
+            cube = build_sql(engine, table, columns, measure=measure, cap=cap)
+            if cube is not None and persistable:
+                write_disk(directory, cube, measure)
+        _drop_earlier_generations(key)
+        _built[key] = cube
         return cube
-    cube = build_sql(engine, table, columns, measure=measure, cap=cap)
-    if cube is not None:
-        write_disk(directory, cube, measure)
-    return cube

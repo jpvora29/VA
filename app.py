@@ -94,6 +94,12 @@ if __name__ == "__main__":
     # its own daemon thread (ui/jobs.py). Hot reload stays off — a reload mid-Generate
     # used to reset the view to Setup so the finished deck never showed.
     from studio.serve import run_app
+    from studio.warm_cache import warm_in_background
+
+    # Build the Studio filter cube now, in the background. On a large warehouse it is one
+    # multi-minute GROUP BY; paying for it at startup means the first person to touch a
+    # filter is not the one waiting for it (studio/cube_store.py). STUDIO_WARM_CUBE=off skips.
+    warm_in_background()
 
     # Debug OFF by default. `debug=True` mounts Dash's dev-tools bar, which floats
     # over the bottom-right of every page — on Studio it sits on top of the filter

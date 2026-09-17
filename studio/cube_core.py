@@ -18,8 +18,13 @@ Nothing here touches a database or knows what a cube is FOR. That is each cube's
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 from typing import Any, List, Mapping, Sequence, Tuple
+
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 # Values that mean "no constraint" on a Setup control.
 BLANK = (None, "", "all", "All")
@@ -80,13 +85,39 @@ def source_fingerprint(engine, table: str) -> Any:
 
     SQLite is a file, so size+mtime is a cheap, exact "has the data changed?" signal. A
     non-file engine falls back to its URL, which simply means the cube lives for the process.
+
+    ``STUDIO_CUBE_KEY`` replaces the file signature with a name you control. Use it when the
+    database file is touched by something other than a data load — an index build, a VACUUM, a
+    WAL checkpoint, another process writing to the same file — because each of those moves
+    size or mtime and silently invalidates a cube that took minutes to build. With a pinned
+    key the cube is rebuilt when you change the key, and not before.
     """
     url = str(getattr(engine, "url", engine))
+    pinned = os.getenv("STUDIO_CUBE_KEY", "").strip()
+    if pinned:
+        return ("pinned", pinned, table)
     path = getattr(getattr(engine, "url", None), "database", None)
     if path and Path(path).exists():
         stat = Path(path).stat()
-        return (url, table, stat.st_size, int(stat.st_mtime))
+        fingerprint = (url, table, stat.st_size, int(stat.st_mtime))
+        _warn_if_moved(url, table, fingerprint)
+        return fingerprint
     return (url, table)
+
+
+# What each (database, table) last fingerprinted as, so a file that keeps moving is REPORTED
+# rather than quietly costing a rebuild every time it is asked for.
+_seen: dict = {}
+
+
+def _warn_if_moved(url: str, table: str, fingerprint: Any) -> None:
+    previous = _seen.get((url, table))
+    _seen[(url, table)] = fingerprint
+    if previous is not None and previous != fingerprint:
+        logger.warning(
+            "cube: %s changed on disk (size/mtime %s → %s) — every cube built for it is "
+            "invalidated and will be rebuilt. If the DATA did not change, set STUDIO_CUBE_KEY "
+            "to pin the cube to a name you control.", table, previous[2:], fingerprint[2:])
 
 
 def cache_path(directory: Path, prefix: str, *parts: Any) -> Path:

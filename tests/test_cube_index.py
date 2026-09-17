@@ -14,6 +14,7 @@ cubes share one scan of the fact table.
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 from itertools import product
 
@@ -21,7 +22,7 @@ import numpy as np
 import pytest
 from sqlalchemy import create_engine
 
-from studio import cube_store, filter_cube as FC, scope_cube as SC
+from studio import cube_core, cube_store, filter_cube as FC, scope_cube as SC
 from studio.cube_index import CubeIndex, encode_rows
 
 # 100 countries x 40 carriers x 5 years x 3 products = 60,000 combinations, and the fact
@@ -205,6 +206,7 @@ def test_the_artifact_is_mapped_from_disk_not_parsed(wide_engine, tmp_path):
                                          disk_dir=tmp_path)
     assert built is not None and built.measures is not None
 
+    cube_store.clear()                       # a fresh process: nothing in memory, all on disk
     mapped = cube_store.load_or_build_sql(wide_engine, "GPR", columns, measure=measure,
                                           disk_dir=tmp_path)
     assert isinstance(mapped.index.column("Country").codes, np.memmap)
@@ -281,3 +283,129 @@ def test_the_index_is_empty_but_answerable_for_a_cube_with_no_rows():
     assert index.n_rows == 0
     assert index.select([]) is None
     assert index.distinct_values("Country", None) == []
+
+
+# ── one build, however many callers ──────────────────────────────────────────
+
+
+def test_only_one_build_runs_however_many_callers_arrive_at_once(
+        wide_engine, tmp_path, monkeypatch):
+    """The Setup page asks for the cube from several callbacks at once; one must build it.
+
+    Without the lock each caller started its own ``GROUP BY`` over the whole warehouse, so a
+    cold cache meant several multi-minute scans competing for the same file — and none of them
+    could use another's artifact, because none had finished.
+    """
+    builds = []
+    real_build = cube_store.build_sql
+
+    def counting_build(*args, **kwargs):
+        builds.append(1)
+        time.sleep(0.2)                  # hold the lock long enough for the others to pile up
+        return real_build(*args, **kwargs)
+
+    monkeypatch.setattr(cube_store, "build_sql", counting_build)
+
+    answers = []
+
+    def ask():
+        answers.append(cube_store.load_or_build_sql(
+            wide_engine, "GPR", _COLUMNS, measure="Premium", disk_dir=tmp_path))
+
+    threads = [threading.Thread(target=ask) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(builds) == 1, f"{len(builds)} builds ran for one cube"
+    assert len(answers) == 4 and all(a is not None for a in answers)
+    assert len({id(a) for a in answers}) == 1, "callers got separate copies of the same cube"
+
+
+def test_the_cascade_and_the_preview_share_one_build_under_concurrency(
+        wide_engine, tmp_path, monkeypatch):
+    """The real shape of it: ``refresh_form`` and ``scope_preview`` fire together.
+
+    They are deliberately separate callbacks so neither waits on the other, which on a cold
+    cache is exactly how the fact table got scanned twice at once.
+    """
+    monkeypatch.setattr(FC, "_DISK_DIR", tmp_path)
+    monkeypatch.setattr(SC, "_DISK_DIR", tmp_path)
+    builds = []
+    real_build = cube_store.build_sql
+
+    def counting_build(*args, **kwargs):
+        builds.append(1)
+        time.sleep(0.2)
+        return real_build(*args, **kwargs)
+
+    monkeypatch.setattr(cube_store, "build_sql", counting_build)
+
+    got = {}
+
+    def cascade():
+        got["cascade"] = FC.sql_cube(wide_engine, "GPR", _COLUMNS, "Premium")
+
+    def preview():
+        got["preview"] = SC.sql_rollup(wide_engine, "GPR", _COLUMNS, "Premium")
+
+    threads = [threading.Thread(target=cascade), threading.Thread(target=preview)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(builds) == 1, f"the two callbacks ran {len(builds)} builds"
+    assert got["cascade"] is not None and got["preview"] is not None
+    assert got["preview"].total({"Country": "C007"}) > 0
+
+
+# ── a parent dimension must narrow its children ──────────────────────────────
+
+
+def test_a_parent_dimension_narrows_its_children():
+    """Pick a region and only ITS countries (and the carriers writing there) remain.
+
+    The hierarchy is not declared anywhere and does not need to be: it is in the data, as the
+    combinations that exist. Region → Country is the one a user notices first.
+    """
+    rows = [("Asia", "Japan", "AIG"), ("Asia", "Singapore", "AIG"),
+            ("EMEA", "France", "AXA"), ("EMEA", "Spain", "AXA"),
+            ("Americas", "Brazil", "Chubb")]
+    cube = FC.FilterCube(cube_store.from_rows(("Region", "Country", "Carrier_Group"), rows))
+
+    asia = cube.cascade({"Region": "Asia"})
+    assert asia["Country"] == ["Japan", "Singapore"]
+    assert asia["Carrier_Group"] == ["AIG"]
+    # Region keeps its own full list, so the choice can still be changed.
+    assert asia["Region"] == ["Americas", "Asia", "EMEA"]
+
+    # …and it narrows the other way round too.
+    assert cube.cascade({"Country": "Brazil"})["Region"] == ["Americas"]
+    assert cube.cascade({"Carrier_Group": "AXA"})["Country"] == ["France", "Spain"]
+
+
+def test_a_pinned_cube_key_survives_a_file_whose_size_and_mtime_move(monkeypatch, tmp_path):
+    """``STUDIO_CUBE_KEY`` is the escape hatch for a database that is touched, not changed.
+
+    An index build, a VACUUM or a WAL checkpoint all move size/mtime, and each one invalidated
+    a cube that had cost minutes to build.
+    """
+    from sqlalchemy import create_engine as make_engine, text as sql
+
+    path = tmp_path / "moving.db"
+    engine = make_engine(f"sqlite:///{path}")
+    with engine.begin() as conn:
+        conn.execute(sql("CREATE TABLE GPR (Country TEXT)"))
+        conn.execute(sql("INSERT INTO GPR VALUES ('Japan')"))
+
+    monkeypatch.setenv("STUDIO_CUBE_KEY", "2026-Q3-load")
+    before = cube_core.source_fingerprint(engine, "GPR")
+    with engine.begin() as conn:                       # touch the file without loading data
+        conn.execute(sql('CREATE INDEX ix_touch ON GPR ("Country")'))
+    assert cube_core.source_fingerprint(engine, "GPR") == before
+
+    monkeypatch.delenv("STUDIO_CUBE_KEY")
+    assert cube_core.source_fingerprint(engine, "GPR") != before
+    engine.dispose()

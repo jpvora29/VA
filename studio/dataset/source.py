@@ -119,6 +119,10 @@ def dataset_cascade_options(
         return {}
     spanned = tuple(c for c in cube_columns("gpr") if c in frame.columns)
     cube = filter_cube.frame_cube(dataset_id, frame, spanned)
+    if cube is not None and not cube.can_answer(selected or {}):
+        # A constraint the cube does not span would be dropped, widening every list. Fall
+        # back to the per-column frame scan, which honours it (the SQL twin does the same).
+        cube = None
     selected = {c: v for c, v in (selected or {}).items() if c in spanned}
     cascaded = filter_cube.cascade(cube, selected)
 

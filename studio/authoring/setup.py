@@ -18,6 +18,7 @@ from functools import lru_cache
 from typing import Sequence
 
 from dash import ALL, MATCH, Input, Output, State, no_update
+from dash.exceptions import PreventUpdate
 
 from logger import get_logger
 from studio.compute import FILTER_COLUMN, quarter_options
@@ -26,7 +27,7 @@ from studio.page import authoring as A
 from studio.template_fill import registry, slide_previews
 from studio.template_fill.deck_slides import DeckSlides
 
-from studio.authoring import jobs
+from studio.authoring import jobs, supersede
 from studio.authoring.config import BLANK, BREAKDOWNS, engine
 from studio.content.report_plan import DEFAULT_AUDIENCE
 from ui.shell.busy import busy_running, register_busy
@@ -942,10 +943,13 @@ def register_setup(app):
 
         ids = ids or []
         selected = {i["col"]: v for i, v in zip(ids, values or []) if v not in BLANK}
+        ticket = supersede.begin(selected)
         record = dataset_in_use(dataset_store)
         options = cascade_filter_options(selected, record)
         chosen = peers_by_country(peer_ids, peer_vals)
         picker, peer_style, peer_msg = peer_panel_state(selected, mode, record, options, chosen)
+        if supersede.stale(ticket, "option cascade"):
+            raise PreventUpdate
         fresh, signature = changed_options(options, signature, token)
         return ([fresh.get(i["col"], no_update) for i in ids],
                 picker, peer_style, peer_msg, signature)
@@ -986,8 +990,12 @@ def register_setup(app):
         from studio.dataset.source import dataset_in_use
 
         selected = {i["col"]: v for i, v in zip(ids or [], values or []) if v not in BLANK}
-        return survey_panel_state(selected, basis, pinned, dataset_in_use(dataset_store),
-                                  keep_pin="carrier" not in changed_ids())
+        ticket = supersede.begin(selected)
+        state = survey_panel_state(selected, basis, pinned, dataset_in_use(dataset_store),
+                                   keep_pin="carrier" not in changed_ids())
+        if supersede.stale(ticket, "survey panel"):
+            raise PreventUpdate
+        return state
 
     # Peers are their own callback so the SURVEY CARRIER above can drive them: a component
     # cannot be both an Input and an Output of one callback, and the peer group is a
@@ -1014,11 +1022,14 @@ def register_setup(app):
         from studio.dataset.source import dataset_in_use
 
         selected = {i["col"]: v for i, v in zip(ids or [], values or []) if v not in BLANK}
+        ticket = supersede.begin(selected)
         changed = changed_ids()
         groups, note = survey_peer_state(
             selected, basis, survey_carrier, peers_by_country(peer_ids, peer_vals),
             dataset_in_use(dataset_store),
             keep_choice=not ({"carrier", "studio-survey-carrier"} & changed))
+        if supersede.stale(ticket, "survey peer group"):
+            raise PreventUpdate
         return A.survey_peer_picker(groups), note
 
     @app.callback(
@@ -1033,7 +1044,11 @@ def register_setup(app):
         from studio.dataset.source import dataset_in_use
 
         selected = {i["col"]: v for i, v in zip(ids or [], values or []) if v not in BLANK}
-        return scope_preview_body(selected, dataset_in_use(dataset_store))
+        ticket = supersede.begin(selected)
+        body = scope_preview_body(selected, dataset_in_use(dataset_store))
+        if supersede.stale(ticket, "scope preview"):
+            raise PreventUpdate
+        return body
 
     # ── "What's in your QBR": the pages the deck carries ─────────────────────
     #
