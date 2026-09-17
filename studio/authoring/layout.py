@@ -89,6 +89,12 @@ def studio_stores() -> list:
         dcc.Download(id="studio-pptx-download"),
         # Hidden sink: the canvas JS writes select/move/resize actions here.
         dcc.Input(id="qs-cv-sink", style={"display": "none"}),
+        # Which text box on the delivered deck is open in the edit field, as
+        # "slide:shape". Its OWN store, and read by the master render as State, so
+        # clicking a box repaints the edit field alone — putting it in ``qs-view``
+        # rebuilt the whole Studio body behind the "Opening…" overlay for what is
+        # only a selection. Memory storage: it describes the cursor, not the work.
+        dcc.Store(id="qs-tf-sel", data=None, storage_type="memory"),
     ]
 
 

@@ -16,6 +16,7 @@ from dash import ALL, Input, Output, State, ctx, dcc, no_update
 from logger import get_logger
 from studio.export import export_document
 from studio.template_fill import fill_template
+from studio.page import template_preview as TP
 from studio.template_fill import registry
 from studio.template_fill import text_edits as TE
 from studio.template_fill import validate as TV
@@ -117,37 +118,77 @@ def register_export(app):
     # ── the delivered deck's own words: pick one on the slide, edit it here ──────
 
     @app.callback(
-        Output("qs-view", "data", allow_duplicate=True),
+        Output("qs-tf-sel", "data"),
         Input({"type": "qs-tf-pick", "at": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def pick_text(clicks):
+        """Clicking a text box on the slide opens it in the edit field.
+
+        Its own store, so the master render does not rebuild the whole Studio body
+        behind the "Opening…" overlay for what is only a selection.
+        """
+        if not ctx.triggered_id or not any(clicks or []):
+            return no_update
+        return ctx.triggered_id["at"]
+
+    @app.callback(
+        Output("qs-tf-editor", "children"),
+        Input("qs-tf-sel", "data"),
+        Input("qs-tdoc", "data"),
         State("qs-view", "data"),
         prevent_initial_call=True,
     )
-    def pick_text(clicks, view):
-        """Clicking a text box on the slide opens it in the edit field."""
-        if not ctx.triggered_id or not any(clicks or []):
-            return no_update
-        view = dict(view or {})
-        view["tf_sel"] = ctx.triggered_id["at"]
-        return view
+    def show_editor(selected_key, tdoc, view):
+        """Repaint the edit field alone — not the slide, not the rest of Studio."""
+        return TP.text_editor_for(tdoc, view, selected_key)
 
     @app.callback(
         Output("qs-tdoc", "data", allow_duplicate=True),
-        Input({"type": "qs-tf-block", "at": ALL}, "n_blur"),
-        State({"type": "qs-tf-block", "at": ALL}, "value"),
-        State({"type": "qs-tf-block", "at": ALL}, "id"),
+        Input({"type": "qs-tf-line", "at": ALL, "i": ALL}, "n_blur"),
+        State({"type": "qs-tf-line", "at": ALL, "i": ALL}, "value"),
+        State({"type": "qs-tf-line", "at": ALL, "i": ALL}, "id"),
         State("qs-tdoc", "data"),
         prevent_initial_call=True,
     )
-    def edit_text(_blurs, values, ids, tdoc):
+    def edit_line(_blurs, values, ids, tdoc):
         if not tdoc or not ctx.triggered_id:
             return no_update
-        key = ctx.triggered_id["at"]
+        key, index = ctx.triggered_id["at"], int(ctx.triggered_id["i"])
         value = next((v for v, i in zip(values or [], ids or []) if i == ctx.triggered_id), None)
         original = _delivered_text(tdoc, key)
         if original is None:
             return no_update
-        updated = TE.set_text_edit(tdoc, key, value, original=original)
+        updated = TE.set_line(tdoc, key, index, value, original=original)
         return no_update if updated == dict(tdoc) else updated
+
+    @app.callback(
+        Output("qs-tdoc", "data", allow_duplicate=True),
+        Input({"type": "qs-tf-lineadd", "at": ALL}, "n_clicks"),
+        State("qs-tdoc", "data"),
+        prevent_initial_call=True,
+    )
+    def add_line(clicks, tdoc):
+        if not tdoc or not ctx.triggered_id or not any(clicks or []):
+            return no_update
+        key = ctx.triggered_id["at"]
+        original = _delivered_text(tdoc, key)
+        return TE.add_line(tdoc, key, original=original) if original is not None else no_update
+
+    @app.callback(
+        Output("qs-tdoc", "data", allow_duplicate=True),
+        Input({"type": "qs-tf-linedel", "at": ALL, "i": ALL}, "n_clicks"),
+        State("qs-tdoc", "data"),
+        prevent_initial_call=True,
+    )
+    def delete_line(clicks, tdoc):
+        if not tdoc or not ctx.triggered_id or not any(clicks or []):
+            return no_update
+        key, index = ctx.triggered_id["at"], int(ctx.triggered_id["i"])
+        original = _delivered_text(tdoc, key)
+        if original is None:
+            return no_update
+        return TE.delete_line(tdoc, key, index, original=original)
 
     @app.callback(
         Output("qs-tdoc", "data", allow_duplicate=True),

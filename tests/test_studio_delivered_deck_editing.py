@@ -244,18 +244,20 @@ def test_the_canvas_reflects_what_was_typed(template):
     assert any("1 edited" in pill for pill in pills), "the slide bar counts the edits"
 
 
-def test_clicking_a_box_opens_it_in_the_edit_field(template):
+def test_clicking_a_box_opens_every_line_in_its_own_field(template):
+    """One run-on textarea is what made the field unusable; a line is a line."""
     slide, _shape, block = _prose_box(template)
     tdoc = _rendered_tdoc()
     view = {"idx": tdoc["order"].index(slide.index), "tf_sel": block.address.key}
 
     body = TP.template_preview_body(tdoc, view)
-    editors = _of_type(body, "qs-tf-block")
+    fields = _of_type(body, "qs-tf-line")
 
-    assert len(editors) == 1
-    assert editors[0].id["at"] == block.address.key
-    assert editors[0].value == block.text, "the field opens on the deck's own words"
-    assert "is-selected" in _classes(body)
+    assert [f.value for f in fields] == list(block.lines)
+    assert [f.id["i"] for f in fields] == list(range(len(block.lines)))
+    assert all(f.id["at"] == block.address.key for f in fields)
+    assert len(_of_type(body, "qs-tf-linedel")) == len(block.lines), "each line can go"
+    assert len(_of_type(body, "qs-tf-lineadd")) == 1
 
 
 def test_the_edit_field_waits_until_something_is_selected(template):
@@ -264,7 +266,7 @@ def test_the_edit_field_waits_until_something_is_selected(template):
 
     body = TP.template_preview_body(tdoc, {"idx": tdoc["order"].index(slide.index)})
 
-    assert _of_type(body, "qs-tf-block") == []
+    assert _of_type(body, "qs-tf-line") == []
     assert any(
         "Click any text on the slide" in str(getattr(item, "children", ""))
         for item in _walk(body)
@@ -277,7 +279,7 @@ def test_a_selection_from_another_page_does_not_follow_you(template):
     tdoc = _rendered_tdoc()
     view = {"idx": tdoc["order"].index(other.index), "tf_sel": block.address.key}
 
-    assert _of_type(TP.template_preview_body(tdoc, view), "qs-tf-block") == []
+    assert _of_type(TP.template_preview_body(tdoc, view), "qs-tf-line") == []
 
 
 def test_the_reset_button_is_live_only_on_a_box_that_was_edited(template):
@@ -291,6 +293,100 @@ def test_the_reset_button_is_live_only_on_a_box_that_was_edited(template):
 
     assert clean.disabled is True
     assert dirty.disabled is False
+
+
+def test_no_editor_field_declares_a_prop_dash_will_reject(template):
+    """`dcc.Textarea.spellCheck` is a boolean; a string there is a runtime error."""
+    from dash import dcc
+
+    slide, _shape, block = _prose_box(template)
+    tdoc = _rendered_tdoc()
+    view = {"idx": tdoc["order"].index(slide.index), "tf_sel": block.address.key}
+
+    for field in _of_type(TP.template_preview_body(tdoc, view), "qs-tf-line"):
+        assert isinstance(field, dcc.Textarea)
+        assert not isinstance(getattr(field, "spellCheck", None), str)
+
+
+# ── the edit field repaints on its own ───────────────────────────────────────
+
+
+def test_the_edit_field_can_be_built_without_rebuilding_the_slide(template):
+    """Selection is repainted alone — going through the master render put the
+    "Opening…" overlay up for what is only a click."""
+    slide, _shape, block = _prose_box(template)
+    tdoc = _rendered_tdoc()
+    view = {"idx": tdoc["order"].index(slide.index)}
+
+    panel = TP.text_editor_for(tdoc, view, block.address.key)
+    fields = _of_type(panel, "qs-tf-line")
+
+    assert [f.value for f in fields] == list(block.lines)
+
+
+def test_the_edit_field_survives_a_document_it_cannot_read():
+    assert _of_type(TP.text_editor_for(None, {}, "3:10"), "qs-tf-line") == []
+    assert _of_type(TP.text_editor_for({"template_path": "/nope.pptx"}, {}, "3:10"),
+                    "qs-tf-line") == []
+
+
+# ── line by line ─────────────────────────────────────────────────────────────
+
+
+def test_retyping_one_line_leaves_its_neighbours_alone():
+    doc = TE.set_line(_tdoc(), "3:10", 1, "Rewritten.", original=["A", "B", "C"])
+
+    assert TE.text_edits(doc)["3:10"] == ["A", "Rewritten.", "C"]
+
+
+def test_adding_a_line_opens_a_blank_one_to_write_in():
+    doc = TE.add_line(_tdoc(), "3:10", original=["A", "B"])
+
+    assert TE.text_edits(doc)["3:10"] == ["A", "B", ""]
+    assert TE.grouped(TE.text_edits(doc)) == {3: {10: ["A", "B"]}}, "a blank line is not a paragraph"
+
+
+def test_adding_twice_without_writing_does_not_stack_blank_lines():
+    doc = TE.add_line(_tdoc(), "3:10", original=["A"])
+
+    assert TE.text_edits(TE.add_line(doc, "3:10", original=["A"]))["3:10"] == ["A", ""]
+
+
+def test_deleting_a_line_removes_that_one():
+    doc = TE.delete_line(_tdoc(), "3:10", 0, original=["A", "B", "C"])
+
+    assert TE.text_edits(doc)["3:10"] == ["B", "C"]
+
+
+def test_deleting_back_to_the_decks_own_words_clears_the_edit():
+    doc = TE.add_line(_tdoc(), "3:10", original=["A", "B"])
+    doc = TE.delete_line(doc, "3:10", 2, original=["A", "B"])
+
+    assert TE.text_edits(doc) == {}
+
+
+def test_deleting_every_line_is_a_reset_not_a_blank_box():
+    """Emptying a box entirely would delete the deck's prose; it reverts instead."""
+    doc = _tdoc()
+    for _ in range(3):
+        doc = TE.delete_line(doc, "3:10", 0, original=["A", "B", "C"])
+
+    assert TE.text_edits(doc) == {}
+
+
+@pytest.mark.parametrize("index", [-1, 9])
+def test_a_line_that_is_not_there_changes_nothing(index):
+    original = ["A", "B"]
+
+    assert TE.text_edits(TE.set_line(_tdoc(), "3:10", index, "x", original=original)) == {}
+    assert TE.text_edits(TE.delete_line(_tdoc(), "3:10", index, original=original)) == {}
+
+
+def test_an_unaddressable_key_cannot_write_a_line():
+    doc = TE.set_line(_tdoc(), "template_path", 0, "/etc/passwd", original=["A"])
+
+    assert TE.text_edits(doc) == {}
+    assert doc["template_path"] == str(TEMPLATE)
 
 
 # ── the colours a reflected box is painted in ────────────────────────────────

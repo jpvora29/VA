@@ -434,6 +434,36 @@ def _field_label(fld: Dict[str, Any]) -> str:
     return (tok[:22] + "…") if len(tok) > 22 else (tok or "Text")
 
 
+def _slide_at(template, tdoc: Mapping[str, Any], view: Mapping[str, Any]):
+    """``(index, slide)`` for the page on screen, honouring order and hidden pages."""
+    order = [i for i in tdoc.get("order", list(range(len(template.slides))))
+             if i not in tdoc.get("hidden", [])]
+    pos = int((view or {}).get("idx", 0))
+    pos = pos if 0 <= pos < len(order) else 0
+    idx = order[pos] if order else 0
+    return idx, template.slides[idx]
+
+
+def text_editor_for(tdoc, view, selected_key) -> html.Div:
+    """The edit field on its own, for the text box currently selected.
+
+    A selection repaints THIS and nothing else — rebuilding the whole Studio body
+    put the "Opening…" overlay up for what is only a click (see
+    ``studio.authoring.export.show_editor``).
+    """
+    if not tdoc or not tdoc.get("template_path"):
+        return _editor_placeholder()
+    try:
+        template, _ = registry.derive_manifest(tdoc["template_path"])
+    except Exception as exc:  # noqa: BLE001 — an unreadable deck is not an edit failure
+        logger.warning("edit field: could not read the delivered deck: %s", exc)
+        return _editor_placeholder()
+    idx, slide = _slide_at(template, tdoc, view)
+    return _text_editor(
+        _selected_block(slide, idx, TE.text_edits(tdoc), selected_key)
+    )
+
+
 def _selected_block(slide, slide_idx: int, edits, selected_key) -> Optional[TE.EditableText]:
     """The text box the author clicked on the slide, if it is still on this page."""
     address = TE.parse_address(selected_key)
@@ -445,39 +475,89 @@ def _selected_block(slide, slide_idx: int, edits, selected_key) -> Optional[TE.E
     return TE.editable_text(shape, slide_idx, edits) if shape is not None else None
 
 
-def _text_editor(block: Optional[TE.EditableText]) -> html.Div:
-    """The edit field for one text box: its lines, to add to, delete or rewrite."""
-    if block is None:
-        return html.Div(
-            [
-                html.Div([html.I(className="bi bi-cursor-text"), " Text"],
-                         className="qs-tf-fp-title"),
-                html.Div("Click any text on the slide to edit it here.",
-                         className="qs-tf-fp-empty"),
-            ],
-            className="qs-tf-te",
+def _editor_rows(block: TE.EditableText) -> List[Any]:
+    """One row per paragraph: its number, the words, and a way to remove it.
+
+    A single textarea holding the whole box ran every sentence together, which is
+    exactly what an author cannot edit. One field per line keeps each sentence a
+    thing you can see the edges of.
+    """
+    rows = []
+    for index, line in enumerate(block.lines):
+        rows.append(
+            html.Div(
+                [
+                    html.Span(str(index + 1), className="qs-tf-ln-num"),
+                    dcc.Textarea(
+                        id={"type": "qs-tf-line", "at": block.address.key, "i": index},
+                        value=line,
+                        rows=_line_rows(line),
+                        placeholder="Write this line…",
+                        className="qs-tf-ln-input",
+                    ),
+                    html.Button(
+                        html.I(className="bi bi-x-lg"),
+                        id={"type": "qs-tf-linedel", "at": block.address.key, "i": index},
+                        n_clicks=0,
+                        className="qs-tf-ln-del",
+                        title="Delete this line",
+                        **{"aria-label": f"Delete line {index + 1}"},
+                    ),
+                ],
+                className="qs-tf-ln",
+            )
         )
+    return rows
+
+
+def _line_rows(line: str, *, per_row: int = 38) -> int:
+    """Enough rows to show the sentence without its own scrollbar."""
+    return max(1, min(8, len(str(line or "")) // per_row + 1))
+
+
+def _editor_placeholder() -> html.Div:
+    return html.Div(
+        [
+            html.Div([html.I(className="bi bi-cursor-text"), " Text"],
+                     className="qs-tf-fp-title"),
+            html.Div(
+                [
+                    html.I(className="bi bi-hand-index qs-tf-te-icon"),
+                    html.Div("Click any text on the slide", className="qs-tf-te-hint"),
+                    html.Div("Its lines open here to rewrite, add to or delete.",
+                             className="qs-tf-fp-note"),
+                ],
+                className="qs-tf-te-empty",
+            ),
+        ],
+        className="qs-tf-te",
+    )
+
+
+def _text_editor(block: Optional[TE.EditableText]) -> html.Div:
+    """The edit field for one text box: a row per line, plus add and reset."""
+    if block is None:
+        return _editor_placeholder()
     return html.Div(
         [
             html.Div(
                 [
                     html.Div([html.I(className="bi bi-cursor-text"), " Text"],
                              className="qs-tf-fp-title"),
+                    html.Span(f"{len(block.lines)} lines", className="qs-tf-ln-count"),
                     html.Span("edited", className="qs-tf-fp-tag ok") if block.edited else None,
                 ],
                 className="qs-tf-te-head",
             ),
-            dcc.Textarea(
-                id={"type": "qs-tf-block", "at": block.address.key},
-                value=block.text,
-                rows=max(3, min(16, len(block.lines) + 2)),
-                spellCheck="false",
-                className="qs-tf-te-input",
-            ),
+            html.Div(_editor_rows(block), className="qs-tf-ln-list"),
             html.Div(
                 [
-                    html.Span("One line per paragraph. Add a line to add one, delete "
-                              "a line to remove it.", className="qs-tf-fp-note"),
+                    html.Button(
+                        [html.I(className="bi bi-plus-lg"), " Add line"],
+                        id={"type": "qs-tf-lineadd", "at": block.address.key},
+                        n_clicks=0,
+                        className="qs-tf-addbtn",
+                    ),
                     html.Button(
                         [html.I(className="bi bi-arrow-counterclockwise"), " Reset"],
                         id={"type": "qs-tf-reset", "at": block.address.key},
@@ -578,8 +658,7 @@ def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> h
     order = [i for i in tdoc.get("order", list(range(len(template.slides)))) if i not in tdoc.get("hidden", [])]
     pos = int(view.get("idx", 0))
     pos = pos if 0 <= pos < len(order) else 0
-    idx = order[pos] if order else 0
-    slide = template.slides[idx]
+    idx, slide = _slide_at(template, tdoc, view)
 
     # A build renders only its opening slides, so this page may not have an image
     # yet. Render its window now — a window and not one slide, because the export
@@ -668,7 +747,10 @@ def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> h
                     html.Div(surface, className="qs-tf-stage"),
                     html.Div(
                         [
-                            _text_editor(_selected_block(slide, idx, edits, selected_key)),
+                            html.Div(
+                                _text_editor(_selected_block(slide, idx, edits, selected_key)),
+                                id="qs-tf-editor",
+                            ),
                             _fields_panel(slide_fields),
                         ],
                         className="qs-tf-side",

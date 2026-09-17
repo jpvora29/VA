@@ -101,24 +101,68 @@ def text_edits(doc: Mapping[str, Any]) -> Dict[str, List[str]]:
     }
 
 
-def set_text_edit(
-    doc: Mapping[str, Any], key: str, value: Any, *, original: Sequence[str]
-) -> Dict[str, Any]:
-    """Fold one retyped text box into the document.
+def current_lines(doc: Mapping[str, Any], key: str, original: Sequence[str]) -> List[str]:
+    """The lines the edit field is showing: the retyped ones, else the deck's own."""
+    stored = text_edits(doc).get(str(key))
+    return list(stored) if stored is not None else [str(x) for x in (original or ())]
 
-    Typing the deck's own words back drops the override, so a block the author
-    reverted stops counting as an edit — and stops being rewritten at export.
+
+def _store(
+    doc: Mapping[str, Any], key: str, lines: Sequence[str], original: Sequence[str]
+) -> Dict[str, Any]:
+    """Hold ``lines`` against ``key`` — or drop the override when they are the deck's own.
+
+    One place decides what counts as an edit, so every way of reaching it (retyping a
+    line, adding one, deleting one) answers the same question the same way.
     """
     doc = dict(doc)
     if parse_address(key) is None:
         return doc
+    kept = [str(line).strip() for line in lines]
     edits = text_edits(doc)
-    lines = to_lines(value)
-    if not lines or lines == tuple(original or ()):
+    # A line the author just opened is still a difference from the deck — comparing
+    # only the written lines would make "Add line" undo itself on the spot.
+    if not any(kept) or tuple(kept) == tuple(original or ()):
         edits.pop(str(key), None)
     else:
-        edits[str(key)] = list(lines)
+        edits[str(key)] = kept
     return {**doc, EDITS_KEY: edits}
+
+
+def set_text_edit(
+    doc: Mapping[str, Any], key: str, value: Any, *, original: Sequence[str]
+) -> Dict[str, Any]:
+    """Fold a whole retyped text box into the document — one line per paragraph."""
+    return _store(doc, key, to_lines(value), original)
+
+
+def set_line(
+    doc: Mapping[str, Any], key: str, index: int, value: Any, *, original: Sequence[str]
+) -> Dict[str, Any]:
+    """Retype one line of a text box, leaving its neighbours alone."""
+    lines = current_lines(doc, key, original)
+    if not 0 <= index < len(lines):
+        return dict(doc)
+    lines[index] = " ".join(str(value or "").split())
+    return _store(doc, key, lines, original)
+
+
+def add_line(doc: Mapping[str, Any], key: str, *, original: Sequence[str]) -> Dict[str, Any]:
+    """Open an empty line at the end of a text box for the author to write into."""
+    lines = current_lines(doc, key, original)
+    if lines and not lines[-1].strip():
+        return dict(doc)        # one blank line at a time
+    return _store(doc, key, lines + [""], original)
+
+
+def delete_line(
+    doc: Mapping[str, Any], key: str, index: int, *, original: Sequence[str]
+) -> Dict[str, Any]:
+    """Remove one line from a text box."""
+    lines = current_lines(doc, key, original)
+    if not 0 <= index < len(lines):
+        return dict(doc)
+    return _store(doc, key, lines[:index] + lines[index + 1:], original)
 
 
 def clear_text_edit(doc: Mapping[str, Any], key: str) -> Dict[str, Any]:
@@ -129,11 +173,17 @@ def clear_text_edit(doc: Mapping[str, Any], key: str) -> Dict[str, Any]:
 
 
 def grouped(edits: Mapping[str, Sequence[str]]) -> Dict[int, Dict[int, List[str]]]:
-    """``{slide_idx: {shape_id: [lines]}}`` — the shape the writer walks in."""
+    """``{slide_idx: {shape_id: [lines]}}`` — the shape the writer walks in.
+
+    A line the author opened but never wrote in is an authoring state, not a blank
+    paragraph to push into the deck, so empties are dropped on the way out.
+    """
     out: Dict[int, Dict[int, List[str]]] = {}
     for key, lines in edits.items():
         address = parse_address(key)
         if address is None:
             continue
-        out.setdefault(address.slide_idx, {})[address.shape_id] = [str(x) for x in lines]
+        written = [str(x) for x in lines if str(x).strip()]
+        if written:
+            out.setdefault(address.slide_idx, {})[address.shape_id] = written
     return out

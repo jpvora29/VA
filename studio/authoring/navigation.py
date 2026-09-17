@@ -30,13 +30,16 @@ def register_navigation(app):
         # panel (``studio.authoring.setup.deck_slides``), never rebuild the whole shell
         # underneath the author's cursor.
         State("qs-slides", "data"),
+        # STATE, not Input: opening a text box in the edit field must not rebuild the
+        # whole body — the edit field repaints itself (studio.authoring.export).
+        State("qs-tf-sel", "data"),
         # This is the longest wait in Studio that is not a build: a mode switch throws
         # away the body on screen and composes the next one server-side (Setup's whole
         # form, the Data page's tables, the canvas' slide previews). Without a cue, the
         # click simply appeared to do nothing for a second or two.
         running=busy_running(A.BUSY_RENDER),
     )
-    def render(view, doc, tdoc, dataset, selection, slides):
+    def render(view, doc, tdoc, dataset, selection, slides, tf_sel):
         from studio.template_fill.deck_slides import DeckSlides
 
         deck = _deck(doc)
@@ -47,7 +50,7 @@ def register_navigation(app):
             deck,
             doc=doc,
             mode=(view or {}).get("mode", "setup"),
-            view=view or {"idx": 0, "tab": "setup"},
+            view={**(view or {"idx": 0, "tab": "setup"}), "tf_sel": tf_sel},
             cut_groups=CUT_GROUPS,
             filter_options=opts,
             filter_values=fvals,
