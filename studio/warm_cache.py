@@ -1,8 +1,10 @@
-"""Pre-build the Studio filter cache so app launch is instant.
+"""Pre-build the Studio filter cube so app launch is instant.
 
-The first time the Studio page loads for a given DB it must run a DISTINCT scan
-per filter column. On a large table that is slow — so run this once offline and
-every subsequent app launch reads a tiny JSON cache instead of scanning.
+The first time the Studio page loads for a given DB it must scan the fact table
+once to build the filter cube (the distinct combinations of the filter columns,
+with premium rolled up to them). On an 80M-row warehouse that scan is minutes —
+so run this once offline, and every subsequent app launch memory-maps the built
+cube instead of scanning for it.
 
     python -m studio.warm_cache             # warm the on-disk filter cache
     python -m studio.warm_cache --indexes   # ALSO create filter-column indexes
@@ -28,10 +30,12 @@ def main(argv: list[str]) -> None:
         made = ensure_filter_indexes(FLOW)
         print(f"  indexes ensured: {len(made)} in {time.time() - t0:.1f}s")
 
-    print("warming filter cache…")
+    print("building the filter cube (one-time for this database)…")
     t0 = time.time()
-    path = warm_filter_cache(FLOW)
-    print(f"  done in {time.time() - t0:.1f}s → {path}")
+    report = warm_filter_cache(FLOW)
+    print(f"  done in {time.time() - t0:.1f}s")
+    for line in report:
+        print(f"  {line}")
 
 
 if __name__ == "__main__":

@@ -206,11 +206,8 @@ def test_the_setup_preview_tiles_match_the_decks_own_kpis(selected):
 
 
 def test_ties_share_a_rank_like_sql():
-    cube = SC.ScopeCube(
-        columns=("Carrier_Group",),
-        rows=(("A",), ("B",), ("C",), ("D",)),
-        measures=(10.0, 10.0, 5.0, 1.0),
-    )
+    cube = SC.from_rows(("Carrier_Group",),
+                        [("A", 10.0), ("B", 10.0), ("C", 5.0), ("D", 1.0)])
     assert cube.rank("Carrier_Group", "A", {}) == (1, 4)
     assert cube.rank("Carrier_Group", "B", {}) == (1, 4)
     assert cube.rank("Carrier_Group", "C", {}) == (3, 4)      # RANK() skips 2

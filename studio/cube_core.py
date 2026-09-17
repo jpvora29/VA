@@ -7,10 +7,11 @@ different questions on every change:
 * :mod:`studio.scope_cube` — "what do the selected rows add up to?" (the preview).
 
 Both are the DISTINCT COMBINATIONS of the filter columns, both are far smaller than the fact
-table, both are built once per data source and cached to disk, and both answer a selection by
-scanning their rows in memory. This module owns what they genuinely share — how a selection
-becomes constraints, how a row is matched, and how a cache entry is keyed to the source it
-came from — so neither cube has to spell it out twice.
+table, and both are built once per data source and cached to disk. This module owns what they
+genuinely share — how a selection becomes constraints, and how a cache entry is keyed to the
+source it came from — so neither cube has to spell it out twice. How those constraints are
+then RESOLVED is :mod:`studio.cube_index`; where a built cube comes from and lives is
+:mod:`studio.cube_store`.
 
 Nothing here touches a database or knows what a cube is FOR. That is each cube's own job.
 """
@@ -18,7 +19,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Any, Iterable, List, Mapping, Sequence, Tuple
+from typing import Any, List, Mapping, Sequence, Tuple
 
 # Values that mean "no constraint" on a Setup control.
 BLANK = (None, "", "all", "All")
@@ -69,15 +70,6 @@ def unknown_columns(columns: Sequence[str], selected: Mapping[str, Any]) -> List
     """
     known = set(columns)
     return [c for c, v in (selected or {}).items() if c not in known and as_values(v)]
-
-
-def matching(rows: Sequence[Tuple[str, ...]],
-             constraints: Sequence[Constraint]) -> Iterable[int]:
-    """The indices of the rows satisfying every constraint (all of them when there are none)."""
-    if not constraints:
-        return range(len(rows))
-    return (i for i, row in enumerate(rows)
-            if all(row[c] in allowed for c, allowed in constraints))
 
 
 # ── keying a cache entry to the source it was built from ─────────────────────

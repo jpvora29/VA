@@ -1,41 +1,47 @@
-"""Filter cube — every filter cascade answered from ONE cached distinct-combination set.
+"""Filter cube — every filter cascade answered from ONE cached, indexed combination set.
 
-The Setup form's ten dropdowns each narrow to what the *other* selections allow. Done in
-SQL that is one ``SELECT DISTINCT <col> … WHERE <others>`` per column — ten scans of the
-fact table per keystroke, and the per-combination cache is cold every time the user picks
-something new. On a warehouse of any size that is the wait.
+The Setup form's ten dropdowns each narrow to what the *other* selections allow. Done in SQL
+that is one ``SELECT DISTINCT <col> … WHERE <others>`` per column — ten scans of the fact
+table per keystroke, and the per-combination cache is cold every time the user picks something
+new. On a warehouse of any size that is the wait.
 
-The insight: the cascade only ever needs the DISTINCT COMBINATIONS of the filter columns,
-and there are far fewer of those than fact rows — the combinations are bounded by the real
-dimensional grain, not by row count (a 152k-row book collapses to ~13k tuples, ~2 MB). So we
-read that cube ONCE per data source and answer every subsequent cascade from memory:
+The insight: the cascade only ever needs the DISTINCT COMBINATIONS of the filter columns, and
+there are far fewer of those than fact rows — they are bounded by the real dimensional grain,
+not by row count. So we read that cube ONCE per data source and answer every subsequent
+cascade from memory:
 
-    ten SQL scans per change  →  one scan per session, then a ~2 ms in-memory filter
+    ten SQL scans per change  →  one scan per dataset, then an indexed lookup
 
-Safety: a source whose cube is implausibly wide (a filter column with client-level grain)
-would defeat the point, so :func:`build_cube` refuses past ``_MAX_ROWS`` and returns
-``None`` — the caller then falls back to the original SQL cascade. Correctness is identical
-either way; only the speed differs.
+*Indexed*, not scanned. An earlier version of this cube walked every combination in Python per
+keystroke, which put it back in the business of being O(size): a real 80M-row book has
+millions of combinations, the cube declined past its cap, and the cascade quietly went back to
+SQL. The combinations now live in an inverted index (:mod:`studio.cube_index`) — dictionary
+encoded columns plus a posting list per value — so a selection is resolved from the rows its
+narrowest constraint admits, and the answer no longer depends on how big the cube is.
+
+Safety: a source whose dimensional grain is wider than :data:`_MAX_ROWS` combinations declines
+(:func:`build_sql_cube` returns ``None``) and the caller falls back to the original SQL
+cascade. Correctness is identical either way; only the speed differs.
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
-
-from sqlalchemy import text
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from logger import get_logger
-from studio import cube_core
+from studio import cube_core, cube_store
 
 logger = get_logger(__name__)
 
 # Values that mean "no constraint" on a Setup control.
 BLANK = cube_core.BLANK
-# Above this many distinct combinations the cube stops being a shortcut (it would cost more
-# to ship and scan than the SQL it replaces), so we decline and let SQL handle it.
-_MAX_ROWS = 400_000
+
+# The most combinations worth cubing. ``None`` defers to :func:`studio.cube_store.max_rows`,
+# which reads ``STUDIO_CUBE_MAX_ROWS`` AT CALL TIME — the app loads its ``.env`` after importing
+# this module, so a cap captured here would silently ignore the setting. Kept as a module
+# attribute because it is the knob that decides whether a warehouse is served by cube or by SQL.
+_MAX_ROWS: Optional[int] = None
 
 # How a selection becomes constraints is shared with the scope cube (``studio.cube_core``);
 # both slice the same filter grain, and they must agree on what "no constraint" means.
@@ -44,32 +50,17 @@ _as_values = cube_core.as_values
 
 @dataclass(frozen=True)
 class FilterCube:
-    """The distinct combinations of ``columns``, with the cascade over them.
+    """The distinct combinations of the filter columns, with the cascade over them."""
 
-    ``rows`` holds each combination as a tuple of strings in ``columns`` order; ``display``
-    maps a column's string form back to the ORIGINAL value, so a numeric year still reaches
-    Dash as an int (the dropdowns' values must keep their type to match the stored selection).
-    """
+    data: cube_store.CubeData
 
-    columns: Tuple[str, ...]
-    rows: Tuple[Tuple[str, ...], ...]
-    display: Mapping[str, Mapping[str, Any]]
+    @property
+    def columns(self) -> tuple:
+        return self.data.columns
 
-    def _index(self, column: str) -> Optional[int]:
-        try:
-            return self.columns.index(column)
-        except ValueError:
-            return None
-
-    def _matching(self, constraints: Sequence[Tuple[int, Tuple[str, ...]]]) -> Iterable[Tuple[str, ...]]:
-        if not constraints:
-            return self.rows
-        return (row for row in self.rows
-                if all(row[i] in allowed for i, allowed in constraints))
-
-    def _constraints(self, selected: Mapping[str, Any],
-                     *, skip: Tuple[str, ...] = ()) -> List[Tuple[int, Tuple[str, ...]]]:
-        return cube_core.constraints_for(self.columns, selected, skip=skip)
+    @property
+    def n_rows(self) -> int:
+        return self.data.n_rows
 
     def values(self, column: str, selected: Mapping[str, Any]) -> Optional[List[Any]]:
         """``column``'s values that survive every OTHER selection, or None if unknown here.
@@ -77,103 +68,56 @@ class FilterCube:
         The column's own selection is skipped — a dropdown must keep offering the siblings
         of what is already chosen, or picking one value would collapse its own list to it.
         """
-        i = self._index(column)
-        if i is None:
+        index = self.data.index
+        if not index.has(column):
             return None
-        back = self.display.get(column, {})
-        seen = {row[i] for row in self._matching(self._constraints(selected, skip=(column,)))}
-        return [back.get(v, v) for v in sorted(seen)]
+        ids = index.select(index.constraints(selected, skip=(column,)))
+        return index.distinct_values(column, ids)
 
     def cascade(self, selected: Mapping[str, Any]) -> Dict[str, List[Any]]:
-        """``{column: surviving values}`` for EVERY column, in a single pass over the cube.
+        """``{column: surviving values}`` for EVERY column of the cube.
 
-        Asking column by column would re-scan the cube once per dropdown (ten scans, and the
-        cost the cube exists to remove). One pass suffices because of how "skip the column's
-        own selection" behaves: count each row's violated constraints, and
-
-          * 0 violations → the row is live for every column;
-          * exactly 1 violation → the row is live ONLY for the column it violates (that is
-            precisely the column whose own constraint is skipped);
-          * 2 or more → the row is live for no column.
+        One selection resolved per DISTINCT question, which is at most eleven: the columns
+        with no selection of their own all ask the same question (every constraint applies),
+        so they share one answer; each constrained column asks its own (its own constraint
+        lifted). Each is an index lookup, so a cascade is bounded by the constraints the user
+        has actually made — never by the size of the cube.
         """
-        constraints = self._constraints(selected)
-        if not constraints:
-            live = [(row, None) for row in self.rows]
-        else:
-            live = []
-            for row in self.rows:
-                violated = [i for i, allowed in constraints if row[i] not in allowed]
-                if not violated:
-                    live.append((row, None))
-                elif len(violated) == 1:
-                    live.append((row, violated[0]))
+        index = self.data.index
+        constraints = index.constraints(selected)
+        constrained = {column for column, _ in constraints}
+        unconstrained_ids = index.select(constraints)
 
-        seen: Dict[int, set] = {i: set() for i in range(len(self.columns))}
-        for row, only in live:
-            if only is None:
-                for i, value in enumerate(row):
-                    seen[i].add(value)
+        out: Dict[str, List[Any]] = {}
+        for column in self.columns:
+            if column in constrained:
+                others = [(c, keys) for c, keys in constraints if c != column]
+                ids = index.select(others)
             else:
-                seen[only].add(row[only])
-        return {
-            column: [self.display[column].get(v, v) for v in sorted(seen[i])]
-            for i, column in enumerate(self.columns)
-        }
+                ids = unconstrained_ids
+            out[column] = index.distinct_values(column, ids)
+        return out
 
 
 # ── building (once per source) ───────────────────────────────────────────────
 
 
-def _cube_from_rows(columns: Sequence[str], raw: Iterable[Sequence[Any]]) -> FilterCube:
-    """Fold raw distinct tuples into a cube, remembering each value's original type."""
-    columns = tuple(columns)
-    display: Dict[str, Dict[str, Any]] = {c: {} for c in columns}
-    rows: List[Tuple[str, ...]] = []
-    for record in raw:
-        keys = []
-        for column, value in zip(columns, record):
-            key = cube_core.key_of(value)
-            display[column].setdefault(key, value)
-            keys.append(key)
-        rows.append(tuple(keys))
-    return FilterCube(columns=columns, rows=tuple(rows), display=display)
+def build_sql_cube(engine, table: str, columns: Sequence[str],
+                   measure: Optional[str] = None) -> Optional[FilterCube]:
+    """One streamed pass over ``columns``; None when the grain is too wide to be worth it.
 
-
-def build_sql_cube(engine, table: str, columns: Sequence[str]) -> Optional[FilterCube]:
-    """One ``SELECT DISTINCT`` over ``columns``; None when it is too wide to be worth it.
-
-    ``columns`` are verified schema identifiers supplied by the flow registry, never user
-    input. The row cap is applied in SQL so an unexpectedly wide source is cheap to reject.
+    ``measure`` is not used by the cascade. It is accepted so the artifact this writes is the
+    SAME one the scope cube needs (:mod:`studio.scope_cube`), which is what keeps a cold start
+    to one scan of the fact table instead of two.
     """
-    quoted = ", ".join(f'"{c}"' for c in columns)
-    sql = f"SELECT DISTINCT {quoted} FROM \"{table}\" LIMIT {_MAX_ROWS + 1}"
-    try:
-        with engine.connect() as conn:
-            raw = conn.execute(text(sql)).fetchall()
-    except Exception as exc:  # noqa: BLE001 — a cube is an optimisation, never a requirement
-        logger.warning("filter_cube: %s cube unavailable, falling back to SQL: %s", table, exc)
-        return None
-    if len(raw) > _MAX_ROWS:
-        logger.warning("filter_cube: %s has >%d filter combinations — using SQL cascade",
-                       table, _MAX_ROWS)
-        return None
-    cube = _cube_from_rows(columns, raw)
-    logger.info("filter_cube: %s cube built — %d combination(s) over %d column(s)",
-                table, len(cube.rows), len(cube.columns))
-    return cube
+    data = cube_store.build_sql(engine, table, columns, measure=measure, cap=_MAX_ROWS)
+    return None if data is None else FilterCube(data)
 
 
 def build_frame_cube(frame, columns: Sequence[str]) -> Optional[FilterCube]:
     """The same cube for an uploaded dataset's in-memory frame."""
-    present = [c for c in columns if c in getattr(frame, "columns", ())]
-    if not present:
-        return None
-    unique = frame[present].drop_duplicates()
-    if len(unique) > _MAX_ROWS:
-        logger.warning("filter_cube: dataset has >%d filter combinations — using the frame scan",
-                       _MAX_ROWS)
-        return None
-    return _cube_from_rows(present, unique.itertuples(index=False, name=None))
+    data = cube_store.build_frame(frame, columns, cap=_MAX_ROWS)
+    return None if data is None else FilterCube(data)
 
 
 # ── caching (per source, invalidated when the source changes) ────────────────
@@ -185,56 +129,26 @@ _DISK_DIR = Path(__file__).resolve().parent / "_cache"
 _sql_fingerprint = cube_core.source_fingerprint
 
 
-def _disk_path(fingerprint: Any, columns: Sequence[str]) -> Path:
-    return cube_core.cache_path(_DISK_DIR, "cube", fingerprint, tuple(columns))
+def disk_dir() -> Path:
+    """Where built cubes are persisted — read through a function so tests can redirect it."""
+    return _DISK_DIR
 
 
-def _read_disk(path: Path, columns: Sequence[str]) -> Optional[FilterCube]:
-    """A cube persisted by an earlier launch, or None.
+def sql_cube(engine, table: str, columns: Sequence[str],
+             measure: Optional[str] = None) -> Optional[FilterCube]:
+    """The cached cube for a database table — memory, then disk, then one streamed scan.
 
-    The DISTINCT scan is the only expensive step, and it is invalidated by the database's
-    own size+mtime — so persisting it means only the FIRST launch for a given dataset pays,
-    however big the warehouse is.
+    The disk tier is what makes a big warehouse bearable: the scan is invalidated by the
+    database's own size+mtime, so only the FIRST launch for a given dataset pays for it.
     """
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            payload = json.load(fh)
-    except (OSError, ValueError):
-        return None
-    if tuple(payload.get("columns", ())) != tuple(columns):
-        return None
-    return _cube_from_rows(columns, payload.get("rows", ()))
-
-
-def _write_disk(path: Path, cube: FilterCube) -> None:
-    try:
-        _DISK_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            # The original values (not the string keys), so types survive the round-trip.
-            back = [cube.display[c] for c in cube.columns]
-            json.dump({"columns": list(cube.columns),
-                       "rows": [[b.get(k, k) for b, k in zip(back, row)] for row in cube.rows]}, fh)
-        tmp.replace(path)                              # atomic swap
-    except (OSError, TypeError, ValueError) as exc:    # noqa: BLE001 — cache is best-effort
-        logger.debug("filter_cube: disk write failed: %s", exc)
-
-
-def sql_cube(engine, table: str, columns: Sequence[str]) -> Optional[FilterCube]:
-    """The cached cube for a database table — memory, then disk, then one DISTINCT scan."""
     fingerprint = _sql_fingerprint(engine, table)
-    key = ("sql", fingerprint, tuple(columns))
+    key = ("sql", fingerprint, tuple(columns), measure)
     if key in _cache:
         return _cache[key]
 
-    path = _disk_path(fingerprint, columns)
-    cube = _read_disk(path, columns)
-    if cube is not None:
-        logger.info("filter_cube: %s cube from disk cache (%d combinations)", table, len(cube.rows))
-    else:
-        cube = build_sql_cube(engine, table, columns)
-        if cube is not None:
-            _write_disk(path, cube)
+    data = cube_store.load_or_build_sql(engine, table, columns, measure=measure,
+                                        disk_dir=_DISK_DIR, cap=_MAX_ROWS)
+    cube = None if data is None else FilterCube(data)
     _cache[key] = cube
     return cube
 
@@ -255,13 +169,13 @@ def clear() -> None:
 
 # ── memoized cascades ────────────────────────────────────────────────────────
 
-# A user revisits the same scope constantly while trying filter combinations, so the last
-# few hundred cascades are worth keeping. Bounded, and dropped whenever a cube is.
+# A user revisits the same scope constantly while trying filter combinations, so the last few
+# hundred cascades are worth keeping. Bounded, and dropped whenever a cube is.
 _CASCADE_CACHE_MAX = 512
 _cascade_cache: Dict[Any, Dict[str, List[Any]]] = {}
 
 
-def _selection_key(selected: Mapping[str, Any]) -> Tuple:
+def _selection_key(selected: Mapping[str, Any]) -> tuple:
     return tuple(sorted((c, _as_values(v)) for c, v in (selected or {}).items()))
 
 

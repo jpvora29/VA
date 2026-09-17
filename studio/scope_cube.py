@@ -6,76 +6,77 @@ it re-derives them on EVERY filter change. Both were full aggregate scans of the
     SELECT SUM(Premium) FROM GPR WHERE …                       -- the total
     SELECT Carrier_Group, SUM(Premium) … GROUP BY Carrier_Group -- the rank
 
-Their cost is linear in ROW COUNT, so a warehouse ten times the size makes the filter pane
-ten times slower — which is exactly what a big dataset felt like.
+Their cost is linear in ROW COUNT, so a warehouse ten times the size makes the filter pane ten
+times slower — which is exactly what a big dataset felt like.
 
-Both questions, though, only ever slice on the ten FILTER columns, and premium is additive.
-So a rollup at the filter grain answers them exactly:
+Both questions, though, only ever slice on the ten FILTER columns, and premium is additive. So
+a rollup at the filter grain answers them exactly:
 
-    SELECT <filter columns>, SUM(Premium), COUNT(*) FROM GPR GROUP BY <filter columns>
+    SELECT <filter columns>, SUM(Premium) FROM GPR GROUP BY <filter columns>
 
-Its size is the dimensional grain, not the row count (a 152k-row book rolls up to ~13k rows),
-and it does not grow with the warehouse — a 10M-row book with the same dimensions rolls up to
-the same ~13k. Built once per data source, cached to disk like the filter cube, and every
-subsequent preview is an in-memory pass:
+Its size is the dimensional grain, not the row count, and it does not grow with the warehouse.
+Built once per data source, cached to disk as arrays, and every subsequent preview is an
+indexed read of it (:mod:`studio.cube_index`): the total is a summed slice of the measure
+column, and the whole ranked field is one ``bincount`` over the carrier codes.
 
-    two aggregate scans per change  →  one rollup per dataset, then a ~2 ms scan
+    two aggregate scans per change  →  one rollup per dataset, then an indexed lookup
 
-Safety, exactly as for the filter cube: a rollup that is not much smaller than the source is
-no shortcut, so :func:`build_sql_rollup` declines past ``_MAX_ROWS`` and returns ``None``, and
-a selection that constrains a column the rollup does not span is refused
+Safety, exactly as for the filter cube: a grain wider than :data:`_MAX_ROWS` declines and
+returns ``None``, and a selection that constrains a column the rollup does not span is refused
 (:meth:`ScopeCube.can_answer`). The caller then runs the original SQL. Same numbers either
 way; only the speed differs.
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
-from sqlalchemy import text
+import numpy as np
 
 from logger import get_logger
-from studio import cube_core
+from studio import cube_core, cube_store
 
 logger = get_logger(__name__)
 
-# Above this many rollup rows the cube stops being a shortcut over the source it replaces.
-_MAX_ROWS = 400_000
+# The most rollup rows worth cubing. ``None`` defers to ``STUDIO_CUBE_MAX_ROWS``, read at call
+# time (see :func:`studio.cube_store.max_rows` and the note in :mod:`studio.filter_cube`).
+_MAX_ROWS: Optional[int] = None
 
 
 @dataclass(frozen=True)
 class ScopeCube:
-    """A measure rolled up to the filter grain, plus the two reads the preview needs."""
+    """A measure rolled up to the filter grain, plus the reads the preview needs."""
 
-    columns: Tuple[str, ...]
-    rows: Tuple[Tuple[str, ...], ...]
-    measures: Tuple[float, ...]
+    data: cube_store.CubeData
+
+    @property
+    def columns(self) -> tuple:
+        return self.data.columns
+
+    @property
+    def measures(self) -> np.ndarray:
+        measures = self.data.measures
+        return np.empty(0, dtype=np.float64) if measures is None else measures
 
     def can_answer(self, selected: Mapping[str, Any]) -> bool:
         """Whether every constraining column in ``selected`` is one this rollup spans."""
         return not cube_core.unknown_columns(self.columns, selected)
 
-    def _live(self, selected: Mapping[str, Any]) -> Iterable[int]:
-        return cube_core.matching(self.rows,
-                                  cube_core.constraints_for(self.columns, selected))
+    def _live(self, selected: Mapping[str, Any]):
+        index = self.data.index
+        return index.select(index.constraints(selected))
 
     def total(self, selected: Mapping[str, Any]) -> float:
         """``SUM(measure)`` over the selected scope."""
-        return sum(self.measures[i] for i in self._live(selected))
+        return self.data.index.sum_over(self._live(selected), self.measures)
 
     def totals_by(self, column: str, selected: Mapping[str, Any]) -> Dict[str, float]:
         """``{value: SUM(measure)}`` for ``column`` over the selected scope."""
-        try:
-            at = self.columns.index(column)
-        except ValueError:
+        index = self.data.index
+        if not index.has(column):
             return {}
-        out: Dict[str, float] = {}
-        for i in self._live(selected):
-            key = self.rows[i][at]
-            out[key] = out.get(key, 0.0) + self.measures[i]
-        return out
+        return dict(index.sums_by_code(column, self._live(selected), self.measures))
 
     def rank(self, column: str, entity: Any,
              selected: Mapping[str, Any]) -> Optional[Tuple[int, int]]:
@@ -98,55 +99,22 @@ class ScopeCube:
 # ── building (once per source) ───────────────────────────────────────────────
 
 
-def _rollup_from_rows(columns: Sequence[str],
-                      raw: Iterable[Sequence[Any]]) -> ScopeCube:
+def from_rows(columns: Sequence[str], raw) -> ScopeCube:
     """Fold ``(dim…, measure)`` records into a cube. The measure is the LAST field."""
-    rows: List[Tuple[str, ...]] = []
-    measures: List[float] = []
-    for record in raw:
-        rows.append(tuple(cube_core.key_of(v) for v in record[:-1]))
-        measures.append(float(record[-1] or 0.0))
-    return ScopeCube(columns=tuple(columns), rows=tuple(rows), measures=tuple(measures))
+    return ScopeCube(cube_store.from_rows(columns, raw, measure=True))
 
 
 def build_sql_rollup(engine, table: str, columns: Sequence[str],
                      measure: str) -> Optional[ScopeCube]:
-    """One ``GROUP BY`` over ``columns``; None when the result is too wide to be worth it.
-
-    ``columns``, ``table`` and ``measure`` are verified schema identifiers supplied by the
-    flow registry, never user input. The row cap is applied in SQL so an unexpectedly wide
-    source is cheap to reject.
-    """
-    quoted = ", ".join(f'"{c}"' for c in columns)
-    sql = (f'SELECT {quoted}, SUM("{measure}") FROM "{table}" '
-           f"GROUP BY {quoted} LIMIT {_MAX_ROWS + 1}")
-    try:
-        with engine.connect() as conn:
-            raw = conn.execute(text(sql)).fetchall()
-    except Exception as exc:  # noqa: BLE001 — a rollup is an optimisation, never a requirement
-        logger.warning("scope_cube: %s rollup unavailable, falling back to SQL: %s", table, exc)
-        return None
-    if len(raw) > _MAX_ROWS:
-        logger.warning("scope_cube: %s rolls up to >%d rows — using the aggregate queries",
-                       table, _MAX_ROWS)
-        return None
-    cube = _rollup_from_rows(columns, raw)
-    logger.info("scope_cube: %s rollup built — %d row(s) over %d column(s)",
-                table, len(cube.rows), len(cube.columns))
-    return cube
+    """One streamed ``GROUP BY`` over ``columns``; None when the grain is too wide."""
+    data = cube_store.build_sql(engine, table, columns, measure=measure, cap=_MAX_ROWS)
+    return None if data is None else ScopeCube(data)
 
 
 def build_frame_rollup(frame, columns: Sequence[str], measure: str) -> Optional[ScopeCube]:
     """The same rollup for an uploaded dataset's in-memory frame."""
-    present = [c for c in columns if c in getattr(frame, "columns", ())]
-    if not present or measure not in getattr(frame, "columns", ()):
-        return None
-    grouped = frame.groupby(present, dropna=False)[measure].sum().reset_index()
-    if len(grouped) > _MAX_ROWS:
-        logger.warning("scope_cube: dataset rolls up to >%d rows — using the frame scan",
-                       _MAX_ROWS)
-        return None
-    return _rollup_from_rows(present, grouped.itertuples(index=False, name=None))
+    data = cube_store.build_frame(frame, columns, measure=measure, cap=_MAX_ROWS)
+    return None if data is None else ScopeCube(data)
 
 
 # ── caching (per source, invalidated when the source changes) ────────────────
@@ -155,56 +123,22 @@ _cache: Dict[Any, Optional[ScopeCube]] = {}
 _DISK_DIR = Path(__file__).resolve().parent / "_cache"
 
 
-def _read_disk(path: Path, columns: Sequence[str]) -> Optional[ScopeCube]:
-    """A rollup persisted by an earlier launch, or None.
-
-    The ``GROUP BY`` is the only expensive step and it is invalidated by the database's own
-    size+mtime, so persisting it means only the FIRST launch for a given dataset pays —
-    however big the warehouse is.
-    """
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            payload = json.load(fh)
-    except (OSError, ValueError):
-        return None
-    if tuple(payload.get("columns", ())) != tuple(columns):
-        return None
-    rows = tuple(tuple(r) for r in payload.get("rows", ()))
-    measures = tuple(float(m) for m in payload.get("measures", ()))
-    if len(rows) != len(measures):
-        return None
-    return ScopeCube(columns=tuple(columns), rows=rows, measures=measures)
-
-
-def _write_disk(path: Path, cube: ScopeCube) -> None:
-    try:
-        _DISK_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({"columns": list(cube.columns),
-                       "rows": [list(r) for r in cube.rows],
-                       "measures": list(cube.measures)}, fh)
-        tmp.replace(path)                              # atomic swap
-    except (OSError, TypeError, ValueError) as exc:    # noqa: BLE001 — cache is best-effort
-        logger.debug("scope_cube: disk write failed: %s", exc)
-
-
 def sql_rollup(engine, table: str, columns: Sequence[str],
                measure: str) -> Optional[ScopeCube]:
-    """The cached rollup for a database table — memory, then disk, then one ``GROUP BY``."""
+    """The cached rollup for a database table — memory, then disk, then one streamed scan.
+
+    The disk artifact is the one the filter cube builds for the same (database, columns,
+    measure), so whichever of the two is asked for first pays for the scan and the other maps
+    it (:func:`studio.cube_store.load_or_build_sql`).
+    """
     fingerprint = cube_core.source_fingerprint(engine, table)
     key = ("sql", fingerprint, tuple(columns), measure)
     if key in _cache:
         return _cache[key]
 
-    path = cube_core.cache_path(_DISK_DIR, "rollup", fingerprint, tuple(columns), measure)
-    cube = _read_disk(path, columns)
-    if cube is not None:
-        logger.info("scope_cube: %s rollup from disk cache (%d rows)", table, len(cube.rows))
-    else:
-        cube = build_sql_rollup(engine, table, columns, measure)
-        if cube is not None:
-            _write_disk(path, cube)
+    data = cube_store.load_or_build_sql(engine, table, columns, measure=measure,
+                                        disk_dir=_DISK_DIR, cap=_MAX_ROWS)
+    cube = None if data is None else ScopeCube(data)
     _cache[key] = cube
     return cube
 

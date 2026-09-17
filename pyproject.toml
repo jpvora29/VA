@@ -14,6 +14,9 @@ dependencies = [
     "langgraph>=1.2.4",
     "langgraph-checkpoint-sqlite>=3.1.0",
     "mcp>=1.2.0",
+    # The Studio filter cube is dictionary-encoded int32 columns with posting lists over
+    # them (studio/cube_index.py), so numpy is a direct dependency now, not just pandas'.
+    "numpy>=2.0",
     "openpyxl>=3.1.5",
     "pandas>=3.0.3",
     "plotly>=6.8.0",

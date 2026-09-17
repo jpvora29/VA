@@ -3,8 +3,9 @@
 LLM-free on purpose: this never imports ``core.initialization`` (which builds the
 chatbot's Azure clients). It resolves a SQLite engine from the same ``DB_PATH`` the live
 app uses, falling back to a deterministic seed DB for local dev. Filter dropdown
-options come straight from the DB (DISTINCT per column), so the form always
-reflects the real data — no dependency on the legacy ``config`` package.
+options come from the data itself — from the cached filter cube where it spans the
+column, and a DISTINCT scan where it does not — so the form always reflects the real
+data, with no dependency on the legacy ``config`` package.
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ import json
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Sequence
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from sqlalchemy import create_engine, text
 
@@ -148,6 +149,25 @@ def cube_columns(flow: str) -> Tuple[str, ...]:
     return tuple(c for c in FILTER_COLUMN.values() if c in spec.columns)
 
 
+def cube_measure(flow: str) -> str | None:
+    """The measure the flow's cubes carry, or None when it has none.
+
+    The filter cascade never needs a measure, but the Setup preview's rollup does — and the
+    two are the same distinct combinations at the same grain. Passing it here means BOTH are
+    served by one artifact (:func:`studio.cube_store.load_or_build_sql`), so a cold start
+    scans the fact table once instead of twice. On an 80M-row book that is the difference
+    between one long first launch and two.
+    """
+    from core.analytics.sql import flow_spec, resolve_measure
+
+    try:
+        measure, _agg = resolve_measure(flow_spec(flow), "premium")
+        return measure
+    except Exception as exc:  # noqa: BLE001 - a flow with no premium measure still cascades
+        logger.debug("cube_measure(%s) unavailable: %s", flow, exc)
+        return None
+
+
 def cascade_options(
     flow: str, columns: Sequence[str], selected: Dict[str, Any] | None = None
 ) -> Dict[str, List[Dict[str, Any]]]:
@@ -168,7 +188,8 @@ def cascade_options(
         return {}
     wanted = [c for c in columns if c in spec.columns]
     selected = {c: v for c, v in (selected or {}).items() if c in spec.columns}
-    cube = filter_cube.sql_cube(get_engine(), spec.primary_table, cube_columns(flow))
+    cube = filter_cube.sql_cube(get_engine(), spec.primary_table, cube_columns(flow),
+                                cube_measure(flow))
     cascaded = filter_cube.cascade(cube, selected) if cube is not None else {}
 
     out: Dict[str, List[Dict[str, Any]]] = {}
@@ -280,22 +301,27 @@ def _peer_members(flow: str, carrier: str, *, country=None, engine=None) -> List
 
 
 def filter_options(flow: str, *, engine=None) -> Dict[str, List[Dict[str, Any]]]:
-    """`{column: [{label, value}]}` for every entity/temporal column of the flow.
+    """`{column: [{label, value}]}` for the columns the form filters on — the page's first render.
 
-    Driven by the flow registry so it stays in lock-step with the schema. Distinct
-    values are cached per column (``_distinct_cached``) so a huge table is scanned
-    once per column, not on every page load.
+    Two things make this cheap on a large warehouse.
+
+    It asks for the FILTER VOCABULARY (:func:`cube_columns`), not every entity/temporal column
+    the schema has. ``CLIENT_NAME`` and ``Billing_Date`` are entity and temporal too, and both
+    have row-level grain — scanning them cost more than every dropdown put together, and no
+    control on the form offers either.
+
+    And it answers from the filter cube (an unfiltered cascade IS each column's full value
+    list), so it shares the one scan the cascade pays for rather than adding a DISTINCT per
+    column. A flow the cube does not span falls back to exactly that, per column, as before.
     """
     spec = get_flow_registry().get(flow)
     if spec is None:
         return {}
-    cols = [c.name for c in spec.columns.values() if c.role in {"entity", "temporal"}]
-    options: Dict[str, List[Dict[str, Any]]] = {}
-    for col in cols:
-        values = _distinct_cached(spec.primary_table, col)
-        if values:
-            options[col] = [{"label": str(v), "value": v} for v in values]
-    return options
+    columns = cube_columns(flow)
+    if not columns:
+        columns = tuple(c.name for c in spec.columns.values()
+                        if c.role in {"entity", "temporal"})
+    return {col: opts for col, opts in cascade_options(flow, columns, {}).items() if opts}
 
 
 # ── persisted filter-option cache (fast app launch) ──────────────────────────
@@ -360,27 +386,47 @@ def cached_filter_options(flow: str) -> Dict[str, List[Dict[str, Any]]]:
     return opts
 
 
-def warm_filter_cache(flow: str = "gpr") -> str:
-    """Build the on-disk filter caches now so the next app launch is instant.
+def warm_filter_cache(flow: str = "gpr") -> List[str]:
+    """Build the on-disk cube now so the next app launch is instant. Returns a report.
 
-    Warms BOTH tiers: the per-column option lists (the page's initial render) and the
-    filter cube (every subsequent cascade). Run offline once — see
-    ``python -m studio.warm_cache``."""
-    from studio import filter_cube
+    ONE artifact covers everything the Setup page asks of the data: the cascade's distinct
+    combinations, the preview's premium rollup, and the initial dropdown lists. Run offline
+    once per database — see ``python -m studio.warm_cache``.
 
-    cached_filter_options(flow)
+    The report says how many combinations the book actually has, which is the number that
+    decides whether the cube serves this warehouse at all: past ``STUDIO_CUBE_MAX_ROWS`` it
+    declines and every filter change falls back to SQL."""
+    from studio import cube_store, filter_cube
+
     spec = get_flow_registry().get(flow)
-    if spec is not None:
-        filter_cube.sql_cube(get_engine(), spec.primary_table, cube_columns(flow))
-    return str(_cache_file(flow))
+    if spec is None:
+        return [f"no flow registered as {flow!r}"]
+
+    columns = cube_columns(flow)
+    measure = cube_measure(flow)
+    cube = filter_cube.sql_cube(get_engine(), spec.primary_table, columns, measure)
+    if cube is None:
+        cap = cube_store.max_rows()
+        return [f"{spec.primary_table}: too wide to cube — the Setup page will use SQL "
+                f"(raise STUDIO_CUBE_MAX_ROWS above {cap:,} to cube it anyway)"]
+
+    cached_filter_options(flow)                    # the initial lists, off the cube
+    return [f"{spec.primary_table}: {cube.n_rows:,} combination(s) over "
+            f"{len(columns)} column(s), measure={measure}",
+            f"cached in {filter_cube.disk_dir()}",
+            f"option lists cached in {_cache_file(flow).name}"]
 
 
 def ensure_filter_indexes(flow: str = "gpr") -> List[str]:
     """Create a single-column index on each filter column (one-time).
 
     OPT-IN: this WRITES to the DB and, on a huge table, can take minutes and grow
-    the file — so it is never run automatically. It makes the first DISTINCT build
-    (and any cache rebuild after a data refresh) dramatically faster."""
+    the file — so it is never run automatically.
+
+    It does NOT speed up building the cube: that is one ``GROUP BY`` over all ten filter
+    columns, which no single-column index serves. What it speeds up is the SQL FALLBACK —
+    the per-column cascade a source too wide to cube still runs — so it is worth having on a
+    warehouse the cube declines, and worth skipping on one it serves."""
     spec = get_flow_registry().get(flow)
     if spec is None:
         return []
