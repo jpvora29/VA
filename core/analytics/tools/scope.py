@@ -74,9 +74,21 @@ def turn_scope(
     resolved_filters: Optional[Mapping[str, Any]] = None,
     plan_filters: Optional[Mapping[str, Any]] = None,
     timeframe: str = "",
+    user_query: str = "",
     matcher: Optional[ValueMatcher] = None,
 ) -> TurnScope:
-    """The shared filters for this turn, as {column: value | [values]}."""
+    """The shared filters for this turn, as {column: value | [values]}.
+
+    The year is established from four sources, in this order: the plan's own
+    filters, the turn contract's resolved filters, the plan's `timeframe`, and —
+    last — the years named in `user_query` itself.
+
+    That last one is a floor, not a preference. The three sources above it are all
+    written by a model, and when every one of them omitted a year the turn
+    silently computed over the whole history of the book: "Zurich premium in
+    Canada for 2025" answered with 2024 and 2025 added together. A year the user
+    typed is not a judgement call, and reading it off the question costs nothing.
+    """
     spec = flow_spec(flow)
     columns = {name.lower(): name for name in spec.columns}
 
@@ -96,7 +108,7 @@ def turn_scope(
 
     year_column = spec.date_columns.get("year")
     if year_column and year_column not in filters:
-        years = years_in(timeframe)
+        years = years_in(timeframe) or years_in(user_query)
         if years:
             filters[year_column] = _collapse(years)
 
@@ -125,17 +137,33 @@ def pin_latest_year(
     trend — is returned untouched: those need more than one year and pinning one
     would break them.
 
-    Returns the filters to use and the year that was pinned, or ``None`` when
-    nothing was. The caller needs that second value: a default the reader cannot
-    see is worse than no default (`core.answers.scope`).
+    A question that names an explicit YEAR is pinned to that year rather than
+    left alone. This used to bail out on any timeframe reference at all, which
+    read as "the turn has said what it wants, do not interfere" — and was wrong
+    in the one case that mattered: a question naming a year whose filters had not
+    picked it up got no period AND no default, so it silently summed the book.
+    A stated year is applied; a quarter or a multi-period term still defers,
+    because those need more than one year.
+
+    Returns the filters to use and the year that was DEFAULTED, or ``None`` when
+    none was. The caller needs that second value: a default the reader cannot see
+    is worse than no default (`core.answers.scope`). A year the reader stated
+    themselves is not a default and is reported as ``None`` — there is nothing to
+    disclose about giving someone what they asked for.
     """
     from core.analytics.library import get_latest_year
-    from core.analytics.timeframe import names_a_timeframe
+    from core.analytics.timeframe import explicit_years, names_a_timeframe
     from core.analytics.types import PrimitiveArgs
 
     pinned = dict(filters)
     year_column = flow_spec(flow).date_columns.get("year")
-    if not year_column or year_column in pinned or names_a_timeframe(user_query):
+    if not year_column or year_column in pinned:
+        return pinned, None
+    stated = explicit_years(user_query)
+    if stated:
+        pinned[year_column] = stated[0] if len(stated) == 1 else stated
+        return pinned, None
+    if names_a_timeframe(user_query):
         return pinned, None
     facts = get_latest_year(
         PrimitiveArgs(flow=flow, metric="", group_by=(), filters=dict(pinned)),

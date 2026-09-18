@@ -42,10 +42,16 @@ import os
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
 from rich.console import Console, Group, RenderableType
+from rich.highlighter import ReprHighlighter
 from rich.padding import Padding
 from rich.table import Table
 from rich.text import Text
 from rich.traceback import Traceback
+
+#: Rich's own highlighter, so a URL, a number or a quoted string in a plain
+#: message still reads as what it is — the Dash startup banner's address
+#: included.
+_HIGHLIGHTER = ReprHighlighter()
 
 #: Fields that say WHAT HAPPENED, in the order a reader wants them. Anything not
 #: named here keeps its emitted order after these — insertion order carries the
@@ -225,6 +231,44 @@ def event_line(record: logging.LogRecord, fields: Mapping[str, Any],
     ))
 
 
+def short_name(name: str) -> str:
+    """"core.graph.analyst_subgraph" -> "analyst_subgraph".
+
+    The module a line came from, without the path that is the same on every line.
+    """
+    return str(name or "").rsplit(".", 1)[-1]
+
+
+def message_line(record: logging.LogRecord, *, glyphs: bool = True) -> RenderableType:
+    """A record with no structured fields — a plain `logger.info(...)`, or a
+    third-party library's line — in the SAME columns as an event.
+
+    It has to be the same columns. A log where half the lines are aligned and
+    half are bare strings is harder to read than one where none of them are, and
+    these lines were losing their timestamp and level entirely.
+
+    The message keeps Rich's highlighter, which is what styles a URL as a URL —
+    the Dash startup banner's address stopped looking like a link when this path
+    printed a pre-styled `Text` instead, because a styled Text is not re-scanned.
+    """
+    style, marker = style_for(record.levelno, glyphs=glyphs)
+    grid = Table.grid(padding=(0, 1))
+    grid.add_column(style="dim", width=TIME_WIDTH, no_wrap=True)
+    grid.add_column(style=style, width=MARKER_WIDTH, no_wrap=True)
+    grid.add_column(width=EVENT_WIDTH, no_wrap=True, overflow="ellipsis")
+    grid.add_column(style="magenta", width=NODE_WIDTH,
+                    no_wrap=True, overflow="ellipsis")
+    grid.add_column(overflow="fold")
+    grid.add_row(
+        logging.Formatter("%(asctime)s", "%H:%M:%S").format(record),
+        marker,
+        "",
+        short_name(record.name),
+        _HIGHLIGHTER(Text(record.getMessage())),
+    )
+    return grid
+
+
 def plain_line(record: logging.LogRecord, fields: Mapping[str, Any]) -> str:
     """The previous one-line JSON rendering, for piping and grepping."""
     message = record.getMessage()
@@ -252,11 +296,13 @@ class EventConsoleHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             fields: Dict[str, Any] = dict(getattr(record, "event_fields", {}) or {})
-            if self.plain or not fields:
+            if self.plain:
                 self._emit_plain(record, fields)
-            else:
+            elif fields:
                 self._rule_for(fields)
                 self.console.print(event_line(record, fields, glyphs=self.glyphs))
+            else:
+                self.console.print(message_line(record, glyphs=self.glyphs))
             if record.exc_info:
                 self.console.print(
                     Traceback.from_exception(*record.exc_info, show_locals=False)
@@ -265,9 +311,14 @@ class EventConsoleHandler(logging.Handler):
             self.handleError(record)
 
     def _emit_plain(self, record: logging.LogRecord, fields: Mapping[str, Any]) -> None:
-        style, _marker = style_for(record.levelno, glyphs=self.glyphs)
-        text = plain_line(record, fields) if fields else f"{record.name}: {record.getMessage()}"
-        self.console.print(Text(text, style=style if record.levelno >= logging.WARNING else ""))
+        """One greppable line: time, level, logger, message, JSON payload.
+
+        Carries the timestamp and level that the rendered form puts in columns —
+        a piped log that has neither is not much use as a log.
+        """
+        stamp = logging.Formatter("%(asctime)s", "%H:%M:%S").format(record)
+        body = plain_line(record, fields) if fields else f"{record.name}: {record.getMessage()}"
+        self.console.print(f"{stamp} {record.levelname:<8} {body}", highlight=False)
 
     def _rule_for(self, fields: Mapping[str, Any]) -> None:
         """Draw a rule when this event belongs to a different turn than the last."""

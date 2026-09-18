@@ -87,11 +87,31 @@ def test_measure_words_bucketed_as_entities_are_skipped_not_clarified():
         assert unresolved == [], term
 
 
-def test_years_and_fallback_family_resolve_nothing():
+def test_a_fallback_family_resolves_nothing():
     entities = QueryEntities(years=["2024"], carriers=["Zurich"])
     assert resolve_entities(entities, "fallback", matcher=_matcher) == ({}, [])
+
+
+def test_a_named_year_resolves_onto_the_flow_s_year_column():
+    """This used to assert the opposite — "years are the timeframe slice's job".
+
+    That was the bug. The timeframe slice is written by a model, and when it came
+    back blank the year the user typed reached nothing: "Zurich premium in Canada
+    for 2025" was answered with every year in the book added together, and the
+    answer said nothing about it. A stated period is a filter like any other.
+    """
+    entities = QueryEntities(years=["2024"], carriers=["Zurich"])
+    resolved, unresolved = resolve_entities(entities, "premium", matcher=_matcher)
+    assert resolved.get("Year") == ["2024"]
+    assert unresolved == []
+
+
+def test_a_relative_period_is_left_to_the_timeframe_slice():
+    """"latest" is not a year. Only a four-digit year becomes a filter here; a
+    relative term still resolves downstream, where the data decides what it means."""
+    entities = QueryEntities(years=["latest", "last 12 months"])
     resolved, _ = resolve_entities(entities, "premium", matcher=_matcher)
-    assert "2024" not in str(resolved)  # years are the timeframe slice's job
+    assert "Year" not in resolved
 
 
 def test_merge_resolved_values_unions_in_order():

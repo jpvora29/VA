@@ -142,9 +142,15 @@ def build_compute_tool(
         # rule, which is where the unscoped all-years aggregate actually reached
         # readers. `question` is the turn's own words, so a query that DOES name a
         # timeframe (an explicit year, a quarter, YoY, a trend) is left alone.
+        # Always take the scoped filters back. `defaulted` says whether a period
+        # was CHOSEN for the turn (which the answer must disclose); it is None
+        # both when nothing changed and when the helper applied a year the
+        # question stated outright. Treating it as "did anything change?" meant a
+        # solver that forgot the year the reader typed still summed every year.
         scoped, defaulted = scoped_to_latest_year(flow, grounded.filters)
-        if defaulted is not None:
+        if scoped != grounded.filters:
             grounded = replace(grounded, filters=scoped)
+        if defaulted is not None:
             logger.info("solver scope defaulted to latest year %s (%s)", defaulted, flow)
         # A pinned peer set belongs to one flow; a call against the other flow
         # resolves its peers from the Peers table as usual.

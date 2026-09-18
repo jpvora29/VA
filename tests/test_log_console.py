@@ -197,6 +197,56 @@ def test_a_record_with_no_structured_fields_still_prints():
     assert "GET /_dash-update-component" in buffer.getvalue()
 
 
+def test_a_plain_message_keeps_its_time_level_and_logger():
+    """It lost all three when this path printed a bare string — worse than before."""
+    record = logging.LogRecord("core.graph.gpr_subgraph", logging.WARNING, __file__, 1,
+                               "GPR chart input rows: 42", (), None)
+    console, buffer = _console()
+    handler = EventConsoleHandler(console)
+    handler.glyphs = False
+    handler.emit(record)
+    line = buffer.getvalue().splitlines()[0]
+    assert ":" in line[:8], "the timestamp column is missing"
+    assert " ! " in line, "the level marker is missing"
+    assert "gpr_subgraph" in line, "the logger should name the module, not the full path"
+    assert "core.graph" not in line, "the shared path prefix is noise on every line"
+
+
+def test_a_plain_message_lines_up_with_a_structured_event():
+    """Half-aligned output is harder to read than none. Same columns for both."""
+    console, buffer = _console()
+    handler = EventConsoleHandler(console)
+    handler.emit(_record("route_selected", node="router", table_family="both"))
+    handler.emit(logging.LogRecord("werkzeug", logging.INFO, __file__, 1,
+                                   "serving", (), None))
+    lines = buffer.getvalue().splitlines()
+    assert lines[0].index("router") == lines[1].index("werkzeug")
+
+
+def test_a_url_in_a_plain_message_is_styled_as_a_url():
+    """The reported regression: the startup address stopped looking like a link.
+
+    A pre-styled `Text` is not re-scanned by Rich, so the highlighter never saw
+    the URL. The message is handed over unstyled instead.
+    """
+    buffer = _Buffer()
+    console = Console(file=buffer, width=200, height=25, force_terminal=True,
+                      no_color=False, color_system="standard", legacy_windows=False)
+    record = logging.LogRecord("dash", logging.INFO, __file__, 1,
+                               "Dash is running on http://127.0.0.1:8050/", (), None)
+    EventConsoleHandler(console).emit(record)
+    out = buffer.getvalue()
+    # Rich's `repr.url` style — underline + bright blue — wraps the address.
+    assert "\x1b[4;94mhttp://127.0.0.1:8050/" in out
+
+
+def test_plain_style_still_carries_the_time_and_level():
+    """A piped log with neither is not much use as a log."""
+    out = _emit(_record("positioning_gathered", node="n", slices=4), plain=True)
+    assert "INFO" in out
+    assert out.strip()[0].isdigit(), "the line should start with a timestamp"
+
+
 def test_logging_never_raises_into_the_caller():
     """A renderer bug must not take down the turn it was reporting on."""
     class Exploding:

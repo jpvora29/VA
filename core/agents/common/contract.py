@@ -96,6 +96,29 @@ def _column_for(spec: Any, kind: str) -> Optional[str]:
     return None
 
 
+#: A four-digit year inside a mention. Not `\b`-anchored, so "FY2025" and "2025."
+#: both yield 2025.
+_YEAR_TERM = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
+
+
+def resolve_years(terms: Iterable[str]) -> List[str]:
+    """The four-digit years named in these mentions, in order, deduplicated.
+
+    Years are resolved by READING them, not by fuzzy-matching them against stored
+    values the way a carrier name is. A year is a number: "2025" against a column
+    holding 2024 and 2025 is a similarity question with a right answer that has
+    nothing to do with similarity, and a near-miss there silently answers about
+    the wrong period.
+    """
+    out: List[str] = []
+    for term in terms or ():
+        for match in _YEAR_TERM.finditer(str(term or "")):
+            year = match.group(0)
+            if year not in out:
+                out.append(year)
+    return out
+
+
 def resolve_entities(
     entities: QueryEntities,
     table_family: str,
@@ -166,6 +189,25 @@ def resolve_entities(
                     unresolved.append(
                         UnresolvedTerm(kind=kind, term=term, column=column, flow=flow)
                     )
+
+        # The period the question named, onto the flow's own year column.
+        #
+        # This used to fall on the floor. `QueryEntities.years` was extracted and
+        # then never resolved — the entity loop above has no `years` kind, and the
+        # year column is a DATE column, not one of the registry's entity columns.
+        # So the only route a stated year had into the scope was the planner LLM
+        # copying it into its `timeframe` field, and when that did not happen the
+        # turn computed over every year in the book and said nothing about it:
+        # "Zurich premium in Canada for 2025" answered 7,810 where 2025 alone is
+        # 3,870. The latest-year guard cannot catch it either, because that fires
+        # only when the question names NO timeframe — and this one does.
+        year_column = (getattr(spec, "date_columns", None) or {}).get("year")
+        years = resolve_years(getattr(entities, "years", None) or ())
+        if year_column and years:
+            bucket = resolved.setdefault(year_column, [])
+            for year in years:
+                if year not in bucket:
+                    bucket.append(year)
     return resolved, unresolved
 
 

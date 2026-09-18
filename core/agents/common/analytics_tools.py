@@ -26,6 +26,7 @@ Flag: ``ANALYTICS_TOOLS`` = ``on`` (default) | ``plan`` (no extra LLM call) |
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple
@@ -337,6 +338,9 @@ class AnalyticsToolRunner:
             resolved_filters=resolved_filters,
             plan_filters=plan.get("filters"),
             timeframe=str(plan.get("timeframe") or ""),
+            # Last resort for the period: the question's own words. Every source
+            # above this one is written by a model (see `turn_scope`).
+            user_query=user_query,
             matcher=self._matcher,
         )
         year_column = flow_spec(flow).date_columns.get("year")
@@ -346,6 +350,21 @@ class AnalyticsToolRunner:
         )
         after = scope.filters.get(year_column) if year_column else None
         defaulted_year = after if before is None and after is not None else None
+        if year_column and after is None:
+            # Every period in the book is about to be added into one figure. That
+            # is occasionally right (a trend, a rolling window) and usually not,
+            # and until this line it was indistinguishable from a scoped answer:
+            # the reader saw a number, the log saw nothing. `defaulted_year` only
+            # covers the case where a period WAS chosen.
+            log_event(
+                logger,
+                "scope_has_no_period",
+                logging.WARNING,
+                node="analytics_tools",
+                flow=flow,
+                scope=sorted(scope.filters),
+                reason="no period was resolved, so this answer covers every year in the data",
+            )
         if scope.blocked:
             # The turn named something we cannot find in the data. Computing a
             # wider answer would be confidently wrong — hand it to the SQL path.
@@ -438,9 +457,12 @@ def _pin_latest_year(
     filters, year = pin_latest_year(
         flow, scope.filters, user_query=user_query, engine=engine
     )
-    if year is None:
-        return scope
-    logger.info("analytics scope defaulted to latest year %s (%s)", year, flow)
+    # Always take the filters back, not only when a year was DEFAULTED: the helper
+    # also pins a year the question stated outright, and that one is reported as
+    # `None` precisely because there is nothing to disclose about it. Reading the
+    # second value as "did anything change?" discarded it.
+    if year is not None:
+        logger.info("analytics scope defaulted to latest year %s (%s)", year, flow)
     return replace(scope, filters=filters)
 
 

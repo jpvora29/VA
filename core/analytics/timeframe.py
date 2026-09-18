@@ -93,6 +93,29 @@ def names_a_timeframe(query: str, *, timeframe_hint: str = "") -> bool:
     )
 
 
+def explicit_years(query: str, *, timeframe_hint: str = "") -> list[int]:
+    """The year(s) the question pins OUTRIGHT, or [] when it pins none.
+
+    The counterpart to `names_a_timeframe`, and the reason it needed one. That
+    guard answers "did the turn say which periods it wants?", and every caller
+    used it to decide whether to leave the scope alone — so a question that
+    named a year and then failed to get that year into its filters was left with
+    no period at all, and quietly answered over the whole book.
+
+    Empty when the question names a quarter or a multi-period term (trend, YoY,
+    "across years"): those need more than the single year the digits name, and
+    pinning it would answer a narrower question than the one asked. Empty too
+    when the context filler already resolved a relative term, which that path
+    owns.
+    """
+    text = query or ""
+    if timeframe_hint and timeframe_hint.strip():
+        return []
+    if _TIME_REFERENCE.search(text) or _QUARTER.search(text):
+        return []
+    return sorted({int(match) for match in _EXPLICIT_YEAR.findall(text)})
+
+
 def resolve_default_timeframe(
     valid_year_quarter: Iterable, query: str, *, timeframe_hint: str = ""
 ) -> str:
