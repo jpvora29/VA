@@ -27,16 +27,59 @@ _chat_checkpointer: Optional[Any] = None
 _pitch_checkpointer: Optional[Any] = None
 
 
+def _state_types() -> tuple:
+    """Our own types that travel INSIDE a checkpoint.
+
+    LangGraph serializes graph state with msgpack and, for a type it does not
+    recognise, currently deserializes it anyway while logging
+
+        Deserializing unregistered type core.schemas.routing.RoutingContext from
+        checkpoint. This will be blocked in a future version.
+
+    It is a real forward-compatibility warning, not noise: when that release
+    lands, an un-allowlisted `RoutingContext` stops round-tripping and every
+    resumed conversation silently loses its filters. Naming the type here both
+    answers the warning and pins the allowlist to what we actually store —
+    anything else in a checkpoint is a type we did not intend to put there.
+
+    `RoutingContext` is the only entry because its nested models
+    (`QueryEntities`, `QueryIntent`, `OutputDirectives`, `UnresolvedTerm`) are
+    encoded within it rather than as separate extension types.
+    """
+    from core.schemas.routing import RoutingContext
+
+    return (RoutingContext,)
+
+
+def _serializer() -> Any:
+    """The checkpoint serializer, with our state types allowlisted.
+
+    Returns ``None`` when this LangGraph release has no allowlist, so the saver
+    keeps its own default rather than being handed something it cannot use.
+    """
+    try:
+        from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
+        return JsonPlusSerializer(allowed_msgpack_modules=_state_types())
+    except TypeError:  # pragma: no cover - older LangGraph, no allowlist support
+        return None
+    except Exception:  # pragma: no cover - never let serde setup stop the app
+        logger.warning("Could not configure the checkpoint serializer.", exc_info=True)
+        return None
+
+
 def _new_memory_checkpointer() -> Any:
     """Return the available LangGraph in-memory saver for this installed version."""
+    serde = _serializer()
+    kwargs = {"serde": serde} if serde is not None else {}
     try:
         from langgraph.checkpoint.memory import InMemorySaver
 
-        return InMemorySaver()
+        return InMemorySaver(**kwargs)
     except ImportError:  # older LangGraph releases
         from langgraph.checkpoint.memory import MemorySaver
 
-        return MemorySaver()
+        return MemorySaver(**kwargs)
 
 
 def _new_sqlite_checkpointer() -> Any:
@@ -48,7 +91,8 @@ def _new_sqlite_checkpointer() -> Any:
 
         # check_same_thread=False: the streaming chat job runs in a daemon thread.
         conn = sqlite3.connect(app_db_path(), check_same_thread=False)
-        saver = SqliteSaver(conn)
+        serde = _serializer()
+        saver = SqliteSaver(conn, serde=serde) if serde is not None else SqliteSaver(conn)
         saver.setup()  # idempotent: creates checkpoints tables on first run
         return saver
     except Exception:  # pragma: no cover - degrade gracefully to in-memory

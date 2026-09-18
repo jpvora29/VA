@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 
@@ -203,3 +203,39 @@ def available(tier: str = DEFAULT_TIER) -> bool:
 def reset_clients() -> None:
     """Drop the client cache (tests that swap credentials mid-run)."""
     _CLIENTS.clear()
+
+
+def describe_tiers() -> List[Dict[str, str]]:
+    """What each tier resolves to right now, for a startup banner or a health page.
+
+    Reads the environment through `resolve_tier`, so what this reports is what the
+    next call will actually use — the point of showing it at all. A tier with no
+    deployment configured says so rather than being omitted, because a silently
+    absent tier is how a turn fails later for a reason nobody saw at startup.
+    """
+    endpoint = os.getenv("ENDPOINT")
+    rows: List[Dict[str, str]] = []
+    for tier in TIERS:
+        config = resolve_tier(tier)
+        model = config.deployment or endpoint_deployment(endpoint) or ""
+        rows.append({
+            "tier": tier,
+            "model": model or "(not configured)",
+            "effort": config.effort or "",
+            "temperature": "" if config.temperature is None else str(config.temperature),
+        })
+    return rows
+
+
+def primary_model() -> str:
+    """The model the answer-writing tier uses — the one name worth showing a user.
+
+    `reason` is the tier the chat answer itself is written by. Falls back through
+    the default tier so a single-`DEPLOYMENT` setup still names its model.
+    """
+    for tier in ("reason", DEFAULT_TIER):
+        config = resolve_tier(tier)
+        model = config.deployment or endpoint_deployment(os.getenv("ENDPOINT"))
+        if model:
+            return model
+    return ""

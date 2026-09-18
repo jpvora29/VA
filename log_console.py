@@ -197,12 +197,37 @@ def rows_table(name: str, rows: Sequence[Mapping[str, Any]], *, empty: str = "-"
     return table
 
 
+#: The turn-close event whose whole content is a cost breakdown. It is the one
+#: event a reader wants as a table rather than a line, so it gets one — the
+#: numbers were already accumulated per agent and per turn
+#: (`core.observability`), and arrived squashed into `token_total=input_tokens=…`.
+TOKEN_EVENT = "turn_token_total"
+
+
+def token_summary(fields: Mapping[str, Any]) -> Optional[RenderableType]:
+    """The token event as a table, or ``None`` when this is not that event."""
+    if str(fields.get("event") or "") != TOKEN_EVENT:
+        return None
+    total = fields.get("token_total")
+    if not isinstance(total, Mapping):
+        return None
+    from log_banner import token_table
+
+    by_agent = fields.get("by_agent")
+    return token_table(total, by_agent if isinstance(by_agent, Mapping) else None)
+
+
 def event_line(record: logging.LogRecord, fields: Mapping[str, Any],
                *, glyphs: bool = True) -> RenderableType:
     """One structured event: time, level, event name, node, then its fields."""
     style, marker = style_for(record.levelno, glyphs=glyphs)
     empty = "—" if glyphs else "-"
+    summary = token_summary(fields)
     ordered = order_fields(fields)
+    if summary is not None:
+        # The two fields the table is BUILT from move into it; anything else the
+        # event carries (the call count) still belongs on the line.
+        ordered = [(k, v) for k, v in ordered if k not in ("token_total", "by_agent")]
     inline = [(k, v) for k, v in ordered if not is_rows(v)]
     tabular = [(k, v) for k, v in ordered if is_rows(v)]
 
@@ -221,14 +246,13 @@ def event_line(record: logging.LogRecord, fields: Mapping[str, Any],
         str(fields.get("node") or ""),
         field_text([(k, v) for k, v in inline if k != "node"], empty=empty),
     )
-    if not tabular:
-        return grid
     # Nested tables sit under the fields column, not against the left margin, so
     # the eye reads them as belonging to the event above rather than as a new one.
-    return Group(grid, *(
-        Padding(rows_table(n, r, empty=empty), (0, 0, 0, GUTTER))
-        for n, r in tabular
-    ))
+    blocks = [Padding(rows_table(n, r, empty=empty), (0, 0, 0, GUTTER))
+              for n, r in tabular]
+    if summary is not None:
+        blocks.append(Padding(summary, (0, 0, 0, GUTTER)))
+    return Group(grid, *blocks) if blocks else grid
 
 
 def short_name(name: str) -> str:

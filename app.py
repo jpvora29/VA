@@ -93,8 +93,14 @@ if __name__ == "__main__":
     # is on so the poll callbacks keep being served while a streaming chat turn runs in
     # its own daemon thread (ui/jobs.py). Hot reload stays off — a reload mid-Generate
     # used to reset the view to Setup so the finished deck never showed.
+    from logger import print_startup_banner
     from studio.serve import run_app
     from studio.warm_cache import warm_in_background
+
+    # What this process is and which model it will use, before anything else
+    # scrolls past. Dash's reloader runs the module twice; the banner is cheap
+    # and printing it in the parent too is better than guessing which is which.
+    print_startup_banner("carrier premium and broker perception, answered from the data")
 
     # Build the Studio filter cube now, in the background. On a large warehouse it is one
     # multi-minute GROUP BY; paying for it at startup means the first person to touch a

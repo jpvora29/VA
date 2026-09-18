@@ -49,6 +49,30 @@ def _user_chip(username: str) -> html.Div:
     )
 
 
+def _model_chip() -> html.Div:
+    """Which model is answering, named beside the identity.
+
+    Small and quiet: a reader who has just been given an answer should be able to
+    see what wrote it without opening a drawer, and a reviewer comparing two runs
+    needs to know whether the model moved under them. Empty when nothing is
+    configured — a chip reading "(not configured)" tells a user nothing they can
+    act on, and the startup banner already says it where it can be fixed.
+    """
+    try:
+        from core.llm.clients import primary_model
+
+        model = primary_model()
+    except Exception:  # noqa: BLE001 - the navbar renders with or without a model
+        model = ""
+    if not model:
+        return html.Div(className="va-model-chip", hidden=True)
+    return html.Div(
+        [html.I(className="bi bi-cpu"), html.Span(model, className="va-model-name")],
+        className="va-model-chip",
+        title=f"Answers on this page are written by {model}",
+    )
+
+
 def build_navbar(active: str, username: str) -> html.Header:
     """Brand on the left, workspace tabs in the middle, the user on the right."""
     return html.Header(
@@ -82,7 +106,7 @@ def build_navbar(active: str, username: str) -> html.Header:
             # beside the identity rather than inside a workspace, because it is
             # about the whole product, not about the tab you happen to be on.
             html.Div(
-                [tour_button(), _user_chip(username)],
+                [_model_chip(), tour_button(), _user_chip(username)],
                 className="va-navbar-end",
             ),
         ],
