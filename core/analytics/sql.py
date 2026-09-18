@@ -34,9 +34,20 @@ def _allowlist(spec: FlowSpec) -> set:
     return set(spec.columns)
 
 
+def declares_column(spec: FlowSpec, column: str) -> bool:
+    """Whether this flow has `column` — the question `safe_column` answers by raising.
+
+    A caller holding filters that may span two flows (a `both` route resolves
+    entities for each) needs to ASK before building a query, because the raise is
+    the right answer for an injection guard and the wrong one for "this filter
+    belongs to the other dataset".
+    """
+    return column in _allowlist(spec)
+
+
 def safe_column(spec: FlowSpec, column: str) -> str:
     """Return `column` iff the flow declares it; else raise (injection guard)."""
-    if column not in _allowlist(spec):
+    if not declares_column(spec, column):
         raise ValueError(f"unknown column {column!r} for flow {spec.name}")
     return column
 

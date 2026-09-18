@@ -109,7 +109,7 @@ def _is_number(value: Any) -> bool:
 #: producer that DECLARES a column money gets a currency mark.
 NUMBER = "number"
 
-_FORMATTED = (P.MONEY, P.PERCENT, P.SIGNED_PERCENT, P.RANK_KIND, P.COUNT)
+_FORMATTED = (P.MONEY, P.MONEY_SI, P.PERCENT, P.SIGNED_PERCENT, P.RANK_KIND, P.COUNT)
 
 
 def _kind_of(view: EvidenceView, column: str) -> str:
@@ -142,6 +142,12 @@ def _format_for(kind: str, unit: str) -> Optional[Format]:
             scheme=Scheme.fixed, precision=2 if unit else 0, group=Group.yes,
             symbol=Symbol.yes, symbol_prefix="$", symbol_suffix=unit,
         )
+    if kind == P.MONEY_SI:
+        # Raw magnitude, SI suffix per cell: "$1.77M", "$840k". For a result set
+        # that arrived without a shared scale, where the alternative the reader
+        # actually saw was "1770.0".
+        return Format(scheme=Scheme.decimal_si_prefix, precision=3,
+                      symbol=Symbol.yes, symbol_prefix="$")
     if kind == P.PERCENT:
         return Format(scheme=Scheme.fixed, precision=1,
                       symbol=Symbol.yes, symbol_suffix="%")

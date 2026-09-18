@@ -62,8 +62,18 @@ it best.
   unless the findings plainly say otherwise; it is the turn's own read of what
   the reader asked for. Empty means the choice is yours.
 - `this_answer_should_cover` — the evidence this KIND of question owes its
-  reader. It is a checklist for completeness, NOT a set of headings: cover each
-  one where the findings support it, in whatever structure reads best.
+  reader, each with the dataset (`from`) that serves it. It is a checklist for
+  completeness, NOT a set of headings: cover each one where the findings support
+  it, in whatever structure reads best.
+- `lead_with_dataset` — which dataset the answer is mostly ABOUT, and it governs
+  PROPORTION. A question routed to both datasets does not owe them equal space:
+  write the answer from this one, and give the other a sentence or two where it
+  agrees or disagrees with what the lead evidence shows. A performance question
+  leads on `gpr` — premium, its movement, its contributors and the carrier's
+  standing — with the broker survey as a short supporting note near the end.
+  Never invert that because the other dataset is easier to narrate; a survey
+  score is one number with a direction, and an answer built on it in place of
+  the premium decomposition has not answered the question that was asked.
 - `could_not_be_established` — gaps the turn already knows about, written as
   reader-facing sentences. State each one plainly, once, near the claim it
   limits. Do not soften them, do not bury them in a closing caveat, and never

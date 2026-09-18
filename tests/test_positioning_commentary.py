@@ -171,6 +171,40 @@ def test_an_untyped_result_set_still_right_aligns_and_sorts_its_numbers():
     assert premium["type"] == "numeric"
 
 
+def test_a_tool_path_premium_prints_as_money_not_as_a_raw_float():
+    """The reported failure: the table under the answer showed "1770.0".
+
+    The tool path folds computed facts into rows of plain floats, so a premium
+    landed in the cell with no unit at all while the prose above it said $1.77M.
+    The digest already recorded what each column IS; the panel now reads it.
+    """
+    from core.analytics.tools.rows import kinds_from_digest
+    from ui.components.evidence import _columns_for
+    from ui.evidence import EvidenceView
+
+    digest = [{"name": "breakdown", "column": "Premium"},
+              {"name": "share_of_wallet", "column": "Share_of_Wallet_%"}]
+    kinds = kinds_from_digest("gpr", digest)
+    assert kinds["Premium"] == P.MONEY_SI
+
+    view = EvidenceView(
+        label="t", columns=["Premium"], records=[{"Premium": 1770.0}],
+        column_kinds=kinds,
+    )
+    spec = _columns_for(view)[0]
+    assert spec["type"] == "numeric"
+    # `$.3s` is d3's SI form: 1770 -> "$1.77k", 1_770_000 -> "$1.77M".
+    assert spec["format"].to_plotly_json()["specifier"] == "$.3s"
+
+
+def test_a_survey_score_is_not_dressed_up_as_money():
+    """7.2 premium and 7.2 score are the same float; only the flow says which."""
+    from core.analytics.tools.rows import kinds_from_digest
+
+    digest = [{"name": "breakdown", "column": "Score"}]
+    assert kinds_from_digest("survey", digest) == {}
+
+
 def test_an_undeclared_number_is_never_printed_as_money():
     """A lens returning a Year column has an all-numeric column that is not an
     amount, and "$2,024" is worse than leaving it exactly as it arrived."""

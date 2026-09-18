@@ -65,12 +65,62 @@ def test_the_insight_adapter_no_longer_drops_the_focus():
     assert "synthesis_focus=synthesis_focus" in source
 
 
-def test_the_brief_states_what_the_answer_owes():
+def test_the_brief_states_what_the_answer_owes_and_which_dataset_serves_it():
     brief = build_brief("q", "analyst", "l", (), (),
                         requirements=("annual_movement", "quarterly_comparison"))
     assert brief.as_payload()["this_answer_should_cover"] == [
-        "annual_movement", "quarterly_comparison"
+        {"requirement": "annual_movement", "from": "gpr"},
+        {"requirement": "quarterly_comparison", "from": "gpr"},
     ]
+
+
+def test_a_hybrid_performance_answer_leads_on_premium_not_survey():
+    """The reported failure: a `both`-routed performance question came back written
+    almost entirely from the survey half.
+
+    A flat list of requirement keys read as five equal headings, and a survey
+    score is far the easier thing to narrate — one number with a direction, no
+    decomposition. The brief now states the proportion, from `intents.yaml`'s own
+    ordering rather than from anyone's guess.
+    """
+    from core.analysis import build_contract
+    from core.analysis.operation import PERFORMANCE
+
+    contract = build_contract(
+        PERFORMANCE, conditions=("comparable_survey_data",),
+        allowed_sources=("gpr", "survey"),
+    )
+    payload = build_brief("q", "analyst", "l", (), (),
+                          requirements=contract.keys()).as_payload()
+
+    assert payload["lead_with_dataset"] == "gpr"
+    covered = payload["this_answer_should_cover"]
+    assert covered[0]["from"] == "gpr", "premium evidence must come first"
+    assert [c["requirement"] for c in covered if c["from"] == "survey"] == [
+        "survey_movement"
+    ], "the survey half is one supporting requirement, not half the answer"
+
+
+def test_a_perception_question_still_leads_on_the_survey():
+    """The rule is proportion from the contract, not a premium preference."""
+    from core.analysis import build_contract
+    from core.analysis.operation import PERCEPTION
+
+    contract = build_contract(PERCEPTION, allowed_sources=("survey",))
+    payload = build_brief("q", "analyst", "l", (), (),
+                          requirements=contract.keys()).as_payload()
+    assert payload["lead_with_dataset"] == "survey"
+
+
+def test_the_narrator_is_told_what_the_lead_dataset_governs():
+    """A field the prompt never explains is a field the writer ignores."""
+    from core.answers import narrator
+
+    source = narrator.__doc__ or ""
+    prompt = " ".join(
+        str(v) for v in vars(narrator).values() if isinstance(v, str)
+    )
+    assert "lead_with_dataset" in prompt + source
 
 
 def test_the_brief_carries_gaps_as_reader_facing_sentences():

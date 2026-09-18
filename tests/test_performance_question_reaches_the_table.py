@@ -353,6 +353,72 @@ def test_an_explicit_year_is_left_alone(warehouse):
     assert scope["Year"] == [scenario.CURRENT_YEAR]
 
 
+#: What a `both` route's resolved filters actually look like: the question's
+#: entities resolved against BOTH datasets, so every filter arrives twice under
+#: two schemas' spellings.
+HYBRID_FILTERS = {
+    "Carrier_Group": [scenario.CARRIER],
+    "Country": [scenario.COUNTRY],
+    "Year": [scenario.CURRENT_YEAR],
+    "Carrier": [scenario.CARRIER],
+    "SurveyCountry": [scenario.COUNTRY],
+    "Survey_Year": [scenario.CURRENT_YEAR],
+}
+
+
+def test_a_hybrid_route_still_gets_its_position_table(warehouse):
+    """The reported failure: "How is Chubb performance in Singapore for 2025?"
+    routed to `both`, and the answer came back with survey commentary and no
+    premium table at all.
+
+    Every positioning primitive queries the GPR table. `safe_column` rightly
+    raises on `SurveyCountry`, and `build_positioning`'s per-primitive guard
+    swallowed all six of those raises as "this column could not be computed" —
+    so the pack was empty, the table was dropped, and the log blamed the data.
+    """
+    import core.graph.analyst_subgraph as sub
+
+    rc = _routing_context()
+    rc.resolved_filters = dict(HYBRID_FILTERS)
+    state = {
+        "question": QUESTION, "route": "both", "flow": "gpr",
+        "routing_context": rc,
+        "contract": build_contract(detect_operation(QUESTION),
+                                   allowed_sources=("gpr", "survey")),
+        "evidence": [],
+    }
+    views = sub.positioning_node(state).get("chart_plan") or []
+
+    assert views, "a hybrid performance turn must still produce the premium table"
+    assert views[0]["tab"] == "Position"
+    assert views[0]["rows"]
+
+
+def test_the_survey_spellings_are_dropped_and_the_premium_ones_kept(warehouse):
+    """The scope is narrowed, not widened: each dropped column is the survey
+    spelling of a premium filter still in place beside it."""
+    import core.graph.analyst_subgraph as sub
+
+    rc = _routing_context()
+    rc.resolved_filters = dict(HYBRID_FILTERS)
+    scope = sub.positioning_scope(
+        {"question": QUESTION, "route": "both", "routing_context": rc}
+    )
+    assert set(scope) == {"Carrier_Group", "Country", "Year"}
+
+
+def test_a_grouping_the_premium_book_does_not_have_falls_back_to_the_ladder():
+    """`detect_group_by` resolves nouns against every flow a `both` route touches."""
+    import core.graph.analyst_subgraph as sub
+    from core.schemas.routing import QueryIntent
+
+    rc = _routing_context(query_intent=QueryIntent(group_by=["SurveyPractice"]))
+    scope = {"Country": scenario.COUNTRY, "Year": scenario.CURRENT_YEAR}
+    assert sub.positioning_dimension(
+        {"routing_context": rc, "route": "both"}, scope
+    ) == "Product_Line"
+
+
 def test_an_explicit_grouping_decides_the_cut():
     """A stated grouping is a request; the ladder is only the default."""
     import core.graph.analyst_subgraph as sub

@@ -51,6 +51,39 @@ BRIEF_FIGURES = 80
 _STRUCTURE = re.compile(r"^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|\||```)")
 
 
+def requirement_sources(requirements: Sequence[str]) -> list[dict]:
+    """Each requirement with the dataset that serves it, in contract order.
+
+    Read from `intents.yaml` rather than inferred from the key's wording, so a
+    requirement that changes dataset changes here too and nowhere else.
+    """
+    from core.analysis.requirements import get_requirements
+
+    library = get_requirements()
+    out = []
+    for key in requirements:
+        requirement = library.requirement(key)
+        out.append({
+            "requirement": key,
+            "from": getattr(requirement, "source", "") or "",
+        })
+    return out
+
+
+def lead_dataset(requirements: Sequence[str]) -> str:
+    """The dataset the answer should be mostly ABOUT.
+
+    The first requirement's source. `intents.yaml` lists a performance intent's
+    required evidence before its conditional evidence, so premium leads and the
+    survey assessment is the supporting note — which is the proportion an ICG
+    reader expects and the one the writer kept inverting.
+    """
+    for entry in requirement_sources(requirements):
+        if entry["from"]:
+            return entry["from"]
+    return ""
+
+
 @dataclass(frozen=True)
 class NarrationBrief:
     """Everything the writer may use, and nothing else."""
@@ -81,7 +114,14 @@ class NarrationBrief:
             "question": self.question,
             "lead_with": self.synthesis_focus,
             "already_on_screen_as_filters": [{"field": k, "value": v} for k, v in self.scope],
-            "this_answer_should_cover": list(self.requirements),
+            # Each requirement WITH the dataset that serves it, in contract order.
+            # A flat list of keys lost that, and a hybrid performance turn — which
+            # owes four premium requirements and one survey one — read to the
+            # writer as five equal headings. The answer then came back written
+            # almost entirely from the survey half, because it is the easier half
+            # to narrate: one score, one direction, no decomposition.
+            "this_answer_should_cover": requirement_sources(self.requirements),
+            "lead_with_dataset": lead_dataset(self.requirements),
             "verified_findings": [
                 # `kind` separates an observed value from a derived comparison, so
                 # the writer can tell the reader what was MEASURED apart from what

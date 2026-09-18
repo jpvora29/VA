@@ -99,6 +99,7 @@ from ui.components.contribution import contribution_panel
 from ui.components.evidence import evidence_panel
 from ui.evidence import build_views
 from core.agents.common.chart_spec import normalize_chart_spec
+from core.analytics.tools.rows import kinds_from_digest
 from core.agents.common.directives import answer_shape
 from core.memory.feedback_reasons import (
     FREE_TEXT_REASON,
@@ -1658,17 +1659,21 @@ def _evidence_specs(state: dict[str, Any], table: str) -> list[dict[str, Any]]:
             for chart in analyst_charts
         ]
 
+    # lens -> (rows field, chart field, flow, analytics-provenance field). The
+    # last of these is what lets a tool-path table format itself: the digest
+    # records what each computed column IS, so a premium renders as "$1.77M"
+    # rather than as the raw "1770.0" the fold left in the cell.
     lenses = {
-        "survey": [("survey", "survey_query_result", "survey_chart")],
-        "premium": [("premium", "gpr_query_result", "gpr_chart")],
+        "survey": [("survey", "survey_query_result", "survey_chart", "survey", "survey_analytics")],
+        "premium": [("premium", "gpr_query_result", "gpr_chart", "gpr", "gpr_analytics")],
         "both": [
-            ("premium", "gpr_query_result", "gpr_chart"),
-            ("survey", "survey_query_result", "survey_chart"),
+            ("premium", "gpr_query_result", "gpr_chart", "gpr", "gpr_analytics"),
+            ("survey", "survey_query_result", "survey_chart", "survey", "survey_analytics"),
         ],
     }.get(table, [])
 
     specs = []
-    for lens, rows_key, chart_key in lenses:
+    for lens, rows_key, chart_key, flow, analytics_key in lenses:
         rows = state.get(rows_key)
         if isinstance(rows, list) and rows:
             specs.append(
@@ -1676,6 +1681,9 @@ def _evidence_specs(state: dict[str, Any], table: str) -> list[dict[str, Any]]:
                     "rows": rows,
                     "chart_data": normalize_chart_spec(state.get(chart_key)),
                     "lens": lens,
+                    "column_kinds": kinds_from_digest(
+                        flow, (state.get(analytics_key) or {}).get("facts") or []
+                    ),
                 }
             )
     return specs

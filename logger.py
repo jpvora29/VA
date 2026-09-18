@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
 
 from rich.console import Console
-from rich.logging import RichHandler
 from rich.theme import Theme
+
+import log_console
 
 # --- Custom theme ---
 CUSTOM_THEME = Theme(
@@ -51,33 +51,26 @@ _CONFIGURED = False
 class EventFieldFormatter(logging.Formatter):
     """Render `log_event`'s structured ``event_fields`` compactly after the message.
 
-    Without this, the previous ``%(message)s`` formatter dropped every structured
-    field attached by ``core.observability.log_event`` — so the useful observability
-    payload never reached the terminal. Tracebacks are left to RichHandler.
+    The one-line JSON rendering, kept because it is the right one for a log that
+    is piped, grepped or diffed. The terminal gets `log_console` instead — see
+    that module for why a bag of alphabetised JSON is unreadable on screen.
     """
 
     def format(self, record: logging.LogRecord) -> str:
-        message = record.getMessage()
         fields = getattr(record, "event_fields", None)
-        if fields:
-            # `event` is already the message; don't repeat it.
-            extra = {key: value for key, value in fields.items() if key != "event"}
-            if extra:
-                message = f"{message} {json.dumps(extra, default=str, sort_keys=True)}"
-        return f"{record.name}: {message}"
+        if not fields:
+            return f"{record.name}: {record.getMessage()}"
+        return log_console.plain_line(record, fields)
 
 
 def _configure(level: int) -> None:
     global _CONFIGURED
 
-    handler = RichHandler(
-        console=console,
-        rich_tracebacks=True,
-        tracebacks_show_locals=False,  # was True — dumped every local var on errors
-        show_path=False,  # keep lines compact; logger name is in the message
-        markup=False,  # structured JSON fields can contain '[' — don't parse markup
+    # Events render as aligned columns with a rule per turn; `LOG_STYLE=plain`
+    # falls back to the single-line JSON this handler also knows how to print.
+    handler = log_console.EventConsoleHandler(
+        console, plain=log_console.plain_style()
     )
-    handler.setFormatter(EventFieldFormatter())
 
     root = logging.getLogger()
     root.handlers.clear()

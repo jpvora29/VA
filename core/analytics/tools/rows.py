@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Tuple
 
+from core.analytics import columns
 from core.analytics.types import AnalyticsFact
 
 # fact.name -> how to label its value column. A callable takes the fact so a
@@ -48,6 +49,70 @@ def column_label(fact: AnalyticsFact) -> str:
     """The column this fact's value belongs under."""
     label = _LABELS.get(fact.name)
     return label(fact) if label else fact.name
+
+
+# fact.name -> how its column should READ. Same dispatch shape as `_LABELS`,
+# because naming a column and formatting it are one decision made twice: the
+# tool path folds facts into rows of raw floats, and without this the reader was
+# shown "1770.0" where the answer above it said "$1.77M".
+#
+# A fact not listed here has no declared kind, so the panel prints it exactly as
+# it arrived — the right default for a measure nobody has classified.
+_KINDS: Dict[str, str] = {
+    "rank": columns.RANK,
+    "yoy": columns.SIGNED_PERCENT,
+    "yoy_to_date": columns.SIGNED_PERCENT,
+    "period_change": columns.SIGNED_PERCENT,
+    "share_of_portfolio": columns.PERCENT,
+    "share_of_wallet": columns.PERCENT,
+}
+
+#: Facts whose value IS the flow's measure, so what they are depends on the flow:
+#: money on the premium book, a score on the survey.
+_MEASURE_FACTS = frozenset({
+    "breakdown", "market_presence", "peer_average", "peer_average_total",
+    "whitespace", "period_series", "ttm", "metric",
+})
+
+
+def _kind_for(flow: str, name: str) -> str:
+    """The kind a fact of this NAME reads as, on this flow. "" when undeclared.
+
+    Money is decided by the FLOW rather than by sniffing at the numbers: a
+    premium of 7.2 and a survey score of 7.2 are the same float, and only the
+    dataset they came from says which one is dollars.
+    """
+    kind = _KINDS.get(name)
+    if kind:
+        return kind
+    money = str(flow or "").strip().lower() == "gpr"
+    return columns.MONEY_SI if (name in _MEASURE_FACTS and money) else ""
+
+
+def column_kinds(flow: str, facts: Iterable[AnalyticsFact]) -> Dict[str, str]:
+    """{column label: kind} for the rows `facts_to_rows` builds from `facts`."""
+    kinds: Dict[str, str] = {}
+    for fact in facts:
+        kind = _kind_for(flow, fact.name)
+        if kind:
+            kinds[column_label(fact)] = kind
+    return kinds
+
+
+def kinds_from_digest(flow: str, digest: Iterable[Mapping[str, Any]]) -> Dict[str, str]:
+    """The same map, from the stored fact digest the graph state carries.
+
+    The UI reads state, not live facts — `facts_digest` already recorded each
+    fact's name and the column it was folded into, so the kinds come off the
+    record rather than being recomputed from a second source that could disagree.
+    """
+    kinds: Dict[str, str] = {}
+    for fact in digest or []:
+        column = str((fact or {}).get("column") or "")
+        kind = _kind_for(flow, str((fact or {}).get("name") or ""))
+        if column and kind:
+            kinds[column] = kind
+    return kinds
 
 
 def _dim_values(facts: Iterable[AnalyticsFact]) -> Dict[str, set]:

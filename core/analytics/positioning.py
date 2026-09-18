@@ -26,6 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from core.analytics import columns
 from core.analytics.library import (
     compute_breakdown,
     compute_market_presence,
@@ -98,9 +99,16 @@ DISPLAY_COLUMNS: Tuple[str, ...] = (
 #: — is it money, a percentage, a rank, or a label — to right-align it, format it
 #: and sort it numerically, and deriving that by sniffing at the cells (which is
 #: what the panel used to do) gets a year or a product code wrong sooner or later.
-TEXT, MONEY, PERCENT, RANK_KIND, SIGNED_PERCENT, COUNT = (
-    "text", "money", "percent", "rank", "signed_percent", "count",
-)
+#: The shared column vocabulary lives in `core.analytics.columns` — three modules
+#: speak it now, so it belongs to none of them. Re-exported here because the
+#: table that declares kinds and the constants naming them read better together.
+RANK_KIND = columns.RANK
+TEXT = columns.TEXT
+MONEY = columns.MONEY
+MONEY_SI = columns.MONEY_SI
+PERCENT = columns.PERCENT
+SIGNED_PERCENT = columns.SIGNED_PERCENT
+COUNT = columns.COUNT
 
 #: Columns whose sign carries a direction, so the panel can colour them from the
 #: VALUE rather than by searching the cell for a glyph.

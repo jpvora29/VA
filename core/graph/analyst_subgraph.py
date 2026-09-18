@@ -530,21 +530,54 @@ _POSITIONING_REQUIREMENTS = frozenset({
 })
 
 
+def gpr_filters(filters: dict, *, state: AnalystState) -> dict:
+    """`filters` keeping only columns the premium flow declares.
+
+    Dropping a filter is normally the wrong answer — it widens the scope the
+    reader asked for. Here it is the right one: the dropped columns are the SURVEY
+    spellings of filters the GPR columns beside them already carry, so the scope
+    is unchanged in meaning. Anything dropped is logged, because a filter that
+    disappears without a trace is how a widened scope becomes invisible.
+    """
+    from core.analytics.sql import declares_column, flow_spec
+
+    try:
+        spec = flow_spec("gpr")
+    except Exception:  # noqa: BLE001 - an unreadable registry never costs the table
+        return dict(filters)
+    kept = {c: v for c, v in filters.items() if declares_column(spec, c)}
+    dropped = [c for c in filters if c not in kept]
+    if dropped:
+        log_event(logger, "positioning_scope_narrowed", node="analyst_positioning",
+                  route=state.get("route", ""), dropped=sorted(dropped),
+                  kept=sorted(kept),
+                  reason="these filters belong to another flow's schema, not the premium book")
+    return kept
+
+
 def positioning_scope(state: AnalystState) -> dict:
     """The filters the position table is computed under.
 
-    The turn's resolved filters, with one correction: a scope that pins no year is
-    pinned to the latest year in the data, by the same helper the analytical
-    compute tool uses (`core.analytics.tools.scope.pin_latest_year`).
+    The turn's resolved filters, narrowed to the premium flow and pinned to a
+    period. Two corrections, both of which the table was silently losing:
 
-    Without it the table silently summed every year in the warehouse into one
-    figure and presented it as a position. That is the worst kind of wrong answer
-    — plausible, precise, and off by however many years the book holds — and it
-    was reachable from any question that named a carrier and a country but no
-    period. The rule already existed and both other paths already applied it;
-    this one simply did not call it.
+    1. **Only GPR columns.** A `both` route resolves the question's entities
+       against BOTH datasets, so the scope arrives carrying `SurveyCountry` and
+       `Survey_Year` beside `Country` and `Year`. Every positioning primitive
+       queries the GPR table, `safe_column` rightly raises on a column that flow
+       does not declare, and `build_positioning`'s per-primitive guard swallowed
+       all six of those raises as "this column could not be computed" — so the
+       pack came back empty and the answer lost its table, on every hybrid turn,
+       with nothing in the log naming a survey filter as the reason.
+    2. **A period.** A scope that pins no year is pinned to the latest year in
+       the data, by the same helper the analytical compute tool uses. Without it
+       the table summed every year in the warehouse into one figure and presented
+       it as a position — plausible, precise, and off by however many years the
+       book holds.
     """
-    scope = dict(resolved_filters_of(state.get("routing_context")) or {})
+    scope = gpr_filters(
+        resolved_filters_of(state.get("routing_context")) or {}, state=state
+    )
     try:
         pinned, year = pin_latest_year("gpr", scope, user_query=state["question"])
     except Exception as exc:  # noqa: BLE001 - a default year never costs the table
@@ -569,9 +602,16 @@ def positioning_dimension(state: AnalystState, scope: dict) -> str:
     product cuts by industry *within* that product rather than returning a single
     row whose share of the book is 100% by construction.
     """
+    # Validated against the PREMIUM flow, not merely taken. `detect_group_by`
+    # resolves grouping nouns against every flow the route touches, so a `both`
+    # turn can hand back a survey column — and cutting the premium book by a
+    # column it does not have produces no table at all, which is how a stated
+    # grouping turned into a missing answer rather than a different one.
     fixed = pinned_columns(scope)
     requested = [
-        column for column in group_by_of(state.get("routing_context"))
+        column for column in gpr_filters(
+            {c: True for c in group_by_of(state.get("routing_context"))}, state=state
+        )
         if column and column not in fixed
     ]
     if requested:
