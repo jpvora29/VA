@@ -50,7 +50,7 @@ SHARE_OF_MARKET = "Share of book"
 
 #: Prior-period columns. Present in `numeric_rows` for the claim layer and
 #: never in `rows`, because a table showing last year beside this year in
-#: every column is unreadable — the movement arrow is the readable form.
+#: every column is unreadable — one movement column is the readable form.
 PRIOR_CARRIER_PREMIUM = "Prior carrier premium"
 PRIOR_SHARE_OF_WALLET = "Prior share of wallet"
 PRIOR_SHARE_OF_PORTFOLIO = "Prior share of portfolio"
@@ -62,22 +62,49 @@ WALLET_CHANGE = "SoW change"
 PORTFOLIO_CHANGE = "Mix change"
 RANK_CHANGE = "Rank change"
 
-#: Direction glyphs. Plain text, so they survive a CSV export and a screen
-#: reader; the colour is applied by the table's conditional styling rather than
-#: baked in, because a cell that carries its own colour cannot be re-themed.
-UP = "▲"
-DOWN = "▼"
-FLAT = "–"
-
 #: Order the columns appear in. Carrier premium first because it is what was
 #: asked about; the market beside it because that is what makes it mean anything.
 COLUMNS: Tuple[str, ...] = (
     SLICE, MARSH_PREMIUM, CARRIER_PREMIUM, SHARE_OF_WALLET, SHARE_OF_PORTFOLIO, RANK,
 )
 
-#: Columns whose value carries a direction, so the table can colour them without
-#: parsing every cell looking for a glyph.
-DIRECTIONAL: Tuple[str, ...] = (CARRIER_PREMIUM, RANK)
+#: The movement column the display table carries as its own column.
+#:
+#: It used to be folded into the premium cell ("$0.90M  ▼ 25.0%"), which read well
+#: and sorted appallingly: a cell holding two numbers and a glyph is a STRING, and
+#: the browser sorted a premium column 100, 160, 40, 90. A figure a reader can
+#: sort is worth more than one they can read a movement off without moving their
+#: eyes, so the change gets a column and every figure stays a number.
+MOVEMENT_PERCENT = "YoY %"
+
+#: How many carriers the rank was taken among, for THIS slice.
+#:
+#: A column rather than a footnote, because the number genuinely differs by slice
+#: — a product Marsh places with two carriers and one it places with twenty are
+#: ranked among different fields — so no single sentence under the table is true
+#: of every row. It has to be here: "#5" alone is meaningless and "#5 of 12" and
+#: "#5 of 200" are different findings (`core/definitions/terms.yaml`), and the
+#: rank cell can no longer carry "of 12" inside it without becoming a string.
+RANK_FIELD = "Carriers"
+
+#: Columns the DISPLAY table shows, in order. `COLUMNS` remains the set of
+#: measures the claim layer names; this is the reader's table.
+DISPLAY_COLUMNS: Tuple[str, ...] = (
+    SLICE, MARSH_PREMIUM, CARRIER_PREMIUM, MOVEMENT_PERCENT,
+    SHARE_OF_WALLET, SHARE_OF_PORTFOLIO, RANK, RANK_FIELD,
+)
+
+#: How each column is rendered and compared. The UI needs one fact about a column
+#: — is it money, a percentage, a rank, or a label — to right-align it, format it
+#: and sort it numerically, and deriving that by sniffing at the cells (which is
+#: what the panel used to do) gets a year or a product code wrong sooner or later.
+TEXT, MONEY, PERCENT, RANK_KIND, SIGNED_PERCENT, COUNT = (
+    "text", "money", "percent", "rank", "signed_percent", "count",
+)
+
+#: Columns whose sign carries a direction, so the panel can colour them from the
+#: VALUE rather than by searching the cell for a glyph.
+DIRECTIONAL: Tuple[str, ...] = (MOVEMENT_PERCENT,)
 
 #: Money is shown at ONE scale across the whole table, named in the header.
 #: Per-row scaling ("$1.2M" above "$840k") makes a column impossible to compare
@@ -227,22 +254,52 @@ class PositioningPack:
         return max(scored, key=lambda p: p.headroom or 0.0) if scored else None
 
     def rows(self) -> List[Dict[str, Any]]:
-        """The table as a reader sees it: formatted, with absences left blank."""
+        """The table a reader sees, as TYPED values with absences left blank.
+
+        Money is divided by the table's shared scale and the scale is named once
+        in the header (`money_suffix`), so a column of figures compares down the
+        page; percentages and ranks are the plain numbers. Formatting is the
+        renderer's job — a table that arrives pre-formatted is a table of strings,
+        and a column of strings sorts alphabetically however numeric it looks.
+        """
         ordered = self.by_premium()
         if self.is_market_view:
             ordered = sorted(
                 self.positions,
                 key=lambda p: (p.marsh_premium is None, -(p.marsh_premium or 0.0)),
             )
-            scale, suffix = money_scale([p.marsh_premium for p in ordered])
+            scale, _suffix = money_scale([p.marsh_premium for p in ordered])
             total = sum(p.marsh_premium or 0.0 for p in ordered)
-            return [
-                _market_row(p, self.dimension, total, scale, suffix) for p in ordered
-            ]
-        scale, suffix = money_scale(
+            return [_market_row(p, self.dimension, total, scale) for p in ordered]
+        scale, _suffix = money_scale(
             [p.marsh_premium for p in ordered] + [p.carrier_premium for p in ordered]
         )
-        return [_row(p, self.dimension, scale=scale, suffix=suffix) for p in ordered]
+        return [_row(p, self.dimension, scale=scale) for p in ordered]
+
+    def column_kinds(self) -> Dict[str, str]:
+        """{column: kind} for the rows this pack renders — see the kind constants.
+
+        Stated by the pack rather than inferred by the panel. The panel used to
+        decide alignment by matching every cell against a figure-shaped regex,
+        which is a guess that a product code or a year eventually defeats.
+        """
+        if self.is_market_view:
+            return {
+                slice_heading(self.dimension): TEXT,
+                MARSH_PREMIUM: MONEY,
+                SHARE_OF_MARKET: PERCENT,
+                MOVEMENT: MONEY,
+            }
+        return {
+            slice_heading(self.dimension): TEXT,
+            MARSH_PREMIUM: MONEY,
+            CARRIER_PREMIUM: MONEY,
+            MOVEMENT_PERCENT: SIGNED_PERCENT,
+            SHARE_OF_WALLET: PERCENT,
+            SHARE_OF_PORTFOLIO: PERCENT,
+            RANK: RANK_KIND,
+            RANK_FIELD: COUNT,
+        }
 
     def money_suffix(self) -> str:
         """The unit this table's money columns are in ("M", "k", ""), for a header."""
@@ -303,26 +360,28 @@ def slice_heading(dimension: str) -> str:
     return (text[:1].upper() + text[1:].lower()) if text else SLICE
 
 
-def _row(position: SlicePosition, dimension: str, *, scale: float = 1.0,
-         suffix: str = "") -> Dict[str, Any]:
+def _row(position: SlicePosition, dimension: str, *, scale: float = 1.0) -> Dict[str, Any]:
     """One table row: category, the market, the carrier, and where it stands.
 
-    The two movements are folded into the figures they belong to rather than
-    given columns of their own. A premium and its change are one fact about one
-    thing, and splitting them across the table made the reader reassemble it.
+    Every figure is a NUMBER. The movement used to be folded into the premium
+    cell, on the argument that a premium and its change are one fact about one
+    thing — true, and it cost the column its ordering, because a cell holding two
+    numbers and a direction glyph is a string. It gets a column of its own.
     """
     return {
         slice_heading(dimension): position.slice,
-        MARSH_PREMIUM: _money(position.marsh_premium, scale, suffix),
-        CARRIER_PREMIUM: _premium_cell(position, scale, suffix),
-        SHARE_OF_WALLET: _percent(position.share_of_wallet),
-        SHARE_OF_PORTFOLIO: _percent(position.share_of_portfolio),
-        RANK: _rank_cell(position),
+        MARSH_PREMIUM: _scaled(position.marsh_premium, scale),
+        CARRIER_PREMIUM: _scaled(position.carrier_premium, scale),
+        MOVEMENT_PERCENT: position.premium_change_percent,
+        SHARE_OF_WALLET: _rounded(position.share_of_wallet),
+        SHARE_OF_PORTFOLIO: _rounded(position.share_of_portfolio),
+        RANK: position.rank,
+        RANK_FIELD: position.rank_of,
     }
 
 
 def _market_row(position: SlicePosition, dimension: str, total: float,
-                scale: float, suffix: str) -> Dict[str, Any]:
+                scale: float) -> Dict[str, Any]:
     """One row of a market table: the book, its share, and its movement.
 
     Share is computed here rather than by `compute_share_of_portfolio`, whose
@@ -332,62 +391,22 @@ def _market_row(position: SlicePosition, dimension: str, total: float,
     share = (position.marsh_premium or 0.0) / total * 100 if total else None
     return {
         slice_heading(dimension): position.slice,
-        MARSH_PREMIUM: _money(position.marsh_premium, scale, suffix),
-        SHARE_OF_MARKET: _percent(share),
-        MOVEMENT: _movement_cell(position, scale, suffix),
+        MARSH_PREMIUM: _scaled(position.marsh_premium, scale),
+        SHARE_OF_MARKET: _rounded(share),
+        MOVEMENT: _scaled(position.movement, scale),
     }
 
 
-def _movement_cell(position: SlicePosition, scale: float, suffix: str) -> Optional[str]:
-    """A slice's year-on-year movement, with its direction."""
-    if position.movement is None:
-        return None
-    if position.movement == 0:
-        return FLAT
-    glyph = UP if position.movement > 0 else DOWN
-    amount = _money(abs(position.movement), scale, suffix)
-    return f"{glyph} {amount}"
-
-
-def _premium_cell(position: SlicePosition, scale: float, suffix: str) -> Optional[str]:
-    """The carrier's premium with its year-on-year movement beside it."""
-    amount = _money(position.carrier_premium, scale, suffix)
-    if amount is None:
-        return None
-    change = position.premium_change_percent
-    if change is None:
-        return amount
-    if change == 0:
-        return f"{amount}  {FLAT}"
-    glyph = UP if change > 0 else DOWN
-    return f"{amount}  {glyph} {abs(change):.1f}%"
-
-
-def _rank_cell(position: SlicePosition) -> Optional[str]:
-    """Rank, with places gained or lost since the prior period."""
-    if position.rank is None:
-        return None
-    text = f"#{position.rank} of {position.rank_of}" if position.rank_of else f"#{position.rank}"
-    moved = position.rank_change
-    if moved is None:
-        return text
-    if moved == 0:
-        return f"{text}  {FLAT}"
-    glyph = UP if moved > 0 else DOWN
-    return f"{text}  {glyph} {abs(moved)}"
-
-
-def _money(value: Optional[float], scale: float = 1.0, suffix: str = "") -> Optional[str]:
-    """A figure at the table's shared scale. None stays None — absent is not zero."""
+def _scaled(value: Optional[float], scale: float) -> Optional[float]:
+    """A money figure at the table's shared scale. None stays None — absent is
+    not zero, and a blank cell says so where a 0 would assert something."""
     if value is None:
         return None
-    if scale > 1.0:
-        return f"${value / scale:,.2f}{suffix}"
-    return f"${value:,.0f}"
+    return round(value / scale, 2) if scale > 1.0 else round(value, 0)
 
 
-def _percent(value: Optional[float]) -> Optional[str]:
-    return None if value is None else f"{value:.1f}%"
+def _rounded(value: Optional[float]) -> Optional[float]:
+    return None if value is None else round(value, 1)
 
 
 # --------------------------------------------------------------------------- #

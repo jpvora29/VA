@@ -29,16 +29,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from ui.color_pallet import ColorPalette
-from core.charts.critic import (
-    ChartSpecCritic,
-    RATE_HINTS as _RATE_HINTS,  # noqa: N811 - canonical home is core.charts.critic
-    TREND_TERMS as _TREND_TERMS,  # noqa: N811
-    is_time_like_name as _is_time_like_name,
-    is_year_like_name as _is_year_like_name,
-    is_year_values as _is_year_axis,
-    looks_like_rate as _looks_like_rate,
-    wants_trend as _wants_trend,
-)
+from core.charts.critic import ChartSpecCritic, is_year_values as _is_year_axis
 from core.observability import log_event
 from logger import get_logger
 
@@ -51,9 +42,9 @@ MAX_TITLE_LEN = 64       # one-line title budget before truncation
 MAX_TICK_LEN = 16        # category label length before we slant the axis
 _AGGS = {"sum", "mean", "count", "median", "min", "max"}
 
-# The chart-guard vocabulary (_TREND_TERMS / _RATE_HINTS) and the year/rate/trend
-# heuristics now live in core.charts.critic — the pre-render critic and this
-# render-time safety net must judge columns identically, so there is one source.
+# The ONE deterministic spec-repair pass. It runs before sanitization, against
+# the full result frame, and decides chart type, axes and legend — see
+# `core.charts.critic`. This module draws what it is given.
 _CRITIC = ChartSpecCritic()
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -354,62 +345,25 @@ def _prepare_frame(df: pd.DataFrame, spec: _Spec) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-# ── Deterministic chart guard ─────────────────────────────────────────────────
+# ── Axis ticks ────────────────────────────────────────────────────────────────
 #
-# The LLM picks chart_type and axes, but it is wrong often enough that a prompt
-# fix alone is not reliable: it over-prefers `line` whenever a year column is
-# present, lets numeric years render as a continuous axis (2024.2 ticks), and
-# packs an amount and a rate onto the same axis. The `ChartSpecCritic` repairs
-# the raw spec pre-sanitize (field roles, legend/x orientation, junk fields);
-# `_normalize_axes_and_type` is the render-time safety net that runs after
-# column reconciliation. Every correction is reported so the override is visible.
-# (The shared year/rate/trend heuristics live in core.charts.critic.)
+# What a chart's TYPE and axes should be is decided once, by `ChartSpecCritic`,
+# before this module sees the spec — it classifies every column by role and
+# repairs the model's picks there. This module used to run a second, overlapping
+# guard of its own after column reconciliation, which meant two rule sets, two
+# sets of override reasons, and six private heuristics imported across the
+# boundary to keep the two judging columns identically.
+#
+# What is left here is the one correction that is genuinely about DRAWING rather
+# than about the spec: a numeric year axis has to become discrete category ticks,
+# or plotly renders 2024.2 between the bars. It changes the frame, not the spec.
 
 
-def _normalize_axes_and_type(
+def _prepare_axis_ticks(
     df: pd.DataFrame, spec: _Spec
 ) -> Tuple[pd.DataFrame, List[str]]:
-    """Correct chart_type and axis typing in place. Returns (df, override_reasons)."""
+    """Discrete, ascending year ticks. Returns (df, reasons)."""
     reasons: List[str] = []
-
-    # 1. Amount + rate on one axis → combo (rate on the secondary line axis).
-    #    Skip when the spec is already combo/pie/etc.; only fix bar/line.
-    if spec.chart_type in ("bar", "line") and len(spec.y) >= 2:
-        rates = [c for c in spec.y if _looks_like_rate(df, c)]
-        amounts = [c for c in spec.y if c not in rates]
-        # Magnitude guard: if not flagged by name/range but one measure dwarfs
-        # another (>100x), the small one is a rate sharing an amount's axis.
-        if not rates and amounts:
-            medians = {
-                c: pd.to_numeric(df[c], errors="coerce").abs().median() or 0.0
-                for c in spec.y
-            }
-            big = max(medians.values())
-            small = min(v for v in medians.values() if v > 0) if any(
-                v > 0 for v in medians.values()
-            ) else 0
-            if small and big / small > 100:
-                rates = [c for c in spec.y if medians[c] == small]
-                amounts = [c for c in spec.y if c not in rates]
-        if rates and amounts:
-            spec.chart_type = "combo"
-            spec.y = amounts
-            spec.secondary_y = list(dict.fromkeys([*spec.secondary_y, *rates]))
-            reasons.append("amount+rate→combo")
-
-    # 2. line → bar unless this is a genuine time trend.
-    if spec.chart_type == "line":
-        distinct_periods = df[spec.x].nunique(dropna=True) if spec.x in df else 0
-        is_trend = (
-            _is_time_like_name(spec.x)
-            and distinct_periods >= 2
-            and _wants_trend(spec.intent, spec.title)
-        )
-        if not is_trend:
-            spec.chart_type = "bar"
-            reasons.append("line→bar (not a trend)")
-
-    # 3. Year axis → discrete integer-string ticks (no 2024.2, sorted ascending).
     if spec.chart_type in ("bar", "line", "combo") and spec.x in df and _is_year_axis(
         df[spec.x], spec.x
     ):
@@ -877,15 +831,13 @@ def generate_chart(
         if spec is None:
             return None, message
 
-        original_type = spec.chart_type
-        prepared, overrides = _normalize_axes_and_type(prepared, spec)
+        prepared, overrides = _prepare_axis_ticks(prepared, spec)
         if overrides:
             log_event(
                 logger,
-                "chart_spec_override",
+                "chart_axis_prepared",
                 node="chart_renderer",
-                original_chart_type=original_type,
-                final_chart_type=spec.chart_type,
+                chart_type=spec.chart_type,
                 reasons=overrides,
             )
 

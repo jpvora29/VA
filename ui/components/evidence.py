@@ -19,12 +19,12 @@ an answer that produced numbers should never show nothing.
 """
 from __future__ import annotations
 
-import re
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from dash import dash_table, dcc, html
+from dash.dash_table.Format import Format, Group, Scheme, Sign, Symbol
 
-from core.analytics.positioning import DOWN, UP
+from core.analytics import positioning as P
 from ui.evidence import EvidenceView
 
 #: The header's ground. Brand navy, so the table reads as part of the product
@@ -98,56 +98,110 @@ _PAGE_SIZE = 10
 _RISE = "#0F7A33"
 _FALL = "#C0393E"
 
-# A cell that reads as a figure: a number, a percentage, a signed change, or
-# one of the direction arrows. Used to decide alignment from the DATA rather
-# than from a list of column names, which would need editing every time a
-# new measure appears.
-#: A cell that reads as a figure: a number with an optional currency mark,
-#: unit and direction glyph — and possibly TWO of them, since a premium now
-#: carries its own movement ("$0.90M  ▼ 25.0%"). Matching the whole
-#: cell rather than sniffing for digits keeps "#1 of 2" and a product name on
-#: the left where they belong.
-_FIGURE = re.compile(r"^\s*(?:[▲▼–]?\s*\$?\s*[\d,.]+\s*(?:%|pts|bn|M|k)?)(?:\s+[▲▼–]?\s*\$?\s*[\d,.]+\s*(?:%|pts|bn|M|k)?)*\s*$|^–$")
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _figure_columns(view: EvidenceView) -> List[str]:
-    """Columns whose cells read as figures, so they can be right-aligned.
+#: The fallback kind for an untyped column whose cells are all numbers. It sorts
+#: and aligns as a figure and is printed exactly as it arrived — deliberately NOT
+#: money, because a lens that returns a Year column has an all-numeric column that
+#: is not an amount, and "$2,024" is worse than no formatting at all. Only a
+#: producer that DECLARES a column money gets a currency mark.
+NUMBER = "number"
 
-    Decided by looking at the values: a column is a figure column when every
-    non-empty cell in it looks like one. Reading the data rather than the name
-    means a new measure aligns correctly the day it is added, and a dimension
-    that happens to be numeric-looking (a year, a code) is treated as what its
-    cells actually are.
+_FORMATTED = (P.MONEY, P.PERCENT, P.SIGNED_PERCENT, P.RANK_KIND, P.COUNT)
+
+
+def _kind_of(view: EvidenceView, column: str) -> str:
+    """What one column IS: what the producer declared, else what its values are.
+
+    A result set that knows its own columns says so (`EvidenceView.column_kinds`).
+    Everything else — a lens returning whatever its SQL selected — is read off the
+    values, which is only ever a fallback: it can tell a figure from a label, and
+    nothing finer than that.
     """
-    out: List[str] = []
+    declared = (view.column_kinds or {}).get(column)
+    if declared:
+        return declared
+    values = [row.get(column) for row in view.records]
+    present = [v for v in values if v not in (None, "")]
+    return NUMBER if present and all(_is_number(v) for v in present) else P.TEXT
+
+
+def _format_for(kind: str, unit: str) -> Optional[Format]:
+    """How a column of this kind prints. ``None`` for a label column.
+
+    Every format leaves a missing value BLANK (Dash's `nully` default), because
+    an absent figure is not a zero — the distinction the whole positioning pack
+    is careful about, which a table printing 0 would throw away in the last inch.
+    """
+    if kind == P.MONEY:
+        # Precision follows the scale the rows were already divided by: a column
+        # in millions wants two decimals, one in whole currency units wants none.
+        return Format(
+            scheme=Scheme.fixed, precision=2 if unit else 0, group=Group.yes,
+            symbol=Symbol.yes, symbol_prefix="$", symbol_suffix=unit,
+        )
+    if kind == P.PERCENT:
+        return Format(scheme=Scheme.fixed, precision=1,
+                      symbol=Symbol.yes, symbol_suffix="%")
+    if kind == P.SIGNED_PERCENT:
+        # The sign IS the direction, so it is always printed — "+4.2%" and
+        # "-25.0%" read as movement where "4.2%" reads as a level.
+        return Format(scheme=Scheme.fixed, precision=1, sign=Sign.positive,
+                      symbol=Symbol.yes, symbol_suffix="%")
+    if kind == P.RANK_KIND:
+        return Format(scheme=Scheme.fixed, precision=0,
+                      symbol=Symbol.yes, symbol_prefix="#")
+    if kind == P.COUNT:
+        return Format(scheme=Scheme.fixed, precision=0, group=Group.yes)
+    return None
+
+
+def _columns_for(view: EvidenceView) -> List[Dict[str, Any]]:
+    """Dash column definitions: typed, so the browser sorts them as numbers.
+
+    This is the whole of the sorting fix. The rows arrive as numbers and the
+    column declares `type: numeric`; ascending a premium column then gives
+    40, 90, 100, 160 rather than the lexical 100, 160, 40, 90 a column of
+    pre-formatted strings gave.
+    """
+    out: List[Dict[str, Any]] = []
     for column in view.columns:
-        seen = [row.get(column) for row in view.records]
-        values = [str(v) for v in seen if v not in (None, "")]
-        if values and all(_FIGURE.match(v) for v in values):
-            out.append(column)
+        kind = _kind_of(view, column)
+        spec: Dict[str, Any] = {"name": column, "id": column}
+        if kind != P.TEXT:
+            # Numeric for SORTING; a format only where the producer said what the
+            # figure means. An untyped number sorts correctly and prints as it is.
+            spec["type"] = "numeric"
+        fmt = _format_for(kind, view.unit)
+        if fmt is not None:
+            spec["format"] = fmt
+        out.append(spec)
     return out
 
 
-def _direction_styles(columns: Sequence[str]) -> List[Dict[str, Any]]:
+def _figure_columns(view: EvidenceView) -> List[str]:
+    """Columns that hold figures, so they can be right-aligned."""
+    return [c for c in view.columns if _kind_of(view, c) != P.TEXT]
+
+
+def _direction_styles(view: EvidenceView) -> List[Dict[str, Any]]:
     """Green for a rise, red for a fall, in every column that carries direction.
 
-    Keyed on the arrow glyph the cell already contains rather than on a column
-    name, so a new change column is coloured the moment it exists and a column
-    that merely has "change" in its name is not coloured by accident. The glyph
-    carries the meaning; this only carries the colour, which is why a screen
-    reader and a CSV export lose nothing.
+    Keyed on the VALUE's sign rather than on a glyph in the cell or a word in the
+    column name. The sign is the meaning; this only carries the colour, which is
+    why a screen reader and a CSV export lose nothing by ignoring it.
     """
     styles: List[Dict[str, Any]] = []
-    for column in columns:
+    for column in view.columns:
+        if _kind_of(view, column) != P.SIGNED_PERCENT:
+            continue
         styles.extend([
-            {
-                "if": {"column_id": column, "filter_query": f"{{{column}}} contains \"{UP}\""},
-                "color": _RISE, "fontWeight": "600",
-            },
-            {
-                "if": {"column_id": column, "filter_query": f"{{{column}}} contains \"{DOWN}\""},
-                "color": _FALL, "fontWeight": "600",
-            },
+            {"if": {"column_id": column, "filter_query": f"{{{column}}} > 0"},
+             "color": _RISE, "fontWeight": "600"},
+            {"if": {"column_id": column, "filter_query": f"{{{column}}} < 0"},
+             "color": _FALL, "fontWeight": "600"},
         ])
     return styles
 
@@ -156,11 +210,12 @@ def data_table(view: EvidenceView) -> Any:
     """The rows, sortable and filterable in the browser.
 
     Native sort and filter cost no callback and no re-render, so the reader can
-    interrogate the evidence without asking another question.
+    interrogate the evidence without asking another question — provided the
+    columns are typed, which is what `_columns_for` is for.
     """
     numeric = _figure_columns(view)
     return dash_table.DataTable(
-        columns=[{"name": c, "id": c} for c in view.columns],
+        columns=_columns_for(view),
         data=view.records,
         page_size=_PAGE_SIZE,
         sort_action="native",
@@ -170,7 +225,7 @@ def data_table(view: EvidenceView) -> Any:
             # not enough to read as a selection.
             {"if": {"state": "active"}, "backgroundColor": "#F2F6FC",
              "border": "none", "color": _BODY_INK},
-            *_direction_styles(view.columns),
+            *_direction_styles(view),
         ],
         # Figures right-align so magnitudes line up down the column; the label
         # column stays left. A table of right-ragged numbers is unreadable at a

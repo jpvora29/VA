@@ -28,10 +28,16 @@ from langgraph.types import Send
 from typing_extensions import Annotated, TypedDict
 
 from core.agents.analyst.chart_picker import ChartFocus, pick_charts
-from core.analytics.dimensions import choose_dimension
+from core.analytics.dimensions import choose_dimension, pinned_columns
 from core.analytics.positioning import build_positioning_comparison
+from core.analytics.tools.scope import pin_latest_year
+from core.answers.chart_plan import TABLE, is_chart
 from core.answers.positioning_claims import LENS as POSITIONING_LENS
-from core.agents.common.contract import resolved_filters_of, unresolved_terms_of
+from core.agents.common.contract import (
+    group_by_of,
+    resolved_filters_of,
+    unresolved_terms_of,
+)
 from core.agents.common.peer_privacy import (
     build_policy,
     redact_text,
@@ -524,6 +530,57 @@ _POSITIONING_REQUIREMENTS = frozenset({
 })
 
 
+def positioning_scope(state: AnalystState) -> dict:
+    """The filters the position table is computed under.
+
+    The turn's resolved filters, with one correction: a scope that pins no year is
+    pinned to the latest year in the data, by the same helper the analytical
+    compute tool uses (`core.analytics.tools.scope.pin_latest_year`).
+
+    Without it the table silently summed every year in the warehouse into one
+    figure and presented it as a position. That is the worst kind of wrong answer
+    — plausible, precise, and off by however many years the book holds — and it
+    was reachable from any question that named a carrier and a country but no
+    period. The rule already existed and both other paths already applied it;
+    this one simply did not call it.
+    """
+    scope = dict(resolved_filters_of(state.get("routing_context")) or {})
+    try:
+        pinned, year = pin_latest_year("gpr", scope, user_query=state["question"])
+    except Exception as exc:  # noqa: BLE001 - a default year never costs the table
+        log_event(logger, "positioning_year_unpinned", logging.WARNING,
+                  node="analyst_positioning", route=state["route"], error=str(exc))
+        return scope
+    if year is not None:
+        log_event(logger, "positioning_year_defaulted", node="analyst_positioning",
+                  route=state["route"], year=year,
+                  reason="the question named no period, so the latest year in the data was used")
+    return pinned
+
+
+def positioning_dimension(state: AnalystState, scope: dict) -> str:
+    """The dimension the table cuts by: the one the question ASKED for, else the ladder.
+
+    An explicit grouping is a stated request — "share of wallet across industries"
+    resolves to `SIC_Major_Class` on the turn contract — and honouring the ladder
+    over it answered a different question in a table headed as though it were this
+    one. The ladder remains the default, because most questions name no grouping:
+    take the finest level the scope has NOT already fixed, so asking about one
+    product cuts by industry *within* that product rather than returning a single
+    row whose share of the book is 100% by construction.
+    """
+    fixed = pinned_columns(scope)
+    requested = [
+        column for column in group_by_of(state.get("routing_context"))
+        if column and column not in fixed
+    ]
+    if requested:
+        log_event(logger, "positioning_dimension_requested", node="analyst_positioning",
+                  route=state["route"], dimension=requested[0])
+        return requested[0]
+    return choose_dimension(scope, flow="gpr")
+
+
 def positioning_node(state: AnalystState) -> dict:
     """Gather where the carrier STANDS, deterministically, before the answer is written.
 
@@ -546,18 +603,14 @@ def positioning_node(state: AnalystState) -> dict:
                   reason="this turn asks for no requirement the position table serves")
         return {}
 
-    scope = dict(resolved_filters_of(state.get("routing_context")) or {})
+    scope = positioning_scope(state)
     # A question that names no carrier still deserves a table — it is a question
     # about the market, and the pack drops the carrier-specific columns for it
     # (see `PositioningPack.is_market_view`). Only the columns change, not
     # whether the reader gets one.
     subject = _subject_carrier(state, scope)
 
-    # Cut by the finest level the question has NOT already fixed. Asking about
-    # one product and cutting by product gives a single row whose share of the
-    # book is 100% by construction — the table has nothing to compare, which is
-    # exactly what a penetration question needs it to do.
-    dimension = choose_dimension(scope, flow="gpr")
+    dimension = positioning_dimension(state, scope)
     if not dimension:
         log_event(logger, "positioning_skipped", logging.WARNING,
                   node="analyst_positioning", route=state["route"],
@@ -634,9 +687,18 @@ def _chart_plan_for(state: AnalystState, pack, scope: dict) -> List[dict]:
         log_event(logger, "quarterly_chart_unavailable", logging.WARNING,
                   node="analyst_positioning", route=state["route"], error=str(exc))
 
+    # The OPERATION decides which charts lead: a movement question opens on the
+    # waterfall, a position request on premium by line. Read off the question by
+    # the same detector that built this turn's contract, so the charts and the
+    # requirements cannot disagree about what was asked.
     views = [
         spec.as_view()
-        for spec in build_chart_plan(pack, quarterly_rows=quarterly, scope=scope)
+        for spec in build_chart_plan(
+            pack,
+            quarterly_rows=quarterly,
+            scope=scope,
+            operation=detect_operation(state["question"]),
+        )
     ]
     # The positioning table is a VIEW, not only an input to the commentary. It
     # was being computed, feeding the claims, and then never rendered: the panel
@@ -648,21 +710,29 @@ def _chart_plan_for(state: AnalystState, pack, scope: dict) -> List[dict]:
 
 
 def _positioning_view(pack, scope: dict) -> dict:
-    """The positioning table as a table-only view (no chart spec, so rows render)."""
+    """The positioning table as a table-only view (no chart spec, so rows render).
+
+    Declares its `kind` rather than leaving `chart_data` empty and letting every
+    reader infer it. That inference is what deleted the table on a "table only"
+    turn: chart suppression ran over the whole planned list, found nothing
+    marking this entry as not-a-chart, and dropped it with the charts.
+    """
     from core.analytics.dimensions import describe_scope, label_for
 
     level = label_for(pack.dimension)
     unit = pack.money_suffix()
     return {
+        "kind": TABLE,
         "tab": "Position",
         "title": f"Position by {level}{describe_scope(scope, pack.dimension)}",
         "rows": pack.rows(),
         "chart_data": {},
         "lens": "positioning",
-        "note": (
-            f"Premium in {unit or 'currency units'}"
-            if unit else "Premium in currency units"
-        ),
+        # Typed columns, so the panel formats and SORTS them as figures rather
+        # than guessing from the cells (see `ui.components.evidence`).
+        "column_kinds": pack.column_kinds(),
+        "unit": unit,
+        "note": f"Premium in {unit or 'currency units'}",
     }
 
 
@@ -823,17 +893,29 @@ def _facts_of(record: dict) -> List[AnswerFact]:
 
 
 def chart_picker_node(state: AnalystState) -> dict:
-    """Pick and build one primary chart from gathered evidence (best-effort)."""
-    # Query-contract gate: "don't generate a chart" means exactly that.
+    """Choose the views this answer carries: the planned ones, else picked charts.
+
+    "Views", not "charts", and the distinction is the whole of this node. The
+    position table travels in `chart_plan` beside the charts because both are
+    result sets the panel renders — but only one of them is a picture. Suppression
+    applies to pictures.
+    """
+    planned = list(state.get("chart_plan") or [])
+    # Query-contract gate: "don't generate a chart" means exactly that — and it
+    # means nothing more. A reader who asked for "just the table" asked FOR the
+    # table; deleting it along with the charts answered neither request, and left
+    # the panel to fall back to whatever supporting result set happened to be
+    # lying around.
     if charts_suppressed(state.get("routing_context")):
+        tables = [view for view in planned if not is_chart(view)]
         log_event(
             logger,
             "charts_suppressed_by_directive",
             node="analyst_chart_picker",
             route=state["route"],
+            tables_kept=len(tables),
         )
-        return {"charts": []}
-    planned = list(state.get("chart_plan") or [])
+        return {"charts": tables}
     if planned:
         # The plan was decided from the data that produced the prose, so there is
         # nothing for a model to choose between. Falling back to the picker only

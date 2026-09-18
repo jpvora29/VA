@@ -162,8 +162,21 @@ def _extract_answer(state: Dict[str, Any]) -> str:
 
 
 def _extract_table(state: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """The rows shown under the answer — the surface a prompt never guards."""
+    """The rows shown under the answer — the surface a prompt never guards.
+
+    `analyst_charts` FIRST, because that is what the panel renders when it is
+    present (`ui.callbacks._evidence_specs`): on an analytical turn the position
+    table lives there, and reading `gpr_query_result` instead scored a table the
+    reader never saw. A harness that checks a different artifact from the one on
+    screen can pass while the answer is wrong, which is the failure mode the
+    18 September review found in it.
+    """
     rows: List[Dict[str, Any]] = []
+    for view in state.get("analyst_charts") or []:
+        if isinstance(view, dict):
+            rows.extend(r for r in (view.get("rows") or []) if isinstance(r, dict))
+    if rows:
+        return rows
     for key in ("gpr_query_result", "survey_query_result", "combined_result"):
         value = state.get(key)
         if isinstance(value, list):

@@ -111,11 +111,12 @@ def test_headroom_is_unknown_rather_than_whole_when_participation_is_unknown(pac
 
 def test_the_table_carries_every_column_the_reader_asked_for(pack):
     row = pack.rows()[0]
-    # Category, the market, the carrier, penetration, mix, standing — in that
-    # order, with the two movements folded into the figures they belong to.
+    # Category, the market, the carrier, its movement, penetration, mix,
+    # standing — in that order. The movement has a column of its own so that
+    # every figure in the table stays a sortable number.
     assert list(row) == [
-        pack.heading, P.MARSH_PREMIUM, P.CARRIER_PREMIUM,
-        P.SHARE_OF_WALLET, P.SHARE_OF_PORTFOLIO, P.RANK,
+        pack.heading, P.MARSH_PREMIUM, P.CARRIER_PREMIUM, P.MOVEMENT_PERCENT,
+        P.SHARE_OF_WALLET, P.SHARE_OF_PORTFOLIO, P.RANK, P.RANK_FIELD,
     ]
 
 

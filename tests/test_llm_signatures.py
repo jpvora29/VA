@@ -256,7 +256,7 @@ def test_every_signature_converts_for_the_wire():
         "core.schemas.combined", "core.schemas.followup", "core.schemas.gimmi",
         "core.schemas.gpr", "core.schemas.hitl", "core.schemas.survey",
         "core.schemas.analysis", "core.context.semantic",
-        "core.agents.common.chart_spec",
+        "core.agents.common.chart_spec", "core.agents.common.chart_node",
     ]
     checked = 0
     for name in modules:
@@ -269,7 +269,10 @@ def test_every_signature_converts_for_the_wire():
                 model = build_response_model(obj, reasoning=reasoning)
                 json.dumps(convert_to_openai_function(model))
                 checked += 1
-    assert checked == 48, f"expected 24 signatures x 2 modes, converted {checked}"
+    # 23, down from 24: `GPRChartSignature` and `SurveyChartSignature` were the
+    # same twenty lines apart from one word and became one `ChartSpecSignature`
+    # in `core.agents.common.chart_node`.
+    assert checked == 46, f"expected 23 signatures x 2 modes, converted {checked}"
 
 
 # ── the predictor a node holds ───────────────────────────────────────────────

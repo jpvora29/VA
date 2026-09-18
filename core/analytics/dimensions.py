@@ -40,7 +40,7 @@ LABELS: Mapping[str, str] = {
 }
 
 
-def _pinned(filters: Mapping[str, Any]) -> set:
+def pinned_columns(filters: Mapping[str, Any]) -> set:
     """Columns the scope fixes to a SINGLE value.
 
     A filter holding several values is still a cut worth showing — "Property and
@@ -99,7 +99,7 @@ def choose_dimension(
     caller to skip the table rather than draw a single row.
     """
     columns = list(ladder) if ladder is not None else available_columns(flow, engine)
-    fixed = _pinned(filters)
+    fixed = pinned_columns(filters)
     return next((column for column in columns if column not in fixed), "")
 
 
@@ -134,7 +134,7 @@ def describe_scope(filters: Mapping[str, Any], dimension: str) -> str:
     and year are already on screen as scope chips, and repeating them in every
     table caption is the noise that made answers read as boilerplate.
     """
-    fixed = _pinned(filters)
+    fixed = pinned_columns(filters)
     above: List[str] = []
     for column in LADDER:
         if column == dimension:

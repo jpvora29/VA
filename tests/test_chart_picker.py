@@ -21,9 +21,8 @@ def _chartable_rows():
 
 def _patch_node(monkeypatch, chart_data):
     """Make pick_charts use a stub chart node returning `chart_data`."""
-    monkeypatch.setattr(cp, "_chart_rules", lambda flow, question: "rules")
     monkeypatch.setattr(
-        cp, "_chart_node", lambda flow, rules: (lambda **kw: chart_data)
+        cp, "chart_node_for", lambda flow, question: (lambda **kw: chart_data)
     )
 
 
@@ -91,8 +90,7 @@ def test_the_requested_trend_is_charted_first_and_duplicates_are_dropped(monkeyp
     def build(**kwargs):
         seen.append(kwargs["sql_output"])
         return {"chart_type": "line", "x": "Year", "y": ["Premium"]}
-    monkeypatch.setattr(cp, "_chart_rules", lambda *args: "")
-    monkeypatch.setattr(cp, "_chart_node", lambda *args: build)
+    monkeypatch.setattr(cp, "chart_node_for", lambda *args: build)
     trend = [{"Year": 2024, "Premium": 100}, {"Year": 2025, "Premium": 125}]
     evidence = [
         {"flow": "gpr", "lens": "mix", "sql": "mix", "rows": [{"Product": str(i), "Premium": i} for i in range(40)]},

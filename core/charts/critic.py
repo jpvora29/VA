@@ -158,6 +158,28 @@ def classify_columns(df: pd.DataFrame) -> Dict[str, ColumnRole]:
 # ── The critic ────────────────────────────────────────────────────────────────
 
 
+def _split_by_magnitude(
+    df: pd.DataFrame, columns: List[str]
+) -> Tuple[List[str], List[str]]:
+    """(rates, amounts) when one measure dwarfs another by more than 100x.
+
+    The unnamed-rate case: a column called "Index" sitting beside a premium is a
+    rate whatever its name says, and plotting it on the same axis draws it as a
+    flat line along zero. Returns ``([], columns)`` when the measures are
+    comparable, which is the common case and must stay a plain grouped bar.
+    """
+    medians = {
+        c: float(pd.to_numeric(df[c], errors="coerce").abs().median() or 0.0)
+        for c in columns
+    }
+    positive = [v for v in medians.values() if v > 0]
+    if len(positive) < 2 or max(positive) / min(positive) <= 100:
+        return [], list(columns)
+    smallest = min(positive)
+    rates = [c for c in columns if medians[c] == smallest]
+    return rates, [c for c in columns if c not in rates]
+
+
 def _make_resolver(df: pd.DataFrame) -> Callable[[Optional[str]], Optional[str]]:
     lookup = {norm_key(c): c for c in df.columns}
 
@@ -306,14 +328,60 @@ class ChartSpecCritic:
         x_role = role_of(x)
         if chart == "scatter" and x_role is not None and x_role.kind == "temporal":
             chart = "line"
+            # Points plotted against time ARE a trend request, whatever the
+            # question's wording. Saying so here is what stops the `line→bar`
+            # rule below from immediately undoing this repair — which is what
+            # the render-time guard used to do, silently, one module away.
+            trendy = True
             reasons.append("scatter+time-x→line")
         if chart in ("pie", "donut"):
             slices = roles[x].cardinality if x in roles else 0
             if series or len(y) > 1 or slices > MAX_PIE_SLICES:
                 chart = "bar"
                 reasons.append("pie→bar (too many slices/series)")
+
+        # ── An amount and a rate cannot share one axis. ──
+        #
+        # $12M and 32% plotted together give a bar you can see and a bar you
+        # cannot. The rate moves to a secondary-axis line, which is what a combo
+        # IS. Judged by role first and by magnitude second, because a measure
+        # whose name says nothing ("Index") is still a rate when it is a
+        # millionth the size of the thing beside it.
+        if chart in ("bar", "line") and len(y) >= 2:
+            rates = [c for c in y if roles[c].kind == "measure_rate"]
+            amounts = [c for c in y if c not in rates]
+            if not rates:
+                rates, amounts = _split_by_magnitude(df, y)
+            if rates and amounts:
+                chart, y = "combo", amounts
+                spec["y"] = y
+                spec["secondary_y"] = list(dict.fromkeys([
+                    *(c for c in (resolve(v) for v in spec.get("secondary_y") or []) if c),
+                    *rates,
+                ]))
+                reasons.append("amount+rate→combo")
+
+        # ── `line` is reserved for a real trend. ──
+        #
+        # The model reaches for a line whenever a year column is present, and a
+        # line between three products asserts a progression from Property to
+        # Casualty to Marine. A trend needs time on the x-axis, at least two
+        # points on it, and a question that actually asked about movement.
+        if chart == "line":
+            x_role = role_of(x)
+            is_trend = (
+                x_role is not None
+                and x_role.kind == "temporal"
+                and x_role.cardinality >= 2
+                and trendy
+            )
+            if not is_trend:
+                chart = "bar"
+                reasons.append("line→bar (not a trend)")
+
         if chart != str(spec.get("chart_type") or "").strip().lower():
             spec["chart_type"] = chart
+        x_role = role_of(x)
 
         # ── Ranked bars: a single-series categorical bar sorts descending. ──
         if (

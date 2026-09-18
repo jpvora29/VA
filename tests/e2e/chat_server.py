@@ -71,6 +71,7 @@ def positioning_turn(engine, query):
     against the code that actually builds it, rather than against a hand-written
     fixture that would pass whatever the page happened to do.
     """
+    from core.analysis.operation import detect_operation
     from core.analytics.dimensions import choose_dimension
     from core.analytics.positioning import build_positioning_comparison
     from core.answers.chart_plan import build_chart_plan, quarterly_rows_from
@@ -83,10 +84,12 @@ def positioning_turn(engine, query):
     pack = build_positioning_comparison(
         dimension=dimension, filters=scope, subject=scope["Carrier_Group"], engine=engine
     )
-    # Same order production uses: the figures first, then the charts.
+    # Same order production uses: the figures first, then the charts — and the
+    # same chart ORDER, which production reads off the question's operation.
     views = [_positioning_view(pack, scope), *(
         s.as_view() for s in build_chart_plan(
-            pack, quarterly_rows=aligned_rows(scope, engine), scope=scope)
+            pack, quarterly_rows=aligned_rows(scope, engine), scope=scope,
+            operation=detect_operation(query))
     )]
 
     answer = compose_answer(AnswerRequest(

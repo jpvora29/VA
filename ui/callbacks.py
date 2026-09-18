@@ -1649,6 +1649,11 @@ def _evidence_specs(state: dict[str, Any], table: str) -> list[dict[str, Any]]:
                 "lens": chart.get("lens") or "",
                 "tab": chart.get("tab") or "",
                 "note": chart.get("note") or "",
+                # A result set that knows how its columns should read says so,
+                # and the panel formats and sorts them accordingly rather than
+                # guessing from the cells (see `ui.components.evidence`).
+                "column_kinds": chart.get("column_kinds") or {},
+                "unit": chart.get("unit") or "",
             }
             for chart in analyst_charts
         ]

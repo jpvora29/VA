@@ -90,7 +90,15 @@ rank:
   definition: >-
     The carrier's position by premium WITHIN THE MARSH BOOK for this scope, among the
     carriers Marsh placed business with there. A position in Marsh's flow, not in the market.
-  formula: dense rank of carrier premium among carriers in the same scope
+  # Competition rank, matching SQL RANK() and its pandas twin: tied carriers
+  # share a position and the next position is skipped (1, 1, 3). The glossary
+  # used to say "dense rank" (1, 1, 2), which neither backend implements — and
+  # a definition shown to readers that contradicts the number beside it is worse
+  # than no definition. The implementation is the one that matches "#5 of 12":
+  # four carriers are ahead of a #5.
+  formula: >-
+    competition rank of carrier premium among carriers in the same scope; ties
+    share a position and the next position is skipped
   say: >-
     Say "ranks #5 of 12 in the Marsh book". Always carry the field size — "#5" alone is
     meaningless, and "#5 of 12" and "#5 of 200" are different findings.

@@ -30,6 +30,7 @@ from core.analysis.operation import (
     MOVEMENT,
     PENETRATION,
     PERFORMANCE,
+    POSITION,
     detect_operation,
 )
 from core.llm import Predictor
@@ -53,7 +54,12 @@ logger = get_logger(__name__)
 #: Deliberately narrow. `breakdown` is NOT here — a plain "premium by product" is a
 #: GROUP BY and genuinely a lookup, which is what the depth signature itself says —
 #: and neither is `perception`, whose survey questions are usually a value read.
-ANALYTICAL_OPERATIONS = frozenset({PERFORMANCE, PENETRATION, MOVEMENT})
+#:
+#: `position_request` IS here, and for the same reason as the rest: the position
+#: table is six columns assembled from six primitives, so it cannot be answered by
+#: one query however the depth model reads the wording. A reader who asks for it by
+#: name and is sent down the single-query rail gets a bare premium list instead.
+ANALYTICAL_OPERATIONS = frozenset({PERFORMANCE, PENETRATION, MOVEMENT, POSITION})
 
 
 def analytical_floor(question: str) -> str:

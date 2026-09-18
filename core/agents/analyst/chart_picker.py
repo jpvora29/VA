@@ -4,11 +4,14 @@ The analyst gathers evidence as several executed queries across analytical lense
 (peer benchmark, trend, segment mix, …). Unlike the deterministic rails — which
 have exactly one SQL result to chart — the analyst has MANY candidate datasets.
 
-`pick_charts` scores those candidates for relevance and chartability, then
-asks the SAME chart node the deterministic path uses (`GPRChartNode` /
-`SurveyChartNode`, driven by the shared chart skill catalog) to produce a
-`ChartOutput` spec. At most two candidates are attempted and only one chart is
-returned, as a `{title, rows, chart_data}` entry.
+`pick_charts` scores those candidates for relevance and chartability, then asks
+the SAME chart node the deterministic path uses (`chart_node_for`, driven by the
+shared chart skill catalog) to produce a `ChartOutput` spec, returning each as a
+`{title, rows, chart_data}` entry.
+
+This is the FALLBACK path. An analytical premium turn's charts are decided from
+the data by `core.answers.chart_plan` and never reach here; the picker serves the
+turns that produce evidence with no positioning pack behind it.
 
 Best-effort by construction: any failure (bad rows, LLM error) is logged and
 skipped, and the function returns `[]` rather than raising, so charting can never
@@ -21,14 +24,10 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from core.agents.common.chart_node import chart_node_for
 from core.agents.common.chart_spec import normalize_chart_spec
-from core.agents.gpr.chart import GPRChartNode
-from core.agents.survey.chart import SurveyChartNode
 from core.observability import log_event
-from core.rules.gpr_chart import GPRChartRules
-from core.rules.survey_chart import SurveyChartRules
 from core.schemas.analyst_subgraph import Evidence
-from core.skills.loader import get_skill_loader
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -125,21 +124,6 @@ def _chart_signature(chart_data: Dict[str, Any]) -> tuple:
         _norm_field(chart_data.get("x")),
         _norm_field(chart_data.get("y")),
         _norm_field(chart_data.get("series")),
-    )
-
-
-def _chart_node(flow: str, rules: str):
-    return SurveyChartNode(rules) if flow == "survey" else GPRChartNode(rules)
-
-
-def _chart_rules(flow: str, question: str) -> str:
-    skill_rules = get_skill_loader().chart(flow, question)
-    if skill_rules:
-        return skill_rules
-    return (
-        SurveyChartRules.chart_creation_rules
-        if flow == "survey"
-        else GPRChartRules.chart_creation_rules
     )
 
 
@@ -250,7 +234,7 @@ def pick_charts(question: str, evidence: List[Evidence],
         rows = ev.get("rows") or []
         try:
             if flow not in nodes:
-                nodes[flow] = _chart_node(flow, _chart_rules(flow, question))
+                nodes[flow] = chart_node_for(flow, question)
             # Always coerce to a plain dict: the model can hand back a ChartOutput
             # MODEL (or a list of specs), which the old `isinstance(dict)` check
             # silently skipped — so the analyst produced charts that never

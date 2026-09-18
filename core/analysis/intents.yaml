@@ -168,6 +168,23 @@ intents:
       quarterly_comparison: quarterly_data_available
       industry_concentration: material_product_movement
 
+  position_request:
+    aliases:
+      - position
+      - positioning
+      - position table
+      - share of wallet
+      - share of portfolio
+      - rank
+      - where do they stand
+    # The reader named the artifact. Positioning is the whole contract: the six
+    # columns ARE the answer, and loading it with the rest of a performance
+    # review would answer a question nobody asked.
+    required:
+      - positioning
+    conditional:
+      annual_movement: comparable_years_available
+
   breakdown:
     aliases: [break down, split by, by product, by industry, across]
     required: [product_contributors]

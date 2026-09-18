@@ -57,7 +57,7 @@
         "standing",
         "league position"
       ],
-      "definition": "The carrier's position by premium WITHIN THE MARSH BOOK for this scope, among the carriers Marsh placed business with there. A position in Marsh's flow, not in the market. | Formula: dense rank of carrier premium among carriers in the same scope | How to phrase it: Say \"ranks #5 of 12 in the Marsh book\". Always carry the field size — \"#5\" alone is meaningless, and \"#5 of 12\" and \"#5 of 200\" are different findings. | Never say: Never write \"market rank\", \"#5 in the market\", \"market leader\", or \"top-five carrier\" without the Marsh-book qualifier.",
+      "definition": "The carrier's position by premium WITHIN THE MARSH BOOK for this scope, among the carriers Marsh placed business with there. A position in Marsh's flow, not in the market. | Formula: competition rank of carrier premium among carriers in the same scope; ties share a position and the next position is skipped | How to phrase it: Say \"ranks #5 of 12 in the Marsh book\". Always carry the field size — \"#5\" alone is meaningless, and \"#5 of 12\" and \"#5 of 200\" are different findings. | Never say: Never write \"market rank\", \"#5 in the market\", \"market leader\", or \"top-five carrier\" without the Marsh-book qualifier.",
       "category": "metric",
       "unit": "rank",
       "notes": "Source: terms.yaml (key: rank)"

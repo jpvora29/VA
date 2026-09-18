@@ -29,7 +29,7 @@ from core.agents.common.directives import charts_suppressed
 from core.agents.common.peer_privacy import redactor_for
 from core.agents.common.peers import custom_peer_directive
 from core.mcp.tools import execute_sql
-from core.agents.gpr.chart import GPRChartNode
+from core.agents.common.chart_node import chart_node_for
 from core.agents.gpr.planner import GPRPlannerNode
 from core.agents.gpr.sql_agent import GPRSQLAgentNode
 from core.data.general import GeneralFunctions
@@ -37,7 +37,6 @@ from core.data.valid_values import GetValidData
 from core.initialization import Initialization
 from core.observability import latency_timer, log_event, sql_metadata
 from core.rules.gpr import GPRRules
-from core.rules.gpr_chart import GPRChartRules
 from core.schemas.gpr import (
     GPRColumnSelectorAgent,
     GPRQueryNormalizer,
@@ -481,19 +480,7 @@ class GPRSubGraph:
 
         gpr_query_output_updated = gpr_query_output
         logger.debug("GPR chart input rows: %s", gpr_query_output_updated)
-        skill_rules = get_skill_loader().chart("gpr", question)
-        chart_rules = skill_rules if skill_rules else GPRChartRules.chart_creation_rules
-        log_event(
-            logger,
-            "skill_load",
-            node="gpr_chart",
-            flow="gpr",
-            scope="chart",
-            used_skills=bool(skill_rules),
-        )
-        gpr_chart_creation_agent = GPRChartNode(
-            chart_creation_rules=chart_rules
-        )
+        gpr_chart_creation_agent = chart_node_for("gpr", question)
         gpr_chart_data = gpr_chart_creation_agent(
             user_query=question, sql_output=gpr_query_output_updated
         )

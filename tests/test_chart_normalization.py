@@ -1,9 +1,15 @@
-"""Tests for the deterministic chart guard (`_normalize_axes_and_type`).
+"""Tests for the deterministic chart guard, end to end through both its halves.
 
-These lock in the corrections the renderer makes on top of the LLM's chart spec:
-year axes stay discrete (no 2024.2), `line` is reserved for real trends,
-amount+rate pairs become a combo, and titles stay on one line. Fixtures mirror
+These lock in the corrections made on top of the LLM's chart spec: `line` is
+reserved for real trends, amount+rate pairs become a combo, year axes stay
+discrete (no 2024.2), and titles stay on one line. Fixtures mirror
 `codex changes/tests/chart_output_eval_cases.yaml`.
+
+The type and axis decisions live in ONE place — `core.charts.critic`, which
+classifies columns by role and repairs the spec before the renderer sees it. The
+renderer keeps only the frame-level correction that is about drawing rather than
+about the spec (`_prepare_axis_ticks`). `_run` is the same two steps
+`generate_chart` runs, in the same order.
 
 Run:  pytest tests/test_chart_normalization.py -q
 """
@@ -11,19 +17,21 @@ from __future__ import annotations
 
 import pandas as pd
 
+from core.charts.critic import ChartSpecCritic
 from ui.chart_functions import (
     MAX_TITLE_LEN,
     _Spec,
     _clean_title,
-    _normalize_axes_and_type,
+    _prepare_axis_ticks,
     _sanitize_spec,
 )
 
 
 def _spec(df: pd.DataFrame, raw: dict) -> tuple[_Spec, pd.DataFrame]:
-    spec, prepared, _ = _sanitize_spec(df, raw)
+    reviewed, _reasons = ChartSpecCritic().review(raw, df)
+    spec, prepared, _ = _sanitize_spec(df, reviewed)
     assert spec is not None
-    prepared, _reasons = _normalize_axes_and_type(prepared, spec)
+    prepared, _ticks = _prepare_axis_ticks(prepared, spec)
     return spec, prepared
 
 

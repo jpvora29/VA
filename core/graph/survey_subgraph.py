@@ -29,7 +29,7 @@ from core.agents.common.directives import charts_suppressed
 from core.agents.common.peer_privacy import redactor_for
 from core.agents.common.peers import custom_peer_directive
 from core.mcp.tools import execute_sql
-from core.agents.survey.chart import SurveyChartNode
+from core.agents.common.chart_node import chart_node_for
 from core.agents.survey.planner import PlannerNode
 from core.agents.survey.sql_agent import SQLAgentNode
 from core.data.general import GeneralFunctions
@@ -37,7 +37,6 @@ from core.data.valid_values import GetValidData
 from core.initialization import Initialization
 from core.observability import latency_timer, log_event, sql_metadata
 from core.rules.survey import SurveyRules
-from core.rules.survey_chart import SurveyChartRules
 from core.schemas.survey import (
     SurveyColumnSelectorAgent,
     SurveyQueryNormalizer,
@@ -508,19 +507,7 @@ class SurveySubGraph:
 
         survey_query_output_updated = survey_query_output
         logger.debug("Survey chart input rows: %s", survey_query_output_updated)
-        skill_rules = get_skill_loader().chart("survey", question)
-        chart_rules = skill_rules if skill_rules else SurveyChartRules.chart_creation_rules
-        log_event(
-            logger,
-            "skill_load",
-            node="survey_chart",
-            flow="survey",
-            scope="chart",
-            used_skills=bool(skill_rules),
-        )
-        survey_chart_creation_agent = SurveyChartNode(
-            chart_creation_rules=chart_rules
-        )
+        survey_chart_creation_agent = chart_node_for("survey", question)
         survey_chart_data = survey_chart_creation_agent(
             user_query=question, sql_output=survey_query_output_updated
         )

@@ -250,7 +250,7 @@ def test_a_market_share_column_sums_to_the_whole_book(engine):
     pack = P.build_positioning_comparison(
         filters={"Country": S.COUNTRY, "Year": 2025}, subject="", engine=engine
     )
-    shares = [float(r[P.SHARE_OF_MARKET].rstrip("%")) for r in pack.rows()]
+    shares = [r[P.SHARE_OF_MARKET] for r in pack.rows()]
     assert sum(shares) == pytest.approx(100.0, abs=0.2)
 
 

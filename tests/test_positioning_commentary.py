@@ -20,6 +20,7 @@ from core.answers.chart_plan import (
     PREMIUM_AXIS,
     build_chart_plan,
     contribution_chart,
+    premium_chart,
     quarterly_chart,
     quarterly_rows_from,
 )
@@ -87,16 +88,16 @@ def test_rank_change_is_positive_when_the_carrier_improves():
     assert P.SlicePosition("X", rank=2, prior_rank=4).rank_change == 2
 
 
-def test_a_change_cell_carries_its_direction(compared):
-    """The movement sits with the figure it describes, not in a column of its own."""
-    assert P.DOWN in _row(compared, "Property")[P.CARRIER_PREMIUM]
-    assert P.UP in _row(compared, "Cyber")[P.CARRIER_PREMIUM]
+def test_a_change_carries_its_direction_in_its_sign(compared):
+    """The sign IS the direction, and unlike a glyph it also sorts."""
+    assert _row(compared, "Property")[P.MOVEMENT_PERCENT] < 0
+    assert _row(compared, "Cyber")[P.MOVEMENT_PERCENT] > 0
 
 
-def test_no_movement_and_no_comparison_render_differently(compared):
-    """A dash means compared and unchanged; blank means never compared."""
-    assert _row(compared, "Cyber")[P.RANK].endswith(P.FLAT)
+def test_a_slice_never_compared_leaves_its_figures_blank(compared):
+    """Blank means never compared, which is not the same as did not move."""
     assert _row(compared, "Marine")[P.RANK] is None
+    assert _row(compared, "Marine")[P.MOVEMENT_PERCENT] is None
 
 
 def test_a_scope_with_no_prior_year_still_produces_a_table(engine):
@@ -107,27 +108,81 @@ def test_a_scope_with_no_prior_year_still_produces_a_table(engine):
     assert all(p.prior_share_of_wallet is None for p in pack.positions)
 
 
-def test_the_table_colours_direction_from_the_glyph_not_the_column_name():
+def _position_view(pack) -> "EvidenceView":
+    from ui.evidence import EvidenceView
+
+    rows = pack.rows()
+    return EvidenceView(
+        label="Position",
+        columns=list(rows[0]),
+        records=rows,
+        column_kinds=pack.column_kinds(),
+        unit=pack.money_suffix(),
+    )
+
+
+def test_the_table_colours_direction_from_the_value_not_a_glyph(compared):
     from ui.components.evidence import _direction_styles
 
-    queries = [s["if"]["filter_query"] for s in _direction_styles([P.CARRIER_PREMIUM])]
-    assert any(P.UP in q for q in queries)
-    assert any(P.DOWN in q for q in queries)
+    queries = [s["if"]["filter_query"] for s in _direction_styles(_position_view(compared))]
+    assert f"{{{P.MOVEMENT_PERCENT}}} > 0" in queries
+    assert f"{{{P.MOVEMENT_PERCENT}}} < 0" in queries
 
 
-def test_figures_right_align_and_labels_do_not():
+def test_figures_right_align_and_labels_do_not(compared):
     from ui.components.evidence import _figure_columns
+
+    aligned = _figure_columns(_position_view(compared))
+    assert P.MARSH_PREMIUM in aligned and P.SHARE_OF_WALLET in aligned
+    assert P.RANK in aligned
+    assert compared.heading not in aligned
+
+
+def test_every_figure_column_is_declared_numeric_to_the_browser(compared):
+    """`sort_action="native"` sorts on the DATA; a typed column sorts as a number."""
+    from ui.components.evidence import _columns_for
+
+    columns = {c["name"]: c for c in _columns_for(_position_view(compared))}
+    assert columns[P.MARSH_PREMIUM]["type"] == "numeric"
+    assert columns[P.RANK]["type"] == "numeric"
+    assert "type" not in columns[compared.heading]
+
+
+def test_the_money_columns_print_the_scale_the_rows_were_divided_by(compared):
+    from ui.components.evidence import _columns_for
+
+    columns = {c["name"]: c for c in _columns_for(_position_view(compared))}
+    spec = columns[P.MARSH_PREMIUM]["format"].to_plotly_json()
+    assert spec["locale"]["symbol"][0] == "$"
+    assert spec["locale"]["symbol"][1] == compared.money_suffix()
+
+
+def test_an_untyped_result_set_still_right_aligns_and_sorts_its_numbers():
+    """Every other lens returns whatever its SQL selected, and must still read well."""
+    from ui.components.evidence import _columns_for, _figure_columns
     from ui.evidence import EvidenceView
 
     view = EvidenceView(
-        label="t",
-        columns=["Product line", "Marsh premium", "Share of wallet", "Rank"],
-        records=[{"Product line": "Property", "Marsh premium": "$1.77M",
-                  "Share of wallet": "50.8%", "Rank": "#1 of 2"}],
+        label="t", columns=["Product", "Premium"],
+        records=[{"Product": "Property", "Premium": 1770.0}],
     )
-    aligned = _figure_columns(view)
-    assert "Marsh premium" in aligned and "Share of wallet" in aligned
-    assert "Product line" not in aligned and "Rank" not in aligned
+    assert _figure_columns(view) == ["Premium"]
+    premium = next(c for c in _columns_for(view) if c["name"] == "Premium")
+    assert premium["type"] == "numeric"
+
+
+def test_an_undeclared_number_is_never_printed_as_money():
+    """A lens returning a Year column has an all-numeric column that is not an
+    amount, and "$2,024" is worse than leaving it exactly as it arrived."""
+    from ui.components.evidence import _columns_for
+    from ui.evidence import EvidenceView
+
+    view = EvidenceView(
+        label="t", columns=["Year"], records=[{"Year": 2024}, {"Year": 2025}],
+    )
+    year = _columns_for(view)[0]
+    assert year["type"] == "numeric"       # still sorts as a number
+    assert "format" not in year            # but carries no currency mark
 
 
 # --------------------------------------------------------------------------- #
@@ -204,7 +259,53 @@ def test_cross_metric_claims_assert_no_cause(compared):
 
 def test_a_performance_answer_carries_three_purposeful_charts(compared):
     plan = build_chart_plan(compared, quarterly_rows=_quarterly_rows(), scope=SCOPE)
-    assert [spec.key for spec in plan] == ["quarterly", "contribution", "wallet"]
+    assert [spec.key for spec in plan] == ["quarterly", "contribution", "premium"]
+
+
+def test_the_charts_are_ordered_by_what_the_question_asked_for(compared):
+    """A movement question opens on the waterfall; a position request on the sizes."""
+    from core.analysis.operation import MOVEMENT, POSITION
+
+    def keys(operation):
+        return [
+            spec.key for spec in build_chart_plan(
+                compared, quarterly_rows=_quarterly_rows(),
+                scope=SCOPE, operation=operation,
+            )
+        ]
+
+    assert keys(MOVEMENT)[0] == "contribution"
+    assert keys(POSITION)[0] == "premium"
+
+
+def test_an_answer_is_not_three_bar_charts(compared):
+    """"It always shows the bar chart" — the movement is cumulative, so it is a
+    waterfall, and a plan of one chart type is a plan that decided nothing."""
+    types = {
+        spec.chart_type for spec in
+        build_chart_plan(compared, quarterly_rows=_quarterly_rows(), scope=SCOPE)
+    }
+    assert "waterfall" in types
+    assert len(types) > 1
+
+
+def test_premium_by_product_plots_the_book_beside_the_carrier(compared):
+    """The chart a reader means by "show premium by product"."""
+    spec = premium_chart(compared, scope=SCOPE)
+    assert spec.chart_type == "bar"
+    assert list(spec.y) == [P.MARSH_PREMIUM, P.CARRIER_PREMIUM]
+    assert len(spec.rows) == len(compared.positions)
+    assert all(row[spec.x] for row in spec.rows)
+
+
+def test_a_market_premium_chart_plots_one_series():
+    """With no carrier in scope there is no carrier premium to put beside the book."""
+    pack = P.PositioningPack(
+        (P.SlicePosition("Property", marsh_premium=100.0),
+         P.SlicePosition("Casualty", marsh_premium=60.0)),
+        "Product_Line",
+    )
+    assert list(premium_chart(pack, scope=SCOPE).y) == [P.MARSH_PREMIUM]
 
 
 def test_each_chart_has_a_short_tab_and_a_fuller_title(compared):
@@ -319,15 +420,18 @@ def test_premium_reads_in_millions_at_a_realistic_scale():
     )
     assert pack.money_suffix() == "M"
     row = pack.rows()[0]
-    assert row[P.MARSH_PREMIUM] == "$1.77M"
-    assert row[P.CARRIER_PREMIUM].startswith("$0.90M")
+    # Divided by the table's shared scale; the unit is named once, in the header.
+    assert row[P.MARSH_PREMIUM] == 1.77
+    assert row[P.CARRIER_PREMIUM] == 0.9
 
 
 def test_the_columns_are_in_the_order_a_reader_reads_them(compared):
     assert list(compared.rows()[0]) == [
-        compared.heading, P.MARSH_PREMIUM, P.CARRIER_PREMIUM,
-        P.SHARE_OF_WALLET, P.SHARE_OF_PORTFOLIO, P.RANK,
+        compared.heading, P.MARSH_PREMIUM, P.CARRIER_PREMIUM, P.MOVEMENT_PERCENT,
+        P.SHARE_OF_WALLET, P.SHARE_OF_PORTFOLIO, P.RANK, P.RANK_FIELD,
     ]
+    # The declared order and the rendered order are the same list.
+    assert list(P.DISPLAY_COLUMNS)[1:] == list(compared.rows()[0])[1:]
 
 
 def test_the_market_comes_before_the_carrier():
@@ -335,20 +439,38 @@ def test_the_market_comes_before_the_carrier():
     assert P.COLUMNS.index(P.MARSH_PREMIUM) < P.COLUMNS.index(P.CARRIER_PREMIUM)
 
 
-def test_the_premium_cell_carries_its_own_movement(compared):
-    cell = _row(compared, "Property")[P.CARRIER_PREMIUM]
-    assert P.DOWN in cell and "%" in cell
+def test_every_figure_in_the_table_is_a_number(compared):
+    """The sorting fix, stated at its source: a formatted cell is a string, and a
+    column of strings sorts alphabetically however numeric it looks."""
+    kinds = compared.column_kinds()
+    for row in compared.rows():
+        for column, value in row.items():
+            if kinds[column] == P.TEXT or value is None:
+                continue
+            assert isinstance(value, (int, float)), f"{column} is not sortable"
 
 
-def test_the_rank_cell_carries_its_own_movement(compared):
-    assert _row(compared, "Cyber")[P.RANK].endswith(P.FLAT)
+def test_a_premium_column_sorts_by_magnitude(compared):
+    """100, 160, 40, 90 was the reproduced browser result. It is now impossible."""
+    values = [r[P.MARSH_PREMIUM] for r in compared.rows() if r[P.MARSH_PREMIUM]]
+    assert sorted(values) == sorted(values, key=float)
 
 
-def test_a_slice_with_no_prior_period_shows_a_bare_figure():
-    """No comparison is not the same as no movement."""
-    position = P.SlicePosition("X", carrier_premium=5_000_000.0)
-    cell = P._premium_cell(position, 1e6, "M")
-    assert cell == "$5.00M"
+def test_the_movement_has_a_column_of_its_own(compared):
+    """Folded into the premium cell it read well and sorted appallingly."""
+    assert _row(compared, "Property")[P.MOVEMENT_PERCENT] < 0
+    assert _row(compared, "Cyber")[P.MOVEMENT_PERCENT] > 0
+
+
+def test_a_slice_with_no_prior_period_leaves_its_movement_blank():
+    """No comparison is not the same as no movement, and neither one is zero."""
+    pack = P.PositioningPack(
+        (P.SlicePosition("X", carrier_premium=5_000_000.0, marsh_premium=8_000_000.0),
+         P.SlicePosition("Y", carrier_premium=1_000_000.0, marsh_premium=8_000_000.0)),
+        "Product_Line", (), "ZURICH GROUP",
+    )
+    assert pack.rows()[0][P.MOVEMENT_PERCENT] is None
+    assert pack.rows()[0][P.CARRIER_PREMIUM] == 5.0
 
 
 def test_the_header_is_brand_navy_on_white():
@@ -376,17 +498,28 @@ def test_the_filter_row_does_not_inherit_the_navy_header():
     assert _TABLE_STYLE["style_filter"]["color"] == "#000000"
 
 
-@pytest.mark.parametrize("cell, aligned", [
-    ("$1.77M", True),
-    ("$0.90M  ▼ 25.0%", True),
-    ("50.8%", True),
-    ("#1 of 2", False),
-    ("Property", False),
+@pytest.mark.parametrize("kind, expected", [
+    (P.MONEY, "numeric"),
+    (P.PERCENT, "numeric"),
+    (P.SIGNED_PERCENT, "numeric"),
+    (P.RANK_KIND, "numeric"),
+    (P.TEXT, None),
 ])
-def test_alignment_is_decided_from_the_cell_not_the_column_name(cell, aligned):
-    from ui.components.evidence import _FIGURE
+def test_a_column_prints_and_sorts_by_its_declared_kind(kind, expected):
+    """Alignment and ordering follow what a column IS, not what its cells look like.
 
-    assert bool(_FIGURE.match(cell)) is aligned
+    The panel used to match every cell against a figure-shaped regex, which put a
+    rank ("#1 of 2") on the left because of its hash and would eventually put a
+    product code on the right because of its digits. The producer knows; it says so.
+    """
+    from ui.components.evidence import _columns_for
+    from ui.evidence import EvidenceView
+
+    view = EvidenceView(
+        label="t", columns=["Measure"], records=[{"Measure": 1.0}],
+        column_kinds={"Measure": kind}, unit="M",
+    )
+    assert _columns_for(view)[0].get("type") == expected
 
 # --------------------------------------------------------------------------- #
 # A null in the axis column must not kill the chart

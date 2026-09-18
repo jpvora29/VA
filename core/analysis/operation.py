@@ -32,6 +32,7 @@ PERFORMANCE = "performance_assessment"
 MOVEMENT = "movement_explanation"
 BREAKDOWN = "breakdown"
 PERCEPTION = "perception_assessment"
+POSITION = "position_request"
 
 # "why did it fall", "what drove the decline", "explain the drop", "reason for"
 _MOVEMENT_PATTERNS = (
@@ -72,6 +73,24 @@ _PENETRATION_PATTERNS = (
     re.compile(r"\bwhere\s+is\b[^.?!]{0,40}\bopportunit", re.I),
 )
 
+# "show the position table", "share of wallet", "rank by product", "Marsh premium"
+#
+# The ARTIFACT the reader asked for, named explicitly. Without this row a question
+# that spells out the six columns it wants -- "Marsh premium, carrier premium,
+# share of wallet, share of portfolio and rank by product" -- matched the breakdown
+# patterns on its trailing "by product", fell through to a lookup, and was answered
+# by the single-query rail, which has no positioning node and therefore no table.
+_POSITION_PATTERNS = (
+    re.compile(r"\bpositioning\b|\bposition\s+(?:table|view|summary)\b", re.I),
+    re.compile(r"\bshare\s+of\s+wallet\b|\bwallet\s+share\b|\bsow\b", re.I),
+    re.compile(r"\bshare\s+of\s+(?:the\s+)?portfolio\b|\bportfolio\s+share\b", re.I),
+    re.compile(r"\bshare\s+of\s+(?:the\s+)?book\b", re.I),
+    re.compile(r"\bmarsh\s+premium\b", re.I),
+    re.compile(r"\brank(?:ing|ed|s)?\b", re.I),
+    re.compile(r"\bwhere\s+do(?:es)?\b[^.?!]{0,40}\bstand\b", re.I),
+    re.compile(r"\b(?:competitive|market)\s+position\b", re.I),
+)
+
 # "what is the NPS", "survey score", "how do brokers rate them"
 _PERCEPTION_PATTERNS = (
     re.compile(r"\b(?:nps|net\s+promoter)\b", re.I),
@@ -88,8 +107,18 @@ _OPERATION_PATTERNS: Tuple[Tuple[str, Tuple[re.Pattern, ...]], ...] = (
     (PENETRATION, _PENETRATION_PATTERNS),
     (MOVEMENT, _MOVEMENT_PATTERNS),
     (PERCEPTION, _PERCEPTION_PATTERNS),
-    (BREAKDOWN, _BREAKDOWN_PATTERNS),
+    # Performance ABOVE breakdown. "How is the performance of AXA in Singapore by
+    # product?" is a performance assessment that also names a grouping axis, not a
+    # GROUP BY that happens to contain the word performance -- and reading it as
+    # the latter cost it every requirement a performance answer owes its reader.
+    # A grouping axis is a separate slice of the turn (`QueryIntent.group_by`);
+    # it says how to CUT the answer, never what the answer IS.
     (PERFORMANCE, _PERFORMANCE_PATTERNS),
+    # Position below performance and above breakdown: a question that says
+    # "performance" wants the richer contract, and one that names the columns of
+    # the position table wants the table, whatever dimension it asks them by.
+    (POSITION, _POSITION_PATTERNS),
+    (BREAKDOWN, _BREAKDOWN_PATTERNS),
 )
 
 # Explicit source restrictions. These OVERRIDE the configured default, so they

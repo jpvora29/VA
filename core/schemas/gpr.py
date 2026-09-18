@@ -27,34 +27,6 @@ class GPRSQLJoinChecker(BaseModel):
     )
 
 
-class GPRChartSignature(Signature):
-    """
-    [ROLE]
-    You are an Expert Data Visualization Analyst specialized in interpreting premium data within the insurance domain.
-    Your task is to recommend the most suitable chart type and configuration to effectively represent the user's intent
-    based on the provided user query, SQL output, and chart creation rules.
-
-    [OBJECTIVE]
-    Analyze the structure and semantics of the survey data (Use the correct field names from the data)
-    and determine the optimal visual representation that clearly communicates trends, comparisons, or distributions.
-
-    [RULE]
-    STRICTLY assign "x", "y", "series" fields in the Chart Data with the Column Names that are ONLY present in the "sql_output"
-
-    """
-
-    chart_creation_rules: str = InputField(
-        desc="# Predefined guidelines or heuristics for choosing chart types, axis mapping, aggregation, and sorting."
-    )
-    user_query: str = InputField(desc="User's natural language question or query")
-    sql_output: List[Dict[str, Any]] = InputField(
-        desc="Structured SQL query result as a list of dictionaries, where each dict represents a row of data."
-    )
-    chart_data: ChartOutput = OutputField(
-        desc="Structured chart data based on the chart creation rules"
-    )
-
-
 class GPRResponseSignature(Signature):
     """
     ROLE:

@@ -52,6 +52,14 @@ class EvidenceView:
     records: List[Dict[str, Any]]
     figure: Optional[Any] = None
     note: str = ""
+    #: {column: kind} for a result set that KNOWS how its columns should read
+    #: (see `core.analytics.positioning`). Empty for a result set that does not,
+    #: and the table falls back to reading the values — which is a guess, and the
+    #: reason a column is typed here when the producer can say so.
+    column_kinds: Dict[str, str] = field(default_factory=dict)
+    #: The unit money columns are already divided by ("M", "k", ""), so the table
+    #: can print it in the cell instead of only in a note above it.
+    unit: str = ""
 
     @property
     def has_chart(self) -> bool:
@@ -90,7 +98,7 @@ def _frame(rows: Any) -> pd.DataFrame:
 
 def build_view(
     rows: Sequence[Any], chart_data: Optional[Dict[str, Any]], *, label: str,
-    note: str = "",
+    note: str = "", column_kinds: Optional[Dict[str, str]] = None, unit: str = "",
 ) -> Optional[EvidenceView]:
     """One view from one result set, or ``None`` when there is nothing to show.
 
@@ -117,6 +125,8 @@ def build_view(
         records=frame.to_dict("records"),
         figure=figure,
         note=(note or fallback_note or "").strip() if figure is None else "",
+        column_kinds=dict(column_kinds or {}),
+        unit=unit,
     )
 
 
@@ -137,6 +147,8 @@ def build_views(specs: Sequence[Dict[str, Any]]) -> List[EvidenceView]:
             chart_data,
             label=label_for(spec.get("lens") or "", i, naming),
             note=spec.get("note", ""),
+            column_kinds=spec.get("column_kinds") or {},
+            unit=spec.get("unit") or "",
         )
         if view is not None:
             views.append(view)

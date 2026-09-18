@@ -97,6 +97,38 @@ def test_rank_gpr_premium_within_product(engine):
     assert facts[0].rendered.startswith("#")
 
 
+def test_a_tie_shares_a_position_and_skips_the_next(engine):
+    """Competition rank (1, 1, 3) — the semantics both backends implement.
+
+    Pinned because the glossary shown to readers used to say "dense rank"
+    (1, 1, 2), which neither backend does. A definition that contradicts the
+    number printed beside it is worse than none, so the two are now asserted
+    together: change one and this fails.
+    """
+    from core.definitions import get_glossary
+
+    with engine.begin() as conn:
+        conn.execute(
+            text('INSERT INTO GPR (Carrier_Group, Country, Product_Line, Year, Premium) '
+                 'VALUES (:cg, :co, :pl, :yr, :pr)'),
+            [
+                {"cg": "Tied A", "co": "Tieland", "pl": "Property", "yr": 2024, "pr": 100.0},
+                {"cg": "Tied B", "co": "Tieland", "pl": "Property", "yr": 2024, "pr": 100.0},
+                {"cg": "Third", "co": "Tieland", "pl": "Property", "yr": 2024, "pr": 50.0},
+            ],
+        )
+    facts = compute_rank(PrimitiveArgs(
+        flow="gpr", metric="premium", group_by=("Product_Line",),
+        filters={"Country": "Tieland", "Year": 2024},
+    ), engine=engine)
+    ranks = {f.dims["entity"]: f.value for f in facts}
+    assert ranks == {"Tied A": 1, "Tied B": 1, "Third": 3}
+
+    formula = getattr(get_glossary().get("rank"), "formula", "").lower()
+    assert "competition rank" in formula
+    assert "dense" not in formula
+
+
 def test_rank_survey_score(engine):
     args = PrimitiveArgs(flow="survey", metric="score", group_by=("SurveyPractice",),
                          filters={"Survey_Year": 2024})
