@@ -22,6 +22,8 @@ from typing import List, Tuple
 
 from pptx import Presentation
 
+from recap.config import settings
+
 logger = logging.getLogger(__name__)
 
 #: Words that are the deck's furniture, not the client's name.
@@ -43,6 +45,8 @@ class DeckMetadata:
     quarter: str = ""
     year: str = ""
     meeting_date: str = ""
+    carrier: str = ""
+    country_region: str = ""
 
     def as_store(self) -> dict:
         return asdict(self)
@@ -78,9 +82,11 @@ def read_cover(pptx_bytes: bytes) -> DeckMetadata:
         return DeckMetadata()
 
     slide = slides[0]
-    period = _read_period(_all_text(slide))
+    cover_text = _all_text(slide)
+    period = _read_period(cover_text)
     names = _read_names(slide)
-    return DeckMetadata(**period, **names)
+    scope = _read_scope(cover_text, slides)
+    return DeckMetadata(**period, **names, **scope)
 
 
 def deck_id_for(filename: str, index: int = 0) -> str:
@@ -151,6 +157,35 @@ def _read_names(slide) -> dict:
             else:
                 client = client or first_line
     return {"client_name": client, "company_name": company}
+
+
+def _read_scope(cover_text: str, slides: list) -> dict:
+    """The carrier and the country or region the review is about.
+
+    Matched against the canonical lists in ``assets/config.yaml``: the cover first,
+    since that is where a deck says what it is about, and the whole deck only when
+    the cover names neither. A region wins over a country — it is the broader scope,
+    and the one the chip should show.
+    """
+    carrier = _first_named(cover_text, settings.carriers)
+    country_region = _first_named(cover_text, settings.regions + settings.countries)
+    if carrier and country_region:
+        return {"carrier": carrier, "country_region": country_region}
+
+    deck_text = " | ".join(_all_text(slide) for slide in slides)
+    return {
+        "carrier": carrier or _first_named(deck_text, settings.carriers),
+        "country_region": country_region
+        or _first_named(deck_text, settings.regions + settings.countries),
+    }
+
+
+def _first_named(text: str, names: List[str]) -> str:
+    """The first of ``names`` that appears in ``text`` as a whole word, or ""."""
+    for name in names:
+        if re.search(r"\b" + re.escape(name) + r"\b", text, re.I):
+            return name
+    return ""
 
 
 def _placeholder_index(shape) -> int | None:

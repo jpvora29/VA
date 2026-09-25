@@ -32,6 +32,7 @@ from core.mcp.tools import execute_sql
 from core.agents.common.chart_node import chart_node_for
 from core.agents.survey.planner import PlannerNode
 from core.agents.survey.sql_agent import SQLAgentNode
+from core.analytics.sql_period import scope_sql_to_default_year
 from core.data.general import GeneralFunctions
 from core.data.valid_values import GetValidData
 from core.initialization import Initialization
@@ -288,6 +289,23 @@ class SurveySubGraph:
         )
 
         # state["survey_sql_query"] = sql_query_output
+
+        # The period rule, applied to the query the model just wrote — the same
+        # seat and the same reason as the premium rail. See
+        # `core.analytics.sql_period`.
+        sql_query_output, period = scope_sql_to_default_year(
+            "survey", sql_query_output, question=question,
+            engine=Initialization.engine,
+        )
+        if period is not None:
+            log_event(
+                logger,
+                "sql_period_defaulted",
+                route="survey",
+                node="survey_convert_to_sql",
+                year=period,
+                reason="the question named no period, so the latest year in the data was used",
+            )
 
         logger.debug("Survey SQL query: %s", sql_query_output)
 

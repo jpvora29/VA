@@ -1,4 +1,4 @@
-﻿"""
+"""
 extraction/extractor.py
 
 Stage 1 â€” Raw PPT Extraction.
@@ -359,6 +359,81 @@ def _extract_chart(shape: BaseShape) -> Optional[RawChart]:
 
 
 # ---------------------------------------------------------------------------
+# Meeting type detection
+# ---------------------------------------------------------------------------
+
+# Ordered list of (regex_pattern, canonical_label) pairs.
+# First match wins. Checked against the combined text of the first two slides.
+_MEETING_TYPE_PATTERNS = [
+    (re.compile(r'kick[\-\s]?off\s+meeting', re.I), 'Kick-Off Meeting'),
+    (re.compile(r'governance\s+meeting',       re.I), 'Governance Meeting'),
+    (re.compile(r'steering\s+committee',       re.I), 'Steering Committee'),
+    (re.compile(r'\bqbr\b',                   re.I), 'QBR'),
+    (re.compile(r'quarterly\s+business\s+review', re.I), 'QBR'),
+    (re.compile(r'business\s+review',          re.I), 'Business Review'),
+    (re.compile(r'annual\s+review',            re.I), 'Annual Review'),
+]
+
+
+def _detect_meeting_type(slides: List) -> Optional[str]:
+    """
+    Scan the first two slides text elements for a known meeting-type keyword.
+    Returns the canonical label (e.g. 'Kick-Off Meeting', 'QBR') or None.
+    """
+    title_slides = slides[:2] if slides else []
+    combined = " ".join(
+        el.text or ""
+        for slide in title_slides
+        for el in slide.elements
+        if el.text
+    ).lower()
+    for pattern, label in _MEETING_TYPE_PATTERNS:
+        if pattern.search(combined):
+            return label
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Image-only chart detection
+# ---------------------------------------------------------------------------
+
+# Keywords that suggest an IMAGE shape is a chart rendered as a raster image.
+_IMAGE_CHART_KEYWORDS = {
+    'gwp', 'chart', 'trend', 'growth', 'year', 'premium', 'revenue',
+    'performance', 'split', 'mix', '5-year', 'five year', 'ytd', 'qoq',
+    'yoy', 'annual', 'quarterly', 'bar', 'line', 'graph',
+}
+
+
+def _is_image_only_chart(shape: BaseShape, alt_text: Optional[str]) -> bool:
+    """
+    Return True if *shape* is an IMAGE element that appears to be a chart
+    rendered as a raster image (no underlying PPTX chart XML).
+    Detection: the shape is a picture/media type (no .has_chart), and its
+    alt-text or name attribute contains chart-like keywords.
+    """
+    try:
+        if not hasattr(shape, "shape_type"):
+            return False
+        mso = int(shape.shape_type)
+        if mso not in (int(MSO_SHAPE_TYPE.PICTURE), int(MSO_SHAPE_TYPE.MEDIA)):
+            return False
+        if getattr(shape, "has_chart", False):
+            return False
+        haystack = (alt_text or "").lower()
+        try:
+            cNvPr = shape._element.find(".//" + qn("p:cNvPr"))
+            if cNvPr is not None:
+                haystack += " " + (cNvPr.get("name") or "").lower()
+                haystack += " " + (cNvPr.get("descr") or "").lower()
+        except Exception:
+            pass
+        return any(kw in haystack for kw in _IMAGE_CHART_KEYWORDS)
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Alt-text / image description
 # ---------------------------------------------------------------------------
 
@@ -470,6 +545,11 @@ def _extract_shapes(
             except Exception:
                 pass
 
+        img_only_chart = (
+            _is_image_only_chart(shape, alt_text)
+            if etype == ElementType.IMAGE else False
+        )
+
         elem = RawElement(
             element_id=elem_id,
             deck_id=deck_id,
@@ -480,6 +560,7 @@ def _extract_shapes(
             alt_text=alt_text,
             table=table,
             chart=chart,
+            is_image_only_chart=img_only_chart,
             x=int(shape.left) if shape.left is not None else None,
             y=int(shape.top)  if shape.top  is not None else None,
             width=int(shape.width)  if shape.width  is not None else None,
@@ -698,6 +779,13 @@ class PPTExtractor:
                 section,
             )
 
+        detected_meeting_type = _detect_meeting_type(slides)
+        if detected_meeting_type:
+            logger.info(
+                "Detected meeting type for deck_id=%s: %s",
+                deck_id, detected_meeting_type,
+            )
+
         deck = RawDeck(
             deck_id=deck_id,
             file_path=str(file_path),
@@ -708,6 +796,7 @@ class PPTExtractor:
             period_label=period_label or self._auto_period_label(quarter, half_year, year),
             client_name=client_name,
             company_name=company_name,
+            meeting_type=detected_meeting_type,
             slides=slides,
             section_map=section_map,
         )

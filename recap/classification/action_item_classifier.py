@@ -23,6 +23,7 @@ from typing import Optional
 from recap.schemas.enrichment import EnrichedInsight, Urgency
 from recap.schemas.action_item import ActionItemResult
 from recap.llm.llm_client import LLMClient
+from recap.config import settings
 from recap.prompts.prompts import (
     ACTION_ITEM_SYSTEM_PROMPT,
     ACTION_ITEM_USER_TEMPLATE,
@@ -59,7 +60,9 @@ class ActionItemClassifier:
             raw = await self._llm.call(
                 system_prompt=ACTION_ITEM_SYSTEM_PROMPT,
                 user_message=user_message,
-                max_completion_tokens=512,
+                max_completion_tokens=settings.token_budget("action_item_classification"),
+                reasoning_effort=settings.reasoning_effort_for("action_item_classification"),
+                stage="action_item_classification",
             )
             d = json.loads(raw) if isinstance(raw, str) else raw
             return self._parse(insight, d)

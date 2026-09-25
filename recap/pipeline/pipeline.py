@@ -9,6 +9,8 @@ Coordinates all stages end-to-end with controlled concurrency:
     1. Raw extraction (sync, python-pptx)
     2. Noise filtering (async — per-slide with LLM ambiguous pass)
     3. Semantic content unit construction (sync per slide)
+    3.5. Cheap content-unit pre-filter (sync, no LLM — drops header-like
+         / duplicate-title SCUs before the expensive stages below)
 
   Per-SCU (concurrent across all SCUs in the deck):
     4. Metadata enrichment (async LLM)
@@ -41,6 +43,7 @@ from typing import Dict, List, Optional, Tuple
 from recap.config import settings
 from recap.extraction.extractor import PPTExtractor
 from recap.filtering.noise_filter import NoiseFilter
+from recap.filtering.prefilter import ContentPreFilter
 from recap.grouping.content_units import ContentUnitBuilder
 from recap.glossary.glossary import BusinessGlossary
 from recap.enrichment.enrichment import EnrichmentLLM
@@ -108,6 +111,7 @@ class BusinessReviewPipeline:
         self._extractor    = PPTExtractor()
         self._noise_filter = NoiseFilter(self._llm)
         self._cu_builder   = ContentUnitBuilder()
+        self._prefilter    = ContentPreFilter()
         self._glossary     = (
             BusinessGlossary.from_file(glossary_path)
             if glossary_path
@@ -124,6 +128,11 @@ class BusinessReviewPipeline:
 
         # Per-insight classification semaphore (prevents excessive fan-out)
         self._classify_sem = None  # lazy-init inside running event loop
+
+        # The meeting type the last deck's title slide named ('QBR', 'Kick-Off
+        # Meeting', ...), or None. Kept so a multi-deck caller can hand it to
+        # generate_recap_from_store() — the recap must not mislabel the meeting.
+        self.meeting_type: Optional[str] = None
 
     # ----------------------------------------------------------------
     # Artefact saving helper
@@ -202,6 +211,7 @@ class BusinessReviewPipeline:
             half_year, year, period_label, client_name, company_name,
         )
         self._save_artefact(deck_id, "01_raw_extraction", deck)
+        self.meeting_type = deck.meeting_type
 
         # ── Stages 2–3: Noise filter + SCU construction ─────────────
         self._report("filtering")
@@ -213,11 +223,25 @@ class BusinessReviewPipeline:
         if not all_scus:
             logger.warning("No SCUs produced for deck_id=%s", deck_id)
             self._report("recap", "No usable content was found in this deck.")
+            self._llm.log_usage_summary()
+            return RecapGenerator._empty_recap(deck_id, client_name, period_label)
+
+        # ── Stage 3.5: Cheap pre-filter (no LLM) ─────────────────────
+        eligible_scus, skipped_scus = self._prefilter.filter(all_scus)
+        if skipped_scus:
+            self._save_artefact(deck_id, "02b_prefiltered_out", skipped_scus)
+        if not eligible_scus:
+            logger.warning(
+                "All %d SCUs skipped by pre-filter for deck_id=%s",
+                len(all_scus), deck_id,
+            )
+            self._report("recap", "No substantive content was found in this deck.")
+            self._llm.log_usage_summary()
             return RecapGenerator._empty_recap(deck_id, client_name, period_label)
 
         # ── Stage 4: Metadata enrichment ────────────────────────────
         self._report("enriching")
-        enriched_insights = await self._enrich(all_scus, deck)
+        enriched_insights = await self._enrich(eligible_scus, deck)
         logger.info("Enriched insights: %d", len(enriched_insights))
         self._save_artefact(deck_id, "03_enriched_insights", enriched_insights)
 
@@ -235,6 +259,7 @@ class BusinessReviewPipeline:
 
         # ── Stage 9: Recap generation ────────────────────────────────
         if not generate_recap:
+            self._llm.log_usage_summary()
             return RecapGenerator._empty_recap(deck_id, client_name, period_label)
 
         self._report("recap")
@@ -242,6 +267,8 @@ class BusinessReviewPipeline:
             deck_id=deck_id,
             client_name=client_name,
             period_label=period_label or deck.period_label,
+            meeting_date=deck.meeting_date,
+            meeting_type=deck.meeting_type,
             min_confidence=min_recap_confidence,
         )
 
@@ -260,6 +287,8 @@ class BusinessReviewPipeline:
         deck_id: str,
         client_name: Optional[str] = None,
         period_label: Optional[str] = None,
+        meeting_date: Optional[str] = None,
+        meeting_type: Optional[str] = None,
         min_confidence: float = 0.0,
     ) -> RecapOutput:
         """
@@ -268,14 +297,20 @@ class BusinessReviewPipeline:
         `run()` calls this at its own last stage. It is public because a run over
         SEVERAL decks wants exactly one recap covering all of them: the caller runs
         each deck with `generate_recap=False` into a shared store, then asks here.
+
+        Logs the per-stage token summary for the recap's own calls on the way out.
         """
-        return await self._recap_generator.generate(
+        recap = await self._recap_generator.generate(
             store=self.store,
             deck_id=deck_id,
             client_name=client_name,
             period_label=period_label,
+            meeting_date=meeting_date,
+            meeting_type=meeting_type,
             min_confidence=min_confidence,
         )
+        self._llm.log_usage_summary()
+        return recap
 
     async def run_multiple(
         self,

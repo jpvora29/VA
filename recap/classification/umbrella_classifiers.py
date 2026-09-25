@@ -25,6 +25,7 @@ from typing import List, Optional
 from recap.schemas.enrichment import EnrichedInsight
 from recap.schemas.classification import ClassificationResult, UmbrellaLabel
 from recap.llm.llm_client import LLMClient
+from recap.config import settings
 from recap.taxonomy.taxonomy_definitions import (
     get_sub_category_block,
     get_umbrella_definition,
@@ -79,7 +80,9 @@ async def _classify_one_umbrella(
         raw = await llm.call(
             system_prompt=system_prompt,
             user_message=user_message,
-            max_completion_tokens=512,
+            max_completion_tokens=settings.token_budget("umbrella_classification"),
+            reasoning_effort=settings.reasoning_effort_for("umbrella_classification"),
+            stage="umbrella_classification",
         )
         d = json.loads(raw) if isinstance(raw, str) else raw
         # LLM sometimes returns integers [1, 2, 3] — coerce to strings

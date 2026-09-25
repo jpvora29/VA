@@ -22,7 +22,7 @@ keeps those apart.
 from __future__ import annotations
 
 import re
-from typing import Sequence, Tuple
+from typing import Any, Sequence, Tuple
 
 from core.analysis.requirements import GPR, SURVEY
 
@@ -73,23 +73,45 @@ _PENETRATION_PATTERNS = (
     re.compile(r"\bwhere\s+is\b[^.?!]{0,40}\bopportunit", re.I),
 )
 
-# "show the position table", "share of wallet", "rank by product", "Marsh premium"
-#
-# The ARTIFACT the reader asked for, named explicitly. Without this row a question
-# that spells out the six columns it wants -- "Marsh premium, carrier premium,
-# share of wallet, share of portfolio and rank by product" -- matched the breakdown
-# patterns on its trailing "by product", fell through to a lookup, and was answered
-# by the single-query rail, which has no positioning node and therefore no table.
-_POSITION_PATTERNS = (
+# The position TABLE, asked for by name: "show the positioning table", "where
+# does Zurich stand". One of these is enough on its own — the reader named the
+# artifact, so there is nothing to weigh up.
+_POSITION_ARTIFACT = (
     re.compile(r"\bpositioning\b|\bposition\s+(?:table|view|summary)\b", re.I),
+    re.compile(r"\bwhere\s+do(?:es)?\b[^.?!]{0,40}\bstand\b", re.I),
+    re.compile(r"\b(?:competitive|market)\s+position\b", re.I),
+)
+
+# The MEASURES the position table is made of. One of these is NOT a position
+# request — "what is Zurich's share of wallet for Property" is a single primitive
+# call and belongs on the cheap rail. TWO or more is: nothing computes "Marsh
+# premium, carrier premium, share of wallet, share of portfolio and rank" in one
+# query, so a question naming several of them is asking for the table whether or
+# not it uses the word.
+#
+# This threshold is the whole rule. Matching on any ONE of them sent every
+# "what is X's SoW?" to the analyst subgraph — six primitives and a model call
+# for a question one primitive answers.
+_POSITION_MEASURES = (
     re.compile(r"\bshare\s+of\s+wallet\b|\bwallet\s+share\b|\bsow\b", re.I),
     re.compile(r"\bshare\s+of\s+(?:the\s+)?portfolio\b|\bportfolio\s+share\b", re.I),
     re.compile(r"\bshare\s+of\s+(?:the\s+)?book\b", re.I),
     re.compile(r"\bmarsh\s+premium\b", re.I),
+    re.compile(r"\bcarrier\s+premium\b", re.I),
     re.compile(r"\brank(?:ing|ed|s)?\b", re.I),
-    re.compile(r"\bwhere\s+do(?:es)?\b[^.?!]{0,40}\bstand\b", re.I),
-    re.compile(r"\b(?:competitive|market)\s+position\b", re.I),
 )
+
+#: How many distinct position measures a question must name before it is read as
+#: asking for the table rather than for one of them.
+_POSITION_MEASURE_THRESHOLD = 2
+
+
+def _wants_position(question: str) -> bool:
+    """Whether the question asks for the position TABLE, not one of its columns."""
+    if _matches(question, _POSITION_ARTIFACT):
+        return True
+    named = sum(1 for pattern in _POSITION_MEASURES if pattern.search(question))
+    return named >= _POSITION_MEASURE_THRESHOLD
 
 # "what is the NPS", "survey score", "how do brokers rate them"
 _PERCEPTION_PATTERNS = (
@@ -99,26 +121,37 @@ _PERCEPTION_PATTERNS = (
     re.compile(r"\b(?:perception|satisfaction)\b", re.I),
 )
 
+def _any_of(patterns: Tuple[re.Pattern, ...]):
+    """A pattern tuple as a predicate, so the table below can hold both shapes."""
+
+    def detect(question: str) -> bool:
+        return _matches(question, patterns)
+
+    return detect
+
+
 # Most specific first. A question matching several operations is named by the
-# first row here, which is why this is a tuple and not a dict.
-_OPERATION_PATTERNS: Tuple[Tuple[str, Tuple[re.Pattern, ...]], ...] = (
+# first row here, which is why this is a tuple and not a dict. Each row is a
+# PREDICATE rather than a pattern list, because one operation (position) is not
+# decided by a single match — see `_wants_position`.
+_OPERATION_TESTS: Tuple[Tuple[str, Any], ...] = (
     # Penetration first: "where can we grow in Property" also matches the
     # breakdown patterns, and the growth question is the one being asked.
-    (PENETRATION, _PENETRATION_PATTERNS),
-    (MOVEMENT, _MOVEMENT_PATTERNS),
-    (PERCEPTION, _PERCEPTION_PATTERNS),
+    (PENETRATION, _any_of(_PENETRATION_PATTERNS)),
+    (MOVEMENT, _any_of(_MOVEMENT_PATTERNS)),
+    (PERCEPTION, _any_of(_PERCEPTION_PATTERNS)),
     # Performance ABOVE breakdown. "How is the performance of AXA in Singapore by
     # product?" is a performance assessment that also names a grouping axis, not a
     # GROUP BY that happens to contain the word performance -- and reading it as
     # the latter cost it every requirement a performance answer owes its reader.
     # A grouping axis is a separate slice of the turn (`QueryIntent.group_by`);
     # it says how to CUT the answer, never what the answer IS.
-    (PERFORMANCE, _PERFORMANCE_PATTERNS),
+    (PERFORMANCE, _any_of(_PERFORMANCE_PATTERNS)),
     # Position below performance and above breakdown: a question that says
     # "performance" wants the richer contract, and one that names the columns of
     # the position table wants the table, whatever dimension it asks them by.
-    (POSITION, _POSITION_PATTERNS),
-    (BREAKDOWN, _BREAKDOWN_PATTERNS),
+    (POSITION, _wants_position),
+    (BREAKDOWN, _any_of(_BREAKDOWN_PATTERNS)),
 )
 
 # Explicit source restrictions. These OVERRIDE the configured default, so they
@@ -152,8 +185,8 @@ def detect_operation(question: str, *, depth: str = "") -> str:
     performance contract rather than being demoted to a bare lookup.
     """
     text = question or ""
-    for operation, patterns in _OPERATION_PATTERNS:
-        if _matches(text, patterns):
+    for operation, detect in _OPERATION_TESTS:
+        if detect(text):
             return operation
     return PERFORMANCE if depth == "analytical" else LOOKUP
 

@@ -15,6 +15,7 @@ from dash import dcc
 
 from mom.modes import DEFAULT_MODE
 from studio.authoring.layout import studio_stores
+from ui.decisions.model import DEFAULT_VIEW as DEFAULT_DECISION_VIEW
 from ui.mom.render import POLL_INTERVAL_MS
 from ui.recap.render import POLL_INTERVAL_MS as RECAP_POLL_INTERVAL_MS
 from ui.shell.tabs import DEFAULT_TAB
@@ -68,12 +69,21 @@ def chat_stores() -> List[Any]:
         # Drag-and-drop drop events from assets/boardroom_dnd.js (set_props).
         dcc.Store(id="bm-dnd", data=None),
         dcc.Store(id="custom-peers-open", data=False),
-        # Decision Board: which content pane is showing (chat | board), plus the
-        # currently-open detail / editor target and a counter bumped after any
-        # decision mutation to force the board to repaint.
+        # Decision Board: which content pane is showing (chat | board), how the
+        # queue is being read, which record the brief is on, and a counter bumped
+        # after any decision mutation to force the board to repaint.
         dcc.Store(id="active-view", data="chat"),
-        dcc.Store(id="decision-detail-target", data=None),
+        dcc.Store(id="decision-view", data=DEFAULT_DECISION_VIEW),
+        # "active" or "archived" — the archive is a view, not a filter, so it is
+        # one click away and cannot be left silently switched on.
+        dcc.Store(id="decision-scope", data="active"),
+        # Weeks from the current one; the agenda ribbon steps it.
+        dcc.Store(id="decision-week", data=0),
+        dcc.Store(id="decision-selected", data=None),
         dcc.Store(id="decision-edit-target", data=None),
+        # The evidence snapshot a draft arrived with, held while the editor is
+        # open so it can be written on create without being typed over.
+        dcc.Store(id="decision-draft-evidence", data=None),
         dcc.Store(id="decisions-version", data=0),
         dcc.Download(id="download-pitch-report"),
         dcc.Download(id="boardroom-download"),

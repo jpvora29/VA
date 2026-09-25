@@ -247,6 +247,12 @@ class RawElement(BaseModel):
     is_placeholder: bool        = False
     placeholder_type: Optional[str] = None   # e.g. 'TITLE', 'BODY', 'FOOTER'
 
+    # Flag: True when this is an IMAGE element that appears to be a chart
+    # rendered as a raster image (no underlying PPTX chart XML). Data from
+    # such elements cannot be extracted as text; downstream stages must not
+    # assert specific values from them.
+    is_image_only_chart: bool   = False
+
     def effective_text(self) -> str:
         """Best available text representation of this element."""
         if self.text:
@@ -293,6 +299,11 @@ class RawDeck(BaseModel):
 
     client_name: Optional[str]      = None
     company_name: Optional[str]     = None
+
+    # Meeting type detected from the title slide, e.g. 'Kick-Off Meeting',
+    # 'Governance Meeting', 'QBR', 'Business Review'. Populated by the
+    # extractor; used by recap generation to avoid mislabelling meeting types.
+    meeting_type: Optional[str]     = None
 
     slides: List[RawSlide]          = Field(default_factory=list)
 

@@ -5,13 +5,24 @@ and deployment names; in the merged application the model client comes from
 ``core.llm.clients``, so Recap reads the same ``.env`` as Studio, the Chatbot and MoM
 and there is one place a deployment is configured. See :mod:`recap.llm.llm_client`.
 
-What remains is the two things that ARE Recap's own:
+What remains is the three things that ARE Recap's own:
 
     lookup tables   the canonical carrier / LoB / country / region / segment labels an
                     enrichment prompt asks the model to snap to, plus the standing
                     Marsh + ICG context block. Edited in ``assets/config.yaml``.
     tuning          concurrency, retries, thresholds — read from the environment so a
                     slow tenant can be throttled without a code change.
+    per-stage LLM   each model call is tagged with a stage name, and each stage's token
+                    budget and reasoning effort can be set on its own. The variables are
+                    ``RECAP_``-prefixed so they never collide with the application-wide
+                    ``<TIER>_EFFORT`` knobs in :mod:`core.llm.clients`:
+
+                        RECAP_REASONING_EFFORT            every recap stage
+                        RECAP_REASONING_EFFORT_<STAGE>    one stage, wins over the above
+                        RECAP_TOKENS_<STAGE>              one stage's output budget
+
+                    With no RECAP_ effort set, a stage runs exactly as its tier is
+                    configured — so an unset variable changes nothing.
 
 A run owns a directory (:class:`RunPaths`), the same shape :mod:`mom.config` uses and
 for the same reason: two runs writing into one ``outputs/`` folder overwrote each other.
@@ -24,9 +35,16 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import yaml
+from dotenv import load_dotenv
+
+# The per-stage settings below are read from the environment at call time, and a recap
+# stage can ask for them before anything has imported ``core.llm.clients`` (which is
+# what loads ``.env`` for the rest of the app). Loading here too is a no-op when it has
+# already run, and never overrides a variable exported in the real environment.
+load_dotenv()
 
 ASSETS = Path(__file__).resolve().parent / "assets"
 
@@ -44,6 +62,87 @@ def _load_asset_config() -> dict:
 
 
 _ASSET_CONFIG: dict = _load_asset_config()
+
+
+# ---------------------------------------------------------------------------
+# Canonical / alias helpers for lookup-table entries
+# ---------------------------------------------------------------------------
+#
+# Lookup lists such as lines_of_business and segments may be defined either
+# as a flat list of strings (legacy shape) or as a list of
+# {canonical: str, aliases: [str, ...]} dicts (current shape). These helpers
+# normalise both shapes so the rest of the code only deals with canonical
+# names and a single alias -> canonical index.
+
+def _entry_canonical(entry) -> str:
+    """Return the canonical display name for one lookup-list entry."""
+    if isinstance(entry, dict):
+        return str(entry.get("canonical", "")).strip()
+    return str(entry).strip()
+
+
+def _entry_aliases(entry) -> List[str]:
+    """Return the alias list for one lookup-list entry (empty if none)."""
+    if isinstance(entry, dict):
+        return [str(a).strip() for a in (entry.get("aliases") or []) if str(a).strip()]
+    return []
+
+
+def _build_alias_index(entries: list) -> dict:
+    """
+    Build a case-insensitive {alias_or_canonical_lower: canonical} index
+    from a lookup-list. Both the canonical name and every alias map to the
+    canonical name, so callers can resolve any known variant in one lookup.
+    """
+    index: dict = {}
+    for entry in entries:
+        canonical = _entry_canonical(entry)
+        if not canonical:
+            continue
+        index[canonical.lower()] = canonical
+        for alias in _entry_aliases(entry):
+            index[alias.lower()] = canonical
+    return index
+
+
+# ---------------------------------------------------------------------------
+# Per-stage token budgets
+# ---------------------------------------------------------------------------
+#
+# Every model call in the pipeline is tagged with a short stage name. Classification
+# stages are kept lean (short, templated JSON); enrichment and recap synthesis get more
+# headroom because they compose free text and — on a reasoning deployment — internal
+# reasoning tokens are drawn from this same budget before any visible output.
+
+_STAGE_TOKEN_DEFAULTS = {
+    # Classification — short boolean/JSON verdicts
+    "umbrella_classification": 512,
+    "subcategory_classification": 512,
+    "action_item_classification": 512,
+    # Enrichment — structured metadata extraction
+    "enrichment_context": 600,
+    "enrichment_kpi": 1024,
+    # Recap generation — free-text synthesis, largest budgets
+    "recap_takeaway": 2000,
+    "recap_dedup": 5000,
+    "recap_force_compress": 3000,
+    "recap_exec_summary": 1000,
+    "recap_overlap": 5000,
+    "recap_fact_check_slide1": 5000,
+    "recap_fact_check_slide2": 5000,
+    "recap_action_ranker": 1500,
+    "recap_country_summary_per_sentence": 500,
+}
+
+#: The budget for a stage name that is not in the table above.
+_FALLBACK_TOKEN_BUDGET = 1024
+
+#: Values that leave a stage's effort to its tier, the same words core.llm.clients uses.
+_NO_EFFORT = {"", "none", "off"}
+
+
+def _recap_env(name: str) -> str:
+    return (os.environ.get(f"RECAP_{name}") or "").strip()
 
 
 # ---------------------------------------------------------------------------
@@ -69,8 +168,22 @@ class Settings:
 
     @property
     def lines_of_business(self) -> List[str]:
-        """Canonical LoB labels for metadata matching."""
-        return _ASSET_CONFIG.get("lines_of_business", [])
+        """
+        Canonical LoB labels for metadata matching.
+
+        Supports both the {canonical, aliases} config shape and the legacy
+        flat list of strings, so older config.yaml files keep working.
+        """
+        return [_entry_canonical(e) for e in _ASSET_CONFIG.get("lines_of_business", [])]
+
+    @property
+    def lob_alias_index(self) -> dict:
+        """
+        Case-insensitive lookup mapping every alias AND canonical name to
+        its canonical LoB name, e.g. {"d&o": "Directors & Officers (D&O)"}.
+        Used to canonicalize free-text LoB values returned by the LLM.
+        """
+        return _build_alias_index(_ASSET_CONFIG.get("lines_of_business", []))
 
     @property
     def countries(self) -> List[str]:
@@ -84,8 +197,20 @@ class Settings:
 
     @property
     def segments(self) -> List[str]:
-        """Canonical ICG client segment labels for metadata matching."""
-        return _ASSET_CONFIG.get("segments", [])
+        """
+        Canonical ICG client segment labels for metadata matching.
+        Supports both the {canonical, aliases} shape and the legacy flat list.
+        """
+        return [_entry_canonical(e) for e in _ASSET_CONFIG.get("segments", [])]
+
+    @property
+    def segment_alias_index(self) -> dict:
+        """
+        Case-insensitive lookup mapping every alias AND canonical name to
+        its canonical segment name. Used to canonicalize free-text segment
+        values returned by the LLM.
+        """
+        return _build_alias_index(_ASSET_CONFIG.get("segments", []))
 
     def lookup_block(self) -> str:
         """
@@ -123,6 +248,54 @@ class Settings:
         if icg:
             parts.append(f"About the ICG team:\n{icg}")
         return "\n\n".join(parts)
+
+    # ----------------------------------------------------------------
+    # Per-stage token budgets & reasoning effort
+    # ----------------------------------------------------------------
+
+    @property
+    def default_reasoning_effort(self) -> Optional[str]:
+        """
+        The reasoning effort ("minimal" | "low" | "medium" | "high") for every
+        recap stage, from RECAP_REASONING_EFFORT.
+
+        None when unset (or "none"/"off"): each stage then runs as its tier is
+        configured by core.llm.clients, which is exactly the behaviour before
+        this setting existed.
+        """
+        value = _recap_env("REASONING_EFFORT").lower()
+        return None if value in _NO_EFFORT else value
+
+    def token_budget(self, stage: str) -> int:
+        """
+        The max_completion_tokens budget for a named pipeline stage.
+
+        Resolution order:
+          1. RECAP_TOKENS_<STAGE> env var (e.g. RECAP_TOKENS_ENRICHMENT_KPI=1500)
+          2. Built-in default in _STAGE_TOKEN_DEFAULTS
+          3. _FALLBACK_TOKEN_BUDGET if the stage name is unrecognised
+        """
+        default = _STAGE_TOKEN_DEFAULTS.get(stage, _FALLBACK_TOKEN_BUDGET)
+        raw = _recap_env(f"TOKENS_{stage.upper()}")
+        try:
+            return int(raw) if raw else default
+        except ValueError:
+            return default
+
+    def reasoning_effort_for(self, stage: str) -> Optional[str]:
+        """
+        The reasoning effort for a named pipeline stage.
+
+        Resolution order:
+          1. RECAP_REASONING_EFFORT_<STAGE> env var (e.g.
+             RECAP_REASONING_EFFORT_SUBCATEGORY_CLASSIFICATION=low)
+          2. RECAP_REASONING_EFFORT (default_reasoning_effort)
+          3. None — the stage's tier decides, see recap.llm.llm_client
+        """
+        value = _recap_env(f"REASONING_EFFORT_{stage.upper()}").lower()
+        if value and value not in _NO_EFFORT:
+            return value
+        return self.default_reasoning_effort
 
     # ----------------------------------------------------------------
     # Concurrency & rate limiting

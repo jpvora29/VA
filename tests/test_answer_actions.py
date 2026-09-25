@@ -280,8 +280,11 @@ def test_a_decision_is_seeded_from_the_answer_not_invented():
     assert seed["title"] == "How did cyber perform in the UK last year"
     assert "$4.2M" in seed["rationale"]
     # Owner, status, priority and dates are business judgements the answer does
-    # not contain, so they are left to the form's own defaults.
-    assert set(seed) == {"title", "rationale"}
+    # not contain, so they are left to the form's own defaults. Title, rationale
+    # and the evidence snapshot are the only things the answer can supply; see
+    # tests/test_decision_review_agenda.py for what goes into the snapshot.
+    assert set(seed) == {"title", "rationale", "evidence"}
+    assert seed["evidence"] == [], "this answer carried no scope and no checked figure"
 
 
 def test_a_long_question_is_trimmed_to_fit_a_board_card():

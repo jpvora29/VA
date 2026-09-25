@@ -56,14 +56,22 @@ class StubLLM:
 
     def __init__(self) -> None:
         self.prompts: list[str] = []
+        self.stages: list[str] = []
 
     async def call(self, *, system_prompt, user_message, response_model=None,
-                   tier=None, max_completion_tokens=2048):
+                   tier=None, max_completion_tokens=2048, reasoning_effort=None,
+                   stage=None):
         self.prompts.append(system_prompt)
+        self.stages.append(stage)
         return json.dumps(ANSWER)
 
-    async def call_cheap(self, *, system_prompt, user_message, response_model=None):
-        return await self.call(system_prompt=system_prompt, user_message=user_message)
+    async def call_cheap(self, *, system_prompt, user_message, response_model=None,
+                         reasoning_effort=None, stage=None):
+        return await self.call(system_prompt=system_prompt, user_message=user_message,
+                               stage=stage)
+
+    def log_usage_summary(self) -> None:
+        """The real client logs per-stage token totals here; a stub has none."""
 
 
 # ── fixtures ─────────────────────────────────────────────────────────────────
@@ -301,6 +309,19 @@ def test_the_rendered_deck_is_a_readable_powerpoint(run_result):
     )
     assert "Acme Corp" in text
     assert ANSWER["executive_summary"] in text
+
+
+def test_a_run_tags_every_model_call_with_its_stage(run_result):
+    """The stage tag is what the per-stage budgets, efforts and usage summary key on;
+    an untagged call would silently escape all three. The recap's verification
+    passes must actually run, not just exist."""
+    _, _, stub = run_result
+    assert None not in stub.stages
+    for stage in ("enrichment_context", "enrichment_kpi", "umbrella_classification",
+                  "action_item_classification", "recap_takeaway", "recap_exec_summary",
+                  "recap_fact_check_slide1", "recap_country_summary_per_sentence",
+                  "recap_fact_check_slide2"):
+        assert stage in stub.stages, stage
 
 
 def test_the_recap_json_carries_the_takeaways_and_their_evidence(run_result):

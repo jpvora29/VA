@@ -135,6 +135,7 @@ async def read_decks(
     they are handed the SAME store — that is what makes the recap cover all of them.
     """
     pipeline = None
+    meeting_type = None
     for index, spec in enumerate(specs, start=1):
         pipeline = BusinessReviewPipeline(
             glossary_path=request.glossary(),
@@ -144,12 +145,16 @@ async def read_decks(
             llm=llm,
         )
         await pipeline.run(generate_recap=False, **spec)
+        # The first deck whose title slide names the meeting names it for the recap.
+        meeting_type = meeting_type or pipeline.meeting_type
 
     report("recap")
     return await pipeline.generate_recap_from_store(
         deck_id=specs[0]["deck_id"],
         client_name=request.metadata.client_name or None,
         period_label=period_label(request.metadata),
+        meeting_date=request.metadata.meeting_date or None,
+        meeting_type=meeting_type,
         min_confidence=settings.recap_min_confidence,
     )
 

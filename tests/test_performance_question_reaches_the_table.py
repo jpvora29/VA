@@ -144,6 +144,54 @@ def test_naming_the_columns_asks_for_the_position_table():
 
 
 # --------------------------------------------------------------------------- #
+# 1b. …but naming ONE of its columns is a lookup, not the table
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("question", [
+    "What is Zurich's Share of Wallet for Property",
+    "What is Zurich's rank in Property?",
+    "What is the Marsh premium in Canada?",
+    "Zurich's share of portfolio in Cyber",
+])
+def test_one_position_measure_is_a_lookup(question):
+    """Six primitives and a model call for a question one primitive answers.
+
+    Matching the table on ANY of its column names sent every "what is X's SoW?"
+    to the analyst subgraph. A single measure is a value; the table is what you
+    get when several of them are asked for at once.
+    """
+    from core.analysis.operation import LOOKUP
+
+    assert detect_operation(question) == LOOKUP
+    assert ic.analytical_floor(question) == ""
+
+
+@pytest.mark.parametrize("question", [
+    "Show share of wallet and rank by product for Zurich",
+    "Marsh premium and carrier premium by product",
+    COLUMNS_NAMED,
+])
+def test_two_position_measures_still_ask_for_the_table(question):
+    """Nothing computes two of these in one query, so it is the table."""
+    from core.analysis.operation import POSITION
+
+    assert detect_operation(question) == POSITION
+    assert ic.analytical_floor(question) == "analytical"
+
+
+@pytest.mark.parametrize("question", [
+    "Show the positioning table for Zurich",
+    "Where does Zurich stand in Canada?",
+    "What is Zurich's competitive position?",
+])
+def test_naming_the_artifact_needs_no_second_measure(question):
+    from core.analysis.operation import POSITION
+
+    assert detect_operation(question) == POSITION
+
+
+# --------------------------------------------------------------------------- #
 # 2. Route — analytical depth is what reaches the analyst subgraph
 # --------------------------------------------------------------------------- #
 

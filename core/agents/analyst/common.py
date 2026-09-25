@@ -28,6 +28,12 @@ from core.agents.common.analytics_tools import (
 from core.agents.common.peer_privacy import PeerRedactor, redactor_for
 from core.agents.common.peers import custom_peer_directive, pinned_peers
 from core.analysis import get_lens_library
+from core.analytics.sql_period import (
+    latest_year_in,
+    scope_sql_to_year,
+    wants_default_period,
+    where_condition,
+)
 from core.mcp.tools import (
     audit_sql_filters,
     execute_sql,
@@ -135,6 +141,35 @@ def build_tools(
     # the `run_sql` closure can flip it after the single re-check it's allowed.
     guard = {"tripped": False}
 
+    # One `SELECT MAX(year)` per SLICE rather than per query. A solver writes
+    # several queries over one turn and often over the same scope, and the latest
+    # year cannot move between them; `build_compute_tool` caches it for the same
+    # reason. Keyed by the scope because the answer is scope-dependent — a carrier
+    # that stopped writing in 2024 has its own latest year (see
+    # `core.analytics.sql_period.latest_year_in`).
+    period: Dict[Any, Any] = {}
+
+    def scoped_to_period(query_flow: str, query: str):
+        """`query` narrowed to the turn's period, and the year that was applied.
+
+        The period rule, applied to a query a MODEL wrote. Every path that builds
+        its own filters pins a period-less turn to the latest year; this one could
+        not, so the table under an answer summed every year in the book while the
+        insight above it named one. `core.analytics.sql_period` narrows only a
+        query it can rewrite with certainty and declines otherwise, in which case
+        this returns exactly what it was given.
+        """
+        if not wants_default_period(question):
+            return query, None
+        key = (query_flow, where_condition(query))
+        if key not in period:
+            period[key] = latest_year_in(query_flow, key[1])
+        year = period[key]
+        if year is None:
+            return query, None
+        scoped = scope_sql_to_year(query_flow, query, year)
+        return (query, None) if scoped is None else (scoped, year)
+
     @tool
     def run_sql(flow: str, sql: str) -> str:
         """Execute a single read-only SELECT and return JSON rows.
@@ -146,7 +181,7 @@ def build_tools(
         query could not be made to run — NOT that the data is missing. A
         successful reply with row_count 0 is the only signal of genuinely no data.
         """
-        attempt_sql = (sql or "").strip()
+        attempt_sql, pinned_year = scoped_to_period(flow, (sql or "").strip())
         last_error = ""
         for attempt in range(1, _SQL_MAX_ATTEMPTS + 1):
             result = execute_sql(flow, attempt_sql)
@@ -201,6 +236,10 @@ def build_tools(
                         "sql": attempt_sql,
                         "rows": redactor.rows(result.rows) if redactor else result.rows,
                         "lens": lens,
+                        # So the answer can SAY which period it chose, exactly as
+                        # a computed result does — a default the reader cannot see
+                        # is worse than no default (`core.answers.scope`).
+                        "defaulted_year": pinned_year,
                     }
                 )
                 return json.dumps(
@@ -221,7 +260,11 @@ def build_tools(
                 error=last_error,
             )
             if attempt < _SQL_MAX_ATTEMPTS:
-                attempt_sql = autofix_sql(flow, question, attempt_sql, last_error) or attempt_sql
+                repaired = autofix_sql(flow, question, attempt_sql, last_error) or attempt_sql
+                # Re-applied, because the repair is another model rewrite and a
+                # rewrite can drop the predicate the guard just added.
+                attempt_sql, repaired_year = scoped_to_period(flow, repaired)
+                pinned_year = repaired_year if repaired_year is not None else pinned_year
         return (
             f"ERROR (failed after {_SQL_MAX_ATTEMPTS} auto-repaired attempts): "
             f"{last_error}. This is a SQL-construction problem, not missing data — "

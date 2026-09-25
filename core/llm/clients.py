@@ -167,7 +167,17 @@ def make_client(tier: str):
     resolve to the same settings share one client — which is the common case when
     nothing is configured per-tier.
     """
-    config = resolve_tier(tier)
+    return client_for(resolve_tier(tier))
+
+
+def client_for(config: TierConfig):
+    """The LangChain chat client for an already-resolved config, built once per config.
+
+    :func:`make_client` is the everyday door. This one exists for a caller that must
+    adjust a tier before building — Recap's per-stage reasoning effort replaces the
+    tier's effort — and still wants the shared cache and credentials rather than a
+    second client factory.
+    """
     if config not in _CLIENTS:
         from langchain_openai import AzureChatOpenAI
 

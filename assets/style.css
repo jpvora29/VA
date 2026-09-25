@@ -2319,88 +2319,10 @@ body {
     width: 100%;
 }
 
-/* ---------- Suggestion / follow-up chips ---------- */
-.suggestion-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
-    text-align: left;
-    padding: 14px 16px;
-    border: 1px solid var(--border-mid);
-    border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.85);
-    color: var(--ink-700);
-    font-family: 'Inter', sans-serif;
-    font-size: 13.5px;
-    font-weight: 500;
-    line-height: 1.45;
-    cursor: pointer;
-    box-shadow: var(--shadow-sm);
-    transition: border-color var(--transition-fast), box-shadow var(--transition-fast),
-        transform var(--transition-fast), background-color var(--transition-fast);
-}
-
-.suggestion-chip:hover {
-    border-color: rgba(0, 44, 119, 0.32);
-    background: #ffffff;
-    color: var(--marsh-blue);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
-}
-
-.suggestion-chip:active {
-    transform: translateY(0);
-}
-
-.suggestion-chip-icon {
-    font-size: 16px;
-    color: var(--marsh-blue);
-    opacity: 0.8;
-    flex-shrink: 0;
-}
-
-.suggestion-chip-text {
-    flex: 1;
-}
-
-/* ---------- Follow-up suggestions (under latest answer) ---------- */
-.followup-block {
-    align-self: flex-start;
-    max-width: 86%;
-    margin: 2px 0 10px 2px;
-    animation: messageIn 320ms cubic-bezier(.2, .7, .2, 1) both;
-}
-
-.followup-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 8px;
-    font-size: 11.5px;
-    font-weight: 700;
-    letter-spacing: 0.4px;
-    text-transform: uppercase;
-    color: var(--ink-300);
-}
-
-.followup-icon {
-    color: var(--marsh-red);
-    font-size: 13px;
-}
-
-.followup-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-.followup-row .suggestion-chip {
-    width: auto;
-    padding: 8px 14px;
-    border-radius: var(--radius-pill);
-    font-size: 13px;
-}
+/* Follow-ups are no longer a block under the answer. They live at the foot of
+   the card itself, as ONE list (`.answer-next` in va_shell_chat.css) — a
+   separate block below it made the same suggestions read as a second, unrelated
+   feature. */
 
 /* ---------- Mobile refinements ---------- */
 @media (max-width: 768px) {
@@ -2411,10 +2333,6 @@ body {
 
     .suggestion-grid {
         grid-template-columns: 1fr;
-    }
-
-    .followup-block {
-        max-width: 94%;
     }
 
     .insight-card {
@@ -3514,390 +3432,6 @@ body {
 .view-pane { height: 100%; }
 .view-hidden { display: none; }
 
-/* ── Board shell ────────────────────────────────────────────────────────── */
-.decision-board-view {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    padding: 24px 30px 22px;
-    background:
-        radial-gradient(1200px 480px at 20% -10%, rgba(0, 15, 71, 0.05), transparent),
-        var(--surface-2);
-    overflow: hidden;
-}
-.decision-board-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 18px;
-}
-.decision-board-heading { display: flex; align-items: center; gap: 13px; }
-.decision-board-heading .bi {
-    color: #fff;
-    font-size: 17px;
-    background: var(--marsh-blue);
-    width: 38px; height: 38px;
-    display: inline-flex; align-items: center; justify-content: center;
-    border-radius: 11px;
-    box-shadow: 0 6px 16px rgba(0, 15, 71, 0.30);
-}
-.decision-board-title { margin: 0; font-size: 23px; font-weight: 800; letter-spacing: -0.01em; color: var(--ink-900); }
-.decision-new-btn {
-    display: inline-flex;
-    align-items: center;
-    background: var(--marsh-blue) !important;
-    border: none !important;
-    border-radius: 12px !important;
-    font-weight: 600;
-    font-size: 14px;
-    padding: 10px 18px !important;
-    box-shadow: 0 6px 18px rgba(0, 15, 71, 0.28);
-    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
-}
-.decision-new-btn:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgba(0, 15, 71, 0.36); }
-
-/* ── Toolbar ────────────────────────────────────────────────────────────── */
-.decision-toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    align-items: center;
-    margin-bottom: 18px;
-    padding: 10px 12px;
-    background: var(--surface-0);
-    border: 1px solid var(--border-soft);
-    border-radius: 14px;
-    box-shadow: var(--shadow-sm);
-}
-.decision-search {
-    max-width: 300px;
-    border-radius: 10px !important;
-    border: 1px solid var(--border-mid) !important;
-    background: var(--surface-1) !important;
-}
-.decision-search:focus { background: var(--surface-0) !important; box-shadow: 0 0 0 3px rgba(11,75,255,0.12) !important; }
-.decision-filter { min-width: 156px; }
-.decision-sort { min-width: 176px; margin-left: auto; }
-/* Polish react-select (dcc.Dropdown) controls */
-.decision-toolbar .Select-control,
-.decision-toolbar .is-focused:not(.is-open) > .Select-control {
-    border-radius: 10px !important;
-    border-color: var(--border-mid) !important;
-    min-height: 38px;
-}
-
-/* ── Kanban columns ─────────────────────────────────────────────────────── */
-/* The whiteboard: a framed dry-erase surface with a faint grid the columns
-   sit on top of. */
-.decision-board {
-    display: flex;
-    gap: 18px;
-    flex: 1 1 auto;
-    overflow-x: auto;
-    overflow-y: hidden;
-    align-items: stretch;
-    padding: 20px;
-    border-radius: 20px;
-    background-color: #ffffff;
-    background-image:
-        linear-gradient(rgba(12, 25, 58, 0.045) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(12, 25, 58, 0.045) 1px, transparent 1px);
-    background-size: 26px 26px;
-    background-position: -1px -1px;
-    border: 1px solid var(--border-mid);
-    box-shadow:
-        inset 0 1px 0 #ffffff,
-        inset 0 0 0 6px rgba(255, 255, 255, 0.6),
-        var(--shadow-md);
-}
-.decision-col {
-    flex: 1 0 268px;
-    min-width: 268px;
-    display: flex;
-    flex-direction: column;
-    border-radius: 16px;
-    max-height: 100%;
-    overflow: hidden;
-    border: 1px solid var(--border-soft);
-    background: var(--surface-0);
-    box-shadow: 0 6px 18px rgba(10, 22, 54, 0.07);
-}
-.decision-col-header {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 13px 16px;
-    font-weight: 800;
-    font-size: 13px;
-    letter-spacing: 0.01em;
-    color: var(--ink-800);
-    border-bottom: 1px solid var(--border-soft);
-}
-.decision-col-title { text-transform: none; }
-.decision-col-count {
-    margin-left: auto;
-    background: var(--surface-2);
-    color: var(--ink-600);
-    border-radius: var(--radius-pill);
-    padding: 2px 10px;
-    font-size: 12px;
-    font-weight: 700;
-}
-.decision-col-body {
-    display: flex;
-    flex-direction: column;
-    gap: 11px;
-    padding: 4px 12px 14px;
-    overflow-y: auto;
-}
-.decision-col-empty {
-    color: var(--ink-300);
-    font-size: 12.5px;
-    text-align: center;
-    padding: 22px 0;
-    border: 1.5px dashed var(--border-mid);
-    border-radius: 12px;
-}
-.decision-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; box-shadow: 0 0 0 3px rgba(0,0,0,0.04); }
-
-/* Colour-coded columns: tinted body + a saturated header band per status. */
-.decision-col-blue   { background: #f4f9ff; border-color: rgba(28, 126, 214, 0.28); }
-.decision-col-yellow { background: #fffbf0; border-color: rgba(232, 168, 0, 0.30); }
-.decision-col-green  { background: #f3fcf6; border-color: rgba(47, 158, 68, 0.28); }
-.decision-col-grey   { background: #f6f7f9; border-color: rgba(134, 142, 150, 0.30); }
-
-.decision-col-blue   .decision-col-header { background: rgba(28, 126, 214, 0.12); color: #15538f; border-bottom-color: rgba(28, 126, 214, 0.22); }
-.decision-col-yellow .decision-col-header { background: rgba(232, 168, 0, 0.15);  color: #8a6700; border-bottom-color: rgba(232, 168, 0, 0.28); }
-.decision-col-green  .decision-col-header { background: rgba(47, 158, 68, 0.12);  color: #1b7a35; border-bottom-color: rgba(47, 158, 68, 0.22); }
-.decision-col-grey   .decision-col-header { background: rgba(134, 142, 150, 0.14); color: #515963; border-bottom-color: rgba(134, 142, 150, 0.26); }
-
-.decision-col .decision-col-count { background: rgba(255, 255, 255, 0.7); }
-
-/* ── Sticky cards ───────────────────────────────────────────────────────── */
-.decision-card {
-    position: relative;
-    background: var(--surface-0);
-    border: 1px solid var(--border-soft);
-    border-radius: 14px;
-    box-shadow: 0 1px 2px rgba(10,22,54,0.05), 0 4px 12px rgba(10,22,54,0.04);
-    padding: 14px 14px 12px;
-    overflow: hidden;
-    transition: box-shadow var(--transition-fast), transform var(--transition-fast);
-}
-.decision-card::before {
-    content: "";
-    position: absolute;
-    left: 0; top: 0; bottom: 0;
-    width: 4px;
-    background: var(--ink-300);
-}
-.decision-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
-.decision-card-open {
-    display: block;
-    width: 100%;
-    text-align: left;
-    background: transparent;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-}
-.decision-card-title { font-weight: 700; font-size: 14.5px; line-height: 1.35; color: var(--ink-900); padding-right: 24px; }
-.decision-card-statement { font-size: 12.5px; color: var(--ink-500); margin-top: 5px; line-height: 1.45; }
-.decision-card-footer {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 7px;
-    margin-top: 12px;
-    font-size: 11px;
-}
-.decision-owner, .decision-due {
-    display: inline-flex;
-    align-items: center;
-    background: var(--surface-1);
-    color: var(--ink-600);
-    border-radius: var(--radius-pill);
-    padding: 2px 9px;
-    font-weight: 600;
-}
-.decision-pin-btn {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    background: transparent;
-    border: none;
-    color: var(--ink-300);
-    cursor: pointer;
-    font-size: 14px;
-    line-height: 1;
-    padding: 3px;
-    border-radius: 8px;
-    transition: color var(--transition-fast), background var(--transition-fast);
-    z-index: 2;
-}
-.decision-pin-btn:hover { background: var(--surface-1); }
-.decision-pin-btn.pinned { color: var(--marsh-blue-2); }
-
-/* Status colour accents (left bar + dot + card wash) */
-.decision-dot-green  { background: #2f9e44; }
-.decision-dot-yellow { background: #e8a800; }
-.decision-dot-blue   { background: #1c7ed6; }
-.decision-dot-grey   { background: #868e96; }
-/* Cards stay clean white so they read as notes pinned on the coloured column;
-   the status colour shows through the left accent bar. */
-.decision-card-green::before  { background: #2f9e44; }
-.decision-card-yellow::before { background: #e8a800; }
-.decision-card-blue::before   { background: #1c7ed6; }
-.decision-card-grey::before   { background: #868e96; }
-
-/* Priority chips */
-.decision-prio {
-    display: inline-flex;
-    align-items: center;
-    border-radius: var(--radius-pill);
-    padding: 2px 9px;
-    font-weight: 700;
-    font-size: 10.5px;
-    letter-spacing: 0.02em;
-}
-.decision-prio-high { background: #ffe3e3; color: #c92a2a; }
-.decision-prio-med  { background: #fff3bf; color: #9a7400; }
-.decision-prio-low  { background: #e7f5ff; color: #1971c2; }
-
-/* ── Detail off-canvas ──────────────────────────────────────────────────── */
-.decision-detail-canvas { width: 480px !important; }
-.decision-detail-canvas .offcanvas-header { border-bottom: 1px solid var(--border-soft); padding: 18px 22px; }
-.decision-detail-canvas .offcanvas-title { font-weight: 800; font-size: 16px; color: var(--ink-900); }
-.decision-detail-canvas .offcanvas-body { padding: 0; display: flex; flex-direction: column; }
-.decision-detail-shell { display: flex; flex-direction: column; height: 100%; }
-.decision-detail-scroll { flex: 1 1 auto; overflow-y: auto; padding: 22px; }
-.decision-detail-body { display: flex; flex-direction: column; gap: 16px; }
-.decision-detail-badges { display: flex; gap: 8px; }
-.decision-badge {
-    border-radius: var(--radius-pill);
-    padding: 3px 13px;
-    font-size: 11.5px;
-    font-weight: 700;
-    color: #fff;
-    letter-spacing: 0.01em;
-}
-.decision-badge-green  { background: #2f9e44; }
-.decision-badge-yellow { background: #e8a800; }
-.decision-badge-red    { background: #e03131; }
-.decision-badge-blue   { background: #1c7ed6; }
-.decision-badge-grey   { background: #868e96; }
-.decision-detail-title { font-size: 21px; font-weight: 800; letter-spacing: -0.01em; color: var(--ink-900); margin: 0; line-height: 1.25; }
-.decision-field { display: flex; flex-direction: column; gap: 3px; }
-.decision-field-label, .decision-meta-label {
-    font-size: 10.5px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--ink-300);
-}
-.decision-field-value { font-size: 14px; color: var(--ink-800); white-space: pre-wrap; line-height: 1.5; }
-.decision-detail-meta {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-    padding: 16px;
-    background: var(--surface-1);
-    border: 1px solid var(--border-soft);
-    border-radius: 14px;
-}
-.decision-meta-item { display: flex; flex-direction: column; gap: 3px; }
-.decision-meta-value { font-size: 14px; font-weight: 600; color: var(--ink-800); }
-.decision-detail-rule { border: none; border-top: 1px solid var(--border-soft); margin: 4px 0; }
-
-/* Action bar (sticky footer in the off-canvas) */
-.decision-detail-actions {
-    display: flex;
-    gap: 9px;
-    padding: 14px 22px;
-    border-top: 1px solid var(--border-soft);
-    background: var(--surface-0);
-}
-.decision-action-btn {
-    flex: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--surface-1) !important;
-    color: var(--ink-800) !important;
-    border: 1px solid var(--border-mid) !important;
-    border-radius: 11px !important;
-    font-size: 13px;
-    font-weight: 600;
-    padding: 9px 10px !important;
-    transition: background var(--transition-fast);
-}
-.decision-action-btn:hover:not(:disabled) { background: var(--surface-2) !important; }
-.decision-action-btn:disabled { opacity: 0.45; }
-.decision-action-danger { color: var(--marsh-red) !important; border-color: rgba(197,53,50,0.3) !important; }
-.decision-action-danger:hover:not(:disabled) { background: #fff0f0 !important; }
-
-/* Revision history timeline */
-.decision-history-title { font-size: 14px; font-weight: 800; color: var(--ink-800); margin: 0; }
-.decision-history { list-style: none; padding: 0; margin: 0; }
-.decision-history-item {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 9px 0 9px 18px;
-    margin-left: 4px;
-    border-left: 2px solid var(--border-mid);
-    position: relative;
-}
-.decision-history-item:last-child { border-left-color: transparent; }
-.decision-history-item::before {
-    content: "";
-    position: absolute;
-    left: -6px;
-    top: 13px;
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: var(--marsh-blue-2);
-    box-shadow: 0 0 0 3px rgba(11,75,255,0.14);
-}
-.decision-history-summary { font-size: 13px; font-weight: 600; color: var(--ink-800); }
-.decision-history-diff { font-size: 12px; color: var(--ink-500); }
-.decision-history-note { font-size: 12px; font-style: italic; color: var(--ink-500); }
-.decision-history-when { font-size: 11px; color: var(--ink-300); }
-.decision-history-empty { font-size: 13px; color: var(--ink-300); }
-
-/* ── Create / edit modal ────────────────────────────────────────────────── */
-.decision-form-field { margin-bottom: 14px; }
-.decision-form-row { display: flex; gap: 14px; }
-.decision-form-row .decision-form-field { flex: 1; }
-.decision-form-label { display: block; font-size: 12px; font-weight: 700; color: var(--ink-600); margin-bottom: 5px; }
-.decision-form-field .form-control,
-.decision-form-field .form-select { border-radius: 10px; border-color: var(--border-mid); font-size: 14px; }
-.decision-form-field .form-control:focus,
-.decision-form-field .form-select:focus { box-shadow: 0 0 0 3px rgba(11,75,255,0.12); border-color: var(--marsh-blue-2); }
-#decision-edit-modal .modal-content { border: none; border-radius: 18px; box-shadow: var(--shadow-lg); overflow: hidden; }
-#decision-edit-modal .modal-header { border-bottom: 1px solid var(--border-soft); padding: 18px 22px; }
-#decision-edit-modal .modal-title { font-weight: 800; font-size: 17px; color: var(--ink-900); }
-#decision-edit-modal .modal-body { padding: 22px; }
-#decision-edit-modal .modal-footer { border-top: 1px solid var(--border-soft); padding: 14px 22px; }
-.decision-save-btn {
-    background: var(--marsh-blue) !important;
-    border: none !important;
-    border-radius: 11px !important;
-    font-weight: 600;
-    padding: 9px 20px !important;
-    box-shadow: 0 6px 16px rgba(0, 15, 71, 0.28);
-}
-.decision-cancel-btn {
-    background: var(--surface-1) !important;
-    color: var(--ink-700) !important;
-    border: 1px solid var(--border-mid) !important;
-    border-radius: 11px !important;
-    font-weight: 600;
-}
-
-
-
-
 /* ════════════════════════════════════════════════════════════════════════
    MODERN UI POLISH — login wow-factor, gradient sidebar/navbar, refined chrome
    (appended overrides; cascade lets these win without touching structure)
@@ -4037,26 +3571,10 @@ body {
     pointer-events: none;
 }
 .welcome-hero > * { position: relative; z-index: 1; }
-.suggestion-chip {
-    border-radius: 16px;
-    background: rgba(255, 255, 255, 0.9);
-    backdrop-filter: blur(6px);
-}
-.suggestion-chip:hover {
-    border-color: rgba(0, 15, 71, 0.35);
-    box-shadow: 0 14px 30px rgba(0, 15, 71, 0.16);
-}
-
 /* ── Refined thin scrollbars across panes ───────────────────────────────── */
 .conversation-list::-webkit-scrollbar,
-.decision-col-body::-webkit-scrollbar,
-.decision-board::-webkit-scrollbar,
-.decision-detail-scroll::-webkit-scrollbar,
 .chat-viewport::-webkit-scrollbar { width: 9px; height: 9px; }
 .conversation-list::-webkit-scrollbar-thumb,
-.decision-col-body::-webkit-scrollbar-thumb,
-.decision-board::-webkit-scrollbar-thumb,
-.decision-detail-scroll::-webkit-scrollbar-thumb,
 .chat-viewport::-webkit-scrollbar-thumb {
     background: rgba(12, 25, 58, 0.18);
     border-radius: 999px;
@@ -4064,9 +3582,6 @@ body {
     background-clip: content-box;
 }
 .conversation-list::-webkit-scrollbar-thumb:hover,
-.decision-col-body::-webkit-scrollbar-thumb:hover,
-.decision-board::-webkit-scrollbar-thumb:hover,
-.decision-detail-scroll::-webkit-scrollbar-thumb:hover,
 .chat-viewport::-webkit-scrollbar-thumb:hover { background: rgba(12, 25, 58, 0.32); background-clip: content-box; }
 
 
@@ -4312,7 +3827,7 @@ html, body,
 .gpt-message p, .gpt-message li, .gpt-message td, .gpt-message th,
 .clarify-card, .clarify-card-question, .clarify-option-label, .clarify-option-desc,
 .conv-item-title, .sidebar-nav-item, .new-chat-btn, .user-name,
-.welcome-subtitle, .suggestion-chip-text,
+.welcome-subtitle,
 .starter-chip-outcome, .starter-chip-question,
 /* The answer's headline is its first SENTENCE, set large — prose, not a title.
    Titles are Georgia here; a sentence does not change face because of its size,
@@ -4360,17 +3875,10 @@ html, body,
 .user-message { position: relative; }
 .user-message-text { white-space: pre-wrap; word-break: break-word; }
 
-/* Copy chip on the user bubble (mirrors the assistant turn) */
-.user-message .msg-copy {
-    position: absolute;
-    top: 8px;
-    right: 10px;
-    color: rgba(255, 255, 255, 0.65);
-    opacity: 0;
-    transition: opacity var(--transition-fast), color var(--transition-fast);
-}
-.user-message:hover .msg-copy { opacity: 1; }
-.user-message .msg-copy:hover { color: #ffffff; }
+/* The user turn's copy control lives in its footer row, not over the bubble
+   (`ui.components.turn.user_footer`); it is styled with the rest of that row in
+   `va_shell_chat.css`. The absolute white chip that used to be here was written
+   for a navy bubble and went invisible when the bubble became pale blue. */
 
 /* ── Live elapsed timer: tabular so M:SS doesn't jitter ──────────────────── */
 .thinking-elapsed { font-variant-numeric: tabular-nums; letter-spacing: 0.2px; }

@@ -45,6 +45,28 @@ def _get(call: Any, key: str, default: Any) -> Any:
     return getattr(call, key, default)
 
 
+def useful_group_by(
+    group_by: Sequence[str], filters: Mapping[str, Any]
+) -> Tuple[str, ...]:
+    """`group_by` minus any column the filters already pin to a single value.
+
+    Cutting by a column the question already fixed produces a table with one row
+    that repeats the filter back — "share of wallet for Property, by product
+    line" is one row reading "Property". The reader asked for a figure and was
+    handed a one-row table of it.
+
+    The selector is a model choosing `group_by` from the question's wording, and
+    "for Property" reads to it as both a filter and an axis. Which of the two it
+    is, is not a judgement call: a filter pinned to one value cannot also be a
+    cut. `core.analytics.dimensions.choose_dimension` applies the same rule to
+    the position table, which is why that one already steps down to industry.
+    """
+    from core.analytics.dimensions import pinned_columns
+
+    fixed = pinned_columns(filters)
+    return tuple(column for column in group_by if column not in fixed)
+
+
 @lru_cache(maxsize=None)
 def _tuning_parameters(primitive: Callable) -> Tuple[str, ...]:
     """The keyword-only tuning arguments a primitive accepts (`grain`, `top_n`…).
@@ -108,11 +130,19 @@ class AnalyticsOrchestrator:
                     evidence.skipped.append(name)
                 continue
 
+            merged = {**(shared_filters or {}), **(_get(call, "filters", {}) or {})}
+            asked = tuple(_get(call, "group_by", ()) or ())
+            cuts = useful_group_by(asked, merged)
+            if cuts != asked:
+                logger.info(
+                    "dropped a redundant cut from %s: %s is already pinned by the scope",
+                    name, ", ".join(c for c in asked if c not in cuts),
+                )
             args = PrimitiveArgs(
                 flow=flow,
                 metric=_get(call, "metric", "") or "",
-                group_by=tuple(_get(call, "group_by", ()) or ()),
-                filters={**(shared_filters or {}), **(_get(call, "filters", {}) or {})},
+                group_by=cuts,
+                filters=merged,
                 subject=subject,
                 peers=pinned,
             )

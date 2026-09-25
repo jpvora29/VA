@@ -28,10 +28,15 @@ TEXT = "text"
 #: impossible, which is the only thing a column of figures is for.
 MONEY = "money"
 
-#: Money at its RAW magnitude, printed with an SI suffix per cell ("$1.77M",
-#: "$840k"). For a result set that arrived from a primitive with no shared scale
-#: computed for it, where the alternative the reader actually saw was "1770.0".
-MONEY_SI = "money_si"
+#: Money at its RAW magnitude, printed in MILLIONS ("$1.77M", "$2,500.00M"). For
+#: a result set that arrived from a primitive with no shared scale computed for
+#: it, where the alternative the reader actually saw was "1770.0".
+#:
+#: Millions, fixed, rather than a per-cell SI prefix. Premium is reported in
+#: millions, and an automatic prefix switches units under the reader at a
+#: threshold they cannot see — a column reading "$840M" then "$2.5G" is both
+#: incomparable down the page and, for money, simply wrong: "G" is a gigabyte.
+MONEY_MILLIONS = "money_millions"
 
 #: A share or rate, already in percentage points (50.8 -> "50.8%").
 PERCENT = "percent"
@@ -50,5 +55,5 @@ COUNT = "count"
 #: Every kind that carries a figure, so a renderer can right-align on membership
 #: rather than on a list of names it has to keep in step.
 FIGURE_KINDS: Tuple[str, ...] = (
-    MONEY, MONEY_SI, PERCENT, SIGNED_PERCENT, RANK, COUNT,
+    MONEY, MONEY_MILLIONS, PERCENT, SIGNED_PERCENT, RANK, COUNT,
 )

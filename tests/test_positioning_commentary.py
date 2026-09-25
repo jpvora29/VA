@@ -185,7 +185,7 @@ def test_a_tool_path_premium_prints_as_money_not_as_a_raw_float():
     digest = [{"name": "breakdown", "column": "Premium"},
               {"name": "share_of_wallet", "column": "Share_of_Wallet_%"}]
     kinds = kinds_from_digest("gpr", digest)
-    assert kinds["Premium"] == P.MONEY_SI
+    assert kinds["Premium"] == P.MONEY_MILLIONS
 
     view = EvidenceView(
         label="t", columns=["Premium"], records=[{"Premium": 1770.0}],
@@ -193,8 +193,11 @@ def test_a_tool_path_premium_prints_as_money_not_as_a_raw_float():
     )
     spec = _columns_for(view)[0]
     assert spec["type"] == "numeric"
-    # `$.3s` is d3's SI form: 1770 -> "$1.77k", 1_770_000 -> "$1.77M".
-    assert spec["format"].to_plotly_json()["specifier"] == "$.3s"
+    # Raw value in, millions out: Dash divides by `prefix` before formatting, so
+    # the cell reads "$1.77M" while the row stays 1770000.0 and sorts as a number.
+    printed = spec["format"].to_plotly_json()
+    assert printed["prefix"] == 1_000_000
+    assert printed["locale"]["symbol"] == ["$", "M"]
 
 
 def test_a_survey_score_is_not_dressed_up_as_money():
@@ -443,6 +446,24 @@ def test_money_uses_one_scale_across_the_whole_table():
 
 def test_an_absent_figure_does_not_drag_the_scale_down():
     assert P.money_scale([2_000_000.0, None]) == (1e6, "M")
+
+
+def test_a_book_over_a_billion_still_reads_in_millions():
+    """Premium is reported in millions. Flipping the table to "$2.50bn" makes it
+    incomparable with every other scope the reader looks at that day."""
+    scale, suffix = P.money_scale([2_500_000_000.0])
+    assert (scale, suffix) == (1e6, "M")
+    assert 2_500_000_000.0 / scale == 2500.0
+
+
+def test_the_tool_path_prints_millions_too_and_never_an_si_gigabyte():
+    """d3's SI prefix renders 2.5e9 as "$2.5G" — a gigabyte, not a currency."""
+    from ui.components.evidence import _format_for
+
+    spec = _format_for(P.MONEY_MILLIONS, "").to_plotly_json()
+    assert spec["prefix"] == 1_000_000, "Dash divides by this before formatting"
+    assert spec["locale"]["symbol"] == ["$", "M"]
+    assert "s" not in spec["specifier"], "an SI specifier would reintroduce G/T"
 
 
 def test_premium_reads_in_millions_at_a_realistic_scale():

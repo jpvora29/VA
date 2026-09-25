@@ -31,13 +31,22 @@ from ui.analysis import dock_target
 from ui.components.analysis_dock import DOCK_NS, dock_body
 from ui.components.answer_actions import (
     ACTIONS,
+    MAX_FOLLOWUPS,
     AnswerContext,
     actions_for,
     answer_footer,
+    next_questions,
     promoted_action,
 )
 from ui.components.answer_lead import key_figures, split_lead
-from ui.components.chatbot import ai_message, chatbot_page, custom_peers_cue, welcome_hero
+from ui.components.chatbot import (
+    ai_message,
+    chatbot_page,
+    custom_peers_cue,
+    reads_beside_the_prose,
+    user_message,
+    welcome_hero,
+)
 from ui.components.provenance import dataset_label, provenance_drawer
 from ui.components.turn import format_stamp
 
@@ -236,17 +245,93 @@ def test_the_promoted_action_is_drawn_first():
     assert set(keys) == {a.key for a in ACTIONS}
 
 
-def test_only_one_next_question_rides_on_the_card():
-    message = ai_message(
+# ── where next: one list, not two features ───────────────────────────────────
+
+
+FOLLOWUPS = [
+    "What drove the Property growth?",
+    "How does AXA compare with Allianz?",
+    "Show the whitespace in Cyber",
+    "And by industry?",
+]
+
+
+def answer_with_followups(questions=FOLLOWUPS):
+    return ai_message(
         "Premium grew 12%. Property led it.", True, idx=1, shape="analyst",
-        followup="Compare with peers",
+        followups=questions,
     )
-    chips = [
-        n for n in walk(message)
-        if (getattr(n, "className", "") or "") == "answer-next-chip"
+
+
+def next_chips(node):
+    return [
+        n for n in walk(node)
+        if "answer-next-chip" in (getattr(n, "className", "") or "")
     ]
-    assert len(chips) == 1
-    assert chips[0].id["q"] == "Compare with peers"
+
+
+def test_every_followup_is_offered_in_one_place():
+    """The defect: the first rode on the card and the rest were a separate block
+    under it — one idea, two labels, two alignments, two chip vocabularies."""
+    chips = next_chips(answer_with_followups())
+    assert [c.id["q"] for c in chips] == FOLLOWUPS[:MAX_FOLLOWUPS]
+
+
+def test_the_list_stops_before_it_becomes_a_menu():
+    assert MAX_FOLLOWUPS == 3
+    assert len(next_chips(answer_with_followups())) == MAX_FOLLOWUPS
+
+
+def test_the_first_one_leads_the_list_it_belongs_to():
+    """Promoted by fill, not by being somewhere else."""
+    lead, *rest = next_chips(answer_with_followups())
+    assert "is-lead" in lead.className
+    assert all("is-lead" not in c.className for c in rest)
+
+
+def test_they_all_sit_in_the_same_row():
+    row = [n for n in walk(answer_with_followups())
+           if (getattr(n, "className", "") or "") == "answer-next-row"]
+    assert len(row) == 1
+    assert len(next_chips(row[0])) == MAX_FOLLOWUPS
+
+
+def test_the_same_question_is_never_offered_twice():
+    """The chip's id IS its question text, so a repeat is a duplicate Dash id —
+    a hard error, not a repeated chip."""
+    chips = next_chips(answer_with_followups(["Why?", "Why?", "And by product?"]))
+    assert [c.id["q"] for c in chips] == ["Why?", "And by product?"]
+
+
+def test_an_answer_with_no_followups_offers_nothing():
+    assert next_questions([]) is None
+    assert next_questions(["", "   "]) is None
+    assert next_chips(answer_with_followups([])) == []
+
+
+def test_a_followup_says_that_clicking_it_asks_the_question():
+    """A starter LOADS its question into the composer; these SEND it. Two
+    controls that look alike and behave differently is the trap."""
+    lead = next_chips(answer_with_followups())[0]
+    assert any("answer-next-go" in (getattr(n, "className", "") or "")
+               for n in walk(lead))
+
+
+def test_the_separate_block_under_the_answer_is_gone():
+    """Both halves: the component and the styles that drew it."""
+    import ui.components.chatbot as chatbot
+
+    assert not hasattr(chatbot, "followup_suggestions")
+    base = Path("assets/style.css").read_text(encoding="utf-8")
+    assert ".followup-block" not in base and ".followup-row" not in base
+
+
+def test_the_row_reads_on_the_cards_own_left_edge():
+    """It used to be right-aligned against a card that is left-aligned
+    throughout, so it read as a control from somewhere else."""
+    rule = rule_for(CHAT_CSS, ".answer-next")
+    assert "justify-content: flex-end" not in rule
+    assert "border-top" in rule  # the answer ends before you are sent onward
 
 
 # ── the analysis panel ───────────────────────────────────────────────────────
@@ -466,3 +551,115 @@ def test_the_drawer_can_be_opened_and_closed_without_the_rail_on_screen():
 
 def test_the_scrim_is_inert_while_the_rail_is_a_column():
     assert "pointer-events: none" in rule_for(SHELL_CSS, ".va-rail-scrim")
+
+
+# ── the question, and getting it back ────────────────────────────────────────
+
+
+QUESTION = "What is Zurich's premium in Singapore?"
+
+
+def user_turn():
+    return user_message(QUESTION, ts="2026-09-19T16:14:00", initial="Jash")
+
+
+def test_a_question_can_be_copied():
+    """The reader's own side gets the affordance the answer has."""
+    from dash import dcc
+
+    clips = [n for n in walk(user_turn()) if isinstance(n, dcc.Clipboard)]
+    assert [c.content for c in clips] == [QUESTION]
+
+
+def test_the_copy_sits_in_the_footer_row_not_over_the_bubble():
+    """An absolute chip lands on the first line of a short question.
+
+    `answer_footer` moved its own copy control into its action row for exactly
+    this reason; the reader's turn had been left behind.
+    """
+    turn = user_turn()
+    bubble = next(n for n in walk(turn)
+                  if "user-message" in (getattr(n, "className", "") or ""))
+    footer = next(n for n in walk(turn)
+                  if (getattr(n, "className", "") or "") == "turn-footer")
+    assert "user-copy" not in " ".join(classes(bubble))
+    assert "user-copy" in " ".join(classes(footer))
+
+
+def test_the_copy_is_visible_against_the_bubble_it_belongs_to():
+    """The defect itself: a white chip, left over from when the bubble was navy.
+
+    The Prism surface repainted the user bubble pale blue, and nothing repainted
+    the chip — so it was there, and invisible, on every question in the
+    transcript.
+    """
+    rule = rule_for(CHAT_CSS, ".user-copy")
+    assert "position: static" in rule
+    assert "opacity: 1" in rule
+    assert "var(--va-ink-" in rule
+    assert "#fff" not in rule.lower() and "255, 255, 255" not in rule
+
+
+def test_the_old_white_chip_rule_is_gone():
+    """Left in place it would keep winning on any turn that still rendered it."""
+    base = Path("assets/style.css").read_text(encoding="utf-8")
+    assert ".user-message .msg-copy" not in base
+
+
+# ── evidence gets the width its shape needs ──────────────────────────────────
+
+
+def _view(*, chart):
+    from ui.evidence import EvidenceView
+
+    return EvidenceView(
+        label="By product",
+        columns=["Product_Line", "Premium", "Share of wallet", "Rank"],
+        records=[{"Product_Line": "Property", "Premium": 56.0,
+                  "Share of wallet": 28.4, "Rank": 2}],
+        figure={"data": [], "layout": {}} if chart else None,
+    )
+
+
+def split_class(message) -> str:
+    return next(
+        (getattr(n, "className", "") or "") for n in walk(message)
+        if "answer-split" in (getattr(n, "className", "") or "")
+    )
+
+
+def _answer_with(view):
+    return ai_message(
+        "Premium grew 12%.", True, idx=1, shape="analyst",
+        evidence=[view], card_idx=1, pane_ids=[1],
+    )
+
+
+def test_a_chart_sits_beside_the_finding_it_illustrates():
+    assert "is-stacked" not in split_class(_answer_with(_view(chart=True)))
+
+
+def test_a_table_takes_the_whole_card():
+    """The measured defect: at 1280 a table-only answer put a 552px panel beside
+    a 778px column of prose, cut its last column off, and scrolled sideways —
+    while the stylesheet carried a rule for full-width tables that could never
+    match, because inside the split the panel is not a child of the card."""
+    assert "is-stacked" in split_class(_answer_with(_view(chart=False)))
+
+
+def test_the_layout_is_decided_from_the_views_not_the_markup():
+    """Every pane contains a table — a chart view hides one behind its
+    Chart/Data switch — so the rendered tree cannot answer "is this a table?"."""
+    assert reads_beside_the_prose([_view(chart=True)]) is True
+    assert reads_beside_the_prose([_view(chart=False)]) is False
+    assert reads_beside_the_prose([_view(chart=False), _view(chart=True)]) is True
+    assert reads_beside_the_prose([]) is False
+
+
+def test_the_prose_keeps_a_readable_measure():
+    """Stacked, the reading column is the whole card, and a card wide enough for
+    a financial table ran to 118 characters a line — measured, against a
+    comfortable ceiling of about 75."""
+    rule = rule_for(CHAT_CSS, ".answer-points")
+    assert "max-width" in rule
+    assert "ch" in rule

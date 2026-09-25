@@ -1,56 +1,160 @@
-"""Dash rendering for the Decision Board: toolbar, Kanban columns, sticky cards,
-the detail panel, and the create/edit modal.
+"""The Decision Board shell: header, view switch, filters, and the two-pane workspace.
 
-Render functions are pure: they take plain decision dicts (from
-``core.store.decisions``) and return Dash components. All interaction lives in
-``ui.decisions.callbacks``. Colours/labels come from ``ui.decisions.model`` so
-nothing is hard-coded here.
+The page is a queue and a brief side by side. Everything above them states what
+you are looking at — how many decisions are live, how many are late, which week
+the agenda is named for — and everything inside them is painted by
+``ui.decisions.callbacks`` so a filter change never rebuilds the chrome.
+
+The three views (Board, List, Agenda) are views over the *same* records, not
+filters: switching changes the grouping and nothing about which decisions are in
+play. Board is ``ui.decisions.render.board_columns``; the other two are
+``ui.decisions.queue``.
+
+Render functions are pure: plain decision dicts (from ``core.store.decisions``)
+in, Dash components out. Colours and labels come from ``ui.decisions.model``.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
-from core.store.decisions import STATUSES
-from ui.decisions import model
+from core.store.decisions import ACTIVE_STATUSES
+from ui.decisions import agenda as ag
+from ui.decisions import brief, model, queue
 
 
 # ── Board shell (mounted by the view router) ────────────────────────────────
 
 
 def decision_board_view() -> html.Div:
-    """The full board: header, filter toolbar, and the columns container.
+    """The full page: header, lede, filters, the week ribbon, and the workspace."""
+    return html.Div(
+        [
+            _header(),
+            _lede(),
+            _toolbar(),
+            html.Div(
+                queue.week_ribbon_shell(),
+                id="decision-ribbon",
+                className=ribbon_class(model.DEFAULT_VIEW),
+            ),
+            _workspace(),
+        ],
+        className="decision-board-view",
+    )
 
-    The columns themselves are painted by a callback into ``decision-board`` so
-    search / filter / sort re-render without rebuilding the toolbar.
+
+def ribbon_class(view: str) -> str:
+    """The week ribbon belongs to the Agenda; the other two views hide it.
+
+    Hidden rather than unmounted, because its step buttons are callback Inputs
+    and a callback cannot fire on a control that is not in the layout.
     """
+    return "decision-ribbon" + ("" if view == "agenda" else " decision-ribbon-off")
+
+
+def _header() -> html.Div:
     return html.Div(
         [
             html.Div(
                 [
+                    html.I(className="bi bi-clipboard-check"),
                     html.Div(
                         [
-                            html.I(className="bi bi-pin-angle-fill"),
                             html.H2("Decision Board", className="decision-board-title"),
+                            html.Div(
+                                "Every decision this analysis led to",
+                                className="decision-board-subtitle",
+                            ),
                         ],
-                        className="decision-board-heading",
-                    ),
-                    dbc.Button(
-                        [html.I(className="bi bi-plus-lg me-1"), "New decision"],
-                        id="decision-new-btn",
-                        n_clicks=0,
-                        className="decision-new-btn",
                     ),
                 ],
-                className="decision-board-header",
+                className="decision-board-heading",
             ),
-            _toolbar(),
-            html.Div(id="decision-board", className="decision-board"),
+            view_switch(model.DEFAULT_VIEW),
+            dbc.Button(
+                [html.I(className="bi bi-plus-lg me-1"), "New decision"],
+                id="decision-new-btn",
+                n_clicks=0,
+                className="decision-new-btn",
+            ),
         ],
-        className="decision-board-view",
+        className="decision-board-header",
     )
+
+
+def view_switch(active: str) -> html.Div:
+    """A segmented control over the three readings of the queue.
+
+    Rendered fresh on every switch rather than styled clientside, so the active
+    view survives a reload and is readable to a screen reader as a pressed
+    button rather than as a colour.
+    """
+    return html.Div(
+        [
+            html.Button(
+                [html.I(className=view.icon), html.Span(view.label)],
+                id={"type": "decision-view", "view": view.key},
+                n_clicks=0,
+                className="decision-view-btn"
+                + (" decision-view-on" if view.key == active else ""),
+                title=view.hint,
+                **{"aria-pressed": "true" if view.key == active else "false"},
+            )
+            for view in model.VIEWS
+        ],
+        id="decision-view-switch",
+        className="decision-view-switch",
+        role="group",
+    )
+
+
+def _lede() -> html.Div:
+    """The page's one sentence, and the two counts a review opens with."""
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.H1("Make the next decision clear.", className="decision-lede-title"),
+                    html.Div(id="decision-counts", className="decision-lede-counts"),
+                ],
+            ),
+            html.Button(
+                id="decision-archive-toggle",
+                n_clicks=0,
+                className="decision-archive-toggle",
+            ),
+        ],
+        className="decision-board-lede",
+    )
+
+
+def counts_line(active: int, overdue: int) -> list[Any]:
+    """"5 active decisions · 1 overdue", with the overdue part set apart.
+
+    Overdue is a separate span because it is the number the reader is actually
+    scanning for, and because zero overdue should read as nothing at all rather
+    than as a reassuring "0 overdue" they have to parse.
+    """
+    line: list[Any] = [
+        html.Span(f"{active} active {'decision' if active == 1 else 'decisions'}")
+    ]
+    if overdue:
+        line += [
+            html.Span(" · ", className="decision-count-sep"),
+            html.Span(f"{overdue} overdue", className="decision-count-overdue"),
+        ]
+    return line
+
+
+def archive_label(showing_archive: bool, archived: int) -> list[Any]:
+    """The archive link's text: into the archive, or back out of it."""
+    if showing_archive:
+        return [html.I(className="bi bi-arrow-left me-1"), html.Span("Active decisions")]
+    return [html.Span(f"Archived ({archived})")]
 
 
 def _toolbar() -> html.Div:
@@ -62,6 +166,13 @@ def _toolbar() -> html.Div:
                 placeholder="Search decisions…",
                 debounce=True,
                 className="decision-search",
+            ),
+            dcc.Dropdown(
+                id="decision-filter-owner",
+                options=[],
+                multi=True,
+                placeholder="Owner: anyone",
+                className="decision-filter",
             ),
             dcc.Dropdown(
                 id="decision-filter-status",
@@ -80,13 +191,13 @@ def _toolbar() -> html.Div:
             dcc.Dropdown(
                 id="decision-sort",
                 options=[
+                    {"label": "Due date", "value": "due"},
                     {"label": "Manual order", "value": "manual"},
                     {"label": "Recently updated", "value": "updated"},
                     {"label": "Recently created", "value": "created"},
                     {"label": "Priority", "value": "priority"},
-                    {"label": "Due date", "value": "due"},
                 ],
-                value="manual",
+                value="due",
                 clearable=False,
                 className="decision-sort",
             ),
@@ -95,18 +206,66 @@ def _toolbar() -> html.Div:
     )
 
 
-# ── Columns + cards ─────────────────────────────────────────────────────────
+def _workspace() -> html.Div:
+    """Queue on the left, the selected decision's brief on the right.
+
+    Both panes are mounted here and only their contents are repainted, so the
+    queue keeps its scroll position while the reader works down it.
+    """
+    return html.Div(
+        [
+            html.Div(id="decision-board", className="decision-board"),
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.I(className="bi bi-file-earmark-text"),
+                            html.Span("Decision brief"),
+                        ],
+                        className="decision-brief-header",
+                    ),
+                    html.Div(
+                        brief.empty_brief(),
+                        id="decision-brief-content",
+                        className="decision-brief-scroll",
+                    ),
+                    brief.brief_actions(),
+                ],
+                id="decision-brief",
+                className="decision-brief",
+            ),
+        ],
+        className="decision-workspace",
+    )
 
 
-def board_columns(decisions: list[dict[str, Any]]) -> list[html.Div]:
-    """One column per status, in canonical order, each holding its cards."""
-    by_status: dict[str, list[dict[str, Any]]] = {s: [] for s in STATUSES}
+# ── Board view: Kanban columns ──────────────────────────────────────────────
+
+
+def board_columns(
+    decisions: list[dict[str, Any]],
+    today: date,
+    selected: str | None,
+    statuses: tuple[str, ...] = ACTIVE_STATUSES,
+) -> html.Div:
+    """One column per status, in canonical order, each holding its cards.
+
+    Only the active statuses get a column. Archived used to sit here as a fourth,
+    which made a finished record compete for width with the work in flight; it
+    now has its own view behind the header's archive link.
+    """
+    by_status: dict[str, list[dict[str, Any]]] = {s: [] for s in statuses}
     for d in decisions:
         by_status.setdefault(d["status"], []).append(d)
-    return [_column(status, by_status.get(status, [])) for status in STATUSES]
+    return html.Div(
+        [_column(status, by_status.get(status, []), today, selected) for status in statuses],
+        className="decision-columns",
+    )
 
 
-def _column(status: str, cards: list[dict[str, Any]]) -> html.Div:
+def _column(
+    status: str, cards: list[dict[str, Any]], today: date, selected: str | None
+) -> html.Div:
     meta = model.status_meta(status)
     return html.Div(
         [
@@ -119,7 +278,7 @@ def _column(status: str, cards: list[dict[str, Any]]) -> html.Div:
                 className="decision-col-header",
             ),
             html.Div(
-                [decision_card(d) for d in cards]
+                [decision_card(d, today, selected) for d in cards]
                 or [html.Div("No decisions", className="decision-col-empty")],
                 className="decision-col-body",
             ),
@@ -128,21 +287,31 @@ def _column(status: str, cards: list[dict[str, Any]]) -> html.Div:
     )
 
 
-def decision_card(d: dict[str, Any]) -> html.Div:
-    """A colour-coded sticky card. Clicking the body opens the detail panel."""
+def decision_card(d: dict[str, Any], today: date, selected: str | None = None) -> html.Div:
+    """A colour-coded sticky card. Clicking the body selects it into the brief."""
     meta = model.status_meta(d["status"])
     decision_id = d["id"]
+    due = ag.due_state(d.get("due_date"), today)
     footer_bits: list[Any] = [
         html.Span(
-            [html.I(className="bi bi-flag-fill me-1"), model.priority_label(d["priority"])],
+            model.priority_label(d["priority"]),
             className=f"decision-prio decision-prio-{model.priority_class(d['priority'])}",
         )
     ]
     if d.get("owner"):
-        footer_bits.append(html.Span([html.I(className="bi bi-person me-1"), d["owner"]], className="decision-owner"))
-    if d.get("due_date"):
-        footer_bits.append(html.Span([html.I(className="bi bi-clock me-1"), d["due_date"]], className="decision-due"))
+        footer_bits.append(
+            html.Span([html.I(className="bi bi-person me-1"), d["owner"]], className="decision-owner")
+        )
+    footer_bits.append(
+        html.Span(
+            [html.I(className="bi bi-clock me-1"), due.label or due.date_text],
+            className=f"decision-due decision-due-{model.due_class(due.tone)}",
+        )
+    )
 
+    classes = f"decision-card decision-card-{meta.color}"
+    if decision_id == selected:
+        classes += " decision-card-selected"
     return html.Div(
         [
             html.Button(
@@ -157,13 +326,13 @@ def decision_card(d: dict[str, Any]) -> html.Div:
                     html.Div(d["title"], className="decision-card-title"),
                     html.Div(_excerpt(d["statement"]), className="decision-card-statement"),
                 ],
-                id={"type": "decision-card", "id": decision_id},
+                id={"type": "decision-row", "id": decision_id},
                 n_clicks=0,
                 className="decision-card-open",
             ),
             html.Div(footer_bits, className="decision-card-footer"),
         ],
-        className=f"decision-card decision-card-{meta.color}",
+        className=classes,
     )
 
 
@@ -172,183 +341,18 @@ def _excerpt(text: str | None, limit: int = 140) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-# ── Detail panel ────────────────────────────────────────────────────────────
-
-
-def detail_body(d: dict[str, Any], revisions: list[dict[str, Any]]) -> html.Div:
-    """Body of the detail off-canvas: all fields + actions + audit trail."""
-    meta = model.status_meta(d["status"])
-    return html.Div(
-        [
-            html.Div(
-                [
-                    html.Span(meta.label, className=f"decision-badge decision-badge-{meta.color}"),
-                    html.Span(
-                        model.priority_label(d["priority"]) + " priority",
-                        className=f"decision-prio decision-prio-{model.priority_class(d['priority'])}",
-                    ),
-                ],
-                className="decision-detail-badges",
-            ),
-            html.H3(d["title"], className="decision-detail-title"),
-            _field("Decision statement", d.get("statement")),
-            _field("Business rationale", d.get("rationale")),
-            _field("Discussion points", d.get("discussion")),
-            html.Div(
-                [
-                    _meta_item("Owner", d.get("owner") or "—"),
-                    _meta_item("Stakeholders", ", ".join(d.get("stakeholders") or []) or "—"),
-                    _meta_item("Decision date", d.get("decision_date") or "—"),
-                    _meta_item("Due date", d.get("due_date") or "—"),
-                ],
-                className="decision-detail-meta",
-            ),
-            _evidence_block(d.get("evidence") or []),
-            _links_block(d.get("links") or {}),
-            html.Hr(className="decision-detail-rule"),
-            html.H5("Revision history", className="decision-history-title"),
-            _history(revisions),
-        ],
-        className="decision-detail-body",
-    )
-
-
-def reopen_disabled(status: str) -> bool:
-    """The Reopen action only applies to archived (terminal) decisions."""
-    return status != "archived"
-
-
-def _field(label: str, value: str | None) -> html.Div:
-    if not (value or "").strip():
-        return html.Div()
-    return html.Div(
-        [html.Div(label, className="decision-field-label"), html.Div(value, className="decision-field-value")],
-        className="decision-field",
-    )
-
-
-def _meta_item(label: str, value: str) -> html.Div:
-    return html.Div(
-        [html.Div(label, className="decision-meta-label"), html.Div(value, className="decision-meta-value")],
-        className="decision-meta-item",
-    )
-
-
-def _evidence_block(evidence: list[dict[str, Any]]) -> html.Div:
-    if not evidence:
-        return html.Div()
-    items = []
-    for e in evidence:
-        label = e.get("label") or e.get("url") or "Attachment"
-        url = e.get("url")
-        items.append(
-            html.Li(html.A(label, href=url, target="_blank") if url else label)
-        )
-    return html.Div(
-        [html.Div("Supporting evidence", className="decision-field-label"), html.Ul(items)],
-        className="decision-field",
-    )
-
-
-def _links_block(links: dict[str, Any]) -> html.Div:
-    chats = links.get("chats") or []
-    if not chats:
-        return html.Div()
-    return html.Div(
-        [
-            html.Div("Linked chats", className="decision-field-label"),
-            html.Ul([html.Li(c.get("title") or c.get("id") if isinstance(c, dict) else str(c)) for c in chats]),
-        ],
-        className="decision-field",
-    )
-
-
-def _history(revisions: list[dict[str, Any]]) -> html.Div:
-    if not revisions:
-        return html.Div("No revisions yet.", className="decision-history-empty")
-    rows = []
-    for r in revisions:
-        action = r.get("action") or "updated"
-        field = r.get("field")
-        summary = {
-            "created": "Decision created",
-            "status_changed": f"Status → {r.get('new_value')}",
-            "reopened": f"Reopened → {r.get('new_value')}",
-        }.get(action, f"Updated {field}" if field else "Updated")
-        detail = []
-        if action in ("updated",) and field not in (None, "status"):
-            detail = [html.Span(f"{_short(r.get('old_value'))} → {_short(r.get('new_value'))}", className="decision-history-diff")]
-        if r.get("note"):
-            detail.append(html.Span(r["note"], className="decision-history-note"))
-        rows.append(
-            html.Li(
-                [
-                    html.Span(summary, className="decision-history-summary"),
-                    *detail,
-                    html.Span(_when(r.get("created_at")), className="decision-history-when"),
-                ],
-                className="decision-history-item",
-            )
-        )
-    return html.Ul(rows, className="decision-history")
-
-
-def _short(value: Any, limit: int = 48) -> str:
-    text = "" if value is None else str(value)
-    return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
-def _when(value: str | None) -> str:
-    return (value or "").split(".")[0]
-
-
-# ── Create / edit modal + detail off-canvas (mounted once in the shell) ─────
+# ── Create / edit modal (mounted once in the shell) ─────────────────────────
 
 
 def decision_modals() -> html.Div:
-    """All Decision-Board overlays, mounted once in the app shell."""
+    """The Decision-Board overlays, mounted once in the app shell.
+
+    Only the editor is an overlay now. Reading a decision happens in the brief
+    beside the queue, so the detail off-canvas that used to cover the list is
+    gone rather than duplicated.
+    """
     return html.Div(
         [
-            dbc.Offcanvas(
-                html.Div(
-                    [
-                        # Scrollable, dynamically-rendered fields + revision history.
-                        html.Div(id="decision-detail-content", className="decision-detail-scroll"),
-                        # Action bar is mounted statically so its buttons always
-                        # exist in the DOM (callbacks reference them as Inputs).
-                        html.Div(
-                            [
-                                dbc.Button(
-                                    [html.I(className="bi bi-pencil me-1"), "Edit"],
-                                    id="decision-detail-edit",
-                                    n_clicks=0,
-                                    className="decision-action-btn",
-                                ),
-                                dbc.Button(
-                                    [html.I(className="bi bi-arrow-counterclockwise me-1"), "Reopen"],
-                                    id="decision-detail-reopen",
-                                    n_clicks=0,
-                                    className="decision-action-btn",
-                                    disabled=True,
-                                ),
-                                dbc.Button(
-                                    [html.I(className="bi bi-trash me-1"), "Delete"],
-                                    id="decision-detail-delete",
-                                    n_clicks=0,
-                                    className="decision-action-btn decision-action-danger",
-                                ),
-                            ],
-                            className="decision-detail-actions",
-                        ),
-                    ],
-                    className="decision-detail-shell",
-                ),
-                id="decision-detail",
-                title="Decision detail",
-                placement="end",
-                is_open=False,
-                className="decision-detail-canvas",
-            ),
             dbc.Modal(
                 [
                     dbc.ModalHeader(dbc.ModalTitle(id="decision-edit-title")),
@@ -425,6 +429,25 @@ def edit_form(d: dict[str, Any] | None) -> list[Any]:
                 _input("Due date", "decision-f-due-date", d.get("due_date", ""), type_="date"),
             ],
             className="decision-form-row",
+        ),
+        html.Div(id="decision-form-evidence", className="decision-form-evidence"),
+    ]
+
+
+def evidence_preview(items: list[Any]) -> list[Any]:
+    """What the editor shows about evidence a draft arrived with.
+
+    Read-only on purpose. The snapshot is what the answer actually said; letting
+    it be typed over in the editor would turn a captured figure into a claim.
+    """
+    if not items:
+        return []
+    return [
+        html.Div("Evidence carried from the analysis", className="decision-form-label"),
+        html.Div([brief.evidence_card(item) for item in items], className="decision-evidence-list"),
+        html.Div(
+            "Captured when this decision was raised, and kept as it was.",
+            className="decision-form-hint",
         ),
     ]
 

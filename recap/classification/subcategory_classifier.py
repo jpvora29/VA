@@ -25,6 +25,7 @@ from recap.schemas.classification import (
     UmbrellaLabel,
 )
 from recap.llm.llm_client import LLMClient
+from recap.config import settings
 from recap.taxonomy.taxonomy_definitions import (
     UMBRELLA_DEFINITIONS,
     get_sub_category_block,
@@ -118,7 +119,9 @@ class SubCategoryClassifier:
             raw = await self._llm.call(
                 system_prompt=system_prompt,
                 user_message=user_message,
-                max_completion_tokens=256,
+                max_completion_tokens=settings.token_budget("subcategory_classification"),
+                reasoning_effort=settings.reasoning_effort_for("subcategory_classification"),
+                stage="subcategory_classification",
             )
             d = json.loads(raw) if isinstance(raw, str) else raw
 

@@ -86,7 +86,7 @@ def _kind_for(flow: str, name: str) -> str:
     if kind:
         return kind
     money = str(flow or "").strip().lower() == "gpr"
-    return columns.MONEY_SI if (name in _MEASURE_FACTS and money) else ""
+    return columns.MONEY_MILLIONS if (name in _MEASURE_FACTS and money) else ""
 
 
 def column_kinds(flow: str, facts: Iterable[AnalyticsFact]) -> Dict[str, str]:

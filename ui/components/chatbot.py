@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Sequence
 
 from dash import html, dcc
 import dash_bootstrap_components as dbc
@@ -9,7 +10,7 @@ from ui.components.answer_actions import (
     AnswerContext,
     answer_footer,
     feedback_panel,
-    next_question,
+    next_questions,
 )
 from ui.components.answer_lead import Lead, split_lead
 from ui.components.contribution import contribution_panel
@@ -47,25 +48,6 @@ def _greeting() -> str:
     if hour < 17:
         return "Good afternoon"
     return "Good evening"
-
-
-def suggestion_chip(question: str, icon: str | None = None, idx: int = 0):
-    """A clickable question chip that ASKS the question.
-
-    The question text rides in the id so a single pattern-matching callback can
-    send it. Used for follow-ups, where the reader has already seen an answer and
-    the chip is a continuation of it.
-    """
-    children = []
-    if icon:
-        children.append(html.I(className=f"{icon} suggestion-chip-icon"))
-    children.append(html.Span(question, className="suggestion-chip-text"))
-    return html.Button(
-        children,
-        id={"type": "suggestion-chip", "idx": idx, "q": question},
-        n_clicks=0,
-        className="suggestion-chip",
-    )
 
 
 def starter_chip(outcome: str, question: str, icon: str, idx: int = 0):
@@ -331,31 +313,6 @@ def welcome_hero(name: str = "", starters: list[str] | None = None):
     )
 
 
-def followup_suggestions(followups: list[str]):
-    """Row of suggested follow-up question chips shown under the latest answer."""
-    if not followups:
-        return None
-    return html.Div(
-        [
-            html.Div(
-                [
-                    html.I(className="bi bi-lightbulb followup-icon"),
-                    html.Span("Suggested follow-ups"),
-                ],
-                className="followup-label",
-            ),
-            html.Div(
-                [
-                    suggestion_chip(question, idx=index)
-                    for index, question in enumerate(followups)
-                ],
-                className="followup-row",
-            ),
-        ],
-        className="followup-block",
-    )
-
-
 def _answer_body(content: str, idx: int, editing: bool, className: str = ""):
     """The commentary — editable IN PLACE when the pencil is on.
 
@@ -481,7 +438,7 @@ def ai_message(
     editing: bool = False,
     ts: str = "",
     source: str = "",
-    followup: str = "",
+    followups: Sequence[str] = (),
 ):
     """One turn, whole: who answered, and everything that answer produced.
 
@@ -536,6 +493,9 @@ def ai_message(
     # stylesheet), so the table is full width WITHOUT leaving the panel.
     panel_idx = idx if card_idx is None else card_idx
     views = evidence_panel(evidence or [], panel_idx, pane_ids or []) if evidence else None
+    # A chart sits beside the finding; a table takes the whole card (see
+    # `reads_beside_the_prose`).
+    beside = reads_beside_the_prose(evidence)
     drivers = contribution_panel(contribution)
     # Between the prose and the actions: the answer states where it came from
     # before it offers you somewhere to take it.
@@ -558,11 +518,11 @@ def ai_message(
     card = html.Div(
         [
             pills,
-            *_reading_area(head, prose, views),
+            *_reading_area(head, prose, views, beside=beside),
             drivers,
             drawer,
             footer,
-            next_question(followup, idx),
+            next_questions(followups, idx),
             panel,
         ],
         className=card_class + wide,
@@ -573,19 +533,26 @@ def ai_message(
     )
 
 
-def _split_views(views):
-    """Chart views and table views, kept apart because they want different widths.
+def reads_beside_the_prose(evidence) -> bool:
+    """Whether this evidence belongs BESIDE the finding rather than under it.
 
-    A view with no chart IS a table (see `ui.evidence.EvidenceView`), and a table
-    of six financial columns needs the full card. Returning two lists rather than
-    one panel is what lets the caller put them in different places.
+    A chart does: it is fixed-height, it reads fine at half the card, and having
+    it next to the sentence it illustrates is the whole point of the split.
+
+    A table does not. A view with no chart IS a table (`ui.evidence.EvidenceView`),
+    and a table of financial columns needs the full card — at half width its last
+    column is cut off and the reader scrolls sideways through their own evidence,
+    while the prose column runs on for another 500px beside a panel that stopped.
+    That was the measured shape of an answer whose only evidence was a table.
+
+    Decided here, from the views, rather than in the stylesheet: every pane
+    contains a table (a chart view hides one behind its Chart/Data switch), so
+    "is this a table panel?" is not a question the rendered markup can answer.
     """
-    charts = [view for view in views if view.has_chart]
-    tables = [view for view in views if not view.has_chart]
-    return charts, tables
+    return any(getattr(view, "has_chart", False) for view in (evidence or []))
 
 
-def _reading_area(head, prose, views):
+def _reading_area(head, prose, views, *, beside: bool = True):
     """The finding and the picture of it, side by side when there is a picture.
 
     Stacked, a chart pushes the points that explain it below the fold, and the
@@ -614,7 +581,10 @@ def _reading_area(head, prose, views):
                     className="answer-visual",
                 ),
             ],
-            className="answer-split",
+            # Stacked is the SAME container with one column, not a second layout:
+            # the labels, the panel's margins and the reading order are already
+            # right for it (they are what the narrow breakpoint falls back to).
+            className="answer-split" + ("" if beside else " is-stacked"),
         )
     ]
 
@@ -630,22 +600,19 @@ def _column_label(text: str):
 
 
 def user_message(content: str, *, ts: str = "", initial: str = ""):
-    """Render a user turn with a hover-reveal copy action.
+    """Render a user turn with a copy action in its footer.
 
-    Mirrors `ai_message`'s native `dcc.Clipboard` copy so the human side of the
-    conversation gets the same affordance. The bubble is position:relative so the
-    copy chip can sit at its corner.
+    Mirrors `answer_footer`: the native `dcc.Clipboard` sits in the attribution
+    row under the bubble, not floating over its corner, so it never covers the
+    question and never has to guess a colour to sit on (see `user_footer`).
     """
     return html.Div(
         [
             html.Div(
-                [
-                    html.Span(content, className="user-message-text"),
-                    dcc.Clipboard(content=content, title="Copy", className="msg-copy"),
-                ],
+                html.Span(content, className="user-message-text"),
                 className="message user-message",
             ),
-            user_footer(initial=initial, ts=ts),
+            user_footer(initial=initial, ts=ts, content=content),
         ],
         className="turn turn-user",
     )

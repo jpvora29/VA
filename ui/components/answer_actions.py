@@ -162,28 +162,66 @@ def _action_button(action: AnswerAction, idx: int, *, primary: bool = False):
     )
 
 
-def next_question(question: str, idx: int = 0):
-    """The single follow-up worth offering under an answer.
+#: How many follow-ups an answer may offer. Past three the reader is reading a
+#: menu instead of taking a suggestion, and the answer above it stops being the
+#: thing on screen.
+MAX_FOLLOWUPS = 3
 
-    One, not a row: the point is to name the obvious next move, and four
-    equally-plausible questions is a menu the reader has to read rather than a
-    suggestion they can take. The rest stay in the follow-up block below.
+
+def next_questions(questions: Sequence[str], idx: int = 0):
+    """Every follow-up this answer offers, in ONE place at its foot.
+
+    They used to be split in two: the first was promoted into the card as
+    "Suggested next question", right-aligned, a filled blue pill; the rest were
+    rendered *below* the card as "SUGGESTED FOLLOW-UPS", left-aligned, at 86% of
+    its width, as white outline chips. One idea, two labels, two alignments, two
+    widths and two chip vocabularies, forty pixels apart — so three suggestions
+    read as two unrelated features rather than one list of where to go next.
+
+    Here they are one list on the card's own left edge, because that is what they
+    are. The first still leads — it is the obvious continuation and gets the
+    filled treatment — but it leads a list it belongs to instead of standing in a
+    different place looking like a different thing.
+
+    Every chip SENDS its question (`suggestion-chip`), unlike the starters on the
+    welcome screen, which load it into the composer for editing. The trailing
+    arrow is what says so: two controls that look alike and behave differently is
+    the trap this row would otherwise walk into.
     """
-    text = (question or "").strip()
-    if not text:
+    # Deduplicated, because the question text IS the chip's Dash id — two
+    # identical suggestions would be two components with the same id, which is a
+    # hard error rather than a repeated chip.
+    texts: List[str] = []
+    for question in questions or []:
+        text = (question or "").strip()
+        if text and text not in texts:
+            texts.append(text)
+    texts = texts[:MAX_FOLLOWUPS]
+    if not texts:
         return None
     return html.Div(
         [
-            html.Span("Suggested next question", className="answer-next-label"),
-            html.Button(
-                [html.I(className="bi bi-chat-square-text"), html.Span(text)],
-                id={"type": "suggestion-chip", "idx": idx, "q": text},
-                n_clicks=0,
-                className="answer-next-chip",
-                title=text,
+            html.Span("Ask next", className="answer-next-label"),
+            html.Div(
+                [_next_chip(text, idx, lead=(i == 0)) for i, text in enumerate(texts)],
+                className="answer-next-row",
             ),
         ],
         className="answer-next",
+    )
+
+
+def _next_chip(text: str, idx: int, *, lead: bool):
+    """One follow-up. `lead` is the obvious continuation, set as such."""
+    return html.Button(
+        [
+            html.Span(text, className="answer-next-text"),
+            html.I(className="bi bi-arrow-right-short answer-next-go"),
+        ],
+        id={"type": "suggestion-chip", "idx": idx, "q": text},
+        n_clicks=0,
+        className="answer-next-chip" + (" is-lead" if lead else ""),
+        title=f"Ask: {text}",
     )
 
 

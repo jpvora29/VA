@@ -152,7 +152,9 @@ class EnrichmentLLM:
         raw_context = await self._llm.call(
             system_prompt=context_system,
             user_message=context_user,
-            max_completion_tokens=600,
+            max_completion_tokens=settings.token_budget("enrichment_context"),
+            reasoning_effort=settings.reasoning_effort_for("enrichment_context"),
+            stage="enrichment_context",
         )
 
         # ── Pass 2: KPI / Performance ───────────────────────────────
@@ -165,12 +167,15 @@ class EnrichmentLLM:
         raw_kpi = await self._llm.call(
             system_prompt=kpi_system,
             user_message=kpi_user,
-            max_completion_tokens=1024,
+            max_completion_tokens=settings.token_budget("enrichment_kpi"),
+            reasoning_effort=settings.reasoning_effort_for("enrichment_kpi"),
+            stage="enrichment_kpi",
         )
 
         # ── Merge both passes into InsightMetadata ──────────────────
         metadata = self._merge_metadata(
-            raw_context, raw_kpi, scu.source_element_ids
+            raw_context, raw_kpi, scu.source_element_ids,
+            content_unit_id=scu.content_unit_id,
         )
 
         return EnrichedInsight(
@@ -194,6 +199,7 @@ class EnrichmentLLM:
         raw_context: str,
         raw_kpi: str,
         source_element_ids: List[str],
+        content_unit_id: str = "",
     ) -> InsightMetadata:
         """
         Parse both LLM JSON responses and merge them into one InsightMetadata.
@@ -255,15 +261,25 @@ class EnrichmentLLM:
             + _list_of_str(kpi.get("matched_glossary_terms"))
         ))
 
-        # Restrict LoB and segments to canonical lists from config
-        canonical_lobs = {v.lower() for v in settings.lines_of_business}
-        canonical_segs = {v.lower() for v in settings.segments}
+        # Canonicalize LoB and segments using the alias index from config,
+        # instead of dropping any value that isn't an exact string match
+        # against the canonical list. Any value the LLM returns that also
+        # doesn't match a known alias is dropped, but logged at DEBUG so
+        # the loss is visible (previously this was silent).
+        lob_alias_index = settings.lob_alias_index
+        seg_alias_index = settings.segment_alias_index
 
         raw_lobs = _list_of_str(ctx.get("lines_of_business"))
-        filtered_lobs = [v for v in raw_lobs if v.lower() in canonical_lobs]
+        filtered_lobs = self._canonicalize(
+            raw_lobs, lob_alias_index, field_name="lines_of_business",
+            content_unit_id=content_unit_id,
+        )
 
         raw_segs = _list_of_str(ctx.get("segments"))
-        filtered_segs = [v for v in raw_segs if v.lower() in canonical_segs]
+        filtered_segs = self._canonicalize(
+            raw_segs, seg_alias_index, field_name="segments",
+            content_unit_id=content_unit_id,
+        )
 
         return InsightMetadata(
             # From Pass 1 — Context
@@ -289,6 +305,40 @@ class EnrichmentLLM:
             matched_glossary_terms=merged_glossary,
             overall_confidence=merged_confidence,
         )
+
+    @staticmethod
+    def _canonicalize(
+        values: List[str],
+        alias_index: dict,
+        field_name: str,
+        content_unit_id: str = "",
+    ) -> List[str]:
+        """
+        Resolve each free-text value returned by the LLM to its canonical
+        name using a case-insensitive alias index (built from config.yaml's
+        {canonical, aliases} entries — see config.Settings.lob_alias_index /
+        segment_alias_index).
+
+        Any value that doesn't match a known canonical name or alias is
+        dropped, but logged at DEBUG (previously this was silent, making
+        it impossible to notice systematic tagging gaps). Duplicates that
+        resolve to the same canonical name are collapsed while preserving
+        first-seen order.
+        """
+        resolved: List[str] = []
+        for raw_value in values:
+            canonical = alias_index.get(raw_value.strip().lower())
+            if canonical:
+                if canonical not in resolved:
+                    resolved.append(canonical)
+            else:
+                logger.debug(
+                    "Dropped unmatched %s value %r for %s "
+                    "(no canonical name or alias found — consider adding "
+                    "it to assets/config.yaml)",
+                    field_name, raw_value, content_unit_id or "(unknown unit)",
+                )
+        return resolved
 
     # ----------------------------------------------------------------
     # Safe fallback

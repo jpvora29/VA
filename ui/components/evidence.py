@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence
 
 from dash import dash_table, dcc, html
-from dash.dash_table.Format import Format, Group, Scheme, Sign, Symbol
+from dash.dash_table.Format import Format, Group, Prefix, Scheme, Sign, Symbol
 
 from core.analytics import positioning as P
 from ui.evidence import EvidenceView
@@ -109,7 +109,7 @@ def _is_number(value: Any) -> bool:
 #: producer that DECLARES a column money gets a currency mark.
 NUMBER = "number"
 
-_FORMATTED = (P.MONEY, P.MONEY_SI, P.PERCENT, P.SIGNED_PERCENT, P.RANK_KIND, P.COUNT)
+_FORMATTED = (P.MONEY, P.MONEY_MILLIONS, P.PERCENT, P.SIGNED_PERCENT, P.RANK_KIND, P.COUNT)
 
 
 def _kind_of(view: EvidenceView, column: str) -> str:
@@ -142,12 +142,19 @@ def _format_for(kind: str, unit: str) -> Optional[Format]:
             scheme=Scheme.fixed, precision=2 if unit else 0, group=Group.yes,
             symbol=Symbol.yes, symbol_prefix="$", symbol_suffix=unit,
         )
-    if kind == P.MONEY_SI:
-        # Raw magnitude, SI suffix per cell: "$1.77M", "$840k". For a result set
-        # that arrived without a shared scale, where the alternative the reader
-        # actually saw was "1770.0".
-        return Format(scheme=Scheme.decimal_si_prefix, precision=3,
-                      symbol=Symbol.yes, symbol_prefix="$")
+    if kind == P.MONEY_MILLIONS:
+        # Raw magnitude, printed in millions: 1_770_000 -> "$1.77M",
+        # 2_500_000_000 -> "$2,500.00M". Dash divides by the `si_prefix`, so the
+        # rows stay raw and sortable while the cell reads at reporting scale.
+        #
+        # A FIXED unit, not an automatic one. `Scheme.decimal_si_prefix` switches
+        # unit per cell at a threshold the reader cannot see, so one column reads
+        # "$840M" then "$2.5G" — incomparable down the page, and "G" is a
+        # gigabyte, not a currency unit.
+        return Format(
+            scheme=Scheme.fixed, precision=2, group=Group.yes,
+            symbol=Symbol.yes, symbol_prefix="$", symbol_suffix="M",
+        ).si_prefix(Prefix.mega)
     if kind == P.PERCENT:
         return Format(scheme=Scheme.fixed, precision=1,
                       symbol=Symbol.yes, symbol_suffix="%")

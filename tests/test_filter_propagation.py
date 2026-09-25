@@ -264,6 +264,68 @@ def test_the_year_filter_changes_the_figure(warehouse):
 # --------------------------------------------------------------------------- #
 
 
+# --------------------------------------------------------------------------- #
+# 3b. A cut the scope already pins is not a cut
+# --------------------------------------------------------------------------- #
+
+
+def test_a_group_by_the_scope_already_pins_is_dropped():
+    """"Share of wallet for Property, by product line" is one row reading
+    "Property". The reader asked for a figure and got a one-row table of it."""
+    from core.analytics.orchestrator import useful_group_by
+
+    assert useful_group_by(("Product_Line",), {"Product_Line": "Property"}) == ()
+    assert useful_group_by(("Product_Line",), {"Product_Line": ["Property"]}) == ()
+
+
+def test_a_cut_the_scope_does_not_pin_survives():
+    from core.analytics.orchestrator import useful_group_by
+
+    assert useful_group_by(
+        ("SIC_Major_Class",), {"Product_Line": "Property"}
+    ) == ("SIC_Major_Class",)
+    # Two values is still a comparison worth cutting by.
+    assert useful_group_by(
+        ("Product_Line",), {"Product_Line": ["Property", "Cyber"]}
+    ) == ("Product_Line",)
+
+
+def test_the_reported_question_returns_a_figure_not_a_one_row_table(warehouse):
+    """"What is Zurich's Share of Wallet for Property" — the answer is a number."""
+    from core.analytics.orchestrator import AnalyticsOrchestrator
+
+    scope = {
+        "Carrier_Group": scenario.CARRIER, "Country": scenario.COUNTRY,
+        "Year": scenario.CURRENT_YEAR, "Product_Line": "Property",
+    }
+    evidence = AnalyticsOrchestrator().run(
+        [{"name": "compute_share_of_wallet", "metric": "premium",
+          "group_by": ["Product_Line"]}],
+        flow="gpr", shared_filters=scope, engine=warehouse,
+        subject=scenario.CARRIER,
+    )
+    assert len(evidence.facts) == 1
+    assert "Product_Line" not in evidence.facts[0].dims
+
+
+def test_a_pinned_product_cuts_the_table_by_industry_not_product(warehouse):
+    """The next level DOWN, and Major before Minor — the ladder's whole job."""
+    from core.analytics.dimensions import choose_dimension
+
+    filters, _unresolved = resolve_entities(
+        QueryEntities(carriers=["Zurich"], products=["Property"]), "premium"
+    )
+    assert choose_dimension(filters, flow="gpr") == "SIC_Major_Class"
+
+
+def test_a_pinned_industry_steps_down_to_sub_industry():
+    from core.analytics.dimensions import choose_dimension
+
+    assert choose_dimension(
+        {"Product_Line": "Property", "SIC_Major_Class": "Manufacturing"}, flow="gpr"
+    ) == "SIC_Minor_Class"
+
+
 def test_the_routing_context_round_trips_all_three(resolved):
     """`resolved_filters_of` is what most consumers read. It must lose nothing."""
     out = resolved_filters_of(_routing_context(resolved))

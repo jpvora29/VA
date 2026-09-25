@@ -183,16 +183,6 @@
 .gpt-message { border-radius: 18px; }
 .user-message { border-radius: 18px 18px 6px 18px; }
 
-.suggestion-chip {
-    transition: transform var(--va-transition-fast), box-shadow var(--va-transition-fast),
-        border-color var(--va-transition-fast);
-}
-.suggestion-chip:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--va-shadow-md);
-    border-color: rgba(11, 75, 255, 0.3);
-}
-
 /* A slim, unobtrusive scrollbar in the transcript. */
 .chat-viewport { scrollbar-width: thin; scrollbar-color: var(--va-border-mid) transparent; }
 .chat-viewport::-webkit-scrollbar { width: 10px; }
@@ -212,7 +202,7 @@
 @media (prefers-reduced-motion: reduce) {
     .thinking-track { animation: none; opacity: 0.5; }
     .scope-bar { animation: none; }
-    .scope-pill:hover, .suggestion-chip:hover, .send-btn:hover { transform: none; }
+    .scope-pill:hover, .send-btn:hover { transform: none; }
 }
 
 
@@ -1861,6 +1851,23 @@ button.dock-pin.is-pinned:hover { background: #e2ebff; }
 }
 .turn-footer .turn-stamp { margin-left: 0; }
 
+/* The question's copy control, in the row rather than over the bubble — the
+   same move, for the same reasons, as `.answer-copy` above. Quiet by default
+   and darkening on hover: always present, so it also works on a touch screen,
+   where a hover-reveal chip simply does not exist. */
+.user-copy {
+    position: static;
+    opacity: 1;
+    color: var(--va-ink-400);
+    padding: 1px 5px;
+    font-size: 12.5px;
+    line-height: 1;
+    cursor: pointer;
+    transition: color var(--va-transition-fast);
+}
+.user-copy:hover { color: var(--va-blue); }
+.user-copy:focus-visible { outline: none; box-shadow: var(--va-focus-ring); border-radius: 5px; }
+
 
 /* ── The answer card ─────────────────────────────────────────────────────── */
 
@@ -2084,41 +2091,88 @@ button.dock-pin.is-pinned:hover { background: #e2ebff; }
 }
 .answer-pin-btn:hover { color: var(--va-blue); background: var(--va-surface-1); }
 
-/* The single obvious continuation. One, because four plausible questions is a
-   menu to read rather than a suggestion to take. */
+/* ── Where next ───────────────────────────────────────────────────────────
+   ONE list, on the card's own left edge. The first suggestion used to sit here
+   right-aligned as a filled pill while the rest were rendered below the card at
+   86% of its width, left-aligned, uppercase-labelled and outlined — so one idea
+   arrived as two features. See `next_questions`.
+
+   A rule above it, because this is the last thing on the card and the reader
+   should see the answer end before they are offered somewhere to go. */
 .answer-next {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 10px;
-    flex-wrap: wrap;
-    margin-top: 12px;
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--va-border-soft);
 }
 
 .answer-next-label {
-    font-size: 11.5px;
-    font-weight: 600;
-    color: var(--va-ink-400);
+    display: block;
+    margin-bottom: 9px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--va-ink-subtle, #7B8AA1);
 }
 
+.answer-next-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+/* One chip shape for all of them; only the fill says which one leads. Equal
+   shapes are what make them read as one list — it was the two different chip
+   vocabularies, more than the two locations, that made the old pair look
+   unrelated. */
 .answer-next-chip {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
     max-width: 100%;
-    padding: 9px 16px;
-    border: 1px solid rgba(11, 75, 255, 0.2);
+    padding: 8px 12px 8px 14px;
+    border: 1px solid var(--va-border-mid);
     border-radius: var(--va-radius-pill);
-    background: var(--va-blue-soft);
-    color: var(--va-blue);
+    background: var(--va-surface-0);
+    color: var(--va-ink-700, var(--va-ink-500));
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
+    line-height: 1.35;
     text-align: left;
     cursor: pointer;
-    transition: background var(--va-transition-fast), transform var(--va-transition-fast);
+    transition: border-color var(--va-transition-fast), background var(--va-transition-fast),
+        color var(--va-transition-fast);
 }
-.answer-next-chip:hover { background: #e2ebff; transform: translateY(-1px); }
-.answer-next-chip .bi { font-size: 12px; opacity: 0.8; }
+
+/* The obvious continuation. It leads a list it belongs to, rather than standing
+   somewhere else looking like a different control. */
+.answer-next-chip.is-lead {
+    border-color: rgba(11, 75, 255, 0.24);
+    background: var(--va-blue-soft);
+    color: var(--va-blue);
+    font-weight: 700;
+}
+
+.answer-next-chip:hover {
+    border-color: rgba(11, 75, 255, 0.34);
+    background: var(--va-blue-soft);
+    color: var(--va-blue);
+}
+.answer-next-chip:focus-visible { outline: none; box-shadow: var(--va-focus-ring); }
+
+.answer-next-text { min-width: 0; }
+
+/* The arrow is the affordance: this chip ASKS the question, where a starter on
+   the welcome screen loads it into the composer to be edited first. Two controls
+   that look alike and behave differently is the trap. */
+.answer-next-go {
+    flex: 0 0 auto;
+    font-size: 16px;
+    line-height: 1;
+    opacity: 0.55;
+    transition: transform var(--va-transition-fast), opacity var(--va-transition-fast);
+}
+.answer-next-chip:hover .answer-next-go { opacity: 1; transform: translateX(2px); }
 
 
 /* ── The composer: one line, with its controls named ─────────────────────── */
@@ -2333,7 +2387,10 @@ button.dock-pin.is-pinned:hover { background: #e2ebff; }
     .composer { flex-direction: column; align-items: stretch; padding: 10px 12px 8px; }
     .composer-toolbar { order: 1; padding-bottom: 0; }
     .composer-input-row { order: 0; }
-    .answer-next { justify-content: flex-start; }
+    /* Narrow, a long question is most of the row anyway — let each chip have
+       the line to itself rather than wrapping mid-question. */
+    .answer-next-row { flex-direction: column; align-items: stretch; }
+    .answer-next-chip { justify-content: space-between; }
     .answer-figures { gap: 16px; }
     .answer-figure + .answer-figure { padding-left: 16px; }
     .turn-source { display: none; }
@@ -2370,9 +2427,10 @@ button.dock-pin.is-pinned:hover { background: #e2ebff; }
 @media (prefers-reduced-motion: reduce) {
     .analysis-dock,
     .starter-chip,
-    .answer-next-chip { transition: none; }
-    .starter-chip:hover,
-    .answer-next-chip:hover { transform: none; }
+    .answer-next-chip,
+    .answer-next-go { transition: none; }
+    .starter-chip:hover { transform: none; }
+    .answer-next-chip:hover .answer-next-go { transform: none; }
 }
 
 /* ── The answer, side by side ─────────────────────────────────────────────
@@ -2397,7 +2455,20 @@ button.dock-pin.is-pinned:hover { background: #e2ebff; }
     align-items: start;
 }
 
-.answer-points { min-width: 0; }
+/* The reading column, capped at a measure you can actually read.
+
+   Beside a chart this never bites — that column is already about 450px. Stacked,
+   it is the whole card, and a card wide enough for a financial table is far too
+   wide for prose: measured at 118 characters a line, against a comfortable
+   ceiling of about 75. The evidence keeps the full width; the sentences do not
+   need it.
+
+   64ch, not 70: `ch` is the width of a "0", which is wider than the average
+   letter, so the cap lands at about 77 actual characters rather than 64. */
+.answer-points {
+    min-width: 0;
+    max-width: 64ch;
+}
 
 /* min-width:0 on both tracks is load-bearing, not defensive. A grid item's
    default `min-width:auto` refuses to shrink below its content, and a wide
@@ -2413,10 +2484,20 @@ button.dock-pin.is-pinned:hover { background: #e2ebff; }
     border-top: none;
 }
 
-/* Below this the two columns are too narrow to be worth having: the chart
-   becomes unreadable and the prose measures about four words a line. Stacking
-   restores the original reading order, which is why `_reading_area` emits the
-   points before the visual. */
+/* Stacked. Two ways in, one result.
+
+   By WIDTH: below 1100px the columns are too narrow to be worth having — the
+   chart becomes unreadable and the prose measures about four words a line.
+
+   By CONTENT: `is-stacked` is set when the evidence is a table rather than a
+   chart (`reads_beside_the_prose`). A table of financial columns at half the
+   card loses its last column to a sideways scrollbar, and leaves the prose
+   running on beside a panel that stopped — measured at 1280 as a 778px column
+   next to a 216px one. A chart has a fixed height and reads fine beside the
+   sentence it illustrates, so it keeps the split.
+
+   Either way the order is already right: `_reading_area` emits the points before
+   the visual, so stacking restores the original reading order. */
 @media (max-width: 1100px) {
     .answer-split {
         grid-template-columns: 1fr;
@@ -2428,6 +2509,17 @@ button.dock-pin.is-pinned:hover { background: #e2ebff; }
         border-top: 1px solid var(--va-border-soft);
     }
 }
+
+.answer-split.is-stacked {
+    grid-template-columns: 1fr;
+    gap: 16px;
+}
+.answer-split.is-stacked .ev-panel {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--va-border-soft);
+}
+.answer-split.is-stacked .answer-visual { margin-top: 18px; }
 
 /* ── Naming the two columns ───────────────────────────────────────────────
    Two columns of equal weight read as one thing cut in half. A quiet label
@@ -2456,6 +2548,8 @@ button.dock-pin.is-pinned:hover { background: #e2ebff; }
     .answer-split .answer-visual {
         margin-top: 18px;
     }
+    /* Already stacked by width; the content rule must not add a second margin. */
+    .answer-split.is-stacked .answer-visual { margin-top: 18px; }
 }
 
 /* A table panel below the split takes the whole card. Six columns of financial

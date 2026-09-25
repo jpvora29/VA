@@ -426,9 +426,27 @@ class PPTXRenderer:
             else:
                 logger.warning("Slide 2: shape %r not found", _S2_BODY_NAME)
         else:
+            # No valid country summaries (e.g. fewer than 2 qualifying
+            # countries, or all summaries were dropped by fact-checking).
+            # Actively clear both shapes so the template's own placeholder
+            # text (which may belong to a different deck/client) never
+            # survives into the output — the slide is left blank rather
+            # than silently showing stale content.
             logger.info(
-                "Slide 2 (Country Feedback) skipped — fewer than 2 unique countries."
+                "Slide 2 (Country Feedback) — no valid country summaries; "
+                "clearing shapes to render a blank slide."
             )
+            shape = _find_shape(slide2, _S2_TITLE_NAME)
+            if shape:
+                _clear_text_frame(shape)
+            else:
+                logger.warning("Slide 2: shape %r not found", _S2_TITLE_NAME)
+
+            shape = _find_shape(slide2, _S2_BODY_NAME)
+            if shape:
+                _clear_text_frame(shape)
+            else:
+                logger.warning("Slide 2: shape %r not found", _S2_BODY_NAME)
 
         # ── Save ──────────────────────────────────────────────────────
         if output_path is None:

@@ -35,6 +35,8 @@ POLL_INTERVAL_MS = 1500
 
 #: What each detected metadata field is called on its chip.
 CHIP_LABELS: dict = {
+    "carrier": "Carrier",
+    "country_region": "Country / Region",
     "client_name": "Client",
     "company_name": "Company",
     "period_label": "Period",

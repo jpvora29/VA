@@ -631,6 +631,7 @@ RECAP_GENERATION_USER_TEMPLATE = dedent(
     """
     Client: {client_name}
     Period: {period_label}
+    Meeting type: {meeting_type}
     Category: {umbrella_label} — {sub_category_label}
 
     Insights ({insight_count} total):
@@ -722,6 +723,7 @@ RECAP_EXEC_SUMMARY_USER_TEMPLATE = dedent(
     """
     Client: {client_name}
     Period: {period_label}
+    Meeting type: {meeting_type}
 
     Key takeaway bullets:
     {takeaways_block}
@@ -893,6 +895,7 @@ RECAP_ACTION_RANKER_USER_TEMPLATE = dedent(
     """
     Client: {client_name}
     Period: {period_label}
+    Meeting date: {meeting_date}
 
     Candidate action items ({action_count} total):
     {actions_block}
@@ -1119,14 +1122,253 @@ TAKEAWAY_DEDUP_USER_TEMPLATE = dedent(
     Any specific fact or metric that appears in multiple input bullets
     must appear in AT MOST ONE output bullet.
 
-    Return a JSON object exactly:
+    Return a JSON object exactly. "source_bullet_numbers" lists the input
+    bullet number(s) each output bullet was built from — one number for a
+    bullet kept as-is, several for a merge. Every input bullet you keep or
+    merge must be referenced.
     {{
       "deduped_takeaways": [
         {{
           "title": "string",
           "narrative": "string",
+          "source_bullet_numbers": [1]
+        }}
+      ]
+    }}
+    """
+).strip()
+
+
+# ---------------------------------------------------------------------------
+# Recap Generator — takeaway force-compress (hard cap, one merge per call)
+#
+# Stand-in wording: the original business_review_recap prompts for this step and
+# the two fact-checkers below were not part of the Recap_Updated drop. The JSON
+# contracts ARE the ones recap_generator parses; replace the prose freely.
+# ---------------------------------------------------------------------------
+
+TAKEAWAY_FORCE_COMPRESS_SYSTEM_PROMPT = dedent(
+    """
+    ROLE
+    You are a QBR editorial editor for Marsh ICG. The takeaway bullets you
+    receive have already been de-duplicated, but there are still more of
+    them than the recap slide can hold. The slide's hard limit is
+    {max_takeaways} bullets.
+
+    OBJECTIVE
+    Reduce the list by EXACTLY ONE bullet: find the single pair of bullets
+    that are most similar to each other and merge them into one bullet that
+    keeps every fact from both. Return the full list — every other bullet
+    unchanged, plus the one merged bullet.
+
+    DIRECTION
+      - Merge exactly one pair. Do not drop, rewrite, or reorder any other
+        bullet; return each of them with its title and narrative verbatim.
+      - Choose the pair whose commercial substance overlaps most (shared
+        metric, geography, theme or initiative), even if the overlap is
+        partial. Titles and wording are irrelevant to the choice.
+      - The merged bullet must preserve every number, name, geography and
+        line of business stated in either source bullet. No information
+        may be lost, and no fact may be invented.
+      - Write a fresh 3–5 word title for the merged bullet. Keep its
+        narrative to at most 75 words, with no label prefixes or bullet
+        markers.
+      - Reference source bullets by their input numbers in
+        "source_bullet_numbers": one number for an unchanged bullet, the
+        two merged numbers for the merged bullet.
+
+    EXECUTION PLAN
+    1. Read every bullet and note its core claim.
+    2. Identify the single most similar pair.
+    3. Merge that pair into one bullet containing every fact from both.
+    4. Copy every other bullet unchanged.
+    5. Verify the output has exactly one bullet fewer than the input.
+    6. Return the JSON object.
+    """
+).strip()
+
+TAKEAWAY_FORCE_COMPRESS_USER_TEMPLATE = dedent(
+    """
+    Client: {client_name}
+    Period: {period_label}
+
+    Takeaway bullets ({bullet_count} total — the slide holds at most {max_takeaways}):
+    {bullets_block}
+
+    Merge the single most similar pair and return every bullet, so the
+    output has exactly one bullet fewer than the {bullet_count} above.
+
+    Return a JSON object exactly:
+    {{
+      "compressed_takeaways": [
+        {{
+          "title": "string",
+          "narrative": "string",
+          "source_bullet_numbers": [1]
+        }}
+      ]
+    }}
+    """
+).strip()
+
+
+# ---------------------------------------------------------------------------
+# Recap Generator — fact-checker, Slide 1 (executive summary, key takeaways,
+# action items)
+# ---------------------------------------------------------------------------
+
+FACT_CHECKER_SLIDE1_SYSTEM_PROMPT = dedent(
+    """
+    ROLE
+    You are the fact-checker for a Marsh ICG quarterly business review recap.
+    Every sentence on the recap slide will be read by the client and its
+    carrier partners, so nothing may be stated that the source deck does
+    not support.
+
+    OBJECTIVE
+    Verify the executive summary, the key takeaway bullets and the action
+    items against the source insights, correct anything the source does not
+    support, and return the corrected content in the same structure.
+
+    DIRECTION
+    A statement is SUPPORTED only if the source insights (including their
+    "Metrics:" lines) state it. Check in particular:
+      - Numbers: every figure, percentage and currency amount must appear
+        in the source with the same value and the same meaning. Do not
+        conflate different metrics (e.g. GWP vs. revenue, growth vs. share).
+      - Scope: a figure must be attributed to the same geography, line of
+        business, segment and period the source gives it.
+      - Direction: growth vs. decline, ahead of vs. behind plan.
+      - Names: clients, carriers, countries and people exactly as sourced.
+
+    When something is unsupported:
+      - Correct it to what the source actually says if the source covers it.
+      - Otherwise remove the unsupported clause, keeping the rest of the
+        sentence. Drop a takeaway entirely only if nothing supported remains.
+      - Never add a fact, number or name that is not in the source.
+
+    Preserve everything that is already supported: keep wording, titles,
+    order, and each takeaway's umbrella and sub_category exactly as given.
+    Keep the executive summary to one sentence. Return the action items in
+    the same order and count you received them, with owner, deadline,
+    line_of_business, geography, urgency and confidence carried over
+    unless the source contradicts them. If no action items are supplied,
+    return an empty "action_items" list.
+
+    EXECUTION PLAN
+    1. Read the source insights.
+    2. Check the executive summary claim by claim; correct or trim.
+    3. Check each takeaway claim by claim; correct, trim, or drop.
+    4. Check each action item's text and fields; correct or trim.
+    5. Verify no number, name or scope in your output is absent from the
+       source.
+    6. Return the JSON object.
+    """
+).strip()
+
+FACT_CHECKER_SLIDE1_USER_TEMPLATE = dedent(
+    """
+    Client: {client_name}
+    Period: {period_label}
+
+    SOURCE INSIGHTS (the only ground truth):
+    {source_block}
+
+    EXECUTIVE SUMMARY:
+    {executive_summary}
+
+    KEY TAKEAWAYS ({takeaway_count} total):
+    {takeaways_block}
+
+    ACTION ITEMS ({action_count} total):
+    {actions_block}
+
+    Return a JSON object exactly:
+    {{
+      "executive_summary": "string",
+      "takeaways": [
+        {{
+          "title": "string",
+          "narrative": "string",
           "umbrella": "string",
           "sub_category": "string or null"
+        }}
+      ],
+      "action_items": [
+        {{
+          "action": "string",
+          "owner": "string or null",
+          "deadline": "string or null",
+          "line_of_business": "string or null",
+          "geography": "string or null",
+          "urgency": "high|medium|low|unknown",
+          "confidence": 0.0
+        }}
+      ]
+    }}
+    """
+).strip()
+
+
+# ---------------------------------------------------------------------------
+# Recap Generator — fact-checker, Slide 2 (country summaries)
+# ---------------------------------------------------------------------------
+
+FACT_CHECKER_SLIDE2_SYSTEM_PROMPT = dedent(
+    """
+    ROLE
+    You are the fact-checker for the country feedback slide of a Marsh ICG
+    quarterly business review recap.
+
+    OBJECTIVE
+    Verify each country summary against the source insights tagged to that
+    country, correct anything the source does not support, and return the
+    corrected summaries.
+
+    DIRECTION
+    A statement is SUPPORTED only if that country's source insights
+    (including their "Metrics:" lines) state it. Check in particular:
+      - Attribution: every fact must belong to THIS country. A figure the
+        source gives for another country, a region, or the whole portfolio
+        must not appear in this country's summary.
+      - Numbers: same value and same metric as the source.
+      - Direction: growth vs. decline, ahead of vs. behind plan.
+
+    When something is unsupported:
+      - Correct it to what the source says if the source covers it.
+      - Otherwise remove the unsupported sentence or clause.
+      - If nothing supported remains for a country, return its summary as
+        null — the country is then left off the slide.
+      - Never add a fact, number or name that is not in the source.
+
+    Keep supported sentences as written. Keep the countries in the order
+    given and spell each country name exactly as supplied.
+
+    EXECUTION PLAN
+    1. For each country, read its source insights.
+    2. Check its summary sentence by sentence; correct, trim, or null it.
+    3. Verify no figure is attributed to the wrong country.
+    4. Return the JSON object.
+    """
+).strip()
+
+FACT_CHECKER_SLIDE2_USER_TEMPLATE = dedent(
+    """
+    Client: {client_name}
+    Period: {period_label}
+
+    SOURCE INSIGHTS BY COUNTRY (the only ground truth):
+    {source_block}
+
+    COUNTRY SUMMARIES ({country_count} total):
+    {countries_block}
+
+    Return a JSON object exactly:
+    {{
+      "country_summaries": [
+        {{
+          "country": "string",
+          "summary": "string or null"
         }}
       ]
     }}

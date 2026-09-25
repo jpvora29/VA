@@ -44,7 +44,6 @@ from ui.components.turn import now_stamp
 from ui.components.chatbot import (
     clarify_card,
     clarify_questions_of,
-    followup_suggestions,
     ai_message,
     user_message,
     welcome_hero,
@@ -2186,15 +2185,17 @@ def render_chat(
     chat_items: list[Any] = []
     chart_idx = 0  # unique, stable per-chart id for the Chart/Data toggle
     initial = ((user or {}).get("username") or "")
-    # The single follow-up promoted into the newest answer's card. The rest stay
-    # in the block below it, so the card offers ONE next move rather than a menu.
+    # Where next, offered ONCE: on the newest answer's card, at its foot. They
+    # used to be split between the card and a separate block under it, which made
+    # one list of suggestions read as two unrelated features (`next_questions`).
     messages_all = (chat_history or {}).get("messages") or []
     last_answer = max(
         (i for i, m in enumerate(messages_all) if m.get("type") == "AIMessage"),
         default=-1,
     )
     pending_followups = list((chat_history or {}).get("followups") or [])
-    lead_followup = pending_followups[0] if (pending_followups and not is_thinking) else ""
+    if is_thinking:  # the next turn is already running; do not offer another
+        pending_followups = []
     absorbed: set = set()  # evidence messages already drawn inside their answer
 
     # Guard on messages presence: chat-store can hold side state (e.g. custom_peers)
@@ -2300,7 +2301,9 @@ def render_chat(
                         editing=(editing_idx == msg_idx),
                         ts=msg.get("ts") or "",
                         source=dataset_label(msg.get("provenance")),
-                        followup=lead_followup if msg_idx == last_answer else "",
+                        followups=(
+                            pending_followups if msg_idx == last_answer else ()
+                        ),
                     )
                 )
 
@@ -2323,14 +2326,6 @@ def render_chat(
 
         # The live "Running X agent… · Ns" status renders in the dedicated
         # thinking-bar above the input (updated by poll_job), not inline here.
-        if not is_thinking:
-            # The first one is already promoted inside the newest card; showing it
-            # twice makes the same suggestion read as two.
-            rest = pending_followups[1:] if lead_followup else pending_followups
-            block = followup_suggestions(rest)
-            if block is not None:
-                chat_items.append(block)
-
         return chat_items
 
     return [welcome_hero((user or {}).get("username") or "")]

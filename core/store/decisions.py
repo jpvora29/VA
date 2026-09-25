@@ -29,6 +29,16 @@ STATUSES: tuple[str, ...] = (
 )
 PRIORITIES: tuple[str, ...] = ("high", "med", "low")
 
+# "Active" is every status a decision can still move through. Approved is active:
+# an approved decision is agreed, not delivered, and it stays on the agenda until
+# somebody archives it. Archived is the only terminal state.
+ARCHIVED = "archived"
+ACTIVE_STATUSES: tuple[str, ...] = tuple(s for s in STATUSES if s != ARCHIVED)
+
+# Which records a listing is asking for. The board defaults to ``active`` so the
+# archive never pads the queue, and reaching it is one click rather than a filter.
+SCOPES: tuple[str, ...] = ("active", "archived", "all")
+
 # Fields tracked individually in the revision audit trail when they change.
 _TRACKED_FIELDS: tuple[str, ...] = (
     "title",
@@ -92,9 +102,16 @@ def list_decisions(
     search: str | None = None,
     statuses: list[str] | None = None,
     priorities: list[str] | None = None,
+    owners: list[str] | None = None,
+    scope: str = "active",
     sort: str = "manual",
 ) -> list[dict[str, Any]]:
     """All decisions for a user, optionally filtered and sorted.
+
+    ``scope`` picks which records are in play at all: ``active`` (the default —
+    everything but the archive), ``archived``, or ``all``. It is applied before
+    the other filters so an explicit status filter can never smuggle archived
+    records back into the active queue.
 
     ``sort`` is one of ``manual`` (pinned first, then sort_order),
     ``updated`` (newest edit first), ``created`` (newest first),
@@ -110,12 +127,16 @@ def list_decisions(
         ).all()
     items = [_row_to_dict(r) for r in rows]
 
+    items = in_scope(items, scope)
     if statuses:
         wanted = set(statuses)
         items = [d for d in items if d["status"] in wanted]
     if priorities:
         wanted = set(priorities)
         items = [d for d in items if d["priority"] in wanted]
+    if owners:
+        wanted = {o.strip().lower() for o in owners if o and o.strip()}
+        items = [d for d in items if (d.get("owner") or "").strip().lower() in wanted]
     if search:
         needle = search.strip().lower()
         if needle:
@@ -131,6 +152,50 @@ def list_decisions(
     }
     items.sort(key=keys.get(sort, keys["manual"]))
     return items
+
+
+def in_scope(items: list[dict[str, Any]], scope: str) -> list[dict[str, Any]]:
+    """Narrow a list of decisions to the active queue, the archive, or neither."""
+    if scope == "archived":
+        return [d for d in items if d["status"] == ARCHIVED]
+    if scope == "all":
+        return list(items)
+    return [d for d in items if d["status"] != ARCHIVED]
+
+
+def count_by_scope(user_id: int | str) -> dict[str, int]:
+    """How many active and archived records the user has, for the board's counters.
+
+    Read in one pass rather than by calling :func:`list_decisions` twice, because
+    the header states both numbers on every repaint.
+    """
+    uid = _uid(user_id)
+    if uid is None:
+        return {"active": 0, "archived": 0}
+    with app_engine.connect() as conn:
+        rows = conn.execute(
+            select(decisions.c.status).where(decisions.c.user_id == uid)
+        ).all()
+    statuses = [r[0] for r in rows]
+    archived = sum(1 for s in statuses if s == ARCHIVED)
+    return {"active": len(statuses) - archived, "archived": archived}
+
+
+def list_owners(user_id: int | str) -> list[str]:
+    """Every owner name in use, de-duplicated and alphabetical, for the filter."""
+    uid = _uid(user_id)
+    if uid is None:
+        return []
+    with app_engine.connect() as conn:
+        rows = conn.execute(
+            select(decisions.c.owner).where(decisions.c.user_id == uid)
+        ).all()
+    seen: dict[str, str] = {}
+    for (owner,) in rows:
+        name = (owner or "").strip()
+        if name:
+            seen.setdefault(name.lower(), name)
+    return sorted(seen.values(), key=str.lower)
 
 
 def _matches(d: dict[str, Any], needle: str) -> bool:

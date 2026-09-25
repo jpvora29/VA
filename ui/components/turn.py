@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from dash import html
+from dash import dcc, html
 
 #: What the analyst's turns are attributed to.
 ANALYST_NAME = "Virtual Analyst"
@@ -81,17 +81,29 @@ def assistant_header(*, source: str = "", ts: Any = ""):
     )
 
 
-def user_footer(*, initial: str = "", ts: Any = ""):
-    """The reader's side: their mark and the time they asked.
+def user_footer(*, initial: str = "", ts: Any = "", content: str = ""):
+    """The reader's side: their mark, the time they asked, and a copy of the ask.
 
     Under the bubble rather than above it, because the question is the thing to
     read and the attribution is the thing to check.
+
+    Copy belongs in this row rather than floating over the bubble, for the two
+    reasons that moved the answer's own copy control into `answer_footer`: an
+    absolutely-positioned chip lands on the first line of a short question, and
+    it has to pick a colour without knowing what is behind it. The one here used
+    to be white, which was right while the bubble was navy and invisible from the
+    moment the Prism surface repainted it pale blue.
     """
     stamp = format_stamp(ts)
-    if not stamp and not initial:
+    if not stamp and not initial and not content:
         return None
     return html.Div(
         [
+            dcc.Clipboard(
+                content=content, title="Copy this question", className="user-copy"
+            )
+            if content
+            else None,
             html.Span(stamp, className="turn-stamp") if stamp else None,
             html.Div(initial_of(initial), className="turn-avatar turn-avatar-you")
             if initial

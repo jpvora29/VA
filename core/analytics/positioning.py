@@ -105,7 +105,7 @@ DISPLAY_COLUMNS: Tuple[str, ...] = (
 RANK_KIND = columns.RANK
 TEXT = columns.TEXT
 MONEY = columns.MONEY
-MONEY_SI = columns.MONEY_SI
+MONEY_MILLIONS = columns.MONEY_MILLIONS
 PERCENT = columns.PERCENT
 SIGNED_PERCENT = columns.SIGNED_PERCENT
 COUNT = columns.COUNT
@@ -117,7 +117,14 @@ DIRECTIONAL: Tuple[str, ...] = (MOVEMENT_PERCENT,)
 #: Money is shown at ONE scale across the whole table, named in the header.
 #: Per-row scaling ("$1.2M" above "$840k") makes a column impossible to compare
 #: down, which is the only thing a column of figures is for.
-SCALES: Tuple[Tuple[float, str], ...] = ((1e9, "bn"), (1e6, "M"), (1e3, "k"))
+#:
+#: Millions is the coarsest step, deliberately. Premium is reported in millions,
+#: so a book that happens to cross a billion should read "$2,500.00M" and stay
+#: comparable with every other scope — not flip the whole table to "$2.50bn" and
+#: make the reader do the conversion in their head to compare it with last
+#: quarter's. `k` stays for a genuinely small slice, where millions would print
+#: a column of "$0.00M".
+SCALES: Tuple[Tuple[float, str], ...] = ((1e6, "M"), (1e3, "k"))
 
 
 def money_scale(values: Sequence[Optional[float]]) -> Tuple[float, str]:

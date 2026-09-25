@@ -89,6 +89,7 @@ async def _resolve_ambiguous(
         raw_response = await llm.call_cheap(
             system_prompt=NOISE_FILTER_SYSTEM_PROMPT,
             user_message=user_message,
+            stage="noise_filter_ambiguous",
         )
         parsed = _AmbiguousCaseDecision.from_json(raw_response)
         return FilterDecision(
