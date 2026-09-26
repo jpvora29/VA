@@ -36,7 +36,7 @@ from core.answers.scope import DisplayScope
 #: How much of the ledger the writer is shown. Past this the brief is padding — a
 #: writer that cannot make an answer out of twelve verified findings will not be
 #: rescued by a thirteenth.
-BRIEF_CLAIMS = 12
+BRIEF_CLAIMS = 20
 
 #: How many figures ride along as raw material for a table. Generous, because a
 #: product-line table is exactly the "missing information" a claim list cannot

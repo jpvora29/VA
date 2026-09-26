@@ -266,13 +266,17 @@ def test_the_drawer_is_absent_when_there_is_nothing_to_show():
     assert provenance_drawer({}) is None
 
 
-def test_an_answer_renders_its_drawer_between_the_prose_and_the_actions():
+def test_the_answer_card_no_longer_draws_the_calculation_drawer():
+    """Business readers read the figure audit as doubt, so it is not drawn.
+
+    Provenance is still built and stored on the answer (the header's dataset
+    label reads it); only the on-card "Source & calculation" drawer is gone.
+    """
     prov = pv.build(state(), ANSWER).as_dict()
     message = ai_message(ANSWER, False, idx=1, provenance=prov)
     rendered = classes(message)
-    assert any("prov-drawer" in c for c in rendered)
-    assert rendered.index("message gpt-message") < len(rendered)
-
+    assert not any("prov-drawer" in c for c in rendered)
+    assert any("answer-footer" in c for c in rendered)
 
 def test_an_answer_without_provenance_renders_unchanged():
     message = ai_message(ANSWER, False, idx=1)

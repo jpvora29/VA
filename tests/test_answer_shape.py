@@ -114,7 +114,7 @@ def test_direct_forbids_the_furniture_the_full_analysis_asks_for():
     full = shape_contract("analyst")
     assert "NO headings" in direct
     assert "NO supporting-data table" in direct
-    assert "H3" in full
+    assert "###" in full
 
 
 @pytest.mark.parametrize("key", [None, "", "auto", "not-a-shape"])

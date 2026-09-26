@@ -46,6 +46,12 @@ class Job:
     # Final-answer text streamed token-by-token by the graph's TokenStreamHandler.
     # The worker thread appends; the Dash poll thread reads — hence the lock.
     partial_text: str = ""
+    # The turn's meter (core.run_trace.RunRecorder): step timeline + model calls.
+    # Set by the worker when the run starts; `trace` is its finished rollup.
+    recorder: Any = None
+    trace: Dict[str, Any] = field(default_factory=dict)
+    # The answer, published before the turn's tail (follow-ups, board) finishes.
+    early_transcript: Optional[Dict[str, Any]] = None
     _lock: Any = field(default_factory=threading.RLock, repr=False, compare=False)
 
     def elapsed_seconds(self) -> int:

@@ -8,6 +8,7 @@ users or on any error, and caches per user to avoid an LLM call on every render.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from typing import Any
 
@@ -19,6 +20,8 @@ logger = get_logger(__name__)
 _CACHE: dict[int, tuple[float, list[str]]] = {}
 _TTL_SECONDS = 600  # refresh tailored suggestions at most every 10 minutes
 _MIN_HISTORY = 3  # below this, defaults are better than a thin LLM guess
+_INFLIGHT: set[int] = set()
+_INFLIGHT_LOCK = threading.Lock()
 
 
 def _coerce_uid(user_id: Any) -> int | None:
@@ -28,8 +31,15 @@ def _coerce_uid(user_id: Any) -> int | None:
         return None
 
 
-def generate_starter_questions(user_id: Any) -> list[str]:
-    """Up to 4 tailored example questions; ``[]`` to signal "use defaults"."""
+def generate_starter_questions(user_id: Any, *, wait: bool = False) -> list[str]:
+    """Up to 4 tailored example questions; ``[]`` to signal "use defaults".
+
+    NEVER blocks the page. This used to make a model call inline, and it is
+    called while the app shell is built at sign-in — so the first screen after
+    "Continue" waited on an LLM round trip. Now a cold cache returns ``[]`` at
+    once and a background thread fills it; the next fresh chat shows the
+    tailored set. ``wait=True`` keeps the old synchronous behaviour for tests.
+    """
     uid = _coerce_uid(user_id)
     if uid is None:
         return []
@@ -37,26 +47,38 @@ def generate_starter_questions(user_id: Any) -> list[str]:
     cached = _CACHE.get(uid)
     if cached and (time.time() - cached[0]) < _TTL_SECONDS:
         return cached[1]
+    if wait:
+        return _refresh(uid)
+    with _INFLIGHT_LOCK:
+        if uid in _INFLIGHT:
+            return cached[1] if cached else []
+        _INFLIGHT.add(uid)
+    threading.Thread(target=_refresh, args=(uid,), name=f"starters-{uid}", daemon=True).start()
+    return cached[1] if cached else []
 
-    questions = episodic_store.recent_questions(uid, limit=25)
-    if len(questions) < _MIN_HISTORY:
-        _CACHE[uid] = (time.time(), [])
-        return []
 
-    disliked = [
-        f.get("content")
-        for f in episodic_store.recent_feedback(uid, limit=15)
-        if f.get("rating") == "down" and f.get("content")
-    ]
-
+def _refresh(uid: int) -> list[str]:
+    """Compute and cache one user's tailored starters (runs off the UI thread)."""
     try:
-        tailored = _ask_llm(questions, disliked)
-    except Exception:  # pragma: no cover - never break the welcome screen
-        logger.exception("generate_starter_questions LLM call failed")
-        tailored = []
-
-    _CACHE[uid] = (time.time(), tailored)
-    return tailored
+        questions = episodic_store.recent_questions(uid, limit=25)
+        if len(questions) < _MIN_HISTORY:
+            _CACHE[uid] = (time.time(), [])
+            return []
+        disliked = [
+            f.get("content")
+            for f in episodic_store.recent_feedback(uid, limit=15)
+            if f.get("rating") == "down" and f.get("content")
+        ]
+        try:
+            tailored = _ask_llm(questions, disliked)
+        except Exception:  # pragma: no cover - never break the welcome screen
+            logger.exception("generate_starter_questions LLM call failed")
+            tailored = []
+        _CACHE[uid] = (time.time(), tailored)
+        return tailored
+    finally:
+        with _INFLIGHT_LOCK:
+            _INFLIGHT.discard(uid)
 
 
 def invalidate(user_id: Any) -> None:

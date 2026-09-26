@@ -43,6 +43,7 @@ from ui.components.provenance import dataset_label
 from ui.components.turn import now_stamp
 from ui.components.chatbot import (
     clarify_card,
+    clarify_answer_label,
     clarify_questions_of,
     ai_message,
     user_message,
@@ -71,7 +72,11 @@ from core.auth import session as auth_session
 from core.auth.settings import LOGOUT_PATH, sso_enabled
 from ui.components.sidebar import login_screen, conversation_list_children
 from ui.shell.busy import BUSY_SIGNIN, busy_running
-from ui.progress import advance as advance_progress, label_of
+from ui.progress import advance as advance_progress, label_of, step_for
+from core.run_trace import RunRecorder, UsageCallbackHandler
+from ui.components.run_meta import conversation_usage
+from core.store.run_traces import recent_traces, save_trace, usage_summary
+from ui.components.usage_panel import usage_body
 from core.store.users import get_or_create_user
 from core.store.conversations import (
     list_conversations,
@@ -82,6 +87,7 @@ from core.store.conversations import (
 )
 from core.memory.episodic import episodic_store
 from core.memory import semantic
+from core.memory.focus import scope_from_chips, user_focus
 from core.memory.suggestions import (
     generate_starter_questions,
     invalidate as invalidate_suggestions,
@@ -135,7 +141,7 @@ from ui.helper import (
 
 from document_builder.models import ReportConfig
 from ui.jobs import Job, start_job, get_job, cancel_job, discard_job
-from ui.chat_turn import TurnRequest, finalize_turn
+from ui.chat_turn import TurnRequest, finalize_turn, provisional_transcript
 from ui import chat_navigation  # noqa: F401  (registers scoped event reducers)
 from core.streaming import TokenStreamHandler, JobCancelled
 
@@ -180,11 +186,28 @@ clientside_callback(
         // Answers, edits and repeated renders preserve the reader's position.
         const thread = (cursor || {}).thread_id || null;
         const questions = el.querySelectorAll('.turn-user').length;
-        if (thread !== el.__chatThread || questions > (el.__chatQuestions || 0)) {
+        const answers = el.querySelectorAll('#chat-box .turn-assistant');
+        const sameThread = thread === el.__chatThread;
+        // A NEW answer in the conversation being read: bring its top into view
+        // so the reader starts at the insight, not at the bottom of a long card.
+        const card = answers.length ? answers[answers.length - 1] : null;
+        if (sameThread && card && card.getBoundingClientRect
+                && answers.length > (el.__chatAnswers || 0) && el.__chatAnswers !== undefined) {
+            el.__chatAnswers = answers.length;
+            el.__chatQuestions = questions;
+            el.__stick = false;
+            requestAnimationFrame(() => {
+                const top = card.getBoundingClientRect().top - el.getBoundingClientRect().top;
+                el.scrollTo({top: el.scrollTop + top - 12, behavior: 'smooth'});
+            });
+            return window.dash_clientside.no_update;
+        }
+        if (!sameThread || questions > (el.__chatQuestions || 0)) {
             el.__stick = true;
         }
         el.__chatThread = thread;
         el.__chatQuestions = questions;
+        el.__chatAnswers = answers.length;
         // Auto-follow is INSTANT. With `scroll-behavior: smooth` on the
         // viewport, a new smooth scroll started every streaming tick (~8 a
         // second) interrupts the one before it, and the transcript shivers in
@@ -1504,11 +1527,25 @@ def handle_logout(n_clicks: int) -> tuple[Any, Any, Any]:
 def refresh_sidebar(
     chat_history: dict[str, Any], active_id: str | None, user_store: dict[str, Any]
 ) -> Any:
-    """Re-render the conversation list after a turn commits / open / delete."""
+    """Re-render the conversation list after a turn commits / open / delete.
+
+    Fires on every store change, so it compares first: an unchanged list and
+    highlight is `no_update`, which spares the browser a sidebar re-render on
+    every poll-driven store update.
+    """
     user_id, _ = _current_user(user_store)
     if user_id is None:
         return no_update
-    return conversation_list_children(list_conversations(user_id), active_id)
+    conversations = list_conversations(user_id)
+    signature = (active_id, tuple((c["id"], c["title"]) for c in conversations))
+    if _SIDEBAR_SIGNATURE.get(user_id) == signature and ctx.triggered_id == "chat-store":
+        return no_update
+    _SIDEBAR_SIGNATURE[user_id] = signature
+    return conversation_list_children(conversations, active_id)
+
+
+#: The last sidebar each user was sent: (active id, (id, title) pairs).
+_SIDEBAR_SIGNATURE: dict = {}
 
 
 @callback(
@@ -1868,6 +1905,10 @@ def _stamp_answer_context(
         if idx < first_new or message.get("type") != "AIMessage":
             continue
         message.update(context)
+        # What this answer cost to produce — time, model calls, tokens. Stamped
+        # here, like the timestamp, because the meter is gone after commit.
+        if state.get("_run"):
+            message["run"] = state["_run"]
         message["provenance"] = answer_provenance.build(
             state, message.get("content") or "", question=question or ""
         ).as_dict()
@@ -1908,22 +1949,63 @@ def _commit_turn(
 
 
 def _run_graph_turn(request: TurnRequest, job: Job) -> None:
-    """Run the graph; the job registry calls finalization even after an error."""
-    handler = TokenStreamHandler(job.cancel, job.append_partial)
+    """Run the graph; the job registry calls finalization even after an error.
+
+    Two handlers ride on the turn's config: the token stream (live draft + Stop)
+    and the usage meter, which sees every model call the turn makes — including
+    the direct invokes that never reported their own tokens.
+    """
+    recorder = RunRecorder()
+    job.recorder = recorder
+    handlers = [TokenStreamHandler(job.cancel, job.append_partial),
+                UsageCallbackHandler(recorder)]
+    status = "ok"
     try:
         for event in langgraph.stream_workflow(
-            request.input_obj, thread_id=request.thread_id, cancel=job.cancel, callbacks=[handler]
+            request.input_obj, thread_id=request.thread_id, cancel=job.cancel, callbacks=handlers
         ):
             if "interrupt" in event:
                 job.interrupt = event["interrupt"] or {}
+                status = "clarify"
             elif "node" in event:
                 job.progress = advance_progress(job.progress, event["node"])
+                step = step_for(event["node"])
+                if step is not None:
+                    recorder.enter(event["node"], step.label)
+                if event["node"] in ANSWER_READY_NODES and job.early_transcript is None:
+                    _publish_answer_early(request, job)
     except JobCancelled:
         job.cancelled = True
+        job.trace = recorder.finish("cancelled")
         return
+    except Exception:
+        job.trace = recorder.finish("error")
+        raise
     job.cancelled = job.cancel.is_set()
+    job.trace = recorder.finish("cancelled" if job.cancelled else status)
     if not job.cancelled:
-        job.state = langgraph.get_state_values(request.thread_id)
+        job.state = dict(langgraph.get_state_values(request.thread_id), _run=job.trace)
+
+
+#: Nodes that run only AFTER the answer is written. When one starts, the answer
+#: is already in the checkpoint and can be shown while the tail finishes.
+ANSWER_READY_NODES = frozenset({"followup_node"})
+
+
+def _publish_answer_early(request: TurnRequest, job: Job) -> None:
+    """Show the answer now; follow-ups and the board arrive with the final save.
+
+    Board turns are skipped: their answer IS the board, built by the last node.
+    Best effort — a failure here only means the reader waits for the final
+    transcript, exactly as before.
+    """
+    try:
+        state = langgraph.get_state_values(request.thread_id)
+        if state.get("boardroom_mode"):
+            return
+        job.early_transcript = provisional_transcript(request, job, state, _commit_turn)
+    except Exception:  # noqa: BLE001 - never cost the turn
+        logger.exception("Early answer publish failed for %s", request.thread_id)
 
 
 def _launch_job(thread_id: str, input_obj: Any, chat_history: dict,
@@ -1943,16 +2025,38 @@ def _prepare_turn(request: TurnRequest, job: Job) -> None:
 
 def _finish_job(request: TurnRequest, job: Job) -> None:
     finalize_turn(request, job, commit=_commit_turn, persist=save_conversation)
+    _save_turn_trace(request, job)
     if request.user_id is None or job.error or job.cancelled or job.interrupt is not None:
         return
     question = next((m.get("content") for m in reversed(job.transcript.get("messages", []))
                      if m.get("type") == "HumanMessage"), None)
+    # The scope the answer RESOLVED to, read off its stamped chips — the memory
+    # layer (core.memory.focus) remembers what the user works on from this.
+    answered = next((m for m in reversed(job.transcript.get("messages", []))
+                     if m.get("type") == "AIMessage"), {})
     if question:
         try:
-            episodic_store.record_question(request.user_id, request.thread_id, question, job.state.get("current_route"))
+            episodic_store.record_question(request.user_id, request.thread_id, question,
+                                           job.state.get("current_route"),
+                                           scope=scope_from_chips(answered.get("scope") or []))
             invalidate_suggestions(request.user_id)
         except Exception:
             logger.exception("Could not record memory for completed job %s", job.id)
+
+
+def _save_turn_trace(request: TurnRequest, job: Job) -> None:
+    """Append this turn's meter reading to the observability ledger."""
+    trace = job.trace or {}
+    if not trace:
+        return
+    if job.error:
+        trace = dict(trace, status="error")
+    question = next((m.get("content") for m in reversed(request.transcript.get("messages", []))
+                     if m.get("type") == "HumanMessage"), "")
+    state = job.state or {}
+    save_trace(request.user_id, request.thread_id, trace, question=question or "",
+               route=state.get("current_route") or "",
+               shape=answer_shape(state.get("routing_context")) if state else "")
 
 
 @callback(
@@ -2065,8 +2169,11 @@ def poll_job(n_intervals: int, cursor: dict | None, user_store: dict | None) -> 
         return dict(event, done=True, status="", transcript=None)
     if job.done:
         return dict(event, done=True, status=job.error or "", transcript=job.transcript or None)
+    early = job.early_transcript
+    if early is not None and cursor.get("job_id") == early.get("_job_id"):
+        early = None  # this browser already shows it; send it once, not every tick
     return dict(event, done=False, status=label_of(job.progress),
-                elapsed=_fmt_elapsed(job.elapsed_seconds()), transcript=None)
+                elapsed=_fmt_elapsed(job.elapsed_seconds()), transcript=early)
 
 
 
@@ -2112,6 +2219,21 @@ def stop_job(n_clicks: int, chat_history: dict[str, Any]) -> str | NoUpdate:
         return no_update
     cancel_job((chat_history or {}).get("thread_id"))
     return "Stopping…"
+
+
+@callback(
+    Output("usage-modal", "is_open"),
+    Output("usage-body", "children"),
+    Input("menu-usage", "n_clicks"),
+    State("user-store", "data"),
+    prevent_initial_call=True,
+)
+def open_usage(n_clicks: int, user_store: dict | None) -> tuple[Any, Any]:
+    """Tools -> Usage & speed: the user's answer times and token use."""
+    if not n_clicks:
+        return no_update, no_update
+    user_id, _ = _current_user(user_store)
+    return True, usage_body(usage_summary(user_id), recent_traces(user_id, 10))
 
 
 # 3. -------------------------- RENDER CHAT ---------------------------------------
@@ -2197,6 +2319,8 @@ def render_chat(
     if is_thinking:  # the next turn is already running; do not offer another
         pending_followups = []
     absorbed: set = set()  # evidence messages already drawn inside their answer
+    # The conversation's running cost, shown in the newest answer's meter.
+    chat_usage = conversation_usage(messages_all)
 
     # Guard on messages presence: chat-store can hold side state (e.g. custom_peers)
     # before any turn exists. Returning [] then would wipe the welcome hero, so only
@@ -2304,6 +2428,8 @@ def render_chat(
                         followups=(
                             pending_followups if msg_idx == last_answer else ()
                         ),
+                        run=msg.get("run"),
+                        usage=chat_usage if msg_idx == last_answer else None,
                     )
                 )
 
@@ -2328,7 +2454,20 @@ def render_chat(
         # thinking-bar above the input (updated by poll_job), not inline here.
         return chat_items
 
-    return [welcome_hero((user or {}).get("username") or "")]
+    return [_welcome_for(user)]
+
+
+def _welcome_for(user: dict[str, Any] | None) -> Any:
+    """The empty state for this user, with what memory knows about them."""
+    user_id, username = _current_user(user)
+    if user_id is None:
+        return welcome_hero(username)
+    return welcome_hero(
+        username,
+        generate_starter_questions(user_id),
+        focus=user_focus(user_id),
+        conversations=list_conversations(user_id)[:2],
+    )
 
 
 # 4. -------------------------- UPDATE CHAT-STORE ---------------------------------------
@@ -2548,7 +2687,7 @@ def submit_clarification(
 
     # Complete: drop the card; record the answers as one readable user turn.
     summary = "; ".join(
-        answers[q_id]
+        clarify_answer_label(answers[q_id])
         for q in questions
         if (q_id := str(q.get("id") or "q0")) in answers
     )

@@ -31,6 +31,9 @@ class NarrativeContext:
     shared: frozenset[tuple[str, str]]
     lead_periods: frozenset[tuple]
     legacy: bool = False
+    #: Drop a suffix value the sentence already names ("...of Property premium
+    #: (Property)."). Off only when replaying a record written before v5.
+    plain_suffix: bool = True
 
 
 def dimension_key(key: str) -> str:
@@ -113,6 +116,13 @@ def shared_dimensions(facts: tuple[AnswerFact, ...]) -> set[tuple[str, str]]:
     return shared
 
 
+def names_value(text: str, value: str) -> bool:
+    """Whether the sentence already says this value, as a whole word."""
+    value = str(value or "").strip()
+    return bool(value) and re.search(r"(?<!\w)" + re.escape(value) + r"(?!\w)", text,
+                                     re.IGNORECASE) is not None
+
+
 def compact_claim(claim: AnswerClaim, inputs: tuple[AnswerFact, ...],
                   narration: NarrativeContext, *, lead: bool) -> AnswerClaim:
     subject = claim_dimensions(claim, inputs)
@@ -126,6 +136,8 @@ def compact_claim(claim: AnswerClaim, inputs: tuple[AnswerFact, ...],
         for fact in inputs:
             text = text.replace(" (" + " · ".join(v for _, v in period_key(fact)) + ")", "")
     remaining = distinguishing_context(dims, claim.kind, consumed, narration)
+    if narration.plain_suffix:
+        remaining = [value for value in remaining if not names_value(text, value)]
     if remaining:
         text = text.removesuffix(".") + f" ({' · '.join(remaining)})."
     through = dims.get("through")
@@ -135,7 +147,8 @@ def compact_claim(claim: AnswerClaim, inputs: tuple[AnswerFact, ...],
 
 
 def compact_claims(claims: tuple[AnswerClaim, ...], facts: tuple[AnswerFact, ...],
-                   scope: DisplayScope = (), *, legacy: bool = False) -> tuple[AnswerClaim, ...]:
+                   scope: DisplayScope = (), *, legacy: bool = False,
+                   plain_suffix: bool = True) -> tuple[AnswerClaim, ...]:
     if not claims:
         return ()
     by_id = {f.id: f for f in facts}
@@ -144,6 +157,7 @@ def compact_claims(claims: tuple[AnswerClaim, ...], facts: tuple[AnswerFact, ...
         shared.update(matching_scope_dimensions([dimensions(f) for f in facts], scope))
     lead_facts = tuple(by_id[i] for i in claims[0].fact_ids)
     periods = {period_key(f) for f in lead_facts} if claims[0].kind in {"change", "portfolio_change"} else set()
-    narration = NarrativeContext(frozenset(shared), frozenset(periods), legacy)
+    narration = NarrativeContext(frozenset(shared), frozenset(periods), legacy,
+                                 plain_suffix=plain_suffix and not legacy)
     return tuple(compact_claim(claim, tuple(by_id[i] for i in claim.fact_ids), narration, lead=index == 0)
                  for index, claim in enumerate(claims))

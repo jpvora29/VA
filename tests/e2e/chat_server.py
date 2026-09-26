@@ -129,6 +129,7 @@ class FixtureWorkflow:
         if "position" in query.lower() or "performance" in query.lower():
             self.states[thread_id] = positioning_turn(self.engine, query)
             yield {"node": "gpr_insight"}
+            yield from self._tail(query, thread_id, cancel)
             return
         turn, primitive, measure = fixture_turn(query)
         turn.update(run_analytics_tools(turn, flow="gpr", engine=self.engine,
@@ -143,6 +144,22 @@ class FixtureWorkflow:
                              "y_agg": "none"}
         self.states[thread_id] = turn
         yield {"node": "gpr_insight"}
+        yield from self._tail(query, thread_id, cancel)
+
+    def _tail(self, query, thread_id, cancel):
+        """The production tail: follow-ups are written AFTER the answer.
+
+        'tail' in a question makes the follow-up step take a few seconds, so the
+        early publish (the answer shown before the tail finishes) is visible.
+        """
+        yield {"node": "followup_node"}
+        if "tail" in query.lower():
+            cancel.wait(3)
+        state = self.states.get(thread_id) or {}
+        state["followup_questions"] = [
+            "What drove the change in Property?",
+            "How does this compare with the peer average?",
+        ]
 
     def get_state_values(self, thread_id):
         return self.states.get(thread_id, {})

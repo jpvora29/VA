@@ -161,7 +161,7 @@ def test_the_studio_rail_keeps_its_pattern_ids_after_the_restyle():
 # They are workspace refinement layers — they may restyle a widget, never the
 # shell chrome, which is what `test_post_shell_layers_leave_the_chrome_alone`
 # enforces below.
-POST_SHELL_SHEETS = {"va_shell_boardroom.css", "va_shell_chat.css"}
+POST_SHELL_SHEETS = {"va_shell_boardroom.css", "va_shell_chat.css", "va_shell_chat_v2.css"}
 
 
 def test_the_shell_stylesheet_loads_after_every_workspace_sheet():

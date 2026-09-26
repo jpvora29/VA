@@ -4,27 +4,46 @@
     {
       "name": "va-app",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["app.py"],
+      "runtimeArgs": [
+        "app.py"
+      ],
       "port": 8080
     },
     {
       "name": "studio-demo",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["-m", "studio.demo_app"],
+      "runtimeArgs": [
+        "-m",
+        "studio.demo_app"
+      ],
       "port": 8099
     },
     {
       "name": "qbr-studio",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["authoring_app.py"],
+      "runtimeArgs": [
+        "authoring_app.py"
+      ],
       "port": 8131,
       "autoPort": true
     },
     {
       "name": "qbr-studio-auto",
       "runtimeExecutable": "cmd",
-      "runtimeArgs": ["/c", "set COMMENTARY_MODE=auto&& .venv\\Scripts\\python.exe authoring_app.py"],
+      "runtimeArgs": [
+        "/c",
+        "set COMMENTARY_MODE=auto&& .venv\\Scripts\\python.exe authoring_app.py"
+      ],
       "port": 8131
+    },
+    {
+      "name": "chat-fixture",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set APP_DB_PATH=.tmp_app.db&& set PORT=8093&& .venv\\Scripts\\python.exe -m tests.e2e.chat_server"
+      ],
+      "port": 8093
     }
   ]
 }

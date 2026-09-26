@@ -40,6 +40,31 @@ def finish_transcript(request: TurnRequest, job: Job,
     return chat
 
 
+def early_job_id(job_id: str) -> str:
+    """The `_job_id` an early (provisional) transcript carries."""
+    return f"{job_id}:early"
+
+
+def provisional_transcript(request: TurnRequest, job: Job, state: dict,
+                           commit: Callable[[dict, dict], dict]) -> dict:
+    """The answer as soon as it is written, before the turn's tail has run.
+
+    The graph ends with follow-up suggestions (a model call) and the board
+    digest; the reader does not need to wait for either to read the answer. This
+    is the committed answer on a transcript still marked running — never saved
+    (the worker persists the final one), only shown.
+    """
+    chat = deepcopy(request.transcript)
+    chat["thread_id"] = request.thread_id
+    # A distinct marker: the browser's cursor adopts `_job_id`, and the final
+    # transcript is only sent to a cursor that has not seen `job.id` yet.
+    chat["_job_id"] = early_job_id(job.id)
+    chat["_running"] = True
+    chat["followups"] = []
+    chat["awaiting_clarification"] = False
+    return commit(chat, state)
+
+
 def finalize_turn(request: TurnRequest, job: Job, *, commit: Callable,
                   persist: Callable[[Any, str, dict], Any]) -> None:
     transcript = finish_transcript(request, job, commit)

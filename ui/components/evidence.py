@@ -25,7 +25,7 @@ from dash import dash_table, dcc, html
 from dash.dash_table.Format import Format, Group, Prefix, Scheme, Sign, Symbol
 
 from core.analytics import positioning as P
-from ui.evidence import EvidenceView
+from ui.evidence import CHART_HEIGHT_PX, EvidenceView
 
 #: The header's ground. Brand navy, so the table reads as part of the product
 #: rather than as a default grid dropped into it.
@@ -271,7 +271,24 @@ def _mode_switch(pane_idx: int) -> Any:
     )
 
 
-def _view_body(view: EvidenceView, pane_idx: int) -> List[Any]:
+def _lazy_chart(view: EvidenceView) -> Any:
+    """A chart that is drawn the first time its tab is opened.
+
+    A panel's hidden tabs used to mount a full Plotly graph each — three or four
+    per answer — so opening a long conversation drew dozens of charts nobody was
+    looking at. This placeholder carries the figure as JSON and
+    `assets/chat_experience.js` plots it on first view.
+    """
+    import plotly.io as pio
+
+    return html.Div(
+        className="ev-lazy-chart",
+        style={"minHeight": f"{CHART_HEIGHT_PX}px"},
+        **{"data-figure": pio.to_json(view.figure, validate=False)},
+    )
+
+
+def _view_body(view: EvidenceView, pane_idx: int, *, lazy: bool = False) -> List[Any]:
     """A view's contents: chart + table behind a switch, or just the table."""
     table = html.Div(data_table(view), className="ev-table")
     if not view.has_chart:
@@ -285,7 +302,7 @@ def _view_body(view: EvidenceView, pane_idx: int) -> List[Any]:
     return [
         _mode_switch(pane_idx),
         html.Div(
-            dcc.Graph(
+            _lazy_chart(view) if lazy else dcc.Graph(
                 figure=view.figure,
                 className="gpt-chart-display",
                 config={"displayModeBar": False, "responsive": True},
@@ -328,12 +345,16 @@ def evidence_panel(
     """
     if not views:
         return None
+    # One chart per panel is drawn eagerly — the first one — which also makes
+    # sure Plotly is loaded on the page; every other chart waits for its tab.
+    eager = next((i for i, v in enumerate(views) if v.has_chart), None)
     panes = [
         html.Div(
             # A caller that does not supply ids still gets a working panel: the
             # switch only needs an id unique within the page, and the pane's own
             # position gives one.
-            _view_body(view, pane_ids[i] if i < len(pane_ids) else f"{idx}-{i}"),
+            _view_body(view, pane_ids[i] if i < len(pane_ids) else f"{idx}-{i}",
+                       lazy=view.has_chart and i != eager),
             id={"type": "ev-pane", "idx": idx, "view": i},
             className="ev-pane",
             style={} if i == 0 else {"display": "none"},

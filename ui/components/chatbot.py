@@ -15,34 +15,45 @@ from ui.components.answer_actions import (
 from ui.components.answer_lead import Lead, split_lead
 from ui.components.contribution import contribution_panel
 from ui.components.evidence import evidence_panel
-from ui.components.provenance import provenance_drawer
 from ui.components.scope_bar import scope_bar
 from ui.components.turn import assistant_header, user_footer
+from ui.components.usage_panel import usage_modal
 
 
-# Example questions surfaced on the welcome screen and (mirrored) in the
-# animated input placeholder. Keep these aligned with assets/typewriter.js.
+# The welcome screen's starters: six JOBS an ICG leader does every week, each
+# with the question that does it. Written from the business side — a carrier
+# review, a movement to explain, a benchmark, whitespace, broker sentiment and a
+# meeting brief — because the reader is choosing a task, not a sentence.
 #
-# Each is (icon, OUTCOME, question). The outcome is what the reader is scanning
-# for — four full sentences of near-identical shape are four things to read
-# before choosing, and the reader is choosing a job, not a sentence. The question
-# stays underneath because it is what actually gets asked, and a starter that
-# hides the question it sends is a starter you cannot trust.
+# Each is (icon, JOB, one-line value, question). A starter LOADS its question
+# into the composer rather than sending it (see `starter_chip`).
 STARTER_SUGGESTIONS = [
-    ("bi bi-pie-chart", "Share of wallet",
-     "What is Zurich's Share of Wallet in Canada for Property?"),
-    ("bi bi-graph-up-arrow", "Explain premium growth",
-     "Show premium growth for Chubb across all product lines"),
-    ("bi bi-people", "Compare peers",
-     "How does AXA's broker score compare to peers this year?"),
-    ("bi bi-bar-chart-line", "Explore market rates",
-     "What is the market composite rate change for Asia this quarter?"),
+    ("bi bi-speedometer2", "Carrier performance review",
+     "Premium, momentum and standing in one read",
+     "How is Zurich performing in Canada in 2025?"),
+    ("bi bi-activity", "Explain a premium movement",
+     "What drove the change, and what offset it",
+     "Why did Chubb's premium in Canada change in 2025?"),
+    ("bi bi-people", "Benchmark against peers",
+     "Share of wallet and rank against the peer set",
+     "How does AXA's share of wallet compare with its peers?"),
+    ("bi bi-compass", "Find growth whitespace",
+     "Where Marsh places premium and the carrier is thin",
+     "Where is the whitespace for Zurich in Canada?"),
+    ("bi bi-chat-heart", "Broker sentiment pulse",
+     "What brokers say, and how it is moving",
+     "How do brokers rate AXA this year compared with last year?"),
+    ("bi bi-briefcase", "Meeting prep brief",
+     "The three numbers and what to watch",
+     "Brief me on Chubb in Canada ahead of a carrier meeting"),
 ]
 
 
-def _greeting() -> str:
-    """Time-of-day greeting, Claude-style."""
-    hour = datetime.now().hour
+def _greeting(hour: int | None = None) -> str:
+    """Time-of-day greeting."""
+    hour = datetime.now().hour if hour is None else hour
+    if hour < 5:
+        return "Working late"
     if hour < 12:
         return "Good morning"
     if hour < 17:
@@ -50,7 +61,13 @@ def _greeting() -> str:
     return "Good evening"
 
 
-def starter_chip(outcome: str, question: str, icon: str, idx: int = 0):
+def _today() -> str:
+    """"Saturday, 26 September" — built by hand; %-d is POSIX-only."""
+    now = datetime.now()
+    return f"{now.strftime('%A')}, {now.day} {now.strftime('%B')}"
+
+
+def starter_chip(outcome: str, question: str, icon: str, idx: int = 0, value: str = ""):
     """A starter, which LOADS the question into the composer rather than sending it.
 
     A starter is an example, and an example the reader cannot adjust before it
@@ -61,14 +78,16 @@ def starter_chip(outcome: str, question: str, icon: str, idx: int = 0):
     """
     return html.Button(
         [
-            html.I(className=f"{icon} starter-chip-icon"),
+            html.Span(html.I(className=icon), className="starter-chip-icon"),
             html.Span(
                 [
                     html.Span(outcome, className="starter-chip-outcome"),
+                    html.Span(value, className="starter-chip-value") if value else None,
                     html.Span(question, className="starter-chip-question"),
                 ],
                 className="starter-chip-text",
             ),
+            html.I(className="bi bi-arrow-up-right starter-chip-go"),
         ],
         id={"type": "starter-chip", "idx": idx, "q": question},
         n_clicks=0,
@@ -93,6 +112,15 @@ def clarify_questions_of(payload: dict) -> list[dict]:
     return [flat]
 
 
+#: The answer value of "Skip — use your best judgement" (core.graph.hitl.SKIP_ANSWER).
+CLARIFY_SKIP = "__skip__"
+
+
+def clarify_answer_label(answer: str) -> str:
+    """What an answer reads as on the card and in the transcript."""
+    return "No preference — your call" if answer == CLARIFY_SKIP else answer
+
+
 def _clarify_answered(question: dict, answer: str) -> "html.Div":
     """A settled question, collapsed to one line: what was asked, what was picked.
 
@@ -104,59 +132,82 @@ def _clarify_answered(question: dict, answer: str) -> "html.Div":
         [
             html.I(className="bi bi-check-circle-fill clarify-done-icon"),
             html.Span(question.get("header") or "Answered", className="clarify-done-label"),
-            html.Span(answer, className="clarify-done-value"),
+            html.Span(clarify_answer_label(answer), className="clarify-done-value"),
         ],
         className="clarify-answered",
         title=question.get("question") or "",
     )
 
 
-def _clarify_question_block(question: dict) -> "html.Div":
-    """The OPEN question: badge, prompt, options, free-text row."""
+def _clarify_option(qid: str, option: dict, number: int):
+    """One choice: its number key, its label, what choosing it means."""
+    label = option.get("label", "")
+    return html.Button(
+        [
+            html.Kbd(str(number), className="clarify-option-key"),
+            html.Span(
+                [
+                    html.Span(
+                        [
+                            html.Span(label, className="clarify-option-label"),
+                            html.Span("Recommended", className="clarify-option-rec")
+                            if option.get("recommended") else None,
+                        ],
+                        className="clarify-option-title",
+                    ),
+                    html.Span(option.get("description", ""), className="clarify-option-desc")
+                    if option.get("description") else None,
+                ],
+                className="clarify-option-text",
+            ),
+            html.I(className="bi bi-arrow-right clarify-option-go"),
+        ],
+        id={"type": "clarify-option", "qid": qid, "value": label},
+        n_clicks=0,
+        className="clarify-option" + (" is-recommended" if option.get("recommended") else ""),
+        **{"data-key": str(number)},
+    )
+
+
+def _clarify_question_block(question: dict, *, allow_skip: bool = True) -> "html.Div":
+    """The OPEN question, in the format a careful analyst would ask it.
+
+    Header chip, the question, one line on why it matters, the numbered
+    choices (the recommended one flagged), a free-text "something else" row,
+    and a way out: "Skip — use your best judgement", which lets the analyst
+    take the sensible default and say which one it took.
+    """
     qid = str(question.get("id") or "q0")
     prompt = question.get("question") or "Could you clarify what you mean?"
     header = question.get("header") or "Quick check"
-    options = question.get("options") or []
-
-    option_buttons = [
-        html.Button(
-            [
-                html.Span(opt.get("label", ""), className="clarify-option-label"),
-                (
-                    html.Span(opt.get("description", ""), className="clarify-option-desc")
-                    if opt.get("description")
-                    else None
-                ),
-            ],
-            id={"type": "clarify-option", "qid": qid, "value": opt.get("label", "")},
-            n_clicks=0,
-            className="clarify-option",
-        )
-        for opt in options
-        if opt.get("label")
-    ]
+    options = [o for o in question.get("options") or [] if o.get("label")]
 
     children = [
         html.Div(
             [
-                html.I(className="bi bi-question-lg clarify-card-icon"),
-                html.Span(header, className="clarify-card-header"),
+                html.Span([html.I(className="bi bi-signpost-split"), header],
+                          className="clarify-card-badge"),
             ],
-            className="clarify-card-badge",
+            className="clarify-card-top",
         ),
         html.Div(prompt, className="clarify-card-question"),
     ]
-    if option_buttons:
-        children.append(html.Div(option_buttons, className="clarify-option-grid"))
+    if question.get("why"):
+        children.append(html.Div([html.I(className="bi bi-info-circle"), question["why"]],
+                                 className="clarify-why"))
+    if options:
+        children.append(html.Div(
+            [_clarify_option(qid, option, number) for number, option in enumerate(options, 1)],
+            className="clarify-option-list",
+        ))
     if question.get("allow_free_text", True):
         children.append(
             dbc.InputGroup(
                 [
                     dbc.Input(
                         id={"type": "clarify-free-text", "qid": qid},
-                        placeholder=(
-                            "…or type your own answer" if option_buttons else "Type your answer"
-                        ),
+                        placeholder=("Something else… type it here" if options
+                                     else "Type your answer"),
                         debounce=True,
                         className="clarify-free-input",
                     ),
@@ -165,11 +216,25 @@ def _clarify_question_block(question: dict) -> "html.Div":
                         id={"type": "clarify-free-submit", "qid": qid},
                         n_clicks=0,
                         className="clarify-free-submit",
+                        title="Send this answer",
                     ),
                 ],
                 className="clarify-free-group",
             )
         )
+    children.append(html.Div(
+        [
+            html.Span("Press a number to choose" if options else "",
+                      className="clarify-hint"),
+            html.Button(
+                [html.I(className="bi bi-skip-forward"), "Skip — use your best judgement"],
+                id={"type": "clarify-option", "qid": qid, "value": CLARIFY_SKIP},
+                n_clicks=0,
+                className="clarify-skip",
+            ) if allow_skip else None,
+        ],
+        className="clarify-actions",
+    ))
     return html.Div(children, className="clarify-question-block")
 
 
@@ -199,13 +264,30 @@ def clarify_card(payload: dict):
     remaining = [q for q in questions if not answers.get(qid_of(q))]
     open_question = remaining[0] if remaining else None
 
-    children: list = []
-    if len(questions) > 1:
-        children.append(_clarify_steps(len(done), len(questions)))
+    children: list = [
+        html.Div(
+            [
+                html.Div("VA", className="turn-avatar turn-avatar-va"),
+                html.Div(
+                    [
+                        html.Div("Before I run the numbers", className="clarify-intro-title"),
+                        html.Div("A quick check so the answer is the one you need.",
+                                 className="clarify-intro-sub"),
+                    ],
+                    className="clarify-intro-text",
+                ),
+                _clarify_steps(len(done), len(questions)) if len(questions) > 1 else None,
+            ],
+            className="clarify-intro",
+        )
+    ]
     children.extend(_clarify_answered(q, answers[qid_of(q)]) for q in done)
     if open_question is not None:
-        children.append(_clarify_question_block(open_question))
-    return html.Div(children, className="message clarify-card")
+        # The custom-peer gate resumes with one of ITS option labels, so it has
+        # no "use your judgement" path — the peer set is the user's call.
+        children.append(_clarify_question_block(
+            open_question, allow_skip=payload.get("kind") != "custom_peer_mismatch"))
+    return html.Div(children, className="message clarify-card clarify-v2")
 
 
 def _clarify_steps(done: int, total: int):
@@ -231,16 +313,6 @@ def _clarify_steps(done: int, total: int):
     )
 
 
-# A small rotation of icons for LLM-tailored starter questions (which arrive as
-# plain strings, without their own icon).
-_STARTER_ICONS = [
-    "bi bi-pie-chart",
-    "bi bi-graph-up-arrow",
-    "bi bi-people",
-    "bi bi-bar-chart-line",
-]
-
-
 def _outcome_for(question: str, index: int) -> str:
     """An outcome label for a tailored starter, which arrives as a bare question.
 
@@ -255,56 +327,115 @@ def _outcome_for(question: str, index: int) -> str:
 
 
 def starter_chips(starters: list[str] | None = None) -> list:
-    """Chips for the welcome hero — tailored strings if given, else the defaults."""
-    if starters:
-        return [
-            starter_chip(
-                _outcome_for(question, index),
-                question,
-                _STARTER_ICONS[index % len(_STARTER_ICONS)],
-                index,
-            )
-            for index, question in enumerate(starters)
-        ]
+    """The six business-job starters. Tailored questions live in the memory row."""
     return [
-        starter_chip(outcome, question, icon, index)
-        for index, (icon, outcome, question) in enumerate(STARTER_SUGGESTIONS)
+        starter_chip(outcome, question, icon, index, value)
+        for index, (icon, outcome, value, question) in enumerate(STARTER_SUGGESTIONS)
     ]
 
 
-def welcome_hero(name: str = "", starters: list[str] | None = None):
-    """Empty-state hero shown before the first message is sent.
+def _memory_chip(text: str, question: str, icon: str, idx: int, kind: str):
+    """One remembered thing, as a chip that loads a question about it."""
+    return html.Button(
+        [html.I(className=f"{icon} memory-chip-icon"),
+         html.Span(text, className="memory-chip-text")],
+        id={"type": "starter-chip", "idx": idx, "q": question},
+        n_clicks=0,
+        className=f"memory-chip memory-chip-{kind}",
+        title=question,
+    )
 
-    Deliberately small. The hero used to fill the first screen — a floating
-    badge, a display-size greeting, a three-line explanation and four full
-    sentences — which put the composer at the bottom of a page about itself. The
-    first thing on this screen is the question, so the greeting is one line, the
-    explanation is one line, and the starters are labels.
+
+def _resume_chip(conversation: dict):
+    """A recent conversation. Clicking it opens that chat: chat_experience.js
+    forwards the click to the matching sidebar item, so there is ONE open path."""
+    return html.Button(
+        [html.I(className="bi bi-clock-history memory-chip-icon"),
+         html.Span(conversation.get("title") or "Untitled chat", className="memory-chip-text")],
+        className="memory-chip memory-chip-resume",
+        title="Open this conversation",
+        **{"data-conv": str(conversation.get("id") or "")},
+    )
+
+
+def welcome_memory(focus=None, conversations: list | None = None,
+                   tailored: list[str] | None = None):
+    """"Pick up where you left off" — what the product remembers about the user.
+
+    Three sources, all things the user actually did: their last conversations,
+    the carrier/market pairings they keep asking about (`core.memory.focus`),
+    and the model-tailored next questions from their history. Nothing is shown
+    for a first-time user; an empty "your focus" row would be a promise the
+    product cannot keep yet.
     """
-    greeting = f"{_greeting()}, "
-    accent = name.strip() if name and name.strip() else "let's dig into the data"
+    chips: list = []
+    for conversation in (conversations or [])[:2]:
+        chips.append(_resume_chip(conversation))
+    for index, scope in enumerate(getattr(focus, "scopes", ()) or ()):
+        chips.append(_memory_chip(scope.label, scope.question(), "bi bi-bullseye",
+                                  100 + index, "focus"))
+    for index, question in enumerate((tailored or [])[:2]):
+        chips.append(_memory_chip(question, question, "bi bi-stars", 200 + index, "tailored"))
+    if not chips:
+        return None
+    return html.Div(
+        [
+            html.Div([html.I(className="bi bi-bookmark-star"), "Pick up where you left off"],
+                     className="welcome-section-label"),
+            html.Div(chips, className="welcome-memory-row"),
+        ],
+        className="welcome-memory",
+    )
+
+
+def display_name(name: str) -> str:
+    """The greeting's name: "jash.vora@marsh.com" -> "Jash", "tester" -> "Tester"."""
+    text = (name or "").strip()
+    if not text:
+        return ""
+    return text.split("@")[0].split(".")[0].split("_")[0].title()
+
+
+def welcome_hero(name: str = "", starters: list[str] | None = None, *,
+                 focus=None, conversations: list | None = None):
+    """The empty state: who you are, what you were doing, what you can ask.
+
+    Reading order is a morning routine. The greeting and the date say the product
+    knows who and when; the memory strip offers yesterday's work back in one
+    click; the six starters name the jobs this tool does, each loading a question
+    you can edit before it runs. The composer sits directly under all of it —
+    on an empty chat the whole group is centred (see `va_shell_chat_v2.css`).
+    """
+    who = display_name(name)
     return html.Div(
         [
             html.Div(
                 [
-                    html.H1(
-                        [
-                            greeting,
-                            html.Span(accent, className="welcome-accent"),
-                        ],
-                        className="welcome-title",
-                    ),
-                    html.P(
-                        "Ask about premium, Share of Wallet, broker sentiment, peer "
-                        "benchmarks or market rates — in plain English.",
-                        className="welcome-subtitle",
-                    ),
+                    html.Span(className="welcome-live-dot"),
+                    html.Span("ICG Virtual Analyst"),
+                    html.Span("·", className="welcome-eyebrow-sep"),
+                    html.Span(_today()),
                 ],
-                className="welcome-head",
+                className="welcome-eyebrow",
             ),
-            html.Div("Start with one of these", className="welcome-suggest-label"),
+            html.H1(
+                [
+                    _greeting(),
+                    html.Span(f", {who}" if who else "", className="welcome-accent"),
+                ],
+                className="welcome-title",
+            ),
+            html.P(
+                "What would you like to understand today? Ask about premium, share of "
+                "wallet, peer benchmarks, whitespace or broker sentiment — every figure "
+                "comes from the governed data.",
+                className="welcome-subtitle",
+            ),
+            welcome_memory(focus, conversations, starters),
+            html.Div([html.I(className="bi bi-lightning"), "Start with a business question"],
+                     className="welcome-section-label"),
             html.Div(
-                starter_chips(starters),
+                starter_chips(),
                 id="starter-suggestions",
                 className="suggestion-grid",
             ),
@@ -380,14 +511,6 @@ def answer_scope(scope: list | None):
     return html.Div(bar, className="answer-scope") if bar is not None else None
 
 
-def _period_of(scope: list | None) -> str:
-    """The timeframe this answer ran under, read off its own scope pills."""
-    for chip in scope or []:
-        if chip.get("key") in ("period", "timeframe", "year", "quarter"):
-            return str(chip.get("value") or "")
-    return ""
-
-
 def _lead_block(lead: Lead, figures: list):
     """The finding, set as the finding: one line, its qualifier, its key numbers."""
     if not lead.has_headline and not figures:
@@ -439,6 +562,8 @@ def ai_message(
     ts: str = "",
     source: str = "",
     followups: Sequence[str] = (),
+    run: dict | None = None,
+    usage: dict | None = None,
 ):
     """One turn, whole: who answered, and everything that answer produced.
 
@@ -497,10 +622,12 @@ def ai_message(
     # `reads_beside_the_prose`).
     beside = reads_beside_the_prose(evidence)
     drivers = contribution_panel(contribution)
-    # Between the prose and the actions: the answer states where it came from
-    # before it offers you somewhere to take it.
-    drawer = provenance_drawer(provenance, period=_period_of(scope))
-    footer = answer_footer(ctx, content=content)
+    # The "Source & calculation" drawer is no longer drawn. Business readers
+    # read its figure-by-figure audit as doubt about the answer rather than as
+    # support for it. Provenance is still BUILT and stored on every answer (the
+    # header's dataset label and the stored record's verification read it) —
+    # only its on-card rendering is gone.
+    footer = answer_footer(ctx, content=content, run=run, usage=usage)
     panel = feedback_panel(idx)
     # While the prose is being rewritten it must be ONE editable region, or the
     # serialiser saves the body and silently drops the headline above it.
@@ -520,7 +647,6 @@ def ai_message(
             pills,
             *_reading_area(head, prose, views, beside=beside),
             drivers,
-            drawer,
             footer,
             next_questions(followups, idx),
             panel,
@@ -649,6 +775,25 @@ def command_menu():
     )
 
 
+def composer_hints():
+    """Under the composer: the keys that make it fast, and one honest note."""
+    def key(label: str, text: str):
+        return html.Span([html.Kbd(label), text])
+
+    return html.Div(
+        [
+            html.Span(
+                [key("Enter", "send"), key("Shift + Enter", "new line"),
+                 key("/", "commands"), key("Ctrl + K", "focus")],
+                className="composer-hints-keys",
+            ),
+            html.Span("Answers are computed from the governed ICG data.",
+                      className="composer-hints-note"),
+        ],
+        className="composer-hints",
+    )
+
+
 def _tool_item(item_id: str, icon: str, label: str, hint: str):
     """One row of the Tools menu: what it is, and what it does for you."""
     return dbc.DropdownMenuItem(
@@ -667,10 +812,12 @@ def _tool_item(item_id: str, icon: str, label: str, hint: str):
     )
 
 
-def chatbot_page(username: str = "", starters: list[str] | None = None):
+def chatbot_page(username: str = "", starters: list[str] | None = None, *,
+                 focus=None, conversations: list | None = None):
 
     return html.Div(
         [
+            usage_modal(),
             dcc.Store(id="chat-store", data={}),
             dcc.Store(id="chat-cursor", data={}),
             dcc.Store(id="job-event", data={}),
@@ -696,7 +843,7 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
             # the answer flow in small increments (Claude-like) instead of landing
             # in chunky ~third-second bursts — the read is in-memory, so the cost
             # of polling more often is negligible.
-            dcc.Interval(id="job-poll", interval=500, n_intervals=0, disabled=True),
+            dcc.Interval(id="job-poll", interval=350, n_intervals=0, disabled=True),
             # Which answer the analysis panel is holding open (None means it
             # follows the newest), and how the two columns are arranged.
             # Below the split breakpoint the two columns cannot both fit, so they
@@ -720,7 +867,9 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                                         html.Div(
                                                             id="chat-box",
                                                             className="chat-bot-text-area",
-                                                            children=[welcome_hero(username, starters)],
+                                                            children=[welcome_hero(
+                                                                username, starters, focus=focus,
+                                                                conversations=conversations)],
                                                         ),
                                                         # The final answer streams here token by
                                                         # token while the turn runs; poll_job
@@ -786,7 +935,7 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                                             [
                                                                 dcc.Textarea(
                                                                     id="user-input",
-                                                                    placeholder="Ask anything",
+                                                                    placeholder="Ask about premium, share of wallet, peers or brokers…",
                                                                     className="composer-input",
                                                                     rows=1,
                                                                 ),
@@ -842,6 +991,12 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                                                             "Boardroom Mode",
                                                                             "Answer the next question as a dashboard",
                                                                         ),
+                                                                        _tool_item(
+                                                                            "menu-usage",
+                                                                            "bi bi-speedometer2",
+                                                                            "Usage & speed",
+                                                                            "Answer times, tokens and model calls",
+                                                                        ),
                                                                     ],
                                                                     id="composer-add-menu",
                                                                     label=[
@@ -880,10 +1035,7 @@ def chatbot_page(username: str = "", starters: list[str] | None = None):
                                                     ],
                                                     className="composer",
                                                 ),
-                                                html.Div(
-                                                    "Virtual Analyst can make mistakes. Verify important figures.",
-                                                    className="composer-disclaimer",
-                                                ),
+                                                composer_hints(),
                                             ],
                                             lg=12,
                                             md=12,

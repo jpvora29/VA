@@ -206,12 +206,19 @@ def test_the_dataset_chip_is_named_in_business_words_not_schema_ones():
     assert dataset_label(PROVENANCE, "Q2 2026").endswith("Q2 2026")
 
 
-def test_the_answer_states_the_period_it_ran_under_on_its_source_line():
+def test_the_answer_states_the_period_it_ran_under_in_its_scope():
+    """The period is stated on the answer's own scope pills.
+
+    It used to ride on the source line of the calculation drawer, which is no
+    longer drawn; the pills are what every answer carries.
+    """
     message = ai_message(
         "Premium grew 12%. Property led it.", True, idx=1, shape="analyst",
         scope=SCOPE, provenance=PROVENANCE,
     )
-    assert any("prov-dataset" in c for c in classes(message))
+    rendered = " ".join(str(getattr(n, "children", "")) for n in walk(message))
+    assert "Q2 2026" in rendered
+    assert not any("prov-dataset" in c for c in classes(message))
 
 
 # ── one promoted action ──────────────────────────────────────────────────────
@@ -501,8 +508,9 @@ def test_the_greeting_does_not_fill_the_screen():
 def test_the_starters_are_outcomes_and_they_load_rather_than_send():
     hero = welcome_hero("Jash")
     outcomes = texts(hero, "starter-chip-outcome")
-    assert outcomes == ["Share of wallet", "Explain premium growth",
-                        "Compare peers", "Explore market rates"]
+    assert outcomes == ["Carrier performance review", "Explain a premium movement",
+                        "Benchmark against peers", "Find growth whitespace",
+                        "Broker sentiment pulse", "Meeting prep brief"]
     kinds = {
         n.id["type"] for n in walk(hero)
         if isinstance(getattr(n, "id", None), dict)

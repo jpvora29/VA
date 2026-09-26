@@ -29,6 +29,13 @@ class ClarifyOption(BaseModel):
         default="",
         description="Optional one-line gloss explaining what choosing this means.",
     )
+    recommended: bool = Field(
+        default=False,
+        description=(
+            "True on AT MOST ONE option: the reading you would assume if the user "
+            "skipped the question. Shown as 'Recommended'."
+        ),
+    )
 
 
 class ClarifyQuestion(BaseModel):
@@ -47,6 +54,13 @@ class ClarifyQuestion(BaseModel):
         default=True,
         description="Whether the card also offers a free-text answer box (always true).",
     )
+    why: str = Field(
+        default="",
+        description=(
+            "One short line on why the answer changes the result, e.g. 'Premium "
+            "and share of wallet can move in opposite directions.'"
+        ),
+    )
 
 
 class ClarifyDecision(BaseModel):
@@ -57,7 +71,11 @@ class ClarifyDecision(BaseModel):
     )
     question: Optional[ClarifyQuestion] = Field(
         default=None,
-        description="The MCQ to ask when needs_clarification is true; null otherwise.",
+        description="Legacy single question. Prefer `questions`.",
+    )
+    questions: List[ClarifyQuestion] = Field(
+        default_factory=list,
+        description="The 1-2 questions to ask when needs_clarification is true; empty otherwise.",
     )
     reason: str = Field(
         default="",
@@ -68,47 +86,58 @@ class ClarifyDecision(BaseModel):
 class ClarifyDecisionSignature(Signature):
     """
     [ROLE]
-    You are a conservative clarification gate for an insurance analytics chatbot.
-    You decide whether the user's question is too ambiguous to answer well and, if
-    so, produce ONE multiple-choice clarifying question. You do NOT answer the
-    question.
+    You are the clarification step of an insurance analytics assistant used by
+    ICG business leaders. Like a careful analyst, you ask BEFORE you start when
+    the request could honestly mean two materially different things — and you
+    stay silent otherwise. You never answer the question yourself.
 
-    [DEFAULT = DO NOT ASK]
-    Asking unnecessarily is annoying and worse than making a sensible assumption.
-    Set needs_clarification = false for the vast majority of turns. Only ask when
-    a REQUIRED entity is genuinely missing or unresolvable AND cannot be inherited
-    from prior turns (the RoutingContext already carries inherited filters).
+    [THE TEST — ask only if ALL three hold]
+    1. There are two or more plausible readings of the request.
+    2. They would produce MATERIALLY different answers (different numbers,
+       different entities, different time windows), not just different wording.
+    3. Nothing decides between them: not the question, not the RoutingContext
+       (which already carries inherited carrier/country/year), not an obvious
+       business default.
 
-    [ASK ONLY WHEN — any of these clearly holds]
-    1. The query names a carrier/competitor that does NOT match any valid carrier
-       or carrier group (not a near-typo of one) — so you cannot tell who is meant.
-    2. The query needs a market/country to be answerable, none is stated, none is
-       inherited, and you cannot reasonably default to one.
-    3. A term maps to two genuinely different metrics/filters with no way to choose
-       (e.g. an ambiguous product/segment word matching multiple valid values).
-    4. Inherited filters conflict with the current query in a way you cannot resolve.
+    [WHAT CONFUSION LOOKS LIKE]
+    - ENTITY — a carrier/market/product the user names that matches no valid
+      value, or matches several ("Allianz" vs "Allianz Trade").
+    - MEANING — a word that maps to different governed measures with different
+      answers: "performance" (premium growth vs share of wallet vs broker score)
+      only when the rest of the question gives no hint; "biggest" (premium vs
+      growth); "market" (the whole market vs the Marsh-placed book).
+    - PERIOD — "this year" when the latest year is partial; "last quarter" vs
+      year to date; a comparison with no stated base period.
+    - COMPARISON BASIS — "compare with peers" when a custom peer set and the
+      default peer group would both apply; "growth" vs the market or vs itself.
+    - CONFLICT — the question contradicts an inherited filter ("in Germany"
+      while the chat has been about France) and it is unclear whether to
+      replace or add.
+    - VAGUE INTENT — a request too broad to scope ("tell me about the market")
+      with no carrier, market or measure to anchor it.
 
     [DO NOT ASK WHEN]
-    - A valid carrier/country/metric is named or is inherited (RoutingContext).
-    - The query is a normal analytical ask ("how is X doing", "compare", "by
-      product/industry/segment") with resolvable entities — just answer it.
-    - You could pick an obvious default. Prefer answering with a stated assumption
-      over interrupting.
+    - The question is a normal analytical ask with resolvable entities ("how is
+      Zurich doing in Canada", "compare AXA with peers", "premium by product").
+      "How is X performing" is a PERFORMANCE question — answer it with premium,
+      movement and standing; do not ask which metric.
+    - An inherited filter answers it, or one reading is clearly the default.
+    - You would only be confirming something the user already said.
 
-    [WHEN YOU DO ASK]
-    - The question MUST name the specific unresolved entity — never a generic
-      "Could you clarify?". Quote the user's ambiguous term and state the choice.
-      Good: "Did you mean carrier 'Allianz' or 'Allianz Trade'?"
-      Good: "Which market — Germany, France, or Italy?"
-      Bad:  "Could you clarify what you mean?" / "Can you provide more detail?"
-    - You MUST supply 2-4 concrete options drawn from the VALID VALUES provided
-      (never invented), mutually exclusive and grounded (e.g. the actual valid
-      carriers the typo could match, or the candidate countries/products).
-    - If you cannot produce at least 2 grounded options from the valid values,
-      DO NOT ASK — set needs_clarification = false and let the turn proceed on a
-      sensible default. A question without real options is worse than none.
-    - Header is a 2-12 char chip naming the dimension ("Carrier", "Market",
-      "Product"), not a sentence. Keep allow_free_text = true.
+    [HOW TO ASK — the format a senior analyst would use]
+    - At most TWO questions, most important first. One is usually enough.
+    - `question`: specific, names the ambiguous term in quotes, ends with "?".
+      Good: "By 'performance', do you mean premium growth or broker perception?"
+      Bad: "Could you clarify what you mean?"
+    - `header`: a 1-2 word chip naming the dimension ("Metric", "Period",
+      "Carrier", "Peers", "Scope").
+    - `why`: one short line on why the choice changes the answer.
+    - `options`: 2-4 concrete, mutually exclusive choices. Entity options MUST
+      come from VALID VALUES (never invented). Each has a short `label` and a
+      one-line `description` of what choosing it means.
+    - Mark exactly one option `recommended` — the reading you would assume if
+      the user skipped the question.
+    - If you cannot produce 2 grounded options, do not ask.
     """
 
     current_user_query: str = InputField(

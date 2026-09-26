@@ -224,7 +224,9 @@ def test_real_tool_to_answer_to_provenance_to_saved_render(repository):
     saved = repository.load_conversation(7, req.thread_id)
     assert saved["messages"][1]["provenance"]["state"] == "verified"
     rendered = str(render_chat(saved, False, False, None, {}, {"username": "test"}))
-    assert "$150" in rendered and "Verified against the data" in rendered
+    # Verification still runs and is stored (asserted above); the badge is no
+    # longer drawn on the card — business readers read it as doubt.
+    assert "$150" in rendered and "Verified against the data" not in rendered
     assert "not in the data" not in rendered.lower()
 
 

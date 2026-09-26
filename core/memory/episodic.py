@@ -94,8 +94,15 @@ class SqliteEpisodicStore:
 
     # ── typed writers ───────────────────────────────────────────────────
     def record_question(
-        self, user_id: Any, conversation_id: str, question: str, route: str | None
+        self, user_id: Any, conversation_id: str, question: str, route: str | None,
+        *, scope: dict[str, str] | None = None,
     ) -> None:
+        """One asked question, with the scope it RESOLVED to when known.
+
+        The scope is what makes the question useful as memory: "how are they
+        doing?" says nothing on its own, but {carrier: Zurich, country:
+        Singapore} is the user's working set (`core.memory.focus`).
+        """
         self.remember(
             user_id,
             {
@@ -103,6 +110,7 @@ class SqliteEpisodicStore:
                 "conversation_id": conversation_id,
                 "content": question,
                 "route": route,
+                "meta": {"scope": scope} if scope else None,
             },
         )
 

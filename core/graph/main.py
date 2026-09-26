@@ -16,7 +16,7 @@ from core.agents.common.meta_intent import is_meta_intent
 from core.agents.context_filler import ContextFillingAgent
 from core.agents.intent_classifier import IntentClassifier
 from core.agents.conversation import conversation_node
-from core.graph.hitl import clarify_decide, clarify_gate
+from core.graph.hitl import clarify_decide, clarify_gate, start_ambiguity_check
 from core.graph.custom_peers_gate import custom_peer_gate
 from core.agents.fallback import Fallback
 from core.agents.followup import followup_node
@@ -54,6 +54,25 @@ def _after_intent_classifier(state: AgentState) -> str:
     return "clarify_decide"
 
 
+def _overlapping(node, *early_starts):
+    """A node that first launches independent work it does not itself need.
+
+    Each `early_start(state)` files a speculative call (`core.graph.speculation`)
+    that a later node collects; the node then runs as before. Its signature and
+    its output are unchanged, so the graph's shape is too.
+    """
+    def run(state):
+        for early in early_starts:
+            try:
+                early(state)
+            except Exception:  # noqa: BLE001 - speculation is an optimisation only
+                logger.exception("early start %s failed", getattr(early, "__name__", early))
+        return node(state)
+
+    run.__name__ = getattr(node, "__name__", "node")
+    return run
+
+
 class LangGraph:
     def __init__(
         self,
@@ -70,7 +89,9 @@ class LangGraph:
         self._compiled_app = None
 
         self.context_filler = ContextFillingAgent().context_filler_agent
-        self.intent_classifier = IntentClassifier().classify_intent
+        self.intent_classifier = _overlapping(
+            IntentClassifier().classify_intent, start_ambiguity_check
+        )
         self.clarify_decide = clarify_decide
         self.clarify_gate = clarify_gate
         self.custom_peer_gate = custom_peer_gate

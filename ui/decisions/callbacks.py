@@ -48,11 +48,18 @@ def _split_stakeholders(raw: str | None) -> list[str]:
     Input("nav-chat-view", "n_clicks"),
     Input("new-chat-btn", "n_clicks"),
     Input({"type": "conv-item", "id": ALL}, "n_clicks"),
+    State("active-view", "data"),
     prevent_initial_call=True,
 )
-def set_active_view(*_: Any) -> str:
-    """Board when its nav is clicked; any chat action returns to the chat view."""
-    return "board" if ctx.triggered_id == "nav-decision-board" else "chat"
+def set_active_view(*args: Any) -> Any:
+    """Board when its nav is clicked; any chat action returns to the chat view.
+
+    Unchanged is `no_update`: every conversation click used to re-emit "chat",
+    and each emission re-ran the view toggle and the board's paint check.
+    """
+    current = args[-1]
+    view = "board" if ctx.triggered_id == "nav-decision-board" else "chat"
+    return no_update if view == (current or "chat") else view
 
 
 @callback(

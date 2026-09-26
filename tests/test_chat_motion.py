@@ -62,7 +62,9 @@ def test_committed_answer_preserves_reading_position_but_new_question_follows():
         let questionCount = 1;
         const el = {scrollTop: 600, scrollHeight: 1000, clientHeight: 400,
             addEventListener(name, fn) {listeners[name] = fn;},
-            querySelectorAll() {return {length: questionCount};}};
+            // Answers are counted separately (see the next test); this one is
+            // about questions and re-renders.
+            querySelectorAll(sel) {return {length: sel.includes('turn-assistant') ? 0 : questionCount};}};
         globalThis.document = {getElementById() {return el;}};
         globalThis.window = {dash_clientside: {no_update: Symbol(),
             callback_context: {triggered: [{prop_id: 'chat-box.children'}]}}};
@@ -105,4 +107,34 @@ def test_status_visibility_does_not_remove_its_layout_slot():
         assert.equal(running[0].visibility, 'visible');
         assert.equal(idle[1].display, 'inline-flex');
         assert.equal(running[2].display, 'inline-flex');
+    """.replace("BODY", body))
+
+
+
+def test_a_new_answer_brings_its_own_top_into_view():
+    """A landed answer is read from its first line, not from the bottom of the card."""
+    body = ast.literal_eval(callback_for("chat-box", "data-scroll-anchor").args[0])
+    run_js("""
+        const assert = require('node:assert/strict');
+        let answers = [];
+        let scrolledTo = null;
+        const card = top => ({getBoundingClientRect() {return {top};}});
+        const el = {scrollTop: 900, scrollHeight: 2000, clientHeight: 400,
+            addEventListener() {},
+            getBoundingClientRect() {return {top: 100};},
+            scrollTo(opts) {scrolledTo = opts;},
+            querySelectorAll(sel) {return sel.includes('turn-assistant') ? answers : {length: 1};}};
+        globalThis.document = {getElementById() {return el;}};
+        globalThis.window = {dash_clientside: {no_update: Symbol()}};
+        globalThis.requestAnimationFrame = fn => fn();
+        const scroll = BODY;
+        const cursor = {thread_id: 'A'};
+        answers = [card(40)];
+        scroll([], [], false, cursor);          // first render of the thread
+        assert.equal(scrolledTo, null);
+        answers = [card(40), card(700)];        // a new answer lands
+        scroll([], [], false, cursor);
+        assert.ok(scrolledTo, 'the viewport scrolls to the new answer');
+        assert.equal(scrolledTo.top, el.scrollTop + (700 - 100) - 12);
+        assert.equal(scrolledTo.behavior, 'smooth');
     """.replace("BODY", body))

@@ -30,6 +30,8 @@ from typing import Any, Callable, List, Optional, Sequence, Tuple
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
+from ui.components.run_meta import run_meta
+
 from core.memory.feedback_reasons import FREE_TEXT_REASON, REASONS
 
 
@@ -299,7 +301,8 @@ def feedback_panel(idx: int):
     )
 
 
-def answer_footer(ctx: AnswerContext, *, content: str):
+def answer_footer(ctx: AnswerContext, *, content: str, run: Optional[dict] = None,
+                  usage: Optional[dict] = None):
     """The action row plus the (hidden) feedback panel, for one answer.
 
     Two clusters, and the split is what keeps the row short. On the LEFT, the
@@ -324,6 +327,8 @@ def answer_footer(ctx: AnswerContext, *, content: str):
             ),
             html.Div(
                 [
+                    # How long this answer took and what it cost in tokens.
+                    run_meta(run, usage),
                     dcc.Clipboard(
                         content=content, title="Copy", className="answer-copy"
                     ),

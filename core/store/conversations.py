@@ -105,8 +105,14 @@ def save_chat_edit(user_id: int | str, conv_id: str, chat: dict, *, recovering: 
         stored = json.loads(previous)
         if stored.get("_job_id") != chat.get("_job_id") or (stored.get("_running") and not recovering):
             return False
+        data = json.dumps(chat, default=str)
+        if data == previous:
+            # Opening a chat re-publishes the store it was just loaded from;
+            # rewriting an identical blob (and bumping updated_at, which also
+            # reorders the sidebar) was pure cost on every open.
+            return True
         result = conn.execute(update(conversations).where(where & (conversations.c.data == previous)).values(
-            data=json.dumps(chat, default=str), title=_derive_title(chat), updated_at=func.now()))
+            data=data, title=_derive_title(chat), updated_at=func.now()))
         return result.rowcount == 1
 
 

@@ -27,12 +27,16 @@ from core.answers.comparison_inputs import build_answer_fact_pack
 from core.answers.scope import DisplayScope
 
 
-ANALYST_CLAIM_LIMIT = 10
-ANSWER_VERSION = 4
+ANALYST_CLAIM_LIMIT = 12
+ANSWER_VERSION = 5
 
 #: Versions whose `content` is the deterministic ledger verbatim. Version 4 may
-#: also carry narrated prose, which verifies by figure support instead.
+#: also carry narrated prose, which verifies by figure support instead. Version
+#: 5 adds two presentation changes, both replayed by verification: a claim no
+#: longer repeats a scope value its own sentence names, and an un-narrated
+#: answer is shown SECTIONED (`present_claims`) rather than as one flat list.
 LEDGER_VERSIONS = {1, 2, 3}
+PROSE_VERSIONS = {4, 5}
 
 
 @dataclass(frozen=True)
@@ -140,6 +144,57 @@ def render_claims(claims: Sequence[AnswerClaim]) -> str:
     return claims[0].text + ("\n\n" + "\n".join(f"- {c.text}" for c in claims[1:]) if len(claims) > 1 else "")
 
 
+#: How an un-narrated answer is organised: each verified finding goes under the
+#: question it answers, in the order an analyst walks a carrier review — the
+#: movement, where the book is concentrated, where the carrier stands, what
+#: brokers say, then anything else. Kinds not listed fall into the last group.
+CLAIM_SECTIONS: tuple[tuple[str, frozenset[str]], ...] = (
+    ("What moved", frozenset({
+        "change", "portfolio_change", "growth_driver", "growth_offset", "growth_breadth",
+        "growth_resilience", "mix_shift", "premium_mix", "comparison_coverage"})),
+    ("Where the book is concentrated", frozenset({
+        "concentration", "growth_concentration", "share_of_portfolio"})),
+    ("Market position", frozenset({
+        "share_of_wallet", "rank", "rank_of", "standing", "position", "positioning",
+        "peer_gap", "headroom"})),
+    ("What brokers say", frozenset({
+        "survey", "survey_movement", "survey_standing", "survey_trailing",
+        "surveypractice", "surveysegment"})),
+)
+OTHER_SECTION = "Also worth knowing"
+
+
+def section_of(kind: str) -> str:
+    for title, kinds in CLAIM_SECTIONS:
+        if kind in kinds:
+            return title
+    return OTHER_SECTION
+
+
+def present_claims(claims: Sequence[AnswerClaim]) -> str:
+    """The verified findings as a READ, not a list: lead, then labelled groups.
+
+    Same sentences as :func:`render_claims`, only arranged — no figure is added,
+    dropped or reworded, so it verifies against the same claims. Findings that
+    all fall in one group keep the plain layout: a heading over one group is
+    scaffolding, not structure.
+    """
+    if not claims:
+        return ""
+    lead, rest = claims[0], list(claims[1:])
+    groups: dict[str, list[AnswerClaim]] = {}
+    for claim in rest:
+        groups.setdefault(section_of(claim.kind), []).append(claim)
+    if len(groups) < 2:
+        return render_claims(claims)
+    order = [title for title, _ in CLAIM_SECTIONS] + [OTHER_SECTION]
+    parts = [lead.text]
+    for title in order:
+        if groups.get(title):
+            parts.append(f"### {title}\n" + "\n".join(f"- {c.text}" for c in groups[title]))
+    return "\n\n".join(parts)
+
+
 def _conflict_limitations(disputed: Sequence[str]) -> tuple[str, ...]:
     """What was left out because two results disagreed about it."""
     if not disputed:
@@ -211,7 +266,8 @@ def compose_answer(request: AnswerRequest, *, select: ClaimSelector | None = Non
     claims = compact_claims(claims, used, request.scope)
     ledger = render_claims(claims)
     narration = write_narration(request, claims, pack.facts, ledger, narrator)
-    return GroundedAnswer(narration.text or ledger, used, claims, rejected, scope=request.scope,
+    return GroundedAnswer(narration.text or present_claims(claims), used, claims, rejected,
+                          scope=request.scope,
                           ledger=ledger, narrated=narration.accepted,
                           dropped_figures=narration.dropped,
                           narration_rejected=narration.rejected,
@@ -249,7 +305,7 @@ def content_supported(text: str, ledger: str, claims: Sequence[AnswerClaim],
     verifying, exactly as it did before prose was allowed.
     """
     if not narrated:
-        return text == ledger
+        return text in {ledger, present_claims(claims)}
     return not unsupported_in(text, supported_numbers(claims, facts))
 
 
@@ -265,7 +321,7 @@ def validate_record(record: Mapping, text: str, evidence: Sequence[Mapping] | No
         facts = tuple(AnswerFact(**dict(f, dimensions=tuple(tuple(d) for d in f["dimensions"])))
                       for f in record.get("facts", []))
         version = record.get("version", 1)
-        if version not in LEDGER_VERSIONS | {4}:
+        if version not in LEDGER_VERSIONS | PROSE_VERSIONS:
             return False
         quotable = facts
         if evidence is not None:
@@ -294,7 +350,8 @@ def validate_record(record: Mapping, text: str, evidence: Sequence[Mapping] | No
         selected = [expected[c["id"]] for c in record.get("claims", [])]
         if version >= 2:
             scope = tuple(tuple(pair) for pair in record.get("scope", ())) if version >= 3 else ()
-            selected = compact_claims(tuple(selected), facts, scope, legacy=version == 2)
+            selected = compact_claims(tuple(selected), facts, scope, legacy=version == 2,
+                                      plain_suffix=version >= 5)
             expected = {c.id: c for c in selected}
         claims_match = all(
             c["text"] == expected[c["id"]].text

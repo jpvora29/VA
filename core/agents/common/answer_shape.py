@@ -74,22 +74,23 @@ _TABLES = """[WHEN YOU WRITE A TABLE]
 # a table": paragraphs a reader has to mine for the finding, with no way to tell
 # where one idea stops and the next starts. Prose is not the problem — an
 # undifferentiated BLOCK of it is.
-_SCANNABLE = """[WRITE SO IT CAN BE SCANNED]
-- Open with the answer as ONE short sentence on its own line. Not a heading, not
-  a preamble — the finding, bolded where the number is.
-- Then group what follows under short labelled headings (###) that name what the
-  group IS: "Where the growth came from", "What is at risk", "Against the peer
-  set". Never a generic label — no "Analysis", "Key insights", "Overview",
-  "Details".
-- Inside a group, write POINTS, not paragraphs. One point per line, one idea per
-  point, each starting with the thing it is about and carrying its number:
-  "**Property** — £8.2m, up 14% and the only line growing above the market."
+_SCANNABLE = """[WRITE FOR AN ICG LEADER — READ IN 30 SECONDS, STUDIED IN 3 MINUTES]
+- Open with the EXECUTIVE INSIGHT: one or two sentences on their own, no heading
+  above them, that give the answer, its headline number and what it means for
+  the business. Bold the key number. A reader who stops here has been answered.
+- Then group the analysis under short labelled headings (###) that name what the
+  group SHOWS: "Where the growth came from", "What held it back", "Against the
+  Marsh book and the peer set". Never a generic label — no "Analysis", "Key
+  insights", "Overview", "Details", "Summary".
+- Inside a group write POINTS, not paragraphs. One idea per point, leading with
+  the thing it is about and its number, and ENDING WITH WHAT IT MEANS:
+  "**Property** — $8.2M, up 14%, the only line growing faster than the Marsh
+  book, so it now carries a third of the carrier's premium."
+  A number with no consequence attached is data, not analysis.
 - Two to five points per group. A group with one point is not a group; fold it
-  into the one above. A group with eight is two groups.
-- Never more than three groups. If a fourth is forming, the first one was not
-  the answer.
+  into the one above.
 - No point may repeat a number another point already made. Say it where it
-  matters most and reference it after that ("that same £3.1m fall")."""
+  matters most and refer back to it after that ("that same $3.1M fall")."""
 
 
 # Applies to every shape. A coined measure name is unanswerable: the reader
@@ -210,21 +211,26 @@ carries the read.""",
 _DRIVER = AnswerShape(
     key="driver",
     label="Driver analysis",
-    contract="""[SHAPE — DRIVERS. The user asked WHY. Ranked causes are the answer.]
+    contract="""[SHAPE — DRIVERS. The user asked WHY. Ranked causes, sized, are the answer.]
 
-1. State the movement first, quantified and in both directions of the comparison
-   ("$12.4M, down from $15.1M — a $2.7M fall").
-2. The drivers, RANKED by how much of the movement each explains. For each: the
-   slice, its own change in currency, and roughly what share of the total move it
-   accounts for. Two or three real drivers beat six thin ones.
-3. What it is NOT — rule out the explanation a reader would otherwise assume
+1. EXECUTIVE INSIGHT — the movement, quantified in both directions of the
+   comparison ("$12.4M, down from $15.1M — a $2.7M fall"), and the one driver
+   that explains most of it.
+2. What drove it — the drivers RANKED by how much of the movement each explains.
+   For each: the slice, its own change in currency, roughly what share of the
+   total move it accounts for, and what that tells us. Two to four real drivers
+   beat six thin ones.
+3. What offset it — anything that moved the OTHER way. A decomposition reported
+   as losses alone states the change wrongly, not partially.
+4. What it is NOT — rule out the explanation a reader would otherwise assume
    ("this is not a rate story; volume fell across every band"). Only when the
    evidence actually rules something out.
-4. Close on the driver that is still moving, and therefore the one that matters
-   next quarter.
+5. What to do about it — two or three points, each starting with a verb and tied
+   to a driver above, closing on the driver still moving and therefore the one
+   that matters next quarter.
 
-NO generic recommendations block — the drivers ARE the finding. A compact table
-only if the ranked drivers need more than three rows to be legible.""",
+A compact table only if the ranked drivers need more than three rows to be
+legible.""",
     patterns=(
         re.compile(
             r"\bwhy\b|\bwhat\s+(?:drove|caused|is\s+driving|is\s+causing|explains)\b"
@@ -246,9 +252,10 @@ _COMPARISON = AnswerShape(
    is not a comparison, it is filler. Bold each gap.
 3. A compact side-by-side table: one row per dimension, one column per subject,
    plus the gap. Peers aggregated into a single column.
-4. ONE line on what explains the gap, where the evidence supports it.
-
-NO recommendations block unless the user asked what to do about it.""",
+4. What explains the gap, where the evidence supports it — and what it means
+   for the subject: where it is winning, where it is exposed.
+5. One or two points on what to do with the gap, each starting with a verb, only
+   when the comparison implies an action.""",
     patterns=(
         re.compile(
             r"\bcompared?\b|\bcomparison\b|\bvs\.?\b|\bversus\b"
@@ -270,7 +277,8 @@ _TREND = AnswerShape(
 2. The periods that MATTER — the inflection, the peak, the latest. Not a
    paragraph per period. Quantify each, and say what changed at the turn.
 3. Where the series is heading on current evidence, stated as an observation and
-   never as a forecast number you invented.
+   never as a forecast number you invented — and what that trajectory means for
+   the carrier's position if it continues.
 4. A compact period table (one row per period) only when the series has more than
    three points.
 
@@ -320,23 +328,26 @@ _ADVISORY = AnswerShape(
 _BRIEFING = AnswerShape(
     key="briefing",
     label="Briefing",
-    contract="""[SHAPE — BRIEFING. Someone is walking into a meeting in five minutes.]
+    contract="""[SHAPE — BRIEFING. Someone is walking into a carrier meeting in five minutes.]
 
-1. THE THREE NUMBERS THAT MATTER — exactly three, each one line: the figure, and
-   the single clause that says whether it is good.
-2. WHAT CHANGED — the two or three real movements since the comparison period,
-   each quantified. Nothing that merely stayed the same.
-3. WHAT TO WATCH — one short paragraph or two bullets: the thing most likely to
-   come up, and the honest answer to it.
+1. EXECUTIVE INSIGHT — one sentence: where this carrier stands, in one number.
+2. THE THREE NUMBERS THAT MATTER — exactly three, each one line: the figure, and
+   the clause that says whether it is good.
+3. WHAT CHANGED — the two or three real movements since the comparison period,
+   each quantified, each with what it means. Nothing that merely stayed the same.
+4. TALKING POINTS — two or three lines the reader can say out loud in the room,
+   each anchored on a number above.
+5. WHAT TO WATCH — the question most likely to come up, and the honest answer
+   to it from the evidence.
 
-Short sections, scannable, no long prose. NO supporting-data table — this is read
-standing up. NO recommendations block unless a decision is genuinely pending.""",
+Short sections, scannable, no long prose. NO supporting-data table — this is
+read standing up.""",
     patterns=(
         re.compile(
             r"\bbrief\s+me\b|\bgive\s+me\s+an?\s+(?:brief|overview|summary|rundown)\b"
             r"|\boverview\s+of\b|\bhow\s+are\s+we\s+doing\b|\bhow\s+is\s+\w+\s+doing\b"
             r"|\bprepare\s+(?:me\s+)?for\b|\bsummari[sz]e\s+(?:the|our|their)\b"
-            r"|\btell\s+me\s+about\b|\bwhere\s+do\s+we\s+stand\b",
+            r"|\btell\s+me\s+about\b|\bwhere\s+do\s+we\s+stand\b|\bahead\s+of\s+(?:a|the|my)\s+\w*\s*meeting\b",
             re.IGNORECASE,
         ),
     ),
@@ -345,25 +356,33 @@ standing up. NO recommendations block unless a decision is genuinely pending."""
 _ANALYST = AnswerShape(
     key="analyst",
     label="Full analysis",
-    contract="""[SHAPE — FULL ANALYSIS. An open question with room to explore it.]
+    contract="""[SHAPE — FULL ANALYSIS. An ICG leader asked an open question and wants the complete read.]
 
-1. LEAD — ONE sentence, no heading above it, stating the answer and its number.
-   A reader who stops here should still have been answered.
-2. BODY — TWO OR THREE H3 groups, and only ones you have real analysis for.
-   Name each after what the data actually shows ("Where the growth went", "The
-   retention problem underneath"), never a generic label. Inside each, 2-5
-   POINTS, one per line, each leading with what it is about. Order the groups
-   wide -> narrow: the portfolio picture, then the segment driving it, then the
-   sharpest specific finding. Connect them explicitly ("that decline is
-   concentrated in..."), so each group answers the question the one above raises.
-   **Bold the critical numbers.**
-3. SO WHAT — 2-3 points, each starting with a verb, each tied to a finding above.
-   Include this ONLY when the analysis actually implies action.
-4. A compact supporting table (5-10 rows) when the answer rests on more numbers
+1. EXECUTIVE INSIGHT — one or two sentences, no heading, stating the answer, its
+   headline number and the business consequence.
+2. THE ANALYSIS — THREE TO FIVE ### groups, wide -> narrow, and only ones the
+   findings actually support. The usual arc for a carrier or market question:
+   - the headline movement in context: against the prior period, and against the
+     Marsh book or the peer average where the brief has it;
+   - what drove it: contributors RANKED by size, each with its own change, and
+     anything that moved the other way and offset it;
+   - where the book is concentrated, and how the mix is shifting;
+   - where the carrier stands: share of wallet, rank, headroom against peers;
+   - what brokers say, where survey evidence is in the brief.
+   Connect the groups explicitly ("that fall is concentrated in..."), so each
+   one answers the question the group above it raises. **Bold the critical
+   numbers.**
+3. WHAT IT MEANS — a ### group of 2-4 points, each starting with a verb (Defend,
+   Grow, Re-price, Investigate, Target, Protect), each tied to a finding above
+   and sized with its number. This is where judgement goes — write it as
+   judgement ("this suggests", "worth testing whether").
+4. WATCH-OUTS — one or two short lines on what the evidence does NOT settle (a
+   partial period, a thin base, missing survey coverage). Only when real.
+5. A compact supporting table (5-10 rows) when the answer rests on more numbers
    than the prose can carry. Skip it when it would only restate the prose.
 
-Three groups at most. If you find yourself writing a fourth, the first one was
-not the answer.""",
+Depth is the point of this shape: an answer that states three numbers and stops
+has not analysed anything. Aim for roughly 250-450 words.""",
 )
 
 # Registry order is detection priority. `analyst` carries no patterns: it is the

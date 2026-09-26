@@ -90,6 +90,49 @@ class ClarifyDecider:
 _CLARIFY_DECIDER = ClarifyDecider()
 
 
+# ── speculative ambiguity check ───────────────────────────────────────────────
+#
+# The ambiguity check needs only the question and the context filler's routing
+# context, but it used to wait behind the intent classifier. The graph starts it
+# as the intent classifier begins (`start_ambiguity_check`) and the ambiguity
+# source collects it — the two model calls overlap instead of queueing.
+
+
+def _speculation_key(state: Any) -> str:
+    messages = state.get("messages") or []
+    message_id = getattr(messages[-1], "id", "") if messages else ""
+    return f"ambiguity:{message_id}" if message_id else ""
+
+
+def _decide_ambiguity(query: str, routing_context: Any) -> ClarifyDecision:
+    return _CLARIFY_DECIDER(
+        current_user_query=query,
+        routing_context=routing_context,
+        valid_values=_valid_values_snapshot(),
+    )
+
+
+def start_ambiguity_check(state: Any) -> None:
+    """Launch this turn's ambiguity check now, to be collected by clarify_decide.
+
+    `SPECULATIVE_CLARIFY=off` restores the old serial order. The routing
+    context is copied: the intent classifier keeps editing the live one.
+    """
+    import os
+
+    from core.graph import speculation
+
+    if os.environ.get("SPECULATIVE_CLARIFY", "on").strip().lower() == "off":
+        return
+    routing_context = state.get("routing_context")
+    key = _speculation_key(state)
+    if not key or routing_context is None or getattr(routing_context, "table_family", None) == "fallback":
+        return
+    copy = getattr(routing_context, "model_copy", None)
+    snapshot = copy(deep=True) if callable(copy) else routing_context
+    speculation.start(key, _decide_ambiguity, state["messages"][-1].content, snapshot)
+
+
 def _valid_values_snapshot() -> dict:
     """Compact valid-values bundle for grounding the ambiguity check + options."""
     survey = GetValidData.valid_values
@@ -107,6 +150,21 @@ def _valid_values_snapshot() -> dict:
 # Caps: a clarify card with too many questions is its own UX failure.
 _MAX_ENTITY_QUESTIONS = 2
 _MAX_QUESTIONS = 3
+_MAX_LLM_QUESTIONS = 2
+
+
+def one_recommended(options: List[Dict]) -> List[Dict]:
+    """Keep at most one `recommended` flag — the first the model set."""
+    seen = False
+    cleaned = []
+    for option in options:
+        option = dict(option)
+        if option.get("recommended") and not seen:
+            seen = True
+        else:
+            option["recommended"] = False
+        cleaned.append(option)
+    return cleaned
 
 # Suggestion search for an unresolved term. The contract's resolver already
 # missed at its strict cutoff, so the "did you mean" lookup casts wider.
@@ -166,8 +224,10 @@ def _unresolved_entity_questions(routing_context: Any) -> List[Dict]:
                     f"I couldn't find {kind} '{term}' in the data. "
                     f"Did you mean one of these?"
                 ),
-                "options": [{"label": s, "description": ""} for s in suggestions],
+                "options": [{"label": s, "description": "", "recommended": i == 0}
+                            for i, s in enumerate(suggestions)],
                 "allow_free_text": True,
+                "why": "A name that matches nothing would filter the data to nothing.",
                 "column": column,
                 "flow": flow,
                 "term": term,
@@ -186,6 +246,37 @@ _MANDATORY_PROMPTS = {
     "carrier": "Which carrier would you like me to analyze?",
     "country": "Which market/country should I focus on?",
 }
+_MANDATORY_WHY = (
+    "Your question does not name a carrier, market or year, so there is no "
+    "scope to run the numbers on yet."
+)
+
+#: What a user can answer instead of choosing: "use your best judgement".
+SKIP_ANSWER = "__skip__"
+
+
+def remembered_options(user_id: Any, role: str, *, limit: int = 4) -> List[Dict]:
+    """The user's own recent carriers or markets, as clarify options.
+
+    A long valid-values list cannot be a set of buttons, which used to leave a
+    free-text box and nothing else. The memory layer knows which values this
+    user actually works on, so those are offered — the most frequent first and
+    marked recommended. Never raises: memory is a convenience, not a dependency.
+    """
+    if user_id in (None, ""):
+        return []
+    try:
+        from core.memory.focus import user_focus
+
+        focus = user_focus(user_id)
+    except Exception:  # noqa: BLE001
+        return []
+    values = {"carrier": focus.carriers, "country": focus.countries}.get(role, ())
+    return [
+        {"label": value, "description": "You asked about this recently",
+         "recommended": index == 0}
+        for index, value in enumerate(values[:limit])
+    ]
 
 
 def _valid_values_for(flow: str, column: str) -> List[str]:
@@ -207,6 +298,10 @@ class ClarifyContext:
     routing_context: Any
     valid_values: dict
     existing: List[Dict] = field(default_factory=list)
+    #: Who is asking — the memory layer offers their usual scope first.
+    user_id: Any = None
+    #: Where a speculative ambiguity check for this turn was filed, if any.
+    speculation_key: str = ""
 
 
 class ClarifyQuestionSource(Protocol):
@@ -237,7 +332,7 @@ class MandatoryFilterSource:
             options = (
                 [{"label": v, "description": ""} for v in values]
                 if 0 < len(values) <= _MANDATORY_OPTION_CAP
-                else []
+                else remembered_options(ctx.user_id, req.role)
             )
             questions.append(
                 {
@@ -250,6 +345,7 @@ class MandatoryFilterSource:
                     ),
                     "options": options,
                     "allow_free_text": True,
+                    "why": _MANDATORY_WHY,
                     "column": column,
                     "flow": req.flow,
                     "term": "",
@@ -276,35 +372,49 @@ class AmbiguityClassifierSource:
     def gather(self, ctx: ClarifyContext) -> List[Dict]:
         if len(ctx.existing) >= _MAX_QUESTIONS:
             return []
+        from core.graph import speculation
+
+        early = speculation.take(ctx.speculation_key)
         try:
-            decision = _CLARIFY_DECIDER(
-                current_user_query=ctx.query,
-                routing_context=ctx.routing_context,
-                valid_values=ctx.valid_values,
-            )
+            if early is not None:
+                decision = early.result(timeout=120)
+            else:
+                decision = _CLARIFY_DECIDER(
+                    current_user_query=ctx.query,
+                    routing_context=ctx.routing_context,
+                    valid_values=ctx.valid_values,
+                )
         except Exception as exc:  # noqa: BLE001 - clarification is best-effort; never break the turn
             log_event(logger, "clarify_decide_error", logging.ERROR, node="clarify_decide", error=str(exc))
             return []
 
-        if not (decision.needs_clarification and decision.question is not None):
+        if not decision.needs_clarification:
             return []
-        llm_q = decision.question
-        # A clarify card with fewer than 2 grounded options is a vague, unhelpful
-        # ask (the model ignored the [WHEN YOU DO ASK] rule).
-        if len(llm_q.options) < 2:
-            log_event(logger, "clarify_skipped_no_options", node="clarify_decide", header=llm_q.header)
-            return []
-        # If it merely re-asks an entity an earlier source already covers, the
-        # grounded card wins.
+        asked = list(decision.questions or ([decision.question] if decision.question else []))
         covered_terms = {
             str(q.get("term", "")).lower() for q in ctx.existing if q.get("term")
         }
-        if any(t and t in llm_q.question.lower() for t in covered_terms):
-            return []
-        payload = llm_q.model_dump()
-        payload.setdefault("id", "llm:ambiguity")
-        payload.setdefault("kind", "ambiguity")
-        return [payload]
+        room = _MAX_QUESTIONS - len(ctx.existing)
+        payloads: List[Dict] = []
+        for index, llm_q in enumerate(asked[:_MAX_LLM_QUESTIONS]):
+            # A clarify card with fewer than 2 grounded options is a vague,
+            # unhelpful ask (the model ignored the [HOW TO ASK] rule).
+            if len(llm_q.options) < 2:
+                log_event(logger, "clarify_skipped_no_options", node="clarify_decide",
+                          header=llm_q.header)
+                continue
+            # If it merely re-asks an entity an earlier source already covers,
+            # the grounded card wins.
+            if any(t and t in llm_q.question.lower() for t in covered_terms):
+                continue
+            payload = llm_q.model_dump()
+            payload["options"] = one_recommended(payload.get("options") or [])
+            payload["id"] = "llm:ambiguity" if index == 0 else f"llm:ambiguity:{index}"
+            payload.setdefault("kind", "ambiguity")
+            payloads.append(payload)
+            if len(payloads) >= room:
+                break
+        return payloads
 
 
 # Production ordering: deterministic mandatory + entity sources first, LLM last.
@@ -337,6 +447,8 @@ def clarify_decide(
         query=state["messages"][-1].content,
         routing_context=routing_context,
         valid_values=_valid_values_snapshot(),
+        user_id=state.get("user_id"),
+        speculation_key=_speculation_key(state),
     )
 
     questions: List[Dict] = []
@@ -400,6 +512,15 @@ def clarify_gate(state: "AgentState") -> "AgentState":
     for q in questions:
         answer = answers.get(str(q.get("id")))
         if not answer:
+            continue
+        if answer == SKIP_ANSWER:
+            # "Use your best judgement": no filter is written, and the note
+            # tells the downstream agents to take the sensible default and say
+            # which one they took.
+            notes.append(
+                f"{q.get('header') or 'this'}: no preference — use the most sensible "
+                "default and state the assumption"
+            )
             continue
         column = q.get("column")
         # Both the "did you mean…?" disambiguation and the mandatory-filter ask

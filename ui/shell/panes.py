@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List
 
 from dash import html
 
+from core.memory.focus import user_focus
 from core.memory.suggestions import generate_starter_questions
 from core.store.conversations import list_conversations
 from studio.authoring.layout import studio_chrome
@@ -40,7 +41,9 @@ def _studio_pane(user_id: int, username: str) -> Any:
 def _chat_pane(user_id: int, username: str) -> Any:
     """Chat rail + the two content views (chat / decision board) it switches between."""
     conversations = list_conversations(user_id)
+    # Non-blocking: a cold cache returns [] and refreshes in the background.
     starters = generate_starter_questions(user_id)
+    focus = user_focus(user_id)
     return html.Div(
         [
             app_sidebar(conversations, username),
@@ -50,7 +53,8 @@ def _chat_pane(user_id: int, username: str) -> Any:
                         # Both views stay mounted; the view-router callback toggles
                         # visibility so the chat keeps its DOM and stores on switch.
                         html.Div(
-                            chatbot_page(username, starters),
+                            chatbot_page(username, starters, focus=focus,
+                                         conversations=conversations[:2]),
                             id="view-chat",
                             className="view-pane",
                         ),

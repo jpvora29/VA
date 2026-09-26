@@ -160,6 +160,31 @@ decision_revisions = Table(
 )
 
 
+# ── Turn traces (observability) ───────────────────────────────────────────────
+# One row per completed chat turn: how long it took, which steps it went through,
+# how many model calls it made and what they cost in tokens. Written by the job
+# worker after the answer is saved (`core.store.run_traces`), read by the
+# operations summary. Never read back into an answer — it is a meter, not memory.
+turn_traces = Table(
+    "turn_traces",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", Integer, nullable=True, index=True),
+    Column("thread_id", String, nullable=True, index=True),
+    Column("question", Text, nullable=True),
+    Column("route", String, nullable=True),
+    Column("shape", String, nullable=True),
+    Column("status", String, nullable=False, default="ok"),
+    Column("elapsed_ms", Integer, nullable=False, default=0),
+    Column("llm_calls", Integer, nullable=False, default=0),
+    Column("input_tokens", Integer, nullable=False, default=0),
+    Column("output_tokens", Integer, nullable=False, default=0),
+    Column("total_tokens", Integer, nullable=False, default=0),
+    Column("trace", Text, nullable=False, default="{}"),  # full JSON trace
+    Column("created_at", DateTime, server_default=func.now(), index=True),
+)
+
+
 #: Columns added to `users` after the table shipped. ``create_all`` only creates
 #: missing TABLES, so a database written before SSO existed keeps the old three
 #: columns and every query naming a new one fails — on an app whose whole state

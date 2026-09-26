@@ -9,7 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.answers.grounded import AnswerRequest, compose_answer, render_claims, validate_record
+from core.answers.grounded import (AnswerRequest, compose_answer, present_claims,
+                                  render_claims, section_of, validate_record)
 from core.answers.narration import supported_numbers, unsupported_in
 from core.answers.response_pipeline import write_response
 from tests.test_answer_insights import QUESTION, growth_evidence
@@ -70,10 +71,28 @@ def test_the_ledger_is_kept_beside_the_prose_and_still_verifies_it():
     assert validate_record(answer.as_dict(), answer.text, growth_evidence())
 
 
-def test_without_a_writer_the_answer_is_exactly_what_it_always_was():
+def test_without_a_writer_the_answer_is_the_ledger_arranged_into_sections():
+    """No writer: the same verified sentences, grouped under what they show.
+
+    The ledger itself is unchanged (it is what verification replays); only the
+    text on screen is arranged, and it still verifies.
+    """
     plain = compose_answer(AnswerRequest(QUESTION, growth_evidence()))
-    assert plain.text == plain.ledger and not plain.narrated
+    assert not plain.narrated
+    assert plain.ledger == render_claims(plain.claims)
+    assert plain.text == present_claims(plain.claims)
     assert plain.text.startswith("Chubb's premium increased")
+    assert "### What moved" in plain.text
+    # Arranged, never reworded: every ledger sentence is on screen verbatim.
+    for claim in plain.claims:
+        assert claim.text in plain.text
+    assert validate_record(plain.as_dict(), plain.text, growth_evidence())
+
+
+def test_a_single_group_of_findings_keeps_the_plain_layout():
+    claims = compose_answer(AnswerRequest(QUESTION, growth_evidence())).claims
+    same_kind = tuple(c for c in claims if section_of(c.kind) == "What moved")[:3]
+    assert present_claims(same_kind) == render_claims(same_kind)
 
 
 def test_the_brief_carries_the_findings_the_shape_and_every_quotable_figure():
@@ -114,12 +133,12 @@ def test_prose_that_loses_the_headline_figure_falls_back_to_the_ledger():
     answer, _ = narrated("Growth was broad-based and the book is in good shape.")
     assert not answer.narrated
     assert answer.narration_rejected == "the headline figure was lost"
-    assert answer.text == answer.ledger
+    assert answer.text == present_claims(answer.claims)
 
 
 def test_a_writer_that_fails_never_fails_the_answer():
     answer = compose_answer(AnswerRequest(QUESTION, growth_evidence()), narrator=BrokenWriter())
-    assert answer.text == answer.ledger and not answer.narrated
+    assert answer.text == present_claims(answer.claims) and not answer.narrated
     assert answer.narration_rejected.startswith("writer unavailable")
 
 
@@ -129,7 +148,7 @@ def test_an_empty_or_wholly_unsupported_draft_falls_back():
                            "nothing survived the figure check")):
         answer, _ = narrated(draft)
         assert not answer.narrated and answer.narration_rejected == reason
-        assert answer.text == answer.ledger
+        assert answer.text == present_claims(answer.claims)
 
 
 def test_a_table_row_with_a_bad_number_goes_without_breaking_the_table():
@@ -192,9 +211,10 @@ def test_a_tampered_ledger_is_rejected_even_when_the_prose_is_clean():
 
 def test_records_written_before_narration_still_verify_unchanged():
     plain = compose_answer(AnswerRequest(QUESTION, growth_evidence()))
-    record = dict(plain.as_dict(), version=3)
+    # A v3 record stored the ledger verbatim as its content.
+    record = dict(plain.as_dict(), version=3, content=plain.ledger)
     record.pop("ledger"), record.pop("narrated")
-    assert validate_record(record, plain.text, growth_evidence())
+    assert validate_record(record, plain.ledger, growth_evidence())
 
 
 # ── the graph adapter, end to end ────────────────────────────────────────────

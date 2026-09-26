@@ -96,11 +96,27 @@ def write_answer(request: AnswerRequest, *, client: Any = None) -> GroundedAnswe
     if request.shape in {"lookup", "direct"} or request.presentation in {"table_only", "chart_only"}:
         return compose_answer(request)
     answer = compose_answer(request,
-                            select=selection_client(request.question, client,
-                                                    request.requirements),
+                            select=_selector_for(request, client),
                             narrator=narration_client(client))
     log_answer(request, answer)
     return answer
+
+
+def _selector_for(request: AnswerRequest, client: Any):
+    """Which claims the narrator is briefed with — ranked in code by default.
+
+    The model selector was a whole extra model call (balanced tier) in series
+    before the writer, on every analytical answer. The writer already receives
+    every verified finding and every quotable figure and chooses what to say, so
+    choosing for it first bought little and cost seconds. The deterministic
+    ranking (`distinct_claims`) keeps the direct answer first and the biggest
+    movements after it. `ANSWER_SELECTOR=model` restores the model selector.
+    """
+    import os
+
+    if os.environ.get("ANSWER_SELECTOR", "").strip().lower() == "model":
+        return selection_client(request.question, client, request.requirements)
+    return None
 
 
 def log_answer(request: AnswerRequest, answer: GroundedAnswer) -> None:

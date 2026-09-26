@@ -15,6 +15,10 @@ is the rendering half.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -115,7 +119,10 @@ def build_view(
         try:
             figure, note = generate_chart(df=frame, chart_outputs=chart_data)
             if figure is not None:
-                figure.update_layout(height=CHART_HEIGHT_PX, autosize=True)
+                # A horizontal ranking sizes itself to its row count; every other
+                # chart takes the card's fixed height.
+                height = figure.layout.height or CHART_HEIGHT_PX
+                figure.update_layout(height=max(CHART_HEIGHT_PX, height), autosize=True)
         except Exception:  # noqa: BLE001 - a chart must never cost the answer
             logger.exception("evidence: chart generation failed for %r", label)
 
@@ -130,7 +137,44 @@ def build_view(
     )
 
 
+#: Rendered views by the JSON of their specs. The transcript is re-rendered on
+#: every store change (a new turn, an edit, a board tweak), and each render used
+#: to rebuild EVERY past answer's Plotly figures from their rows — the cost of
+#: opening a long conversation grew with its length. Specs are immutable once
+#: committed, so their views can be reused. Small and bounded (LRU).
+_VIEW_CACHE: "OrderedDict[str, List[EvidenceView]]" = OrderedDict()
+_VIEW_CACHE_SIZE = 96
+_VIEW_CACHE_LOCK = threading.Lock()
+
+
+def _cache_key(specs: Sequence[Dict[str, Any]]) -> Optional[str]:
+    try:
+        return hashlib.sha1(
+            json.dumps(list(specs or []), sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+    except (TypeError, ValueError):
+        return None
+
+
 def build_views(specs: Sequence[Dict[str, Any]]) -> List[EvidenceView]:
+    """Every view of a turn's evidence, cached by the specs that produced them."""
+    key = _cache_key(specs)
+    if key is not None:
+        with _VIEW_CACHE_LOCK:
+            hit = _VIEW_CACHE.get(key)
+            if hit is not None:
+                _VIEW_CACHE.move_to_end(key)
+                return list(hit)
+    views = _build_views(specs)
+    if key is not None:
+        with _VIEW_CACHE_LOCK:
+            _VIEW_CACHE[key] = list(views)
+            while len(_VIEW_CACHE) > _VIEW_CACHE_SIZE:
+                _VIEW_CACHE.popitem(last=False)
+    return views
+
+
+def _build_views(specs: Sequence[Dict[str, Any]]) -> List[EvidenceView]:
     """Every view of a turn's evidence, in the order the turn produced it.
 
     Each spec is ``{"rows": [...], "chart_data": {...}, "lens": "premium"}`` —

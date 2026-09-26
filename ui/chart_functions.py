@@ -94,6 +94,9 @@ class _Spec:
     # measure says so; every other chart keeps deriving the label from columns.
     x_title: str = ""
     y_title: str = ""
+    #: Drawn as horizontal bars: a long ranking of named categories reads down a
+    #: page, not across it (see `_wants_horizontal`). Decided after sanitizing.
+    horizontal: bool = False
 
 
 def _as_dict(spec: Any) -> Dict[str, Any]:
@@ -417,21 +420,34 @@ def _series_key(df: pd.DataFrame, series: List[str]) -> Optional[pd.Series]:
 def _build_bar(fig: go.Figure, df: pd.DataFrame, spec: _Spec, color_map: Dict) -> None:
     stacked = "stack" in spec.bar_mode
     key = _series_key(df, spec.series)
+    if spec.horizontal and key is None and len(spec.y) == 1:
+        ordered = df.sort_values(spec.y[0], ascending=True)
+        fig.add_trace(
+            go.Bar(
+                y=ordered[spec.x].astype(str), x=ordered[spec.y[0]], orientation="h",
+                name=_pretty(spec.y[0]), marker_color=CURRENT_COLOR,
+            )
+        )
+        fig.update_layout(barmode="group")
+        return
     if key is not None:
-        for i, val in enumerate(_ordered_unique(key)):
+        names = _ordered_unique(key)
+        colors = semantic_colors([str(v) for v in names])
+        for i, val in enumerate(names):
             sub = df[key == val]
             fig.add_trace(
                 go.Bar(
                     x=sub[spec.x], y=sub[spec.y[0]], name=_pretty(val),
-                    marker_color=color_map.setdefault(val, ColorPalette.color_for(i)),
+                    marker_color=color_map.setdefault(val, colors[i]),
                 )
             )
     else:
+        colors = semantic_colors(list(spec.y))
         for i, ycol in enumerate(spec.y):
             fig.add_trace(
                 go.Bar(
                     x=df[spec.x], y=df[ycol], name=_pretty(ycol),
-                    marker_color=ColorPalette.color_for(i),
+                    marker_color=colors[i],
                 )
             )
     fig.update_layout(barmode="stack" if stacked else "group")
@@ -441,23 +457,31 @@ def _build_bar(fig: go.Figure, df: pd.DataFrame, spec: _Spec, color_map: Dict) -
 def _build_line(fig: go.Figure, df: pd.DataFrame, spec: _Spec, color_map: Dict) -> None:
     key = _series_key(df, spec.series)
     if key is not None:
-        for i, val in enumerate(_ordered_unique(key)):
+        names = _ordered_unique(key)
+        colors = semantic_colors([str(v) for v in names])
+        for i, val in enumerate(names):
             sub = df[key == val]
             fig.add_trace(
                 go.Scatter(
                     x=sub[spec.x], y=sub[spec.y[0]], mode="lines+markers",
                     name=_pretty(val),
-                    line=dict(color=color_map.setdefault(val, ColorPalette.color_for(i)), width=2.5),
-                    marker=dict(size=6),
+                    line=dict(color=color_map.setdefault(val, colors[i]), width=2.5,
+                              shape="spline", smoothing=0.4),
+                    marker=dict(size=7, line=dict(color="white", width=1.5)),
                 )
             )
     else:
+        colors = semantic_colors(list(spec.y))
         for i, ycol in enumerate(spec.y):
             fig.add_trace(
                 go.Scatter(
                     x=df[spec.x], y=df[ycol], mode="lines+markers", name=_pretty(ycol),
-                    line=dict(color=ColorPalette.color_for(i), width=2.5),
-                    marker=dict(size=6),
+                    line=dict(color=colors[i], width=2.5, shape="spline", smoothing=0.4),
+                    marker=dict(size=7, line=dict(color="white", width=1.5)),
+                    # A single measure over time reads better with the area under
+                    # it faintly filled: the eye follows a shape, not a thread.
+                    fill="tozeroy" if len(spec.y) == 1 else None,
+                    fillcolor="rgba(11, 75, 255, 0.07)" if len(spec.y) == 1 else None,
                 )
             )
 
@@ -532,19 +556,27 @@ def _build_waterfall(fig: go.Figure, df: pd.DataFrame, spec: _Spec, color_map: D
     if len(measures) < n:
         measures += ["relative"] * (n - len(measures))
     measures = [m if m in ("relative", "total", "absolute") else "relative" for m in measures]
-    # If the spec gave no explicit total, append a closing total bar.
+    unit = measure_unit(spec)
+    text = [format_value(v, unit, signed=True) for v in values]
+    # If the spec gave no explicit total, close the series with the NET of the
+    # movements. Its value is plotly's to compute (a `total` bar ignores its y),
+    # but its LABEL is ours — it used to print the placeholder 0 as "0.00".
     if "total" not in measures and "absolute" not in measures:
-        labels.append("Total")
+        net = sum(_number_or(v, 0.0) for v in values)
+        labels.append("Net change")
         values.append(0)
         measures.append("total")
+        text.append(format_value(net, unit, signed=True))
     fig.add_trace(
         go.Waterfall(
             x=labels, y=values, measure=measures,
-            connector=dict(line=dict(color="#C7CFDB", width=1)),
-            increasing=dict(marker=dict(color=ColorPalette.positive)),
-            decreasing=dict(marker=dict(color=ColorPalette.negative)),
-            totals=dict(marker=dict(color=ColorPalette.total)),
-            text=[_format_number(v) for v in values], textposition="outside",
+            connector=dict(line=dict(color="#C7CFDB", width=1, dash="dot")),
+            increasing=dict(marker=dict(color=GOOD_COLOR)),
+            decreasing=dict(marker=dict(color=BAD_COLOR)),
+            totals=dict(marker=dict(color=CURRENT_COLOR)),
+            text=text, textposition="outside", cliponaxis=False,
+            textfont=dict(size=11, color=_INK),
+            hovertemplate="<b>%{x}</b><br>%{text}<extra></extra>",
         )
     )
     fig.update_layout(showlegend=False)
@@ -596,6 +628,100 @@ def _format_number(v: float) -> str:
         if abs(v) >= div:
             return f"{v / div:.1f}{suffix}"
     return f"{v:,.0f}" if abs(v) >= 1 else f"{v:.2f}"
+
+
+# ── Units: what a chart's numbers ARE ─────────────────────────────────────────
+#
+# A premium axis reading "300" and a share axis reading "41" look identical, and
+# the reader has to find the title to learn one is dollars and the other percent.
+# The unit is read once from the spec's measure names and axis title, and every
+# label, tick and tooltip on the chart states it.
+
+_PCT_RX = re.compile(r"%|\bpct\b|percent|share|\brate\b|\byoy\b|growth\s*%|margin", re.I)
+_MONEY_RX = re.compile(r"premium|\bgwp\b|amount|revenue|spend|wallet\s*size|change vs prior|\$", re.I)
+_SCORE_RX = re.compile(r"score|nps|index|rating|rank", re.I)
+
+
+def measure_unit(spec: "_Spec") -> str:
+    """"pct", "money" or "" for the chart's primary measure. Pure."""
+    names = " ".join([spec.y_title or "", *[str(c) for c in spec.y]])
+    if _SCORE_RX.search(names):
+        return ""
+    if _PCT_RX.search(names):
+        return "pct"
+    if _MONEY_RX.search(names):
+        return "money"
+    return ""
+
+
+def format_value(v: Any, unit: str = "", *, signed: bool = False) -> str:
+    """One number the way the chart states it: "$1.2M", "+$60", "41.0%"."""
+    try:
+        number = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    sign = ""
+    if number < 0:
+        sign = "-"
+    elif signed and number > 0:
+        sign = "+"
+    size = abs(number)
+    if unit == "pct":
+        return f"{sign}{size:.1f}%"
+    body = _format_number(size)
+    return f"{sign}${body}" if unit == "money" else f"{sign}{body}"
+
+
+# ── Colour meaning ────────────────────────────────────────────────────────────
+#
+# Colour carries meaning before a label is read: the period being reported is
+# the strong brand blue and earlier periods step back into muted blue-greys; a
+# benchmark (the Marsh book, the market, the peer average) is muted beside the
+# subject it frames. Anything else takes the categorical brand order.
+
+CURRENT_COLOR = "#0B4BFF"
+PRIOR_COLORS = ("#9FB3CF", "#C5D3E6", "#DCE5F1")
+BENCHMARK_COLOR = "#B7C6DB"
+GOOD_COLOR = "#1F9D55"
+BAD_COLOR = "#D64545"
+_YEAR_RX = re.compile(r"^(19|20)\d{2}$")
+_BENCHMARK_RX = re.compile(r"marsh|market|peer|book|average|benchmark|total", re.I)
+
+
+def semantic_colors(names: List[str]) -> List[str]:
+    """One colour per series name, by what the series IS. Pure."""
+    names = [str(n).strip() for n in names]
+    if len(names) == 1:
+        return [CURRENT_COLOR]
+    if len(names) >= 2 and all(_YEAR_RX.match(n) for n in names):
+        order = sorted(names)
+        latest = order[-1]
+        priors = [n for n in reversed(order) if n != latest]
+        shade = {n: PRIOR_COLORS[min(i, len(PRIOR_COLORS) - 1)] for i, n in enumerate(priors)}
+        shade[latest] = CURRENT_COLOR
+        return [shade[n] for n in names]
+    if len(names) == 2:
+        bench = [bool(_BENCHMARK_RX.search(n)) for n in names]
+        if bench.count(True) == 1:
+            return [BENCHMARK_COLOR if b else CURRENT_COLOR for b in bench]
+    return [ColorPalette.color_for(i) for i in range(len(names))]
+
+
+def _wants_horizontal(df: pd.DataFrame, spec: "_Spec") -> bool:
+    """A single-measure ranking of many (or long-named) categories reads DOWN.
+
+    Vertical bars with slanted labels are the default look of a chart nobody
+    designed. Time is never turned on its side — periods read left to right.
+    """
+    if spec.chart_type != "bar" or spec.series or len(spec.y) != 1:
+        return False
+    if spec.x not in df.columns or _is_numeric(df, spec.x) or _is_year_axis(df[spec.x], spec.x):
+        return False
+    if re.search(r"quarter|month|year|period|date|week", spec.x, re.I):
+        return False
+    labels = df[spec.x].astype(str)
+    count = labels.nunique()
+    return count >= 7 or (count >= 3 and labels.map(len).max() > MAX_TICK_LEN)
 
 
 # ── Theme ─────────────────────────────────────────────────────────────────────
@@ -654,8 +780,8 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
         colorway=ColorPalette.get_colors(),
         # Wider gaps: bars that nearly touch read as a single mass. The grouped
         # pair stays tight so the two years read as one comparison.
-        bargap=0.38,
-        bargroupgap=0.06,
+        bargap=_bar_gap(df, spec),
+        bargroupgap=0.08,
         showlegend=multi,
         legend=dict(
             orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0,
@@ -676,6 +802,10 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
             fig.update_layout(barcornerradius=6)
         except Exception:  # noqa: BLE001 - older plotly: harmless to skip
             pass
+
+    if spec.horizontal:
+        _style_horizontal(fig, spec, df)
+        return
 
     if not is_polar:
         # Slant long category labels so they stay on ONE line instead of letting
@@ -720,6 +850,13 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
             max_y = 0
         if max_y and max_y >= 10_000:
             fig.update_yaxes(tickformat="~s")
+        unit = measure_unit(spec)
+        if unit == "money":
+            fig.update_yaxes(tickprefix="$")
+        elif unit == "pct":
+            fig.update_yaxes(ticksuffix="%")
+        if spec.chart_type in ("bar", "line", "combo"):
+            _unit_hover(fig, unit)
 
         # Direct value labels on small single-series bars (the Tableau look).
         if (
@@ -729,7 +866,7 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
             and df[spec.x].nunique(dropna=True) <= 8
         ):
             bar = fig.data[0]
-            bar.text = [_format_number(v) for v in bar.y]
+            bar.text = [format_value(v, measure_unit(spec)) for v in bar.y]
             bar.textposition = "outside"
             bar.cliponaxis = False
             bar.textfont = dict(size=10.5, color=_INK)
@@ -751,6 +888,56 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
         if spec.chart_type not in ("scatter",):
             fig.update_layout(hovermode="x unified")
 
+
+
+def _bar_gap(df: pd.DataFrame, spec: "_Spec") -> float:
+    """Gap between bar groups, by how many there are.
+
+    With one or two categories a fixed gap draws two slabs that fill the card —
+    the quarterly chart with a single comparable quarter looked like a wall.
+    """
+    try:
+        count = int(df[spec.x].nunique()) if spec.x in df.columns else 0
+    except Exception:  # noqa: BLE001
+        count = 0
+    if count and count <= 2:
+        return 0.62
+    if count and count <= 4:
+        return 0.45
+    return 0.34
+
+
+def _unit_hover(fig: go.Figure, unit: str) -> None:
+    """Tooltips that state the unit: "$1.24M", "41.0%"."""
+    body = {"money": "$%{y:,.3~s}", "pct": "%{y:.1f}%"}.get(unit, "%{y:,.3~s}")
+    for trace in fig.data:
+        if trace.type in ("bar", "scatter") and getattr(trace, "orientation", None) != "h":
+            trace.hovertemplate = f"{body}<extra>%{{fullData.name}}</extra>"
+
+
+def _style_horizontal(fig: go.Figure, spec: "_Spec", df: pd.DataFrame) -> None:
+    """Axes for a horizontal ranking: names down the left, values along the bars."""
+    unit = measure_unit(spec)
+    bar = fig.data[0]
+    values = [] if bar.x is None else list(bar.x)
+    bar.text = [format_value(v, unit) for v in values]
+    bar.textposition = "outside"
+    bar.cliponaxis = False
+    bar.textfont = dict(size=10.5, color=_INK)
+    body = {"money": "$%{x:,.3~s}", "pct": "%{x:.1f}%"}.get(unit, "%{x:,.3~s}")
+    bar.hovertemplate = f"<b>%{{y}}</b><br>{body}<extra></extra>"
+    count = len(values)
+    fig.update_layout(height=max(260, 34 * count + 90), bargap=0.32, hovermode="closest",
+                      margin=dict(l=8, r=56, t=56, b=36))
+    fig.update_yaxes(title=None, showgrid=False, showline=False, ticks="",
+                     tickfont=dict(size=11.5, color=_INK), automargin=True)
+    fig.update_xaxes(title=dict(text=spec.y_title or _pretty(spec.y[0]),
+                                font=dict(size=12, color="#5A6B82")),
+                     showgrid=True, gridcolor=_GRID, griddash="dot", zeroline=False,
+                     tickfont=dict(size=11, color=_TICK_INK), automargin=True,
+                     tickprefix="$" if unit == "money" else "",
+                     ticksuffix="%" if unit == "pct" else "",
+                     tickformat="~s" if unit != "pct" else None)
 
 
 def _number_or(value, default: float) -> float:
@@ -832,6 +1019,7 @@ def generate_chart(
             return None, message
 
         prepared, overrides = _prepare_axis_ticks(prepared, spec)
+        spec.horizontal = _wants_horizontal(prepared, spec)
         if overrides:
             log_event(
                 logger,
