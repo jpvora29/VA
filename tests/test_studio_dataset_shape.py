@@ -361,3 +361,83 @@ def test_one_year_of_uploaded_data_clears_the_chart_rather_than_faking_it(tmp_pa
     finally:
         dataset_source.cache_clear()
         R.get_repository.cache_clear()
+
+
+# ── the settings readings: split, combine, replace, first/last ───────────────
+
+
+def test_split_keeps_the_part_asked_for():
+    frame = pd.DataFrame({"Where": ["Asia - Singapore", "Pacific - Australia", "Europe"]})
+    # "Europe" has no second part: missing, never a made-up value.
+    assert list(derive_column(frame, "Where", "split", ("-", "2")).fillna("")) == [
+        "Singapore", "Australia", ""]
+    assert list(derive_column(frame, "Where", "split", ("-", "-1"))) == [
+        "Singapore", "Australia", "Europe"]
+    assert list(derive_column(frame, "Where", "split", ("-", "1"))) == ["Asia", "Pacific", "Europe"]
+
+
+def test_combine_replace_and_characters():
+    frame = pd.DataFrame({"A": ["Cyber", "Marine"], "B": ["2025", "2026"], "C": ["FY-25", "FY-26"]})
+    assert list(derive_column(frame, "A", "combine", ("B", " / "))) == ["Cyber / 2025",
+                                                                       "Marine / 2026"]
+    assert list(derive_column(frame, "C", "replace", ("FY-", "20"))) == ["2025", "2026"]
+    assert list(derive_column(frame, "B", "last", ("2",))) == ["25", "26"]
+    assert list(derive_column(frame, "A", "first", ("3",))) == ["Cyb", "Mar"]
+
+
+@pytest.mark.parametrize("recipe,args,message", [
+    ("split", ("-", "0"), "count from 1"),
+    ("combine", ("Nope", ""), "not one"),
+    ("replace", ("", ""), "find"),
+    ("first", ("x",), "whole number"),
+])
+def test_bad_settings_say_what_is_wrong(recipe, args, message):
+    frame = pd.DataFrame({"A": ["x-y"]})
+    with pytest.raises(ValueError, match=message):
+        derive_column(frame, "A", recipe, args)
+
+
+def test_a_split_column_is_replayed_and_named_for_its_part(dataset):
+    repo, record = dataset
+    assert add_column(repo, record.dataset_id, "", "Billing Date", "split", "", ("-", "1")) is None
+    after = repo.get(record.dataset_id)
+    assert "Billing Date_part1" in {c.name for c in after.profile.columns}
+    assert after.transforms[-1].args == ("-", "1")
+    # …and survives a fresh repository reading it back from disk.
+    assert DatasetRepository(repo.root).get(record.dataset_id).transforms[-1].args == ("-", "1")
+    assert "split by a delimiter" in S.shape_history(after)[-1].lower()
+
+
+# ── the bug: deleting a column reset the mapping the author was typing ──────
+
+
+def test_a_column_change_keeps_the_mapping_the_form_was_showing(dataset):
+    """Save the on-screen answers first, then reshape: nothing typed is lost."""
+    from studio.authoring.data import save_draft
+
+    repo, record = dataset
+    columns = [m.uploaded for m in record.mappings]
+    targets = [m.target for m in record.mappings]
+    descriptions = [m.description for m in record.mappings]
+    i = columns.index("Market")
+    targets[i], descriptions[i] = "", "The market the policy was placed in"
+    save_draft(repo, record.dataset_id, columns, targets, descriptions)
+
+    assert delete_column(repo, record.dataset_id, "Insurer")
+    after = {m.uploaded: m for m in repo.get(record.dataset_id).mappings}
+    assert "Insurer" not in after
+    assert after["Market"].description == "The market the policy was placed in"
+    assert after["Market"].target == ""
+    assert after["Market"].source == "user"                 # the author's edit is theirs
+    untouched = next(c for c in columns if c not in ("Market", "Insurer"))
+    assert after[untouched].source == record.mappings[columns.index(untouched)].source
+
+
+def test_a_draft_never_submits(dataset):
+    from studio.authoring.data import save_draft
+
+    repo, record = dataset
+    status = repo.get(record.dataset_id).status
+    save_draft(repo, record.dataset_id, [m.uploaded for m in record.mappings],
+               ["" for _ in record.mappings], ["" for _ in record.mappings])
+    assert repo.get(record.dataset_id).status == status

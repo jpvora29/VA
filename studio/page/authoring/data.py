@@ -17,12 +17,13 @@ active dataset's frame are read server-side from the repository.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import dash_ag_grid as dag
 from dash import dcc, html
 
 from studio.dataset.automap import SOURCE_LABEL, is_proposed
+from studio.page.authoring import data_queue as Q
 from studio.dataset.ingest import SUPPORTED_EXTENSIONS
 from studio.dataset.model import (
     REQUIRED_TARGETS,
@@ -86,20 +87,12 @@ def _target_description(target: str) -> str:
 # ── the three-step pipeline header ───────────────────────────────────────────
 
 
-def _step(number: int, title: str, sub: str, state: str) -> html.Div:
-    """One node of the pipeline: done (a tick), active (numbered, lit) or still to come."""
+def _step(number: int, title: str, state: str) -> html.Div:
+    """One node of the stepper: done (a tick), active (numbered, lit) or still to come."""
     mark = html.I(className="bi bi-check-lg") if state == "done" else str(number)
-    return html.Div(
-        [
-            html.Div(mark, className="qs-step-mark"),
-            html.Div(
-                [html.Div(title, className="qs-step-title"),
-                 html.Div(sub, className="qs-step-sub")],
-                className="qs-step-text",
-            ),
-        ],
-        className=f"qs-step is-{state}",
-    )
+    return html.Div([html.Span(mark, className="qs-step-mark"),
+                     html.Span(title, className="qs-step-title")],
+                    className=f"qs-step is-{state}")
 
 
 def _step_states(record: Optional[DatasetRecord]) -> Tuple[str, str, str]:
@@ -117,13 +110,13 @@ def _pipeline(record: Optional[DatasetRecord]) -> html.Div:
     upload, mapping, use = _step_states(record)
     return html.Div(
         [
-            _step(1, "Upload", "Bring a spreadsheet", upload),
-            html.Div(className="qs-step-link"),
-            _step(2, "Map columns", "Confirm what each column is", mapping),
-            html.Div(className="qs-step-link"),
-            _step(3, "Use for the deck", "Hand it to Setup", use),
+            _step(1, "Upload", upload),
+            html.Span(className="qs-step-link"),
+            _step(2, "Map columns", mapping),
+            html.Span(className="qs-step-link"),
+            _step(3, "Use for deck", use),
         ],
-        className="qs-pipeline",
+        className="qs-pipeline qs8-steps",
     )
 
 
@@ -141,7 +134,7 @@ def _upload_zone() -> html.Div:
                         html.I(className="bi bi-file-earmark-spreadsheet qs-data-drop-icon"),
                         html.Div("Drop a spreadsheet here", className="qs-data-drop-title"),
                         html.Div(
-                            f"or click to browse — {', '.join(SUPPORTED_EXTENSIONS)}, up to 100k rows",
+                            f"or click to browse — {', '.join(SUPPORTED_EXTENSIONS)}, up to 1M rows",
                             className="qs-data-drop-sub",
                         ),
                     ],
@@ -262,25 +255,6 @@ def _source_badge(mapping: Optional[ColumnMapping]) -> Optional[html.Span]:
                      className="qs-map-badge user", title="You confirmed this mapping.")
 
 
-def _column_facts(profile: ColumnProfile) -> html.Div:
-    """The evidence for a decision: how many distinct values, how empty, and examples."""
-    chips = [html.Span(str(value), className="qs-map-sample") for value in profile.sample[:3]]
-    return html.Div(
-        [
-            html.Div(
-                [
-                    html.Span([html.B(f"{profile.n_distinct:,}"), " distinct"], className="qs-map-stat"),
-                    html.Span([html.B(f"{profile.null_pct:g}%"), " empty"],
-                              className="qs-map-stat" + (" warn" if profile.null_pct >= 50 else "")),
-                ],
-                className="qs-map-stats",
-            ),
-            html.Div(chips, className="qs-map-samples") if chips else None,
-        ],
-        className="qs-map-facts",
-    )
-
-
 def _row_state(mapping: Optional[ColumnMapping]) -> Tuple[str, str, bool]:
     """``(target, description, needs a description)`` for one mapping row.
 
@@ -293,63 +267,173 @@ def _row_state(mapping: Optional[ColumnMapping]) -> Tuple[str, str, bool]:
     return target, description, not target and not description.strip()
 
 
-def _mapping_row(profile: ColumnProfile, mapping: Optional[ColumnMapping]) -> html.Div:
+def _samples(profile: ColumnProfile) -> html.Div:
+    """Two lines of real values — the evidence the author decides from."""
+    values = [str(v) for v in profile.sample[:3]]
+    first, rest = (values[0], ", ".join(values[1:])) if values else ("—", "")
+    return html.Div([html.Div(first, className="qs8-sample-a"),
+                     html.Div(rest, className="qs8-sample-b") if rest else None],
+                    className="qs8-samples", title=", ".join(values))
+
+
+def _tier_chip(tier: str) -> Any:
+    if not tier:
+        return html.Span("—", className="qs8-tier none")
+    return html.Span(tier, className=f"qs8-tier {tier.lower()}")
+
+
+def _queue_row(row: "Q.QueueRow") -> html.Div:
+    """One column in the queue: what it is, its values, where it goes, why, how sure."""
+    profile, mapping = row.profile, row.mapping
     target, description, needs_desc = _row_state(mapping)
     icon, kind_label = _KIND_META.get(profile.kind, ("bi-fonts", "Text"))
+    desc_input = dcc.Input(
+        id={"type": "qs-map-desc", "col": profile.name},
+        value=description,
+        placeholder="Required — what is this column?" if needs_desc else "What this column means…",
+        debounce=True,
+        className="qs-map-desc qs8-desc" + (" required" if needs_desc else ""),
+    )
+    derive = (html.Button([html.I(className="bi bi-magic"), "Create Year"],
+                          id={"type": "qs8-derive-year", "col": profile.name, "at": "row"},
+                          n_clicks=0, className="qs8-fix sm")
+              if row.can_derive_year else None)
+    why = html.Div(
+        [html.Div(row.reason, className="qs8-reason"), derive,
+         desc_input if not target else html.Details(
+             [html.Summary([html.I(className="bi bi-pencil"), "Description"],
+                           className="qs8-desc-toggle"), desc_input],
+             className="qs8-desc-wrap")],
+        className="qs8-cell qs8-why",
+    )
     return html.Div(
         [
             html.Div(
-                [
-                    html.Div(
-                        [
-                            html.Span([html.I(className=f"bi {icon}"), kind_label],
-                                      className=f"qs-map-kindpill {profile.kind}"),
-                            html.Span(profile.name, className="qs-map-col", title=profile.name),
-                        ],
-                        className="qs-map-colhead",
-                    ),
-                    _column_facts(profile),
-                ],
-                className="qs-map-src",
+                [html.Div(profile.name, className="qs8-col", title=profile.name),
+                 html.Div([html.I(className=f"bi {icon}"),
+                           f"{kind_label} · column {row.letter}"], className="qs8-colmeta")],
+                className="qs8-cell qs8-src",
             ),
-            html.I(className="bi bi-arrow-right qs-map-arrow"),
+            html.Div(_samples(profile), className="qs8-cell"),
+            html.I(className="bi bi-arrow-right qs8-arrow"),
             html.Div(
-                [
-                    html.Div(
-                        [
-                            html.Span("Maps to", className="qs-map-fieldlabel"),
-                            _source_badge(mapping),
-                        ],
-                        className="qs-map-fieldhead",
-                    ),
-                    dcc.Dropdown(
-                        id={"type": "qs-map-target", "col": profile.name},
-                        options=list(_target_options()),
-                        value=target or None,
-                        placeholder="Not mapped — pick a column",
-                        className="studio-dd qs-map-dd",
-                    ),
-                ],
-                className="qs-map-field",
+                [dcc.Dropdown(
+                    id={"type": "qs-map-target", "col": profile.name},
+                    options=list(_target_options()),
+                    value=target or None,
+                    placeholder="Not mapped",
+                    maxHeight=320,
+                    className="qs6-dd qs8-dd",
+                 ),
+                 _source_badge(mapping)],
+                className="qs8-cell qs8-target",
             ),
-            html.Div(
-                [
-                    html.Span("Description" + (" — required" if needs_desc else ""),
-                              className="qs-map-fieldlabel"),
-                    dcc.Input(
-                        id={"type": "qs-map-desc", "col": profile.name},
-                        value=description,
-                        placeholder="Required — what is this column?" if needs_desc
-                                    else "What this column means…",
-                        debounce=True,
-                        className="qs-map-desc" + (" required" if needs_desc else ""),
-                    ),
-                ],
-                className="qs-map-field",
-            ),
+            why,
+            html.Div(_tier_chip(row.tier), className="qs8-cell qs8-conf"),
         ],
-        className="qs-map-row" + (" mapped" if target else "")
-                  + (" needs-desc" if needs_desc else ""),
+        className="qs-map-row qs8-row" + (" mapped" if target else "")
+                  + (" needs-desc" if needs_desc else "")
+                  + (" is-decide" if row.needs_decision else ""),
+    )
+
+
+def _queue_header() -> html.Div:
+    return html.Div(
+        [html.Span(t, className="qs8-h") for t in
+         ("Source column", "Sample values", "", "Target", "Reason", "Confidence")],
+        className="qs8-row qs8-headrow",
+    )
+
+
+def _queue_card(title: str, sub: str, rows: List["Q.QueueRow"], *, tone: str,
+                fold_after: int = 0) -> html.Section:
+    """One table of the queue. ``fold_after`` keeps the rest behind "Show N more" — still
+    in the page, because the submit callback reads every row."""
+    shown, rest = (rows[:fold_after], rows[fold_after:]) if fold_after else (rows, [])
+    body = [_queue_header(), *[_queue_row(r) for r in shown]]
+    if rest:
+        body.append(html.Details(
+            [html.Summary([html.I(className="bi bi-chevron-down"),
+                           f"Show {len(rest)} more mapped column" + ("s" if len(rest) != 1 else "")],
+                          className="qs8-more"),
+             *[_queue_row(r) for r in rest]],
+            className="qs8-fold",
+        ))
+    return html.Section(
+        [
+            html.Div(
+                [html.H2([title, html.Span(str(len(rows)), className=f"qs8-count {tone}")],
+                         className="qs8-h2"),
+                 html.P(sub, className="qs8-sub")],
+                className="qs8-card-head",
+            ),
+            html.Div(body, className="qs8-table"),
+        ],
+        className=f"qs8-card qs8-queue {tone}",
+    )
+
+
+def _queue_cards(record: DatasetRecord) -> List[Any]:
+    decide, suggested = Q.queue(
+        record, lambda p, m: _row_state(m)[1])
+    cards = []
+    if decide:
+        cards.append(_queue_card(
+            "Needs your decision",
+            "These columns need a person: a match we were not sure of, a column with nothing "
+            "to explain it, or a date the deck's Year could come from.",
+            decide, tone="decide"))
+    cards.append(_queue_card(
+        "Suggested mappings",
+        "Mapped from the column names and values. Review and change anything that is wrong.",
+        suggested, tone="ok", fold_after=6))
+    return cards
+
+
+def _readiness_rail(record: DatasetRecord) -> html.Aside:
+    """The three columns every deck needs, the one-click fix for a missing Year, and the
+    two actions: confirm the mapping, look at the data."""
+    items = Q.readiness(record)
+    ready = sum(1 for i in items if i.ready)
+    rows = []
+    for item in items:
+        fix = (html.Button([html.I(className="bi bi-magic"), f"Create Year from {item.derive_from}"],
+                           id={"type": "qs8-derive-year", "col": item.derive_from, "at": "rail"},
+                           n_clicks=0,
+                           className="qs8-fix") if item.derive_from else None)
+        rows.append(html.Div(
+            [html.Span(html.I(className="bi bi-check-circle-fill" if item.ready
+                              else "bi bi-exclamation-triangle-fill"),
+                       className="qs8-ready-icon"),
+             html.Div([html.Div(item.target.replace("_", " "), className="qs8-ready-name"),
+                       html.Div(item.detail, className="qs8-ready-detail"), fix],
+                      className="qs8-ready-text")],
+            className="qs-req-chip qs8-ready" + (" ok" if item.ready else " todo"),
+        ))
+    in_use = record.status == "submitted"
+    usable = record.status in ("mapped", "submitted")
+    return html.Aside(
+        [
+            html.H3("Deck readiness", className="qs8-h3"),
+            html.Div(rows, className="qs8-ready-list"),
+            html.Div(
+                [html.Div(f"{ready} of {len(items)} required fields ready", className="qs8-ready-sum"),
+                 html.P("Resolve the items in the queue to continue. You can still adjust any "
+                        "mapping below." if ready < len(items) else
+                        "Every column the deck needs is in place.", className="qs8-sub")],
+                className="qs8-ready-foot",
+            ),
+            html.Button([html.I(className="bi bi-stars"), "Confirm mapping"],
+                        id="qs-map-submit", className="qs8-btn primary",
+                        disabled=not record.profile.columns),
+            html.Div(id="qs-map-msg", className="qs-map-msg qs8-msg"),
+            html.Button([html.I(className="bi bi-rocket-takeoff"),
+                         "Update deck data" if in_use else "Use this data for the deck"],
+                        id="qs-ds-use", className="qs8-btn go") if usable else None,
+            html.A([html.I(className="bi bi-eye"), "Preview the data"],
+                   href="#qs8-data-view", className="qs8-btn ghost"),
+        ],
+        className="qs8-card qs8-rail",
     )
 
 
@@ -360,109 +444,6 @@ def _coverage(record: DatasetRecord) -> Tuple[List[str], List[str]]:
         covered.add("Premium")
     return ([t for t in REQUIRED_TARGETS if t in covered],
             [t for t in REQUIRED_TARGETS if t not in covered])
-
-
-def _requirement_chips(record: DatasetRecord) -> html.Div:
-    """The three columns the fixed templates cannot fill without, ticked off live."""
-    covered, _ = _coverage(record)
-    chips = []
-    for target in REQUIRED_TARGETS:
-        ok = target in covered
-        chips.append(
-            html.Span(
-                [
-                    html.I(className="bi " + ("bi-check-circle-fill" if ok else "bi-circle")),
-                    target.replace("_", " "),
-                ],
-                className="qs-req-chip" + (" ok" if ok else ""),
-                title="Required before this dataset can build a deck.",
-            )
-        )
-    return html.Div(chips, className="qs-req-chips")
-
-
-def _mapping_progress(record: DatasetRecord) -> html.Div:
-    """How much of the upload is accounted for — a meter plus the three counts."""
-    columns = record.profile.columns
-    states = [_row_state(_mapping_for(record, p.name)) for p in columns]
-    mapped = sum(1 for target, _, _ in states if target)
-    proposed = sum(1 for m in record.mappings if is_proposed(m))
-    pending = sum(1 for _, _, needs_desc in states if needs_desc)
-    return html.Div(
-        [
-            html.Div(
-                html.Div(className="qs-meter-fill",
-                         style={"width": f"{round(100 * mapped / max(len(columns), 1))}%"}),
-                className="qs-meter",
-            ),
-            html.Div(
-                [
-                    html.Span([html.B(f"{mapped}"), f" of {len(columns)} mapped"],
-                              className="qs-map-count"),
-                    html.Span([html.B(f"{proposed}"), " proposed for review"],
-                              className="qs-map-count alt") if proposed else None,
-                    html.Span([html.B(f"{pending}"), " need a description"],
-                              className="qs-map-count warn") if pending else None,
-                ],
-                className="qs-map-counts",
-            ),
-        ],
-        className="qs-map-progress",
-    )
-
-
-def _mapping_header() -> html.Div:
-    return html.Div(
-        [
-            html.Span("Your column", className="qs-map-h"),
-            html.Span(""),
-            html.Span("Maps to", className="qs-map-h"),
-            html.Span("Description", className="qs-map-h"),
-        ],
-        className="qs-map-row qs-map-headrow",
-    )
-
-
-def _mapping_panel(record: DatasetRecord) -> html.Div:
-    rows = [_mapping_row(p, _mapping_for(record, p.name)) for p in record.profile.columns]
-    _, missing = _coverage(record)
-    ready = not missing
-    hint = (
-        "Every number in the deck traces to these mappings."
-        if ready
-        else "Still needed: " + ", ".join(t.replace("_", " ") for t in missing)
-    )
-    return _section(
-        "bi-signpost-2", "Column mapping",
-        "Each column arrives with a proposed target. Change anything that's wrong — "
-        "columns you leave unmapped need a description, that's all the deck has to go on.",
-        html.Div(
-            [
-                _mapping_progress(record),
-                html.Div([_mapping_header(), *rows], className="qs-map-rows"),
-                html.Div(
-                    [
-                        html.Div(
-                            [
-                                html.Div(hint, className="qs-map-hint" + ("" if ready else " warn")),
-                                html.Div(id="qs-map-msg", className="qs-map-msg"),
-                            ],
-                            className="qs-map-hints",
-                        ),
-                        html.Button(
-                            [html.I(className="bi bi-check2-circle"), "Confirm mapping"],
-                            id="qs-map-submit",
-                            className="qs-generate-btn qs-map-submit",
-                            disabled=not record.profile.columns,
-                        ),
-                    ],
-                    className="qs-map-actions",
-                ),
-            ],
-            className="qs-map-panel",
-        ),
-        aside=_requirement_chips(record),
-    )
 
 
 # ── primary measure + custom KPIs ────────────────────────────────────────────
@@ -619,23 +600,41 @@ def _column_chips(frame, record: DatasetRecord) -> html.Div:
     return html.Div(chips, className="qs-colchip-row")
 
 
-def _recipe_options() -> List[Mapping[str, str]]:
-    from studio.dataset.transform import RECIPES
+def _recipe_options() -> List[Mapping[str, Any]]:
+    """Every reading, grouped: text surgery (split, combine…) first, then dates and tidy-ups."""
+    from studio.dataset.transform import PARAM_RECIPES, RECIPES
 
-    return [{"label": label, "value": key} for key, (label, _fn) in RECIPES.items()]
+    return ([{"label": label, "value": key} for key, (label, _fn, _args) in PARAM_RECIPES.items()]
+            + [{"label": label, "value": key} for key, (label, _fn) in RECIPES.items()])
+
+
+def _recipe_arg_specs() -> Dict[str, Any]:
+    """``{recipe: [setting 1 label, setting 2 label]}`` — what the clientside relabel reads."""
+    from studio.dataset.transform import PARAM_RECIPES
+
+    return {key: list(args) for key, (_label, _fn, args) in PARAM_RECIPES.items()}
 
 
 def _add_column_bar(frame) -> html.Div:
-    """Create a column: read one out of another (the common case), or compute a formula."""
+    """Create a column: read one out of another (split, combine, a Year from a date…), or
+    compute a formula. The two settings boxes only appear for a reading that needs them."""
     columns = [{"label": str(c), "value": str(c)} for c in frame.columns]
+    hidden = {"display": "none"}
     return html.Div(
         [
+            dcc.Store(id="qs-col-arg-specs", data=_recipe_arg_specs()),
             _field("FROM COLUMN", dcc.Dropdown(id="qs-col-source", options=columns,
                                                placeholder="Pick a column…",
-                                               className="studio-dd")),
-            _field("READ", dcc.Dropdown(id="qs-col-recipe", options=_recipe_options(),
-                                        placeholder="e.g. Year from a date",
-                                        className="studio-dd")),
+                                               maxHeight=320, className="studio-dd")),
+            _field("MAKE", dcc.Dropdown(id="qs-col-recipe", options=_recipe_options(),
+                                        placeholder="Split, combine, Year from a date…",
+                                        maxHeight=320, className="studio-dd")),
+            html.Div(_field("SETTING", dcc.Input(id="qs-col-arg1", debounce=False,
+                                                 className="qs-map-desc qs-col-arg")),
+                     id="qs-col-arg1-wrap", style=hidden),
+            html.Div(_field("AND", dcc.Input(id="qs-col-arg2", debounce=False,
+                                             className="qs-map-desc qs-col-arg")),
+                     id="qs-col-arg2-wrap", style=hidden),
             _field("NAME", dcc.Input(id="qs-col-name", placeholder="Defaults to the reading",
                                      debounce=False, className="qs-map-desc qs-col-name")),
             _field("OR FORMULA", dcc.Input(id="qs-col-formula",
@@ -662,9 +661,10 @@ def _columns_section(record: DatasetRecord, frame) -> Optional[html.Div]:
         return None
     history = shape_history(record)
     return _section(
-        "bi-columns-gap", "Columns",
-        "Create a column from one you already have — a Year out of a billing date — "
-        "or delete what the deck does not need.",
+        "bi-columns-gap", "Your columns",
+        "Create a column from one you already have — split \"Asia - Singapore\" into its "
+        "parts, combine two, read a Year out of a date — or delete what the deck does not "
+        "need. Your mapping choices are kept either way.",
         html.Div(
             [
                 _column_chips(frame, record),
@@ -817,27 +817,38 @@ def _grid(frame, *, grid_id: str = "qs-data-grid", height: int = 480) -> Any:
             for c in head.columns
         ],
         defaultColDef={"minWidth": 110},
-        dashGridOptions={"pagination": True, "paginationPageSize": 25},
+        dashGridOptions={"pagination": True, "paginationPageSize": 25,
+                         "paginationPageSizeSelector": [25, 50, 100]},
         className="ag-theme-alpine qs-data-grid",
         style={"height": f"{height}px", "width": "100%"},
     )
 
 
-def _active_panel(record: DatasetRecord, frame) -> html.Div:
+def _data_view(record: DatasetRecord, frame) -> html.Div:
+    """See the data: the working rows (with any created columns), sortable and filterable."""
     n_rows = len(frame) if frame is not None else record.n_rows
     n_preview = min(n_rows, _PREVIEW_ROWS)
+    return html.Div(
+        _section(
+            "bi-grid-3x2", "Your data",
+            f"First {n_preview:,} of {n_rows:,} rows, including any columns you created — "
+            "sort and filter to explore.",
+            _grid(frame, height=520),
+            aside=html.Span(f"{len(frame.columns) if frame is not None else record.n_cols} columns",
+                            className="qs-sec-count"),
+        ),
+        id="qs8-data-view",
+    )
+
+
+def _active_panel(record: DatasetRecord, frame) -> html.Div:
     sections = [
-        _columns_section(record, frame),
-        _mapping_panel(record),
+        *_queue_cards(record),
         _primary_measure_card(record),
         _custom_kpi_card(record),
-        _use_for_deck_section(record, frame),
-        _section(
-            "bi-grid-3x2", "Data preview",
-            f"First {n_preview:,} of {n_rows:,} rows — sort and filter to explore.",
-            _grid(frame),
-            aside=html.Span(f"{record.n_cols} columns", className="qs-sec-count"),
-        ),
+        _columns_section(record, frame),
+        _use_for_deck_section(record, frame) if PIVOT_ENABLED else None,
+        _data_view(record, frame),
     ]
     return html.Div([s for s in sections if s is not None], className="qs-data-active")
 
@@ -861,29 +872,36 @@ def _empty_panel() -> html.Div:
 # ── the mode body ────────────────────────────────────────────────────────────
 
 
+def _uploaded_on(record: DatasetRecord) -> str:
+    from datetime import datetime
+
+    try:
+        return "Uploaded " + datetime.fromisoformat(str(record.created)[:19]).strftime(
+            "%d %b %Y, %H:%M")
+    except ValueError:
+        return ""
+
+
 def _head(record: Optional[DatasetRecord]) -> html.Div:
+    if record is None:
+        title = [html.H1("Your data", className="qs8-h1"),
+                 html.P("Bring your own spreadsheet. We propose what every column is, you "
+                        "confirm it once, and the deck builds from it.", className="qs8-sub")]
+    else:
+        meta = " · ".join(p for p in (f"{record.n_rows:,} rows", f"{record.n_cols} columns",
+                                      _uploaded_on(record)) if p)
+        title = [html.H1("Your data", className="qs8-h1"),
+                 html.Div(record.filename or record.name, className="qs8-file"),
+                 html.Div(meta, className="qs8-meta")]
+    status = None
+    if record is not None:
+        label, tone = _STATUS_CHIP.get(record.status, (record.status, "todo"))
+        status = html.Span([html.I(className="bi bi-check-circle" if tone != "todo"
+                                   else "bi bi-pencil-square"), label],
+                           className=f"qs8-status {tone}")
     return html.Div(
-        [
-            html.Div(
-                [
-                    html.Div("QBR Studio", className="qs-setup-eyebrow"),
-                    html.Div([html.I(className="bi bi-table"), "Your data"], className="qs-setup-title"),
-                    html.P(
-                        "Bring your own dataset. We propose what every column is, you confirm "
-                        "it once, and the deck builds from it — figures stay deterministic "
-                        "and traceable.",
-                        className="qs-setup-sub",
-                    ),
-                ],
-                className="qs-setup-head-text",
-            ),
-            html.Span(
-                [html.I(className="bi bi-person-check"), "Your data governs"],
-                className="qs-govern-chip",
-                title="A submitted dataset takes precedence over the governed database for this deck.",
-            ),
-        ],
-        className="qs-setup-head",
+        [html.Div(title, className="qs8-title"), _pipeline(record), status],
+        className="qs8-head",
     )
 
 
@@ -904,17 +922,14 @@ def data_body(dataset_state: Optional[Mapping[str, Any]]) -> html.Div:
         except ValueError:
             frame = repo.load_frame(active_id)
 
-    aside = html.Div([_upload_zone(), _dataset_list(records, active_id)], className="qs-setup-aside")
+    library = html.Div([_upload_zone(), _dataset_list(records, active_id)],
+                       className="qs8-library")
     main = _active_panel(record, frame) if record else _empty_panel()
-    card = html.Div(
-        [
-            _head(record),
-            _pipeline(record),
-            html.Div(
-                [html.Div(main, className="qs-data-main"), aside],
-                className="qs-setup-layout",
-            ),
-        ],
-        className="qs-setup-card",
+    rail = html.Div([_readiness_rail(record) if record else None, library],
+                    className="qs-setup-aside qs8-aside")
+    return html.Div(
+        [_head(record),
+         html.Div([html.Div(main, className="qs-data-main qs8-main"), rail],
+                  className="qs8-layout")],
+        className="qs-setup-wrap qs8-page",
     )
-    return html.Div(card, className="qs-setup-wrap")

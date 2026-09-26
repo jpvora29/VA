@@ -54,8 +54,19 @@ def test_the_plan_is_built_from_the_registry_not_hardcoded_names():
     plan = index_plan("gpr")
     assert plan
     by_name = {spec.name: spec.columns for spec in plan}
-    assert by_name["ix_studio_gpr_carrier_country_year"] == (
+    assert by_name["ix_studio_gpr_carrier_country_year_nc"] == (
         "Carrier_Group", "Country", "Year", "Premium",
+    )
+
+
+def test_text_columns_are_indexed_nocase_and_numbers_are_not():
+    """The analytics layer compares text as ``"col" COLLATE NOCASE = :v``; SQLite only
+    SEARCHES an index for that when the index column carries the same collation."""
+    spec = {s.name: s for s in index_plan("gpr")}["ix_studio_gpr_carrier_country_year_nc"]
+    assert spec.nocase == ("Carrier_Group", "Country")
+    assert spec.create_sql() == (
+        'CREATE INDEX IF NOT EXISTS "ix_studio_gpr_carrier_country_year_nc" ON "GPR" '
+        '("Carrier_Group" COLLATE NOCASE, "Country" COLLATE NOCASE, "Year", "Premium")'
     )
 
 
@@ -113,21 +124,35 @@ def test_existing_indexes_are_reported(engine):
 
 
 def test_the_index_is_actually_used_by_the_query_planner(engine, tmp_path):
-    """The point of the whole module: SQLite must CHOOSE the index.
+    """The point of the whole module: SQLite must SEARCH the index.
 
     An index the planner ignores costs disk and buys nothing, so this asserts the
-    shape still matches the WHERE clause a build issues.
+    shape still matches the WHERE clause a build issues — the one ``where_clause``
+    really writes, text compared case-insensitively.
     """
+    from core.analytics.sql import flow_spec, where_clause
+
     ensure_indexes("gpr", engine)
+    params = {}
+    where = where_clause(flow_spec("gpr"), {"Country": "singapore", "Carrier_Group": "ZURICH",
+                                            "Year": 2024}, params)
     con = sqlite3.connect(tmp_path / "gpr.db")
-    plan = con.execute(
-        "EXPLAIN QUERY PLAN SELECT Product_Line, SUM(Premium) FROM GPR "
-        "WHERE Country=? AND Carrier_Group=? AND Year=? GROUP BY Product_Line",
-        ("Singapore", "Zurich", 2024),
-    ).fetchall()
+    sql = f"EXPLAIN QUERY PLAN SELECT Product_Line, SUM(Premium) FROM GPR{where} GROUP BY Product_Line"
+    plan = con.execute(sql.replace(":f0", ":f0"), params).fetchall()
     detail = " ".join(str(row[-1]) for row in plan)
-    assert "ix_studio_gpr" in detail, detail
-    assert "SCAN GPR" not in detail, detail
+    assert "SEARCH GPR USING" in detail and "ix_studio_gpr" in detail, detail
+
+
+def test_nocase_matching_answers_like_lower(engine):
+    """The collated comparison is an optimisation, never a different answer."""
+    from core.analytics.sql import flow_spec, where_clause, run_rows
+
+    ensure_indexes("gpr", engine)
+    params = {}
+    where = where_clause(flow_spec("gpr"), {"Country": ["SINGAPORE"], "Carrier_Group": "zurich"},
+                         params)
+    rows = run_rows(engine, f'SELECT SUM(Premium) AS v FROM "GPR"{where}', params)
+    assert rows == [{"v": 200.0}]
 
 
 def test_results_are_identical_with_and_without_indexes(engine):

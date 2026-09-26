@@ -161,3 +161,11 @@ def dataset_dependent_options(
 def _plain(value: Any) -> Any:
     """Numpy scalars → plain python so Dash serializes dropdown values cleanly."""
     return value.item() if hasattr(value, "item") else value
+
+
+def dataset_quarter_labels(dataset_id: str) -> List[str]:
+    """The uploaded dataset's own ``Quarter`` labels — ``[]`` when it has no such column."""
+    frame = dataset_frame(dataset_id)
+    if frame is None or "Quarter" not in frame.columns:
+        return []
+    return sorted({str(v) for v in frame["Quarter"].dropna() if str(v).strip()})

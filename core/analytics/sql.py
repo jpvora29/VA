@@ -85,6 +85,14 @@ def where_clause(
 
     Text values are compared case-insensitively (the GPR/survey rule); numeric
     values (e.g. Year) compared directly. Returns "" for no filters.
+
+    Case-insensitivity is spelled ``"col" COLLATE NOCASE = :v``, not
+    ``LOWER("col") = LOWER(:v)``. The two agree on every value (SQLite's built-in
+    ``LOWER`` and ``NOCASE`` both fold ASCII only), but a function wrapped round the
+    column hides it from every index, so each filtered aggregate was a full table
+    scan — measured, 89% of a three-country deck build. The collated form can use an
+    index declared ``COLLATE NOCASE`` (see ``studio.indexes``) and costs nothing where
+    there is none.
     """
     clauses: List[str] = []
     for i, (column, value) in enumerate(filters.items()):
@@ -100,8 +108,7 @@ def where_clause(
                 params[k] = v
                 keys.append(f":{k}")
             if all(isinstance(v, str) for v in vals):  # case-insensitive text match
-                placeholders = ", ".join(f"LOWER({k})" for k in keys)
-                clauses.append(f'LOWER("{col}") IN ({placeholders})')
+                clauses.append(f'"{col}" COLLATE NOCASE IN ({", ".join(keys)})')
             else:
                 clauses.append(f'"{col}" IN ({", ".join(keys)})')
             continue
@@ -109,7 +116,7 @@ def where_clause(
         if isinstance(value, bool):  # guard: bool is an int subclass
             clauses.append(f'"{col}" = :{key}')
         elif isinstance(value, str):
-            clauses.append(f'LOWER("{col}") = LOWER(:{key})')
+            clauses.append(f'"{col}" COLLATE NOCASE = :{key}')
         else:
             clauses.append(f'"{col}" = :{key}')
         params[key] = value

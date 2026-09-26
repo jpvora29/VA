@@ -811,9 +811,12 @@ def test_the_form_no_longer_asks_how_much_of_the_deck_to_build():
     form = _form()
     assert "How much of the deck should we build?" not in form
     assert "Entire QBR" not in form and "Product-wise" not in form
-    # …and every template page is on the form, with its own tick.
-    assert form.count('"qs-slide"') == sum(len(catalog(a)) for a in registered_axes()
-                                           if a != "survey")
+    # …and every distinct template page is on the form, with its own tick (a run of
+    # identical pages — the product template's Feedback layouts — is one tick).
+    from studio.page.authoring.setup import page_groups
+
+    assert form.count('"qs-slide"') == sum(len(page_groups(catalog(a)))
+                                           for a in registered_axes() if a != "survey")
 
 
 def test_deck_axes_lists_every_registered_axis_by_default():
@@ -873,9 +876,28 @@ def test_the_page_count_is_the_sum_of_the_pages_still_ticked():
         summary = panel.children[0].children[0]  # "<b>N</b> base pages"
         return int(summary.children[0].children)
 
+    from studio.page.authoring.setup import page_groups
+
     dropped = DeckSlides({"overall": [0]})
-    assert pages() == sum(len(catalog(a)) for a in ("overall", "product", "country", "end"))
+    assert pages() == sum(len(page_groups(catalog(a)))
+                          for a in ("overall", "product", "country", "end"))
     assert pages(dropped) == pages() - 1
+
+
+def test_identical_pages_are_one_tick_that_covers_them_all():
+    """The product template repeats its Feedback page once per country layout; the author
+    sees one Feedback row, and unticking it drops every copy."""
+    from studio.authoring.setup import slides_from_form
+    from studio.page.authoring.setup import group_key, page_groups
+
+    groups = page_groups(catalog("product"))
+    feedback = [g for g in groups if g[0].section == "feedback"]
+    assert len(feedback) == 1 and len(feedback[0]) == len(catalog("product"))
+    key = group_key(feedback[0])
+    form = _form()
+    assert f'"idx": "{key}"' in form
+    unticked = slides_from_form([{"axis": "product", "idx": key}], [False])
+    assert all(not unticked.includes("product", e.index) for e in feedback[0])
 
 
 def test_country_scoped_peer_group_reaches_the_deck_benchmark(tmp_path):

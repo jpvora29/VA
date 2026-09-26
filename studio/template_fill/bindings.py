@@ -164,6 +164,20 @@ def _growth_bubble(result, filters: Dict[str, Any]) -> Dict[str, Any]:
     return {"points": points}
 
 
+def period_labels(result, year: int) -> Dict[str, Any]:
+    """``{"period_labels": {"2026": "TTM Aug 2026", "2025": "TTM Aug 2025"}}`` off the calendar.
+
+    On an R12M or date-range run a year on a slide ("Marsh GWP 2025", "FY 2025", "2025
+    Rank") names a PERIOD, and printing the bare year would claim a calendar year the figures
+    do not cover. The fill engine's label pass (``fill._label_subs``) swaps each reporting
+    year it shifts into place for its period label. Empty on the calendar basis.
+    """
+    window = getattr(result, "period", None)
+    if window is None or not getattr(window, "relabels", False):
+        return {}
+    return {"period_labels": {str(y): window.label(y) for y in (year, year - 1)}}
+
+
 def resolve_roles(result) -> Dict[str, Any]:
     """Map the role vocabulary to values from ``result``.
 
@@ -183,6 +197,7 @@ def resolve_roles(result) -> Dict[str, Any]:
     year = fy.get(_YEAR_COL)
     if year is not None:
         out["period_year"] = int(year)
+        out.update(period_labels(result, int(year)))
 
     # Carrier (subject) total + YoY, and the whole Marsh book total + YoY (raw).
     carrier_tot = _safe(C.period_totals, result.flow, fy, result.engine)

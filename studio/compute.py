@@ -52,16 +52,21 @@ _INDUSTRY_COL = "SIC_Major_Class"
 
 # ── the quarter ──────────────────────────────────────────────────────────────
 #
-# A QBR reports on a quarter, so Setup asks for one. The GPR book has no quarter column —
-# it records the month a premium was billed in — so a quarter is a set of three months, and
-# that is how the filter is expressed: ``Month_Name IN ('January','February','March')``.
+# A QBR reports on a quarter, so Setup asks for one. The warehouse carries its own
+# ``Quarter`` column, and the filter reads it directly — its values are whatever the book
+# says (a fiscal quarter is not always the calendar months), offered as they are stored.
+# A book WITHOUT one (the seed, an upload with only dates) falls back to the months a
+# calendar quarter covers: ``Month_Name IN ('January','February','March')``. A run's working
+# book (:mod:`studio.book`) always has a ``Quarter`` column — native, or derived from the
+# billing month — so the deck itself always filters the same way.
 #
 # Deliberately NOT a member of ``FILTER_COLUMN``. That table is also what defines the filter
-# cube (:func:`studio.data.cube_columns`), and adding the month column to the cube would
-# multiply its distinct combinations by twelve to answer a cascade nobody asked for — a
-# quarter should not remove carriers or products from the other lists. So the quarter filters
-# the DATA and stays out of the cascade, and this is the one place that knows how.
-QUARTER_COLUMN = "Month_Name"
+# cube (:func:`studio.data.cube_columns`), and adding a period column to the cube would
+# multiply its distinct combinations to answer a cascade nobody asked for — a quarter
+# should not remove carriers or products from the other lists. So the quarter filters the
+# DATA and stays out of the cascade, and this is the one place that knows how.
+QUARTER_COLUMN = "Quarter"
+QUARTER_MONTH_COLUMN = "Month_Name"
 
 QUARTER_MONTHS: Dict[str, Tuple[str, ...]] = {
     "Q1": ("January", "February", "March"),
@@ -73,14 +78,25 @@ QUARTER_MONTHS: Dict[str, Tuple[str, ...]] = {
 QUARTERS: Tuple[str, ...] = tuple(QUARTER_MONTHS)
 
 
-def quarter_options() -> List[Dict[str, str]]:
-    """The Setup dropdown's choices — the calendar's four quarters.
+def quarter_options(values: Sequence[Any] = ()) -> List[Dict[str, str]]:
+    """The Setup dropdown's choices — the book's own quarter labels, else Q1–Q4.
 
-    A fixed vocabulary rather than a distinct scan: the four quarters exist whether or not
-    a given scope has premium in each, and a quarter missing from the list would read as
-    "this carrier has no Q3" when it means "this filter combination has none".
+    ``values`` is the distinct content of the book's ``Quarter`` column when it has one.
+    Never narrowed by the other filters: every quarter the book records is offered whether
+    or not the current scope wrote premium in it, because a quarter missing from the list
+    would read as "this carrier has no Q3" when it means "this combination has none".
     """
-    return [{"label": q, "value": q} for q in QUARTERS]
+    labels = [str(v) for v in values if str(v or "").strip()] or list(QUARTERS)
+    return [{"label": q, "value": q} for q in sorted(dict.fromkeys(labels), key=_quarter_order)]
+
+
+def _quarter_order(label: str) -> Tuple[str, str]:
+    """Year-first when a label carries one ("2025 Q1" before "2025 Q2" before "2026 Q1")."""
+    import re
+
+    year = re.search(r"(19|20)\d{2}", label)
+    quarter = re.search(r"[1-4]", re.sub(r"(19|20)\d{2}", "", label))
+    return (year.group(0) if year else "", quarter.group(0) if quarter else label)
 
 
 def form_options(by_column: Mapping[str, Any]) -> Dict[str, Any]:
@@ -177,29 +193,103 @@ class OverallResult:
     survey_peers: Optional[Tuple[str, ...]] = None
     # …and the survey peer pin market by market, for the same reason as ``peers_by_country``.
     survey_peers_by_country: Optional[Dict[str, Tuple[str, ...]]] = None
+    # The reporting period (``studio.period.PeriodWindow``) — ``None`` on the calendar year.
+    # When set, ``Year`` in ``engine``'s book already means "period year", so every metric
+    # below reads it unchanged; this is only what a page needs to NAME the period
+    # ("TTM Aug 2026" rather than "2026").
+    period: Optional[Any] = None
+    # The run's working book (``studio.book.WorkingBook``): its ``r12m()`` is what the
+    # Country page's TTM table reports from whatever the basis. ``None`` for a result
+    # computed straight off an engine (the demo pages, tests).
+    book: Optional[Any] = None
 
 
 _BLANK_VALS = (None, "", "all", "All")
 
 
-def _resolve_filters(filters: Mapping[str, Any]) -> Dict[str, Any]:
+def quarter_number(label: Any) -> Optional[int]:
+    """1..4 for "Q1", "q1", "2025-Q1", "Q1 FY25", "1" — ``None`` for anything else."""
+    import re
+
+    text = str(label or "").strip()
+    if text in ("1", "2", "3", "4"):
+        return int(text)
+    found = re.search(r"q\s*([1-4])", text, re.I)
+    return int(found.group(1)) if found else None
+
+
+def match_quarters(chosen: Sequence[Any], vocabulary: Sequence[Any]) -> Tuple[str, ...]:
+    """The book's own labels for the quarters ``chosen`` — exact first, then by number.
+
+    The form offers the labels the book stores, so an exact match is the normal case. The
+    fallback is for a form that could only offer Q1–Q4 (the warm-up had not read the book
+    yet) against a book that writes "2025-Q1": a bare "Q1" then selects every label that
+    IS a first quarter, rather than matching nothing and emptying the deck.
+    """
+    picked = [str(c) for c in chosen if str(c or "").strip()]
+    vocab = [str(v) for v in vocabulary if str(v or "").strip()]
+    if not vocab:
+        return tuple(picked)
+    lowered = {v.lower(): v for v in vocab}
+    exact = [lowered[c.lower()] for c in picked if c.lower() in lowered]
+    numbers = {quarter_number(c) for c in picked if c.lower() not in lowered} - {None}
+    by_number = [v for v in vocab if quarter_number(v) in numbers]
+    return tuple(dict.fromkeys(exact + by_number)) or tuple(picked)
+
+
+def _quarter_filter(values: Any, *, has_quarter: bool,
+                    vocabulary: Sequence[Any] = ()) -> Dict[str, Any]:
+    """The quarter pin as a column constraint — the book's own column when it has one."""
+    wanted = values if isinstance(values, (list, tuple, set)) else (values,)
+    chosen = tuple(str(v) for v in wanted if v not in _BLANK_VALS)
+    if not chosen:
+        return {}
+    if has_quarter:
+        return {QUARTER_COLUMN: match_quarters(chosen, vocabulary)}
+    months = quarter_months(chosen)
+    return {QUARTER_MONTH_COLUMN: months} if months else {}
+
+
+def quarter_vocabulary(engine: Any, flow: str = "gpr") -> Tuple[str, ...]:
+    """Every label the book's ``Quarter`` column holds — cheap on a run's working book."""
+    facts = compute_breakdown(
+        PrimitiveArgs(flow=flow, metric="premium", group_by=(QUARTER_COLUMN,), filters={}),
+        engine=engine,
+    )
+    return tuple(str(f.dims.get(QUARTER_COLUMN)) for f in facts
+                 if f.dims.get(QUARTER_COLUMN) not in (None, ""))
+
+
+def has_quarter_column(engine: Any, table: str = "GPR") -> bool:
+    """Whether ``engine``'s book carries a ``Quarter`` column (a FrameSource or a database)."""
+    from core.analytics.frames import as_frame_source
+    from core.analytics.sql import resolve_engine, table_columns
+
+    frames = as_frame_source(engine)
+    if frames is not None:
+        return QUARTER_COLUMN in frames.columns(table)
+    try:
+        return QUARTER_COLUMN in table_columns(resolve_engine(engine), table)
+    except Exception:  # noqa: BLE001 - an unreadable schema means "no such column"
+        return False
+
+
+def _resolve_filters(filters: Mapping[str, Any], *, has_quarter: bool = False,
+                     quarter_labels: Sequence[Any] = ()) -> Dict[str, Any]:
     """Map non-empty form filters to real columns; drop blanks/'all'.
 
     Multi-select values (lists from the form) are kept as tuples so they stay
     hashable for ``PrimitiveArgs.cache_key`` and flow through ``where_clause`` as
     an ``IN (...)`` constraint.
 
-    One filter is DERIVED rather than mapped: ``quarter`` becomes the month names it
-    covers (see :data:`QUARTER_MONTHS`), because the book records a billing month and not
-    a quarter. Doing it here means every caller — the deck, the scope preview, the peer
-    scoping — narrows to the quarter without any of them knowing that."""
+    ``quarter`` reads the book's ``Quarter`` column when it has one (``has_quarter``) and
+    otherwise becomes the month names a calendar quarter covers (see :data:`QUARTER_MONTHS`).
+    Doing it here means every caller — the deck, the scope preview, the peer scoping —
+    narrows to the quarter without any of them knowing how."""
     out: Dict[str, Any] = {}
     for key, val in (filters or {}).items():
         if key == "quarter":
-            # The one derived filter: a quarter is three of the book's month names.
-            months = quarter_months(val)
-            if months:
-                out[QUARTER_COLUMN] = months
+            out.update(_quarter_filter(val, has_quarter=has_quarter, vocabulary=quarter_labels))
             continue
         col = FILTER_COLUMN.get(key, key)
         if isinstance(val, (list, tuple, set)):
@@ -442,6 +532,43 @@ def sow_movement(flow, filters, engine, subject) -> Optional[Dict[str, Any]]:
     return {"current": c, "prior": p, "delta": (c - p) if (p is not None) else None}
 
 
+_COUNTRY_COL = "Country"
+
+
+@memoized
+def sow_by_market(flow, filters, engine, subject) -> Dict[str, Dict[str, Optional[float]]]:
+    """``{country: {"current": sow %, "prior": sow %}}`` — the subject's share per market."""
+    cur = _current_year(filters)
+    if cur is None or not subject:
+        return {}
+
+    def at(year):
+        return {str(f.dims.get(_COUNTRY_COL)): f.value for f in compute_share_of_wallet(
+            PrimitiveArgs(flow=flow, metric="premium", group_by=(_COUNTRY_COL,),
+                          filters={**filters, _YEAR_COL: year}, subject=subject),
+            engine=engine)}
+
+    now, before = at(cur), at(cur - 1)
+    return {c: {"current": now.get(c), "prior": before.get(c)} for c in set(now) | set(before)}
+
+
+@memoized
+def rank_by_market(flow, filters, engine, subject) -> Dict[str, Dict[str, int]]:
+    """``{country: {"rank": n, "of_n": m}}`` — the subject's rank in each market."""
+    cur = _current_year(filters)
+    if cur is None or not subject:
+        return {}
+    base = {k: v for k, v in filters.items() if k != _CARRIER_COL}
+    out: Dict[str, Dict[str, int]] = {}
+    for f in compute_rank(PrimitiveArgs(flow=flow, metric="premium", group_by=(_COUNTRY_COL,),
+                                        filters={**base, _YEAR_COL: cur}), engine=engine):
+        if str(f.dims.get("entity", "")).lower() == subject.lower():
+            of_n = f.support[0].get("of_n") if f.support else None
+            out[str(f.dims.get(_COUNTRY_COL))] = {"rank": int(f.value),
+                                                  "of_n": int(of_n) if of_n else 0}
+    return out
+
+
 @memoized
 def premium_by_dim(flow, dim, filters, engine) -> List[Dict[str, Any]]:
     """Current premium per value of ``dim``, biggest first — ``[{name, premium}]``.
@@ -512,10 +639,13 @@ def product_breakdown_rows(
       • ``sow``         — the carrier's share of wallet in that product line;
       • ``rank``        — the carrier's rank among carriers in that product line;
       • ``rank_change`` — rank improvement vs the prior year (+ = moved up);
-      • ``runway``      — own premium − the TOP-5 carriers' AVERAGE premium in that
-                          product line (negative = behind the top-5 average);
-      • ``peer_gwp``    — that TOP-5 carrier AVERAGE itself (the confidential peer
-                          benchmark the breakdown table's "Peer GWP" column shows).
+      • ``runway``      — own premium − the AVERAGE premium, in that product line, of the
+                          five largest carriers IN THE SCOPE (the country) — one fixed set
+                          of five for every row (negative = behind them);
+      • ``peer_gwp``    — that top-5 average itself (the confidential benchmark the
+                          breakdown table's "Peer GWP" column shows beside the runway).
+    Never the author's selected peer group: the page's header says "Top 5", and a peer
+    group chosen for benchmarking is a different, smaller question (see ``peer_gap``).
     Everything is premium-derived — no LLM, no random values.
     """
     if not subject:
@@ -548,15 +678,13 @@ def product_breakdown_rows(
     rank_cur = ranks(cur)
     rank_prev = ranks(cur - 1) if cur is not None else {}
 
-    # Runway: TOP-5 carrier-average premium per product (one grouped query).
-    per_carrier: Dict[str, List[float]] = {}
-    for x in compute_breakdown(PrimitiveArgs(flow=flow, metric="premium", group_by=(dim, _CARRIER_COL),
-                                             filters=scoped(base, cur)), engine=engine):
-        per_carrier.setdefault(str(x.dims.get(dim)), []).append(x.value)
+    # Runway: the scope's five largest carriers, averaged per product (two grouped queries).
+    leaders = top_carriers(flow, scoped(base, cur), engine)
+    per_carrier = premium_by_dim_and_carrier(flow, dim, scoped(base, cur), engine)
     runway: Dict[str, float] = {}
     peer_avg: Dict[str, float] = {}
-    for p, vals in per_carrier.items():
-        peer_avg[p] = avg = _top_average(vals)
+    for p, by_carrier in per_carrier.items():
+        peer_avg[p] = avg = leaders_average(by_carrier, leaders)
         runway[p] = (gwp.get(p, 0.0) or 0.0) - avg
 
     rows: List[Dict[str, Any]] = []
@@ -573,6 +701,41 @@ def product_breakdown_rows(
 
 
 _PEER_TOP_N = 5
+
+
+def top_carriers(flow, filters, engine, *, top: int = _PEER_TOP_N) -> Tuple[str, ...]:
+    """The ``top`` largest carriers by premium under ``filters`` — the subject eligible.
+
+    Ties are broken by name so the set is the same on every run.
+    """
+    facts = compute_breakdown(
+        PrimitiveArgs(flow=flow, metric="premium", group_by=(_CARRIER_COL,), filters=filters),
+        engine=engine,
+    )
+    ranked = sorted(((f.value or 0.0, str(f.dims.get(_CARRIER_COL))) for f in facts
+                     if f.dims.get(_CARRIER_COL) is not None), key=lambda r: (-r[0], r[1]))
+    return tuple(name for _value, name in ranked[:top])
+
+
+def premium_by_dim_and_carrier(flow, dim, filters, engine) -> Dict[str, Dict[str, float]]:
+    """``{dim value: {carrier: premium}}`` in one grouped query."""
+    out: Dict[str, Dict[str, float]] = {}
+    for x in compute_breakdown(PrimitiveArgs(flow=flow, metric="premium",
+                                             group_by=(dim, _CARRIER_COL), filters=filters),
+                               engine=engine):
+        out.setdefault(str(x.dims.get(dim)), {})[str(x.dims.get(_CARRIER_COL))] = x.value or 0.0
+    return out
+
+
+def leaders_average(by_carrier: Mapping[str, float], leaders: Sequence[str]) -> float:
+    """The leaders' average premium in one cut — a leader writing none of it counts as 0.
+
+    The set is fixed across the rows, so a product where two of the five write nothing has
+    a LOWER benchmark than one they all write — which is exactly the runway's point.
+    """
+    if not leaders:
+        return 0.0
+    return sum(by_carrier.get(name, 0.0) or 0.0 for name in leaders) / len(leaders)
 
 
 def _top_average(values: List[float], *, top: int = _PEER_TOP_N) -> float:
@@ -852,6 +1015,8 @@ class ComputeRequest:
     survey_carrier: Optional[str] = None
     survey_peers: Optional[Tuple[str, ...]] = None
     survey_peers_by_country: Optional[Dict[str, Tuple[str, ...]]] = None
+    period: Optional[Any] = None
+    book: Optional[Any] = None
 
     @property
     def subject(self) -> Optional[str]:
@@ -871,14 +1036,29 @@ def build_compute_request(
     survey_carrier: Optional[str] = None,
     survey_peers: Optional[Sequence[str]] = None,
     survey_peers_by_country: Optional[Mapping[str, Sequence[str]]] = None,
+    book: Any = None,
 ) -> ComputeRequest:
-    """The Setup form's answers as one resolved request (the engine defaults to the live one)."""
+    """The Setup form's answers as one resolved request.
+
+    The engine is the run's working book when one is given (``studio.book``), else the one
+    passed, else the live warehouse. A book that relabels its years to a period year also
+    drops a date range's own year pin: the window IS the period, and the latest period
+    year in the book is its current one.
+    """
     from studio.data import get_engine
 
+    engine = getattr(book, "engine", None) or engine or get_engine()
+    period = getattr(book, "window", None)
+    has_quarter = has_quarter_column(engine)
+    wants_quarter = (filters or {}).get("quarter") not in (None, "", [], ())
+    labels = quarter_vocabulary(engine, flow) if has_quarter and wants_quarter else ()
+    resolved = _resolve_filters(filters or {}, has_quarter=has_quarter, quarter_labels=labels)
+    if period is not None and getattr(period, "kind", "") == "range":
+        resolved.pop(_YEAR_COL, None)
     return ComputeRequest(
-        engine=engine or get_engine(),
+        engine=engine,
         flow=flow,
-        filters=_resolve_filters(filters or {}),
+        filters=resolved,
         breakdowns=tuple(breakdowns) if breakdowns else DEFAULT_BREAKDOWNS,
         peers=tuple(peers) if peers else None,
         peers_by_country=_by_country(peers_by_country),
@@ -886,6 +1066,8 @@ def build_compute_request(
         survey_carrier=survey_carrier or None,
         survey_peers=tuple(survey_peers) if survey_peers else None,
         survey_peers_by_country=_by_country(survey_peers_by_country),
+        period=period,
+        book=book,
     )
 
 
@@ -927,6 +1109,8 @@ class OverallResultBuilder:
             survey_carrier=request.survey_carrier,
             survey_peers=request.survey_peers,
             survey_peers_by_country=request.survey_peers_by_country,
+            period=request.period,
+            book=request.book,
         )
 
     def add_kpis(self) -> "OverallResultBuilder":
@@ -972,8 +1156,9 @@ def compute_overall(
     survey_carrier: Optional[str] = None,
     survey_peers: Optional[Sequence[str]] = None,
     survey_peers_by_country: Optional[Mapping[str, Sequence[str]]] = None,
+    book: Any = None,
 ) -> OverallResult:
-    """Compute the Overall page from the live DB.
+    """Compute the Overall page from the live DB (or the run's working ``book``).
 
         resolve the request  ->  KPIs  ->  breakdowns  ->  whitespace
 
@@ -984,7 +1169,7 @@ def compute_overall(
         flow=flow, filters=filters, breakdowns=breakdowns, engine=engine,
         peers=peers, peers_by_country=peers_by_country, style=style,
         survey_carrier=survey_carrier, survey_peers=survey_peers,
-        survey_peers_by_country=survey_peers_by_country,
+        survey_peers_by_country=survey_peers_by_country, book=book,
     )
     return (
         OverallResultBuilder(request)

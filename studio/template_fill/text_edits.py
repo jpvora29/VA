@@ -25,14 +25,25 @@ EDITS_KEY = "text_edits"
 
 @dataclass(frozen=True)
 class ShapeAddress:
-    """Where one editable text box sits in the delivered deck."""
+    """Where one editable block of words sits in the delivered deck.
+
+    A text box is ``slide:shape``; one CELL of a table is ``slide:shape:row:col`` — the
+    KPI tables and the "Key Highlights" cell hold words an author needs to change too.
+    """
 
     slide_idx: int
     shape_id: int
+    row: Optional[int] = None
+    col: Optional[int] = None
+
+    @property
+    def is_cell(self) -> bool:
+        return self.row is not None and self.col is not None
 
     @property
     def key(self) -> str:
-        return f"{self.slide_idx}:{self.shape_id}"
+        base = f"{self.slide_idx}:{self.shape_id}"
+        return f"{base}:{self.row}:{self.col}" if self.is_cell else base
 
 
 @dataclass(frozen=True)
@@ -51,11 +62,12 @@ class EditableText:
 
 
 def parse_address(key: Any) -> Optional[ShapeAddress]:
-    """``"3:10"`` → an address; anything else → ``None``."""
+    """``"3:10"`` (a text box) or ``"3:10:1:2"`` (a table cell) → an address; else ``None``."""
     parts = str(key or "").split(":")
-    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+    if len(parts) not in (2, 4) or not all(part.isdigit() for part in parts):
         return None
-    return ShapeAddress(int(parts[0]), int(parts[1]))
+    numbers = [int(p) for p in parts]
+    return ShapeAddress(*numbers)
 
 
 def to_lines(value: Any) -> Tuple[str, ...]:
@@ -70,18 +82,28 @@ def to_lines(value: Any) -> Tuple[str, ...]:
 
 
 def editable_text(
-    shape: Any, slide_idx: int, edits: Mapping[str, Sequence[str]]
+    shape: Any, slide_idx: int, edits: Mapping[str, Sequence[str]],
+    cell: Optional[Tuple[int, int]] = None,
 ) -> Optional[EditableText]:
-    """The editable block of one shape, or ``None`` when it holds no prose.
+    """The editable block of one shape (or one table ``cell``), or ``None`` when empty.
 
-    Text shapes only — a chart's data, a table's cells and a picture are not prose.
+    Text boxes and table cells — a chart's data and a picture are not words.
     """
-    if getattr(shape, "kind", "") != "text":
+    kind = getattr(shape, "kind", "")
+    if cell is not None:
+        table = getattr(shape, "table", None) or []
+        row, col = cell
+        if kind != "table" or not (0 <= row < len(table) and 0 <= col < len(table[row])):
+            return None
+        original = to_lines(table[row][col])
+        address = ShapeAddress(slide_idx, int(shape.shape_id), row, col)
+    elif kind == "text":
+        original = to_lines("\n".join(getattr(shape, "paragraphs", None) or []))
+        address = ShapeAddress(slide_idx, int(shape.shape_id))
+    else:
         return None
-    original = to_lines("\n".join(getattr(shape, "paragraphs", None) or []))
     if not original:
         return None
-    address = ShapeAddress(slide_idx, int(shape.shape_id))
     override = edits.get(address.key)
     return EditableText(
         address=address,
@@ -136,6 +158,26 @@ def set_text_edit(
     return _store(doc, key, to_lines(value), original)
 
 
+def commit_lines(
+    doc: Mapping[str, Any], key: str, lines: Sequence[Any], *, original: Sequence[str],
+    drop: Optional[int] = None, add_blank: bool = False,
+) -> Dict[str, Any]:
+    """Fold the lines ON SCREEN into the document, optionally dropping or opening one.
+
+    The edit bar applies what the author typed in one go (Apply), so Add line and Delete
+    line fold the unapplied lines in too — reading the stored lines instead would throw
+    away whatever had been typed since the last Apply. A line holding a line break becomes
+    two paragraphs, which is what pressing Enter in a line means.
+    """
+    text = [" ".join(part.split()) for line in lines for part in str(line or "").splitlines()]
+    if drop is not None and 0 <= drop < len(text):
+        text = text[:drop] + text[drop + 1:]
+    text = [line for line in text if line]
+    if add_blank:
+        text.append("")
+    return _store(doc, key, text, original)
+
+
 def set_line(
     doc: Mapping[str, Any], key: str, index: int, value: Any, *, original: Sequence[str]
 ) -> Dict[str, Any]:
@@ -172,18 +214,30 @@ def clear_text_edit(doc: Mapping[str, Any], key: str) -> Dict[str, Any]:
     return {**dict(doc), EDITS_KEY: edits}
 
 
-def grouped(edits: Mapping[str, Sequence[str]]) -> Dict[int, Dict[int, List[str]]]:
-    """``{slide_idx: {shape_id: [lines]}}`` — the shape the writer walks in.
+def editable_cells(shape: Any, slide_idx: int,
+                   edits: Mapping[str, Sequence[str]]) -> List[EditableText]:
+    """Every non-empty cell of a table shape, as editable blocks (row-major)."""
+    table = getattr(shape, "table", None) or []
+    blocks = (editable_text(shape, slide_idx, edits, (r, c))
+              for r, row in enumerate(table) for c in range(len(row)))
+    return [b for b in blocks if b is not None]
 
-    A line the author opened but never wrote in is an authoring state, not a blank
+
+def grouped(edits: Mapping[str, Sequence[str]]) -> Dict[int, Dict[Any, List[str]]]:
+    """``{slide_idx: {target: [lines]}}`` — the shape the writer walks in.
+
+    ``target`` is the shape id for a text box and ``(shape_id, row, col)`` for a table
+    cell. A line the author opened but never wrote in is an authoring state, not a blank
     paragraph to push into the deck, so empties are dropped on the way out.
     """
-    out: Dict[int, Dict[int, List[str]]] = {}
+    out: Dict[int, Dict[Any, List[str]]] = {}
     for key, lines in edits.items():
         address = parse_address(key)
         if address is None:
             continue
         written = [str(x) for x in lines if str(x).strip()]
         if written:
-            out.setdefault(address.slide_idx, {})[address.shape_id] = written
+            target = ((address.shape_id, address.row, address.col) if address.is_cell
+                      else address.shape_id)
+            out.setdefault(address.slide_idx, {})[target] = written
     return out

@@ -162,6 +162,10 @@ gpr:
     Billing_Date: {role: temporal}
     Year: {role: temporal, card_cap: 30}
     Month_Name: {role: temporal, card_cap: 30}
+    # The warehouse's own quarter label. Studio filters on it directly; a book without one
+    # gets it derived from the billing month when the run's working book is built
+    # (studio/book.py), so a quarter filter means the same thing on either.
+    Quarter: {role: temporal, card_cap: 30}
 
 gimmi:
   label: GIMMI

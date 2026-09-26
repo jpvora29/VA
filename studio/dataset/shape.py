@@ -15,14 +15,14 @@ replayed — which is what makes a derived column mappable like any other.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from logger import get_logger
 from studio.dataset.automap import propose_mappings
 from studio.dataset.ingest import profile_frame
 from studio.dataset.materialize import working_frame
 from studio.dataset.model import ColumnMapping, DatasetProfile, DatasetRecord, TransformOp
-from studio.dataset.transform import RECIPES, apply_transforms
+from studio.dataset.transform import PARAM_RECIPES, RECIPES, apply_transforms, recipe_label
 
 logger = get_logger(__name__)
 
@@ -106,22 +106,30 @@ def add_computed(repo, record: DatasetRecord, name: str, formula: str) -> Datase
     return _append(repo, record, op)
 
 
-def add_derived(repo, record: DatasetRecord, name: str, source: str, recipe: str) -> DatasetRecord:
-    """A new column read out of ``source`` by a named recipe (Year from a date…)."""
+def add_derived(repo, record: DatasetRecord, name: str, source: str, recipe: str,
+                args: Sequence[str] = ()) -> DatasetRecord:
+    """A new column read out of ``source`` by a named recipe (Year from a date, a split…)."""
     frame = working_frame(repo, record)
-    if recipe not in RECIPES:
+    if recipe not in RECIPES and recipe not in PARAM_RECIPES:
         raise ValueError("Pick what to read from that column.")
     op = TransformOp(kind="derive", name=_free_name(name, record, frame.columns),
-                     source=str(source or ""), recipe=recipe)
+                     source=str(source or ""), recipe=recipe,
+                     args=tuple(str(a) for a in (args or ()) if a is not None))
     return _append(repo, record, op)
 
 
-def suggested_name(source: str, recipe: str) -> str:
+def suggested_name(source: str, recipe: str, args: Sequence[str] = ()) -> str:
     """The name a derived column defaults to — ``Billing Date`` + ``year`` → ``Year``."""
-    stem = {"year": "Year", "quarter": "Quarter", "month": "Month",
+    stem = {"year": "Year", "quarter": "Quarter", "quarter_label": "Quarter",
+            "quarter_from_month": "Quarter", "month": "Month",
             "month_name": "Month_Name", "date": "Date"}.get(recipe)
     if stem:
         return stem
+    if recipe == "split":
+        part = str((list(args) + ["", ""])[1] or "1").strip()
+        return f"{source}_last" if part.startswith("-") else f"{source}_part{part}"
+    if recipe == "combine" and args:
+        return f"{source}_{args[0]}".replace(" ", "_")
     return f"{source}_{recipe}".strip("_")
 
 
@@ -152,7 +160,8 @@ def shape_history(record: DatasetRecord) -> List[str]:
         if op.kind == "drop":
             labels.append(f"Deleted {op.name}")
         elif op.kind == "derive":
-            labels.append(f"{op.name} = {RECIPES.get(op.recipe, (op.recipe,))[0]} of {op.source}")
+            settings = f" ({', '.join(a for a in op.args if a)})" if any(op.args) else ""
+            labels.append(f"{op.name} = {recipe_label(op.recipe)}{settings} of {op.source}")
         else:
             labels.append(f"{op.name} = {op.formula}")
     return labels

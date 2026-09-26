@@ -16,6 +16,18 @@ from studio.authoring.generate import _deck, _friendly_options, usable_tdoc
 from ui.shell.busy import busy_running
 
 
+def review_box_key(slide_idx: int, role: str):
+    """The canvas address of a prose role's box on page ``slide_idx`` of the delivered deck.
+
+    ``note:<slide>:<shape>:…`` names the shape by its id, which the merge keeps, so the
+    box can be preselected; anything else just opens the page.
+    """
+    parts = role.split(":")
+    if len(parts) >= 3 and parts[0] in ("note", "fbnote") and parts[2].isdigit():
+        return f"{int(slide_idx)}:{int(parts[2])}"
+    return None
+
+
 def register_navigation(app):
     """Wire the render + view-navigation callbacks onto ``app``."""
 
@@ -102,6 +114,21 @@ def register_navigation(app):
         view["idx"] = int(ctx.triggered_id["idx"])
         view["sel"] = None  # changing page clears the selected widget
         return view
+
+    @app.callback(
+        Output("qs-view", "data", allow_duplicate=True),
+        Output("qs-tf-sel", "data", allow_duplicate=True),
+        Input({"type": "qs-rv-open", "slide": ALL, "role": ALL, "block": ALL}, "n_clicks"),
+        State("qs-view", "data"),
+        prevent_initial_call=True,
+    )
+    def open_from_review(_clicks, view):
+        """A Review finding opens its page on the Canvas, with its box selected."""
+        if not ctx.triggered_id or not any(_clicks or []):
+            return no_update, no_update
+        slide = int(ctx.triggered_id["slide"])
+        view = {**dict(view or {}), "mode": "canvas", "idx": slide, "sel": None}
+        return view, review_box_key(slide, str(ctx.triggered_id.get("role") or ""))
 
     @app.callback(
         Output("qs-view", "data", allow_duplicate=True),

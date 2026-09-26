@@ -15,19 +15,23 @@ this one. ``scope_preview`` shows cheap headline figures as the filters change.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Sequence
+from typing import Optional, Sequence
 
 from dash import ALL, MATCH, Input, Output, State, no_update
 from dash.exceptions import PreventUpdate
 
 from logger import get_logger
-from studio.compute import FILTER_COLUMN, quarter_options
+from studio.compute import FILTER_COLUMN
 from studio.data import cascade_options, peer_members
 from studio.page import authoring as A
+from studio.page.authoring import period_picker as PP
+from studio.page.authoring.period_picker import date_keys
 from studio.template_fill import registry, slide_previews
 from studio.template_fill.deck_slides import DeckSlides
 
 from studio.authoring import jobs, supersede
+from studio.authoring.period_picker import register_period_picker
+from studio.authoring.setup_summary import register_setup_summary
 from studio.authoring.config import BLANK, BREAKDOWNS, engine
 from studio.content.report_plan import DEFAULT_AUDIENCE
 from ui.shell.busy import busy_running, register_busy
@@ -165,7 +169,9 @@ def cascade_filter_options(selected: dict, record) -> dict:
     where = {FILTER_COLUMN[c]: v for c, v in (selected or {}).items() if c in FILTER_COLUMN}
     by_column = _cascade(record, _FILTER_COLUMNS, where)
     options = {fid: by_column[col] for fid, col in FILTER_COLUMN.items() if col in by_column}
-    return {**options, "quarter": quarter_options()}
+    from studio.authoring.generate import quarter_choices
+
+    return {**options, "quarter": quarter_choices(record)}
 
 
 # ── the peer group, market by market ─────────────────────────────────────────
@@ -220,6 +226,30 @@ def _kept(chosen, offered) -> list:
     """The peers still worth keeping: the ones this market still offers (``()`` = all)."""
     names = [str(p) for p in (chosen or []) if p]
     return [p for p in names if p in offered] if offered else names
+
+
+def seeded_peers(selected: dict, picker_ids, current, record) -> list:
+    """Each custom picker's value, seeded from the Peers table — its market's own group.
+
+    What the author had already picked in a market is kept and the group is added to it,
+    so the shortcut never throws a choice away. A custom dataset has no governed group, so
+    nothing changes there.
+    """
+    carrier = (selected or {}).get("carrier")
+    if not carrier or record is not None:
+        return [no_update] * len(picker_ids or [])
+    groups = dict(peer_groups("gpr", carrier, selected, record))
+    out = []
+    for ident, value in zip(picker_ids or [], current or [[]] * len(picker_ids or [])):
+        country = str((ident or {}).get("country") or "")
+        if country:
+            group = groups.get(country, [])
+        else:
+            writing = {str(o.get("value", "")).lower() for o in carriers_in_scope(selected, record)}
+            group = [m for m in peer_members("gpr", carrier) if str(m).lower() in writing]
+        merged = list(dict.fromkeys([*(value or []), *map(str, group)]))
+        out.append(merged)
+    return out
 
 
 def peer_panel_state(selected: dict, mode, record, options: dict, chosen: dict | None = None):
@@ -552,13 +582,24 @@ def _hashable(value):
     return tuple(value) if isinstance(value, list) else value
 
 
-def scope_preview_body(selected: dict, record):
-    """The live headline tiles for the current filters (empty until a carrier is picked)."""
+def scope_preview_body(selected: dict, record, period: Optional[dict] = None):
+    """The live headline tiles for the current filters (empty until a carrier is picked).
+
+    ``period`` is the selection's period keys (:func:`period_selection`). On the calendar
+    basis the tiles come from the filter rollup as they always did; on R12M or a date range
+    they come from the run's working book when its slice is on disk — and a slice is started
+    in the background when it is not, so the NEXT look (and the deck) finds it ready.
+    """
     if not (selected or {}).get("carrier"):
         return A.scope_preview_empty()
     key = tuple(sorted((c, _hashable(v)) for c, v in selected.items()))
+    period_key = tuple(sorted((period or {}).items()))
     try:
-        items = _scope_figures(key, record.dataset_id if record else None)
+        if period_key:
+            items = _period_scope_figures(key, record.dataset_id if record else None,
+                                          period_key)
+        else:
+            items = _scope_figures(key, record.dataset_id if record else None)
     except Exception as exc:  # noqa: BLE001 — preview is best-effort, never blocks Setup
         log.warning("scope preview failed: %s", exc)
         return A.scope_preview_empty("Preview unavailable for this scope.")
@@ -574,14 +615,14 @@ def _scope_figures(key: tuple, dataset_id):
     the second time. Both come from the pre-aggregated rollup (:mod:`studio.scope`), so the
     first visit to a scope does not scan the fact table either.
     """
-    from studio.compute import _CARRIER_COL, _resolve_filters
+    from studio.compute import _CARRIER_COL, _resolve_filters, has_quarter_column
     from studio.dataset.source import dataset_engine
     from studio.page.format import money
     from studio.scope import scope_figures
 
     filters = {c: (list(v) if isinstance(v, tuple) else v) for c, v in key}
     eng = dataset_engine(dataset_id) if dataset_id else engine
-    resolved = _resolve_filters(filters)
+    resolved = _resolve_filters(filters, has_quarter=has_quarter_column(eng))
     subject = resolved.get(_CARRIER_COL)
     figures = scope_figures(resolved, flow="gpr", engine=eng, dataset_id=dataset_id)
 
@@ -592,6 +633,46 @@ def _scope_figures(key: tuple, dataset_id):
         {"label": "Market rank", "value": figures.rank_rendered},
         {"label": "Countries", "value": str(n_countries)},
         {"label": "Period", "value": period_label(filters)},
+    )
+
+
+def _period_scope_figures(key: tuple, dataset_id, period_key: tuple):
+    """The preview tiles on an R12M / date-range basis — from the working book when ready.
+
+    Not ``lru_cache``d like the calendar path: whether the slice is ready changes while the
+    author works, and a cached "not ready yet" would pin the calendar figures on screen.
+    """
+    from studio import period as P
+    from studio.book import book_spec, open_book, prefetch
+    from studio.compute import _CARRIER_COL, _resolve_filters, has_quarter_column
+    from studio.dataset.source import dataset_source
+    from studio.page.format import money
+    from studio.scope import scope_figures
+
+    filters = {c: (list(v) if isinstance(v, tuple) else v) for c, v in key}
+    selection = {"filters": filters, **dict(period_key)}
+    spec = book_spec(selection)
+    source = dataset_source(dataset_id) if dataset_id else engine
+    calendar = list(_scope_figures(key, dataset_id))
+    if not prefetch(source, spec, wait=8.0):
+        window = P.window_for(spec.choice, latest=latest_month(dataset_id),
+                              year_pin=spec.year_pin)
+        calendar[-1] = {"label": "Period", "value": period_label(filters),
+                        "sub": (f"Calendar totals — preparing {window.label()}"
+                                if window else "Calendar totals")}
+        return tuple(calendar)
+    book = open_book(source, spec)
+    resolved = _resolve_filters(filters, has_quarter=has_quarter_column(book.engine))
+    if book.window is not None and book.window.kind == P.KIND_RANGE:
+        resolved.pop("Year", None)
+    figures = scope_figures(resolved, flow="gpr", engine=book.engine, rollup=False)
+    label = book.window.label() if book.window else period_label(filters)
+    return (
+        {"label": "Total GWP", "value": money(figures.total),
+         "sub": str(resolved.get(_CARRIER_COL))},
+        {"label": "Market rank", "value": figures.rank_rendered},
+        calendar[2],
+        {"label": "Period", "value": label},
     )
 
 
@@ -606,6 +687,52 @@ def period_label(filters: dict) -> str:
     quarters = _listed(filters.get("quarter"))
     period = ", ".join(years) if years else "All"
     return f"{period} · {', '.join(quarters)}" if quarters else period
+
+
+def period_selection(basis, date_from, date_to) -> dict:
+    """The selection's period keys — only what differs from the calendar default.
+
+    Omitting the defaults keeps a calendar selection byte-identical to one saved before
+    the toggle existed, so every cached build keyed on the old selection still matches.
+    """
+    out = {}
+    if basis and basis != "calendar":
+        out["period_basis"] = str(basis)
+    if date_from:
+        out["date_from"] = str(date_from)[:10]
+    if date_to:
+        out["date_to"] = str(date_to)[:10]
+    return out
+
+
+def period_note_text(selection: dict, record) -> str:
+    """The Setup form's "this deck reports …" sentence for the current answers."""
+    from studio import period as P
+
+    choice = P.period_choice(selection)
+    pin = P.year_pin((selection.get("filters") or {}).get("year"))
+    return P.describe(choice, latest=latest_month(record.dataset_id if record else None),
+                      year_pin=pin)
+
+
+def latest_month(dataset_id: Optional[str]):
+    """``(year, month)`` of the latest billing — the uploaded dataset's, else the warehouse's.
+
+    Never scans the warehouse from a callback (``wait=False``): until the startup warm-up
+    has read it, the sentence names the rule rather than the month.
+    """
+    if dataset_id:
+        from studio.book import _frame_latest
+        from studio.dataset.source import dataset_source
+
+        try:
+            return _frame_latest(dataset_source(dataset_id).table("GPR"))
+        except Exception:  # noqa: BLE001 - the sentence degrades, the form does not
+            return None
+    from studio.data import period_profile
+
+    latest = (period_profile("gpr", wait=False) or {}).get("latest")
+    return tuple(latest) if latest else None
 
 
 def _listed(value) -> list:
@@ -691,13 +818,17 @@ def slides_from_form(ids, values) -> DeckSlides:
         if on:
             continue
         axis = str((ident or {}).get("axis") or "")
-        excluded.setdefault(axis, []).append(int((ident or {}).get("idx") or 0))
+        # A folded run of identical pages ticks as one: its idx is "0,1,2,3".
+        raw = str((ident or {}).get("idx") if (ident or {}).get("idx") is not None else 0)
+        excluded.setdefault(axis, []).extend(int(p) for p in raw.split(",") if p.strip())
     return DeckSlides(excluded)
 
 
 def register_setup(app):
     """Wire the Generate + scope-preview callbacks onto ``app``."""
     _register_busy_overlay(app)
+    register_period_picker(app)
+    register_setup_summary(app)
     # The page thumbnails the include/exclude panel hovers are rendered from the fixed
     # templates and cached on disk, so this is a one-off per machine. On a background
     # thread because it opens PowerPoint, and nothing on the page waits for it: a row
@@ -728,12 +859,14 @@ def register_setup(app):
         State({"type": "studio-survey-peer", "country": ALL}, "id"),
         State("qs-dataset", "data"),
         State("qs-gen-job", "data"),
+        State("studio-period-basis", "value"),
+        State("studio-period-dates", "data"),
         prevent_initial_call=True,
     )
     def start_generate(n, fvals, fids, cut_vals, cut_ids, peer_mode, peer_vals, peer_ids,
                        audience, style, slide_store, data_basis,
                        survey_carrier, survey_peer_vals, survey_peer_ids, dataset_store,
-                       running_job):
+                       running_job, period_basis=None, period_dates=None):
         """Read the form, refuse what we must, and start the build in its own thread.
 
         Returns in milliseconds either way: what comes back is the job to follow, not the
@@ -829,6 +962,9 @@ def register_setup(app):
             # every cached build. Without it, fixing a mapping and generating again
             # re-served the deck built from the mapping that was wrong.
             "dataset_rev": (dataset_store or {}).get("rev") if record else None,
+            # The reporting period (studio.period): what "this year" means for every
+            # figure. Rides in the selection so switching it re-keys every cached build.
+            **period_selection(period_basis, *date_keys(period_dates)),
         }
         job = jobs.start_build(selection)
         return selection, job.job_id, False, A.generate_progress(job.snapshot()), n, ""
@@ -915,7 +1051,7 @@ def register_setup(app):
     #     every dropdown wait on the rank query.
     @app.callback(
         Output({"type": "studio-filter", "col": ALL}, "options"),
-        Output("studio-peer-custom-wrap", "children"),
+        Output("studio-peer-custom-wrap-inner", "children"),
         Output("studio-peer-custom-wrap", "style"),
         Output("studio-peer-msg", "children"),
         Output("qs-filter-sig", "data"),
@@ -954,6 +1090,58 @@ def register_setup(app):
         return ([fresh.get(i["col"], no_update) for i in ids],
                 picker, peer_style, peer_msg, signature)
 
+    @app.callback(
+        Output("studio-period-note", "children"),
+        Output("qs6-period-meta", "data"),
+        Input("studio-period-basis", "value"),
+        Input("studio-period-dates", "data"),
+        Input({"type": "studio-filter", "col": ALL}, "value"),
+        State({"type": "studio-filter", "col": ALL}, "id"),
+        State({"type": "studio-filter", "col": "year"}, "options"),
+        State("qs-dataset", "data"),
+    )
+    def show_period(basis, dates, values, ids, year_options, dataset_store):
+        """Say, in one sentence, which period every figure in the deck will cover —
+        and tell the month picker which months the book actually holds."""
+        from studio.dataset.source import dataset_in_use
+
+        record = dataset_in_use(dataset_store)
+        filters = {i["col"]: v for i, v in zip(ids or [], values or []) if v not in BLANK}
+        selection = {"filters": filters, **period_selection(basis, *date_keys(dates))}
+        latest = latest_month(record.dataset_id if record else None)
+        meta = {"latest": list(latest) if latest else None,
+                "first_year": PP.available_years(year_options)}
+        try:
+            detail = period_note_text(selection, record)
+        except Exception:  # noqa: BLE001 - a sentence must never break the form
+            log.exception("period note failed")
+            return no_update, meta
+        from studio import period as P
+
+        short = PP.summary_line(PP.read_answer(dates), basis or PP.BASIS_YTD, latest,
+                                P.year_pin(filters.get("year")))
+        return A.period_note(short, tone="ttm" if basis == "r12m" else "", detail=detail), meta
+
+    @app.callback(
+        Output({"type": "studio-peer-custom", "country": ALL}, "value"),
+        Input("qs6-peer-seed", "n_clicks"),
+        State({"type": "studio-filter", "col": ALL}, "value"),
+        State({"type": "studio-filter", "col": ALL}, "id"),
+        State({"type": "studio-peer-custom", "country": ALL}, "id"),
+        State({"type": "studio-peer-custom", "country": ALL}, "value"),
+        State("qs-dataset", "data"),
+        prevent_initial_call=True,
+    )
+    def seed_custom_peers(clicks, values, ids, picker_ids, picker_vals, dataset_store):
+        """"Start from existing peers": each market's picker takes its Peers-table group."""
+        from studio.dataset.source import dataset_in_use
+
+        if not clicks:
+            return [no_update] * len(picker_ids or [])
+        selected = {i["col"]: v for i, v in zip(ids or [], values or []) if v not in BLANK}
+        return seeded_peers(selected, picker_ids, picker_vals,
+                            dataset_in_use(dataset_store))
+
     # The "at least five" check is its own tiny per-market callback: it is a function of ONE
     # picker's value, so MATCH answers only the market the author just touched — folding it
     # into refresh_form would rebuild every picker (and close the menu) on each pick.
@@ -962,8 +1150,8 @@ def register_setup(app):
         Input({"type": "studio-peer-custom", "country": MATCH}, "value"),
     )
     def check_peer_minimum(chosen):
-        """The red "Please select atleast 5 peers" line under one market's picker."""
-        return A.peer_min_note(chosen)
+        """The live "3 of 5 · 2 more needed" counter under one market's picker."""
+        return A.peer_counter(chosen)
 
     # The survey panel is its own callback, not part of refresh_form: it queries a DIFFERENT
     # book, and only on the survey basis, so folding it in would make every premium-only
@@ -1035,17 +1223,20 @@ def register_setup(app):
     @app.callback(
         Output("studio-scope-preview", "children"),
         Input({"type": "studio-filter", "col": ALL}, "value"),
+        Input("studio-period-basis", "value"),
+        Input("studio-period-dates", "data"),
         State({"type": "studio-filter", "col": ALL}, "id"),
         State("qs-dataset", "data"),
         running=_busy(A.BUSY_PREVIEW),
     )
-    def scope_preview(values, ids, dataset_store):
+    def scope_preview(values, basis, dates, ids, dataset_store):
         """The live headline figures — the one panel that genuinely queries on each change."""
         from studio.dataset.source import dataset_in_use
 
         selected = {i["col"]: v for i, v in zip(ids or [], values or []) if v not in BLANK}
         ticket = supersede.begin(selected)
-        body = scope_preview_body(selected, dataset_in_use(dataset_store))
+        body = scope_preview_body(selected, dataset_in_use(dataset_store),
+                                  period_selection(basis, *date_keys(dates)))
         if supersede.stale(ticket, "scope preview"):
             raise PreventUpdate
         return body

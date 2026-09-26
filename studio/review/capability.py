@@ -51,6 +51,15 @@ def _has_series(values: Mapping[str, Any]) -> bool:
     return bool(points)
 
 
+def reporting_period(values: Mapping[str, Any]) -> str:
+    """What the deck's period is CALLED — "TTM Aug 2025" on an R12M run, "FY2025" otherwise."""
+    year = reporting_year(values)
+    if year is None:
+        return ""
+    labels = values.get("period_labels") or {}
+    return str(labels.get(str(year)) or f"FY{year}")
+
+
 def reporting_year(values: Mapping[str, Any]) -> Optional[int]:
     """The year this deck reports on, when one resolved."""
     year = values.get("period_year")
@@ -69,7 +78,8 @@ def _year_capability(values: Mapping[str, Any]) -> Capability:
         "reporting_year",
         "Reporting year",
         available=year is not None,
-        detail=(f"Every figure reports on {year}." if year is not None
+        detail=(f"Every figure reports on {reporting_period(values).removeprefix('FY')}."
+                if year is not None
                 else "No year could be resolved, so no period figure could be computed."),
         cause_id=K.NO_REPORTING_YEAR,
         # Without a year nothing at all resolves, so this owns every unfilled data slot

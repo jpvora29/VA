@@ -19,7 +19,7 @@ Four dataclasses carry that:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -110,6 +110,7 @@ class ReviewReport:
     source: str = TEMPLATE
     subject: str = ""
     period_year: Optional[int] = None
+    period_label: str = ""          # "TTM Aug 2025" / "FY2025" — what the header prints
     slides_total: int = 0
     slides_hidden: int = 0
     slots_total: int = 0
@@ -117,6 +118,10 @@ class ReviewReport:
     capabilities: Tuple[Capability, ...] = ()
     groups: Tuple[CauseGroup, ...] = ()
     commentary: Tuple[CommentaryFinding, ...] = ()
+    #: Every commentary field of the delivered deck and what the writer did with it
+    #: (:mod:`studio.template_fill.commentary_ledger`). ``None`` when the deck was built
+    #: before the ledger existed, which is different from "no fields".
+    commentary_fields: Optional[Tuple[Any, ...]] = None
 
     @property
     def slots_open(self) -> int:

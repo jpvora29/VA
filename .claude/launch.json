@@ -19,6 +19,12 @@
       "runtimeArgs": ["authoring_app.py"],
       "port": 8131,
       "autoPort": true
+    },
+    {
+      "name": "qbr-studio-auto",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set COMMENTARY_MODE=auto&& .venv\\Scripts\\python.exe authoring_app.py"],
+      "port": 8131
     }
   ]
 }

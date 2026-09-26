@@ -13,11 +13,26 @@ import pandas as pd
 from studio.dataset.model import ColumnProfile, DatasetProfile
 
 _SAMPLE_VALUES = 5
-_MAX_ROWS = 100_000  # agreed upload ceiling — beyond this we truncate, loudly
+# The upload ceiling — beyond this we truncate, loudly. One million rows: an uploaded book
+# runs on the in-memory pandas executor, which answers a deck at that size in minutes.
+# ``STUDIO_UPLOAD_MAX_ROWS`` moves it for a machine with the memory to go further.
+_DEFAULT_MAX_ROWS = 1_000_000
+
+
+def max_rows() -> int:
+    """The row ceiling, read at call time (the app loads ``.env`` after importing this)."""
+    import os
+
+    raw = os.getenv("STUDIO_UPLOAD_MAX_ROWS", "").strip()
+    try:
+        return max(1, int(raw)) if raw else _DEFAULT_MAX_ROWS
+    except ValueError:
+        return _DEFAULT_MAX_ROWS
 
 
 def _read_csv(data: bytes) -> pd.DataFrame:
-    return pd.read_csv(io.BytesIO(data))
+    # low_memory=False: a million-row file read in chunks can type one column two ways.
+    return pd.read_csv(io.BytesIO(data), low_memory=False)
 
 
 def _read_openpyxl(data: bytes) -> pd.DataFrame:
@@ -123,9 +138,10 @@ def read_upload(filename: str, data: bytes) -> Tuple[pd.DataFrame, bool]:
         raise ValueError(f"Unsupported file type {filename!r} — expected one of: {supported}")
     frame = _parse(ext, filename, data)
     frame.columns = [str(c).strip() for c in frame.columns]
-    truncated = len(frame) > _MAX_ROWS
+    ceiling = max_rows()
+    truncated = len(frame) > ceiling
     if truncated:
-        frame = frame.head(_MAX_ROWS)
+        frame = frame.head(ceiling)
     return frame, truncated
 
 

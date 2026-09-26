@@ -46,7 +46,8 @@ def _delivered_text(tdoc, key: str):
         log.warning("could not read the delivered deck to check an edit: %s", exc)
         return None
     shape = template.shape(address.slide_idx, address.shape_id)
-    block = TE.editable_text(shape, address.slide_idx, {}) if shape is not None else None
+    cell = (address.row, address.col) if address.is_cell else None
+    block = TE.editable_text(shape, address.slide_idx, {}, cell) if shape is not None else None
     return block.original if block else None
 
 
@@ -123,14 +124,25 @@ def register_export(app):
         prevent_initial_call=True,
     )
     def pick_text(clicks):
-        """Clicking a text box on the slide opens it in the edit field.
+        """Clicking a text box on the slide opens it in the edit panel.
 
         Its own store, so the master render does not rebuild the whole Studio body
         behind the "Opening…" overlay for what is only a selection.
         """
-        if not ctx.triggered_id or not any(clicks or []):
+        if not ctx.triggered_id or not (ctx.triggered and ctx.triggered[0].get("value")):
             return no_update
         return ctx.triggered_id["at"]
+
+    @app.callback(
+        Output("qs-tf-sel", "data", allow_duplicate=True),
+        Input({"type": "qs7-close", "at": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def close_editor(clicks):
+        """The panel's × — nothing selected, so the panel folds away."""
+        if not any(clicks or []):
+            return no_update
+        return None
 
     @app.callback(
         Output("qs-tf-editor", "children"),
@@ -140,55 +152,72 @@ def register_export(app):
         prevent_initial_call=True,
     )
     def show_editor(selected_key, tdoc, view):
-        """Repaint the edit field alone — not the slide, not the rest of Studio."""
+        """Repaint the edit bar alone — not the slide, not the rest of Studio."""
         return TP.text_editor_for(tdoc, view, selected_key)
+
+    # The edit bar commits a box's lines TOGETHER — Apply, Ctrl/Cmd+Enter, or the author
+    # leaving the bar (assets/studio_v6.js presses Apply for them). Committing each line on
+    # blur rebuilt the slide between two lines of the same box, and the cursor went with it.
+
+    def _typed(values, ids, key):
+        """The lines of box ``key`` as they stand in the edit bar, in order."""
+        rows = sorted(((int(i["i"]), v) for v, i in zip(values or [], ids or [])
+                       if i.get("at") == key), key=lambda r: r[0])
+        return [v for _, v in rows]
 
     @app.callback(
         Output("qs-tdoc", "data", allow_duplicate=True),
-        Input({"type": "qs-tf-line", "at": ALL, "i": ALL}, "n_blur"),
+        Input({"type": "qs-tf-apply", "at": ALL}, "n_clicks"),
         State({"type": "qs-tf-line", "at": ALL, "i": ALL}, "value"),
         State({"type": "qs-tf-line", "at": ALL, "i": ALL}, "id"),
         State("qs-tdoc", "data"),
         prevent_initial_call=True,
     )
-    def edit_line(_blurs, values, ids, tdoc):
-        if not tdoc or not ctx.triggered_id:
+    def apply_text(clicks, values, ids, tdoc):
+        if not tdoc or not ctx.triggered_id or not any(clicks or []):
             return no_update
-        key, index = ctx.triggered_id["at"], int(ctx.triggered_id["i"])
-        value = next((v for v, i in zip(values or [], ids or []) if i == ctx.triggered_id), None)
+        key = ctx.triggered_id["at"]
         original = _delivered_text(tdoc, key)
         if original is None:
             return no_update
-        updated = TE.set_line(tdoc, key, index, value, original=original)
+        updated = TE.commit_lines(tdoc, key, _typed(values, ids, key), original=original)
         return no_update if updated == dict(tdoc) else updated
 
     @app.callback(
         Output("qs-tdoc", "data", allow_duplicate=True),
         Input({"type": "qs-tf-lineadd", "at": ALL}, "n_clicks"),
+        State({"type": "qs-tf-line", "at": ALL, "i": ALL}, "value"),
+        State({"type": "qs-tf-line", "at": ALL, "i": ALL}, "id"),
         State("qs-tdoc", "data"),
         prevent_initial_call=True,
     )
-    def add_line(clicks, tdoc):
+    def add_line(clicks, values, ids, tdoc):
         if not tdoc or not ctx.triggered_id or not any(clicks or []):
             return no_update
         key = ctx.triggered_id["at"]
         original = _delivered_text(tdoc, key)
-        return TE.add_line(tdoc, key, original=original) if original is not None else no_update
+        if original is None:
+            return no_update
+        return TE.commit_lines(tdoc, key, _typed(values, ids, key), original=original,
+                               add_blank=True)
 
     @app.callback(
         Output("qs-tdoc", "data", allow_duplicate=True),
         Input({"type": "qs-tf-linedel", "at": ALL, "i": ALL}, "n_clicks"),
+        State({"type": "qs-tf-line", "at": ALL, "i": ALL}, "value"),
+        State({"type": "qs-tf-line", "at": ALL, "i": ALL}, "id"),
         State("qs-tdoc", "data"),
         prevent_initial_call=True,
     )
-    def delete_line(clicks, tdoc):
+    def delete_line(clicks, values, ids, tdoc):
         if not tdoc or not ctx.triggered_id or not any(clicks or []):
             return no_update
         key, index = ctx.triggered_id["at"], int(ctx.triggered_id["i"])
         original = _delivered_text(tdoc, key)
         if original is None:
             return no_update
-        return TE.delete_line(tdoc, key, index, original=original)
+        return TE.commit_lines(tdoc, key, _typed(values, ids, key), original=original,
+                               drop=index)
 
     @app.callback(
         Output("qs-tdoc", "data", allow_duplicate=True),

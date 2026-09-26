@@ -72,6 +72,7 @@ class TransformOp:
     formula: str = ""               # for add: arithmetic over existing columns
     source: str = ""                # for derive: the column it is read from
     recipe: str = ""                # for derive: which reading (see transform.RECIPES)
+    args: Tuple[str, ...] = ()      # for derive: the reading's settings (a delimiter, a part…)
 
 
 @dataclass(frozen=True)
@@ -248,6 +249,7 @@ def record_from_json(raw: Mapping[str, Any]) -> DatasetRecord:
             TransformOp(
                 kind=t["kind"], name=t["name"], formula=t.get("formula", ""),
                 source=t.get("source", ""), recipe=t.get("recipe", ""),
+                args=tuple(str(x) for x in (t.get("args") or ())),
             )
             for t in raw.get("transforms", ())
         ),

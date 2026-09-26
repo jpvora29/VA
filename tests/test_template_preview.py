@@ -27,7 +27,8 @@ def test_template_preview_uses_cached_background_without_rendering(monkeypatch):
         {"idx": 0},
     )
 
-    stage = body.children[1].children[0].children
+    stage_row = body.children[0]                      # [stage wrap, edit panel]
+    stage = stage_row.children[0].children[1].children   # wrap = [prev, stage, next]
     assert stage.style["backgroundImage"] == "url('/assets/pre-rendered.png')"
 
 

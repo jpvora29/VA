@@ -525,7 +525,27 @@ def _label_subs(values: Dict[str, Any]) -> List[Any]:
         subs.append((re.compile(r"\bCarriers?(?:['’]s)?\b"), _carrier))
 
     ty, py = values.get("template_year"), values.get("period_year")
-    if ty and py and int(ty) != int(py):
+    labels = {str(k): str(v) for k, v in (values.get("period_labels") or {}).items()}
+    if labels and ty and py:
+        # An R12M / date-range run: the reporting year and the one before it are PERIODS,
+        # so "FY 2025" / "Marsh GWP 2025" become "TTM Aug 2026" / "Marsh GWP TTM Aug 2026".
+        # Any other year ("Opportunities for 2026") still just moves with the deck.
+        delta = int(py) - int(ty)
+
+        # "Opportunities for 2026" looks FORWARD: on a rolling-twelve-month deck it means the
+        # next twelve months, not the period just reported. Runs before the period rule.
+        def _ahead(m, _d=delta, _p=int(py)):
+            return ("for the next twelve months" if int(m.group(1)) + _d >= _p
+                    else m.group(0))
+
+        subs.append((re.compile(r"\bfor\s+(20\d{2})\b"), _ahead))
+
+        def _period(m, _d=delta, _labels=labels):
+            year = str(int(m.group("year")) + _d)
+            return _labels.get(year, (m.group("fy") or "") + year)
+
+        subs.append((re.compile(r"(?P<fy>\bFY\s*)?\b(?P<year>20\d{2})\b"), _period))
+    elif ty and py and int(ty) != int(py):
         delta = int(py) - int(ty)
         subs.append((re.compile(r"\b(20\d{2})\b"), lambda m: str(int(m.group(1)) + delta)))
     return subs
@@ -1862,6 +1882,22 @@ def _write_lines(text_frame, lines) -> None:
         _drop_paragraph(paragraph)
 
 
+def _override_frame(shapes, target):
+    """The text frame an edit names: a text box (``shape_id``) or a table cell."""
+    if isinstance(target, tuple):
+        shape_id, row, col = target
+        shape = shapes.get(shape_id)
+        if shape is None or not getattr(shape, "has_table", False):
+            return None
+        rows = list(shape.table.rows)
+        if not 0 <= row < len(rows) or not 0 <= col < len(rows[row].cells):
+            return None
+        return rows[row].cells[col].text_frame
+    shape = shapes.get(target)
+    return shape.text_frame if shape is not None and getattr(shape, "has_text_frame", False) \
+        else None
+
+
 def apply_text_overrides(src_path: str, edits: Dict[str, Any], out_path: str) -> str:
     """Write every text box retyped on the canvas into a copy of a delivered deck.
 
@@ -1882,11 +1918,11 @@ def apply_text_overrides(src_path: str, edits: Dict[str, Any], out_path: str) ->
         if not 0 <= slide_idx < len(slides):
             continue
         shapes = _index_by_id(slides[slide_idx])
-        for shape_id, lines in by_shape.items():
-            shape = shapes.get(shape_id)
-            if shape is None or not getattr(shape, "has_text_frame", False) or not lines:
+        for target, lines in by_shape.items():
+            frame = _override_frame(shapes, target)
+            if frame is None or not lines:
                 continue
-            _write_lines(shape.text_frame, lines)
+            _write_lines(frame, lines)
             written += 1
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     prs.save(out_path)

@@ -1,7 +1,9 @@
 """The Quarter filter — a QBR reports on a quarter, so Setup can pin one.
 
-The GPR book has no quarter column; it records the month a premium was billed in. So the
-filter is DERIVED (:data:`studio.compute.QUARTER_MONTHS`), and these tests hold the two
+The warehouse carries its own ``Quarter`` column and the filter reads it; a book WITHOUT
+one (the seed here) falls back to the months a calendar quarter covers
+(:data:`studio.compute.QUARTER_MONTHS`). A run's working book always has the column —
+native or derived from the billing month (:mod:`studio.book`). These tests hold the
 things that makes fragile:
 
 * it must resolve to the right months everywhere the deck reads filters, not just where
@@ -18,9 +20,12 @@ import pytest
 
 from studio.compute import (
     QUARTER_COLUMN,
+    QUARTER_MONTH_COLUMN,
     QUARTER_MONTHS,
     _resolve_filters,
+    match_quarters,
     quarter_months,
+    quarter_number,
     quarter_options,
 )
 
@@ -39,10 +44,17 @@ def test_the_form_asks_for_a_quarter_next_to_the_year():
     assert quarter["ph"] == "Full year"              # …and none pinned means the year
 
 
-def test_the_choices_are_the_calendars_four_quarters():
-    """A fixed vocabulary, not a distinct scan: Q3 missing from the list would read as
-    "this carrier has no Q3" when it means "this filter combination has none"."""
+def test_the_choices_are_the_calendars_four_quarters_without_a_quarter_column():
+    """Never narrowed by the scope: Q3 missing from the list would read as "this carrier
+    has no Q3" when it means "this filter combination has none"."""
     assert [o["value"] for o in quarter_options()] == ["Q1", "Q2", "Q3", "Q4"]
+
+
+def test_the_choices_are_the_books_own_labels_when_it_has_them():
+    """A fiscal or year-stamped quarter is offered as the book writes it, in time order."""
+    labels = ["2026-Q1", "2025-Q3", "2025-Q1", "2025-Q2", "2025-Q4"]
+    assert [o["value"] for o in quarter_options(labels)] == [
+        "2025-Q1", "2025-Q2", "2025-Q3", "2025-Q4", "2026-Q1"]
 
 
 # ── what a quarter resolves to ──────────────────────────────────────────────
@@ -62,12 +74,28 @@ def test_several_quarters_resolve_in_calendar_order():
         "January", "February", "March", "July", "August", "September")
 
 
-def test_the_resolver_turns_a_quarter_into_a_month_constraint():
+def test_without_a_quarter_column_the_resolver_uses_the_months():
     resolved = _resolve_filters({"carrier": "Zurich", "year": ["2025"], "quarter": ["Q3"]})
 
-    assert resolved[QUARTER_COLUMN] == ("July", "August", "September")
+    assert resolved[QUARTER_MONTH_COLUMN] == ("July", "August", "September")
+    assert QUARTER_COLUMN not in resolved
     assert resolved["Year"] == (2025,)
     assert "quarter" not in resolved                 # never passed through as a column
+
+
+def test_with_a_quarter_column_the_resolver_filters_on_it():
+    resolved = _resolve_filters({"quarter": ["Q3"]}, has_quarter=True,
+                                quarter_labels=["Q1", "Q2", "Q3", "Q4"])
+    assert resolved == {QUARTER_COLUMN: ("Q3",)}
+
+
+def test_a_bare_quarter_matches_the_books_year_stamped_labels():
+    """A form that could only offer Q1-Q4 must still select a "2025-Q1"-style book."""
+    vocab = ["2025-Q1", "2025-Q2", "2026-Q1", "FY26 Q2"]
+    assert match_quarters(["Q1"], vocab) == ("2025-Q1", "2026-Q1")
+    assert match_quarters(["2025-Q2"], vocab) == ("2025-Q2",)          # exact wins
+    assert match_quarters(["q2"], vocab) == ("2025-Q2", "FY26 Q2")
+    assert [quarter_number(x) for x in ("Q3", "q4", "2025-Q1", "3", "Qx")] == [3, 4, 1, 3, None]
 
 
 @pytest.mark.parametrize("value", [None, "", [], ["all"], "All"])
@@ -79,7 +107,7 @@ def test_an_unknown_quarter_narrows_to_what_it_can_rather_than_failing():
     """A selection stored by an older form must not be able to fail a build."""
     assert quarter_months(["Q9"]) == ()
     assert _resolve_filters({"quarter": ["Q9"]}) == {}
-    assert _resolve_filters({"quarter": ["Q9", "Q2"]})[QUARTER_COLUMN] == (
+    assert _resolve_filters({"quarter": ["Q9", "Q2"]})[QUARTER_MONTH_COLUMN] == (
         "April", "May", "June")
 
 
@@ -104,7 +132,7 @@ def test_every_path_that_offers_the_filters_offers_the_quarter():
     from studio.authoring.setup import cascade_filter_options
     from studio.compute import form_options
 
-    assert _friendly_options(None)["quarter"] == quarter_options()
+    assert _friendly_options(None)["quarter"] == quarter_options()          # seed: no column
     assert cascade_filter_options({"carrier": "Zurich"}, None)["quarter"] == quarter_options()
     assert form_options({})["quarter"] == quarter_options()
 
@@ -138,7 +166,20 @@ def test_a_quarter_scoped_run_reports_the_quarters_premium():
 
     assert 0 < _total(quarter=["Q3"]) < _total()
     result = compute_overall(filters={**_SCOPE, "quarter": ["Q3"]})
-    assert result.resolved_filters[QUARTER_COLUMN] == ("July", "August", "September")
+    assert result.resolved_filters[QUARTER_MONTH_COLUMN] == ("July", "August", "September")
+
+
+def test_the_working_book_derives_a_quarter_the_seed_lacks_and_agrees_with_the_months():
+    """The deck's book filters on ``Quarter``; its derived Q3 must be exactly the months."""
+    from studio.book import BookSpec, open_book
+    from studio.compute import compute_overall
+    from studio.data import get_engine
+
+    book = open_book(get_engine(), BookSpec(countries=("Singapore",)))
+    via_book = compute_overall(filters={**_SCOPE, "quarter": ["Q3"]}, book=book)
+    assert via_book.resolved_filters[QUARTER_COLUMN] == ("Q3",)
+    assert via_book.kpis[0]["value"] == compute_overall(
+        filters={**_SCOPE, "quarter": ["Q3"]}).kpis[0]["value"]
 
 
 def test_the_four_quarters_add_up_to_the_year():

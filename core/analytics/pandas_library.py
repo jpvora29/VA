@@ -78,6 +78,29 @@ def _values(value: Any) -> List[Any]:
     return [value]
 
 
+# ``(id(frame), column)`` -> ``(frame, its text lowered and trimmed, as a category)``.
+#
+# A deck asks ~700 filtered aggregates of one uploaded book, and every text filter used to
+# lower-case and trim its whole column again — on a million-row upload that string work
+# WAS the build. The normalised column depends only on the frame, so it is built once per
+# (frame, column) and every later filter is a categorical ``isin``. The frame itself is held
+# alongside so an ``id`` can never be reused by a different frame while its entry lives.
+_NORMALISED: Dict[Tuple[int, str], Tuple[pd.DataFrame, pd.Series]] = {}
+_NORMALISED_MAX = 96
+
+
+def _normalised_text(frame: pd.DataFrame, column: str) -> pd.Series:
+    key = (id(frame), column)
+    hit = _NORMALISED.get(key)
+    if hit is not None and hit[0] is frame:
+        return hit[1]
+    lowered = frame[column].astype(str).str.strip().str.lower().astype("category")
+    if len(_NORMALISED) >= _NORMALISED_MAX:
+        _NORMALISED.clear()
+    _NORMALISED[key] = (frame, lowered)
+    return lowered
+
+
 def _mask_for(frame: pd.DataFrame, column: str, value: Any) -> pd.Series:
     """One filter's row mask — text compared case-insensitively, as the SQL does."""
     wanted = _values(value)
@@ -86,7 +109,7 @@ def _mask_for(frame: pd.DataFrame, column: str, value: Any) -> pd.Series:
     series = frame[column]
     if all(isinstance(v, str) for v in wanted):
         needles = {v.strip().lower() for v in wanted}
-        return series.astype(str).str.strip().str.lower().isin(needles)
+        return _normalised_text(frame, column).isin(needles)
     # Mixed/numeric: compare on the string form so 2025 matches "2025" from a text column.
     numeric = pd.to_numeric(series, errors="coerce")
     as_numbers = {float(v) for v in wanted if isinstance(v, (int, float)) and not isinstance(v, bool)}
@@ -96,15 +119,19 @@ def _mask_for(frame: pd.DataFrame, column: str, value: Any) -> pd.Series:
 
 def _apply_filters(spec, frame: pd.DataFrame, filters: Dict[str, Any]) -> pd.DataFrame:
     """``frame`` narrowed by ``filters`` — the pandas twin of ``where_clause``."""
-    out = frame
+    # Every mask is taken on the WHOLE frame and combined, then the frame is sliced once:
+    # masks on the whole frame reuse the cached normalised columns (``_normalised_text``),
+    # where narrowing step by step made each later filter a fresh, uncached frame.
+    mask = None
     for column, value in (filters or {}).items():
         col = safe_column(spec, column)
-        if not _has(out, col):
+        if not _has(frame, col):
             # An AND constraint that cannot be evaluated cannot be satisfied.
             logger.info("pandas primitives: filter on absent column %r matches nothing", col)
-            return out.iloc[0:0]
-        out = out[_mask_for(out, col, value)]
-    return out
+            return frame.iloc[0:0]
+        step = _mask_for(frame, col, value)
+        mask = step if mask is None else (mask & step)
+    return frame if mask is None else frame[mask.to_numpy(dtype=bool)]
 
 
 _AGGREGATIONS = {"SUM": "sum", "AVG": "mean", "COUNT": "count", "MIN": "min", "MAX": "max"}

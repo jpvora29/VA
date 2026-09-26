@@ -48,7 +48,7 @@ logger = get_logger(__name__)
 #: Bumped when the prompt below changes in a way that should invalidate cached commentary.
 #: Read by :mod:`studio.template_fill.commentary_cache` — a better prompt must not be
 #: shadowed by yesterday's answer.
-PROMPT_VERSION = "icg-argument-v7"
+PROMPT_VERSION = "icg-skills-v8"
 
 #: How many repair rounds a section gets.
 #:
@@ -342,6 +342,9 @@ def section_payload(section: Section, pack, glossary_brief: str, *,
                    "ICG DEFINITIONS — what each term means, how this system computes "
                    "it, and the NEVER it carries. The NEVER lines are bans, not advice:",
                    glossary_brief]
+    playbook = _playbook(section, pack)
+    if playbook:
+        blocks += ["", playbook]
     blocks += ["", f"Write {len(section.columns)} field(s). Return one entry per field, with "
                    "its field_id copied exactly. Read every field's brief before writing any "
                    "of them: they are read on the SAME slide deck by the same people, so no "
@@ -367,6 +370,22 @@ def _pack_for(section: Section):
 
     pack = E.build_pack(dict(section.facts or {}))
     return pack if pack.items else None
+
+
+def _playbook(section: Section, pack) -> str:
+    """The QBR writing skills this section's evidence calls for (:mod:`commentary_skills`).
+
+    A decline is briefed as a decline and a multi-country overall page as a comparison of
+    markets — chosen from the facts, never by the model.
+    """
+    from studio.template_fill import commentary_skills
+
+    try:
+        return commentary_skills.playbook(section.facts or {},
+                                          (item.fact_id for item in pack.items))
+    except Exception as exc:  # noqa: BLE001 — guidance sharpens prose, it does not gate it
+        logger.warning("commentary_batch: playbook unavailable (%s)", exc)
+        return ""
 
 
 def _glossary_brief(pack) -> str:
@@ -572,7 +591,10 @@ def cache_key(section: Section, column: Column, pack, plan=None):
     plan = plan if plan is not None else editorial.EMPTY_PLAN
     return cache.CacheKey(
         subject=section.subject, topic=column.topic, bullets=column.bullets,
-        evidence=cache.evidence_digest((pack.as_brief(), _glossary_brief(pack))),
+        # The playbook is keyed with the evidence it was chosen from: editing a skill, or a
+        # section gaining one (a decline, a second market), must not be served from cache.
+        evidence=cache.evidence_digest((pack.as_brief(), _glossary_brief(pack),
+                                        _playbook(section, pack))),
         brief=C.column_rules(column.topic, column.bullets) + plan.brief(column.field_id),
         style=cache.evidence_digest((section.style,
                                      C.deck_voice(section.style, section.subject))),
@@ -923,6 +945,12 @@ def _all_drafts(value_sets: Sequence[Mapping[str, Any]]) -> List[Dict[str, str]]
             for values in value_sets]
 
 
+def section_markets(section: "Section") -> Tuple[str, ...]:
+    """The countries a section's book spans — the markets its fields are handed one each."""
+    return tuple(str(r.get("name")) for r in ((section.facts or {}).get("markets") or [])
+                 if r.get("name"))
+
+
 def write_deck(value_sets: Sequence[Mapping[str, Any]]) -> List[Dict[str, str]]:
     """Every section in the deck, written concurrently — one ``{role: text}`` per value set.
 
@@ -954,7 +982,8 @@ def write_deck(value_sets: Sequence[Mapping[str, Any]]) -> List[Dict[str, str]]:
     # and the sections that would otherwise each answer it for themselves run
     # concurrently. Deterministic and model-free, so it costs nothing and cannot reorder
     # anything — see :mod:`studio.template_fill.editorial`.
-    plan = editorial.plan_deck([section.columns for section in sections])
+    plan = editorial.plan_deck([section.columns for section in sections],
+                               markets=[section_markets(section) for section in sections])
     logger.info("commentary_batch: %d section(s), %d field(s) across %d value set(s)",
                 len(sections), sum(len(s.columns) for s in sections), len(value_sets))
     _log_plan(plan, sections)

@@ -72,8 +72,10 @@ def build_evidence_pack(
 ) -> EvidencePack:
     carrier = carrier or result.subject or "Market"
     flow, filters, engine = result.flow, result.resolved_filters, result.engine
-    period = f"FY{year}" if year else "current period"
-    comp = f"FY{int(year) - 1}" if year else "prior period"
+    from studio.period import display_period
+
+    period = display_period(getattr(result, "period", None), year)
+    comp = display_period(getattr(result, "period", None), year, prior=True)
     yr_int = int(year) if year else None
     prov = Provenance(flow=flow, source="GPR — premium ledger", primitive="", filters=dict(filters), period=yr_int)
 

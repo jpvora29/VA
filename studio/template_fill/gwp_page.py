@@ -23,7 +23,7 @@ template's authored example countries — see :func:`_country_series`.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from logger import get_logger
@@ -358,6 +358,36 @@ def _pp_delta(current: Optional[float], prior: Optional[float]) -> Optional[floa
     return None if (current is None or prior is None) else (current - prior)
 
 
+@dataclass(frozen=True)
+class TtmReadings:
+    """The TTM table's numbers and what to call its two columns."""
+
+    readings: Dict[str, Reading]
+    current_label: Optional[str] = None      # "TTM Aug 2026"; None = keep the header's text
+    prior_label: Optional[str] = None
+
+
+def _ttm_readings(result, filters: Dict[str, Any],
+                  basis: Dict[str, Reading]) -> TtmReadings:
+    """The TTM table's rows over the twelve months to the book's latest month.
+
+    The table is captioned TTM whatever the deck's basis, so it reads the run's R12M book
+    (``WorkingBook.r12m``) — built from the same slice, so it costs no warehouse read — and
+    its headers are relabelled to the real month ("TTM Aug 2026", "TTM Aug 2025") instead of
+    keeping the template's authored "TTM April". A result with no working book (a direct
+    engine, a test) reports the basis readings, as the page always did.
+    """
+    book = getattr(result, "book", None)
+    r12m = _safe(book.r12m) if book is not None else None
+    window = getattr(r12m, "window", None)
+    if r12m is None or window is None:
+        return TtmReadings(readings=basis)
+    scoped = {**filters, _YEAR_COL: window.year}
+    readings = _readings(replace(result, engine=r12m.engine, period=window), scoped)
+    return TtmReadings(readings=readings, current_label=window.label(window.year),
+                       prior_label=window.label(window.year - 1))
+
+
 def _reporting_filters(result) -> Dict[str, Any]:
     """The result's filters with the reporting year pinned (max pin, else latest in scope)."""
     from studio.template_fill.bindings import reporting_filters
@@ -559,6 +589,7 @@ def values(template: Template, result) -> Dict[str, Any]:
     fy = _reporting_filters(result)
     scope = _scope_label(result)
     readings = _readings(result, fy)
+    ttm = _ttm_readings(result, fy, readings)
     found = pages(template, vocab=_vocab(result))
 
     by_index = {s.index: s for s in template.slides}
@@ -569,7 +600,7 @@ def values(template: Template, result) -> Dict[str, Any]:
     boxes: Dict[str, Any] = {}
     for page in found:
         slide = by_index[page.slide_idx]
-        out.update(_table_values(template, page, readings))
+        out.update(_table_values(template, page, ttm))
         out.update(_panel_values(template, page, readings, scope))
         divisor = _chart_divisor(slide)
         for shape_id, column in page.charts:
@@ -594,8 +625,21 @@ def values(template: Template, result) -> Dict[str, Any]:
     return out
 
 
-def _table_values(template: Template, page: Page,
-                  readings: Dict[str, Reading]) -> Dict[str, Any]:
+# "TTM April 2026", "R12M Apr 2026", "LTM Apr. 2026" — the period an authored header names.
+_TTM_HEADER = re.compile(r"\b(?:TTM|LTM|R12M?|Rolling\s+12\s*M(?:onths)?)\b\.?\s+[A-Za-z]+\.?\s+"
+                         r"(?:19|20)\d{2}", re.I)
+
+
+def _period_header(token: str, year: Optional[int], label: Optional[str]) -> Optional[str]:
+    """One period column's header: the real TTM label where the author wrote one."""
+    if label and _TTM_HEADER.search(token or ""):
+        return _TTM_HEADER.sub(label, token)
+    if label and not _YEAR_IN_TEXT.search(token or ""):
+        return label
+    return _YEAR_IN_TEXT.sub(str(year), token) if year is not None else None
+
+
+def _table_values(template: Template, page: Page, ttm: TtmReadings) -> Dict[str, Any]:
     """The TTM table's cells: raw numbers for the period columns, rendered change text.
 
     The row LABELS ("QBE GWP rank") are left to the fill engine's carrier substitution,
@@ -604,14 +648,16 @@ def _table_values(template: Template, page: Page,
     table = page.table
     if table is None:
         return {}
+    readings = ttm.readings
     out: Dict[str, Any] = {}
     periods = readings.get("carrier_gwp", Reading())
-    for col, when, year in ((table.current_col, "cy", periods.current_year),
-                            (table.prior_col, "py", periods.prior_year)):
-        if year is None:
-            continue
+    for col, when, year, label in (
+            (table.current_col, "cy", periods.current_year, ttm.current_label),
+            (table.prior_col, "py", periods.prior_year, ttm.prior_label)):
         token = _token_at(template, page.slide_idx, table.shape_id, ["cell", 0, col])
-        out[_role(page.slide_idx, "period", when)] = _YEAR_IN_TEXT.sub(str(year), token)
+        header = _period_header(token, year, label)
+        if header is not None:
+            out[_role(page.slide_idx, "period", when)] = header
     for row, metric in table.rows:
         reading = readings.get(metric, Reading())
         if reading.current is not None:

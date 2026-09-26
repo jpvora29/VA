@@ -153,22 +153,61 @@ def submit_mappings(
     return None
 
 
-def add_column(repo, active_id, name, source, recipe, formula) -> Optional[str]:
+def save_draft(repo, active_id, columns, targets, descriptions, *,
+               primary: Optional[CustomMeasure] = None,
+               kpis: Sequence[CustomMeasure] = ()) -> None:
+    """Keep what the mapping form SHOWS before anything re-renders it.
+
+    Deleting, adding or undoing a column rebuilds the Data page from the repository, and
+    the repository only knew the mapping as of the last Submit — so every choice and
+    description typed since was silently thrown away. This writes the on-screen answers
+    back first. It is a draft, not a submission: nothing is validated, the status does not
+    move, and only a row the author actually CHANGED is stamped ``user`` (an untouched
+    machine proposal keeps its ``auto`` badge). ``columns`` empty — the form was not on
+    screen — is a no-op.
+    """
+    record = repo.get(active_id) if active_id else None
+    if record is None or not columns:
+        return
+    stored = {m.uploaded: m for m in record.mappings}
+    drafted = []
+    for col, target, desc in zip(columns, targets, descriptions):
+        before = stored.get(col) or ColumnMapping(uploaded=col)
+        target, desc = str(target or ""), str(desc or "")
+        if (target, desc) == (before.target, before.description):
+            drafted.append(before)
+        else:
+            drafted.append(replace(before, target=target, description=desc, source="user"))
+    on_screen = {m.uploaded for m in drafted}
+    mappings = tuple(drafted) + tuple(m for m in record.mappings if m.uploaded not in on_screen)
+    updated = replace(record, mappings=mappings,
+                      primary=primary if primary is not None else record.primary,
+                      custom_measures=tuple(kpis) if kpis else record.custom_measures)
+    if updated != record:
+        repo.update_record(updated)
+
+
+def add_column(repo, active_id, name, source, recipe, formula, args=()) -> Optional[str]:
     """Add a column: read one out of ``source`` with a ``recipe``, else compute a formula.
 
     A recipe is the common case — "Year from a date" is what unlocks every period
-    comparison in the deck when a spreadsheet only carries a billing date. The formula
-    path stays for arithmetic over money columns. Returns an error message, or None.
+    comparison in the deck when a spreadsheet only carries a billing date, and a split
+    ("Asia - Singapore" → "Singapore") is what makes a combined column mappable. The
+    formula path stays for arithmetic over money columns. Returns an error message, or None.
     """
     from studio.dataset import shape
 
     record = repo.get(active_id) if active_id else None
     if record is None:
         return "No active dataset."
+    settings = tuple(str(a) for a in (args or ()) if a is not None)
     try:
         if recipe:
-            shape.add_derived(repo, record, name or shape.suggested_name(source, recipe),
-                              source, recipe)
+            if not source:
+                return "Pick the column to read from."
+            shape.add_derived(repo, record,
+                              name or shape.suggested_name(source, recipe, settings),
+                              source, recipe, settings)
         else:
             shape.add_computed(repo, record, name, formula)
     except ValueError as exc:
@@ -232,6 +271,43 @@ def use_for_deck(repo, active_id) -> Optional[str]:
 
 
 # ── callbacks ────────────────────────────────────────────────────────────────
+
+
+# What the mapping form shows, read as State by every callback that re-renders the page, so
+# the on-screen answers can be kept as a draft first (``save_draft``).
+_FORM_STATES = (
+    State({"type": "qs-map-target", "col": ALL}, "value"),
+    State({"type": "qs-map-target", "col": ALL}, "id"),
+    State({"type": "qs-map-desc", "col": ALL}, "value"),
+    State({"type": "qs-kpi-name", "col": ALL}, "value"),
+    State({"type": "qs-kpi-name", "col": ALL}, "id"),
+    State({"type": "qs-kpi-agg", "col": ALL}, "value"),
+    State({"type": "qs-kpi-fmt", "col": ALL}, "value"),
+    State({"type": "qs-kpi-desc", "col": ALL}, "value"),
+    State({"type": "qs-primary", "field": ALL}, "value"),
+    State({"type": "qs-primary", "field": ALL}, "id"),
+)
+
+
+def _form_answers(targets, target_ids, descriptions, kpi_names, kpi_ids, kpi_aggs,
+                  kpi_fmts, kpi_descs, primary_values, primary_ids):
+    """The mapping form's answers as ``(columns, targets, descriptions, primary, kpis)``."""
+    columns = [ident["col"] for ident in (target_ids or [])]
+    kpis = _kpis_from_rows(
+        [i["col"] for i in (kpi_ids or [])],
+        kpi_names or [], kpi_aggs or [], kpi_fmts or [], kpi_descs or [],
+    )
+    # Empty when the primary-measure card isn't on screen — which is exactly
+    # when a column maps to Premium, so there is no primary measure to declare.
+    fields = {i["field"]: v for i, v in zip(primary_ids or [], primary_values or [])}
+    primary = _primary_from_fields(fields.get("name"), fields.get("column"), fields.get("formula"))
+    return columns, list(targets or []), list(descriptions or []), primary, kpis
+
+
+def _keep_draft(active, form) -> None:
+    columns, targets, descriptions, primary, kpis = _form_answers(*form)
+    save_draft(get_repository(), active, columns, targets, descriptions,
+               primary=primary, kpis=kpis)
 
 
 def register_data(app):
@@ -324,39 +400,19 @@ def register_data(app):
         Output("qs-dataset", "data", allow_duplicate=True),
         Output("qs-map-msg", "children"),
         Input("qs-map-submit", "n_clicks"),
-        State({"type": "qs-map-target", "col": ALL}, "value"),
-        State({"type": "qs-map-target", "col": ALL}, "id"),
-        State({"type": "qs-map-desc", "col": ALL}, "value"),
-        State({"type": "qs-kpi-name", "col": ALL}, "value"),
-        State({"type": "qs-kpi-name", "col": ALL}, "id"),
-        State({"type": "qs-kpi-agg", "col": ALL}, "value"),
-        State({"type": "qs-kpi-fmt", "col": ALL}, "value"),
-        State({"type": "qs-kpi-desc", "col": ALL}, "value"),
-        State({"type": "qs-primary", "field": ALL}, "value"),
-        State({"type": "qs-primary", "field": ALL}, "id"),
+        *_FORM_STATES,
         State("qs-dataset", "data"),
         prevent_initial_call=True,
         running=busy_running(BUSY_DATA),
     )
-    def submit_mapping(n, targets, target_ids, descriptions,
-                       kpi_names, kpi_ids, kpi_aggs, kpi_fmts, kpi_descs,
-                       primary_values, primary_ids, store):
+    def submit_mapping(n, *form_and_store):
+        *form, store = form_and_store
         active = (store or {}).get("active")
         if not n or not active:
             return no_update, no_update
-        columns = [ident["col"] for ident in (target_ids or [])]
-        kpis = _kpis_from_rows(
-            [i["col"] for i in (kpi_ids or [])],
-            kpi_names or [], kpi_aggs or [], kpi_fmts or [], kpi_descs or [],
-        )
-        # Empty when the primary-measure card isn't on screen — which is exactly
-        # when a column maps to Premium, so there is no primary measure to declare.
-        fields = {i["field"]: v for i, v in zip(primary_ids or [], primary_values or [])}
-        primary = _primary_from_fields(
-            fields.get("name"), fields.get("column"), fields.get("formula"),
-        )
+        columns, targets, descriptions, primary, kpis = _form_answers(*form)
         error = submit_mappings(
-            get_repository(), active, columns, targets or [], descriptions or [],
+            get_repository(), active, columns, targets, descriptions,
             primary=primary, kpis=kpis,
         )
         if error:
@@ -373,15 +429,47 @@ def register_data(app):
         State("qs-col-source", "value"),
         State("qs-col-recipe", "value"),
         State("qs-col-formula", "value"),
+        State("qs-col-arg1", "value"),
+        State("qs-col-arg2", "value"),
+        *_FORM_STATES,
         State("qs-dataset", "data"),
         prevent_initial_call=True,
         running=busy_running(BUSY_DATA),
     )
-    def add_column_cb(n, name, source, recipe, formula, store):
+    def add_column_cb(n, name, source, recipe, formula, arg1, arg2, *form_and_store):
+        *form, store = form_and_store
         active = (store or {}).get("active")
         if not n or not active:
             return no_update, no_update
-        error = add_column(get_repository(), active, name, source, recipe, formula)
+        _keep_draft(active, form)
+        error = add_column(get_repository(), active, name, source, recipe, formula,
+                           (arg1 or "", arg2 or ""))
+        if error:
+            return no_update, html.Span(error, className="qs-map-hint warn")
+        return _bump(store, active), ""
+
+    @app.callback(
+        Output("qs-dataset", "data", allow_duplicate=True),
+        # The upload message, not the mapping one: it is on the page in every state,
+        # and this callback's pattern Input can fire whenever the page is.
+        Output("qs-data-upload-msg", "children", allow_duplicate=True),
+        Input({"type": "qs8-derive-year", "col": ALL, "at": ALL}, "n_clicks"),
+        *_FORM_STATES,
+        State("qs-dataset", "data"),
+        prevent_initial_call=True,
+    )
+    def derive_year_cb(clicks, *form_and_store):
+        """Deck readiness' one-click fix: a Year column read out of a date column.
+
+        The same recipe the column tools offer, so the new column is proposed as Year by the
+        reconcile step exactly as if the author had built it by hand.
+        """
+        *form, store = form_and_store
+        active = (store or {}).get("active")
+        if not ctx.triggered_id or not any(clicks or []) or not active:
+            return no_update, no_update
+        _keep_draft(active, form)
+        error = add_column(get_repository(), active, "Year", ctx.triggered_id["col"], "year", None)
         if error:
             return no_update, html.Span(error, className="qs-map-hint warn")
         return _bump(store, active), ""
@@ -389,13 +477,16 @@ def register_data(app):
     @app.callback(
         Output("qs-dataset", "data", allow_duplicate=True),
         Input({"type": "qs-col-del", "col": ALL}, "n_clicks"),
+        *_FORM_STATES,
         State("qs-dataset", "data"),
         prevent_initial_call=True,
     )
-    def delete_column_cb(clicks, store):
+    def delete_column_cb(clicks, *form_and_store):
+        *form, store = form_and_store
         active = (store or {}).get("active")
         if not ctx.triggered_id or not any(clicks or []) or not active:
             return no_update
+        _keep_draft(active, form)
         if not delete_column(get_repository(), active, ctx.triggered_id["col"]):
             return no_update
         return _bump(store, active)
@@ -403,15 +494,42 @@ def register_data(app):
     @app.callback(
         Output("qs-dataset", "data", allow_duplicate=True),
         Input("qs-col-undo", "n_clicks"),
+        *_FORM_STATES,
         State("qs-dataset", "data"),
         prevent_initial_call=True,
         running=busy_running(BUSY_DATA),
     )
-    def undo_shape_cb(n, store):
+    def undo_shape_cb(n, *form_and_store):
+        *form, store = form_and_store
         active = (store or {}).get("active")
-        if not n or not active or not undo_shape(get_repository(), active):
+        if not n or not active:
+            return no_update
+        _keep_draft(active, form)
+        if not undo_shape(get_repository(), active):
             return no_update
         return _bump(store, active)
+
+    # Picking a reading relabels the two settings boxes ("Delimiter" / "Part") and hides
+    # the ones it does not use. Clientside: it is a pure lookup, and a round trip for it
+    # would lag the dropdown the author is still looking at.
+    app.clientside_callback(
+        r"""
+        function(recipe, specs) {
+            var spec = (specs || {})[recipe] || null;
+            var show = function(label) {
+                return label ? {} : {display: 'none'};
+            };
+            if (!spec) { return ['', '', {display: 'none'}, {display: 'none'}]; }
+            return [spec[0] || '', spec[1] || '', show(spec[0]), show(spec[1])];
+        }
+        """,
+        Output("qs-col-arg1", "placeholder"),
+        Output("qs-col-arg2", "placeholder"),
+        Output("qs-col-arg1-wrap", "style"),
+        Output("qs-col-arg2-wrap", "style"),
+        Input("qs-col-recipe", "value"),
+        State("qs-col-arg-specs", "data"),
+    )
 
     # ── the pivot builder — PARKED ────────────────────────────────────────────
     # Still switched off (``PIVOT_ENABLED`` in studio/page/authoring/data.py

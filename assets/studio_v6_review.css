@@ -1,0 +1,47 @@
+/* ==========================================================================
+   Studio v6 — Review: the commentary fields list (studio/page/authoring/
+   review_report.py), and a calmer skin for the Review cards around it.
+   Loads after studio_v6_canvas.css and uses the --qs6-* tokens.
+   ========================================================================== */
+.qs-root .qs-rv .qs-review-card {
+    border: none !important; border-radius: 16px !important;
+    background: var(--va-surface-0) !important;
+    box-shadow: 0 0 0 1px var(--qs6-hair), 0 10px 28px -22px rgba(10, 22, 54, 0.45) !important;
+}
+.qs-root .qs-rv .qs-panel-title { font-family: var(--qs6-serif); font-size: 18px; letter-spacing: 0; text-transform: none; color: var(--va-navy); }
+
+.qs-root .qs-rv-fieldwrap { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.qs-root .qs-rv-fields { display: flex; flex-direction: column; gap: 6px; }
+.qs-root .qs-rv-more { cursor: pointer; list-style: none; margin: 8px 0 6px; }
+.qs-root .qs-rv-more::-webkit-details-marker { display: none; }
+.qs-root .qs-rv-more::before { content: "\25B8"; display: inline-block; margin-right: 6px; transition: transform 160ms; }
+.qs-root details[open] > .qs-rv-more::before { transform: rotate(90deg); }
+
+.qs-root .qs-rv-field {
+    display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center;
+    gap: 4px 12px; width: 100%; padding: 10px 14px; text-align: left; cursor: pointer;
+    border: none; border-radius: 12px; background: var(--va-surface-1);
+    box-shadow: inset 0 0 0 1px var(--qs6-hair);
+    transition: background 120ms, box-shadow 120ms, transform 90ms;
+}
+.qs-root .qs-rv-field:hover { background: var(--va-surface-0); box-shadow: inset 0 0 0 1px rgba(11, 75, 255, 0.35); }
+.qs-root .qs-rv-field:active { transform: scale(0.995); }
+.qs-root .qs-rv-field.is-empty { background: #fff7f6; box-shadow: inset 0 0 0 1px rgba(197, 53, 50, 0.22); }
+.qs-root .qs-rv-field-page {
+    font-family: var(--qs6-serif); font-size: 15px; font-weight: 700; color: var(--va-ink-500);
+}
+.qs-root .qs-rv-field-main { display: flex; flex-direction: column; min-width: 0; }
+.qs-root .qs-rv-field-name { font-size: 13.5px; font-weight: 700; color: var(--va-navy); }
+.qs-root .qs-rv-field-where { font-size: 12px; color: var(--va-ink-500); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qs-root .qs-rv-field-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 700; white-space: nowrap;
+}
+.qs-root .qs-rv-field-chip.err { color: #a12b28; background: rgba(197, 53, 50, 0.1); }
+.qs-root .qs-rv-field-chip.warn { color: #8a5f00; background: rgba(185, 129, 10, 0.12); }
+.qs-root .qs-rv-field-chip.ok { color: #0f6b3a; background: rgba(31, 157, 85, 0.12); }
+.qs-root .qs-rv-field-why { grid-column: 2 / -1; font-size: 12px; line-height: 1.45; color: var(--va-ink-600); }
+@media (max-width: 720px) {
+    .qs-root .qs-rv-field { grid-template-columns: 40px minmax(0, 1fr); }
+    .qs-root .qs-rv-field-chip { grid-column: 2; justify-self: start; }
+}

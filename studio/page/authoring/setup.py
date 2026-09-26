@@ -14,9 +14,10 @@ from uuid import uuid4
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
-from core.peers import MIN_CUSTOM_PEERS, MIN_PEERS_MESSAGE, peer_min_note  # noqa: F401
+from core.peers import MIN_CUSTOM_PEERS, MIN_PEERS_MESSAGE, count_peers, peer_min_note  # noqa: F401
 from studio.compute import DATA_BASIS_PREMIUM, DATA_BASIS_WITH_SURVEY
-from studio.page.layout import _filter_grid
+from studio.page.authoring import period_picker as PP
+from studio.page.layout import DROPDOWN_MAX_HEIGHT
 
 # ── the Setup busy overlay ───────────────────────────────────────────────────
 #
@@ -55,12 +56,32 @@ def _elapsed(seconds: int) -> str:
     return f"{seconds}s" if seconds < 60 else f"{seconds // 60}m {seconds % 60:02d}s"
 
 
+def _gen_steps(phase: Optional[str], *, done: bool) -> html.Ol:
+    """The build's four phases as a stepper: done ✓, the one running, and what is to come."""
+    from studio.authoring.progress import PHASES
+
+    ids = [p.id for p in PHASES]
+    at = ids.index(phase) if phase in ids else -1
+    items = []
+    for i, step in enumerate(PHASES):
+        state = "done" if done or i < at else "now" if i == at else "todo"
+        mark = (html.I(className="bi bi-check-lg") if state == "done"
+                else html.Span(className="qs6-gen-spin") if state == "now"
+                else html.Span(str(i + 1)))
+        items.append(html.Li([html.Span(mark, className="qs6-gen-dot"),
+                              html.Span(step.label, className="qs6-gen-label")],
+                             className=f"qs6-gen-step is-{state}"))
+    return html.Ol(items, className="qs6-gen-steps")
+
+
 def generate_progress(state: Optional[Mapping[str, Any]]) -> Any:
-    """What the build in flight is doing: the phase, the bar, and how long it has run.
+    """What the build in flight is doing: its phases, the bar, and how long it has run.
 
     Rendered into a host that is mounted for as long as Studio is (see
     ``studio.authoring.layout.generate_progress_host``), NOT into the Setup form: a build
     takes minutes, and the author is free to walk the last deck's canvas while it runs.
+    The timer ticks in the browser between polls (assets/studio_v6.js reads
+    ``data-elapsed``), so it counts every second rather than jumping with each poll.
 
     Nothing at all before the first build and after a finished one — the deck itself is
     the report then, and a "100%" bar left on screen only asks to be clicked again.
@@ -73,27 +94,39 @@ def generate_progress(state: Optional[Mapping[str, Any]]) -> Any:
         # that cannot close (see ``studio.commentary_mode.CommentaryUnavailable``).
         again = " Re-running the same selection may succeed." if state.get("retryable") else ""
         return html.Div(
-            [html.I(className="bi bi-exclamation-triangle"),
-             html.Span(f"The deck could not be built: {state['error']}{again}")],
-            className="qs-gen-progress is-failed",
+            [html.Span(html.I(className="bi bi-exclamation-triangle-fill"),
+                       className="qs6-gen-erricon"),
+             html.Div([html.Div("The deck could not be built", className="qs6-gen-title"),
+                       html.P(f"{state['error']}.{again}".replace("..", "."),
+                              className="qs6-gen-msg")],
+                      className="qs6-gen-body")],
+            className="qs-gen-progress qs6-gen is-failed", role="alert",
         )
     percent = int(state.get("percent") or 0)
+    elapsed = int(state.get("elapsed") or 0)
     return html.Div(
         [
             html.Div(
                 [
-                    html.Span(state.get("step") or "Working", className="qs-gen-step"),
-                    html.Span(str(state.get("scope") or ""), className="qs-gen-scope"),
-                    html.Span(_elapsed(int(state.get("elapsed") or 0)),
-                              className="qs-gen-elapsed"),
+                    html.Div([html.Div("Building your deck", className="qs6-gen-title"),
+                              html.Span(str(state.get("scope") or "Full QBR"),
+                                        className="qs6-gen-scope")],
+                             className="qs6-gen-titles"),
+                    html.Span([html.I(className="bi bi-stopwatch"),
+                               html.Span(_elapsed(elapsed), className="qs6-gen-timer",
+                                         **{"data-elapsed": str(elapsed)})],
+                              className="qs6-gen-clock"),
                 ],
-                className="qs-gen-head",
+                className="qs6-gen-head",
             ),
-            html.Div(html.Div(className="qs-gen-fill", style={"width": f"{percent}%"}),
-                     className="qs-gen-track"),
-            html.P(state.get("message") or "", className="qs-gen-msg"),
+            html.Div(
+                html.Div(className="qs6-gen-fill", style={"width": f"{max(percent, 4)}%"}),
+                className="qs6-gen-track",
+            ),
+            _gen_steps(state.get("phase"), done=bool(state.get("done"))),
+            html.P(state.get("message") or "", className="qs6-gen-msg"),
         ],
-        className="qs-gen-progress",
+        className="qs-gen-progress qs6-gen", role="status", **{"aria-live": "polite"},
     )
 
 
@@ -152,14 +185,15 @@ def _setup_section(icon: str, title: str, subtitle: str, children: Any, *,
 
 
 def _radio_field(label: str, cid: str, options: Sequence[Mapping[str, str]], value: str,
-                 *, tip_id: str = "", tip: str = "") -> html.Div:
+                 *, tip_id: str = "", tip: str = "", persist: bool = False) -> html.Div:
+    extra = {"persistence": True, "persistence_type": "local"} if persist else {}
     return html.Div(
         [
             _label(label, tip_id=tip_id, tip=tip),
             dcc.RadioItems(
                 id=cid, options=list(options), value=value,
                 className="studio-report-radio", inputClassName="studio-report-input",
-                labelClassName="studio-report-label",
+                labelClassName="studio-report-label", **extra,
             ),
         ],
         className="studio-field",
@@ -218,6 +252,33 @@ def _setup_options() -> html.Div:
     )
 
 
+# ── the reporting period ─────────────────────────────────────────────────────
+
+# The stored values are unchanged ("calendar" / "r12m"); Setup NAMES them YTD and R12M.
+PERIOD_BASIS_OPTIONS = [dict(o) for o in PP.BASIS_OPTIONS]
+PERIOD_BASIS_DEFAULT = PP.BASIS_YTD
+
+
+def period_note(text: str, *, tone: str = "", detail: str = "") -> html.Div:
+    """The one line that says which period the deck reports; ``detail`` is the full
+    sentence, shown on hover so the line itself stays short."""
+    return html.Div([html.I(className="bi bi-calendar-check"), html.Span(text)],
+                    className="qs-period-note" + (f" {tone}" if tone else ""),
+                    title=detail or text)
+
+
+def _period_control() -> html.Div:
+    """How the deck measures a period — YTD or R12M — and the month it ends in.
+
+    The basis changes every figure in the deck — premium, share of wallet, share of
+    portfolio, rank, the peer benchmark and every YoY — because it changes what "the year"
+    means in the run's working book (:mod:`studio.period`). The survey pages are the
+    exception: the survey is run once a year, so they report the pinned or latest survey
+    year whatever is chosen here. The control itself is :mod:`period_picker`.
+    """
+    return PP.timeline_control(PERIOD_BASIS_DEFAULT)
+
+
 # Kept for backward-compat imports; the options now live in ``_setup_options``.
 def _audience_length() -> html.Div:  # pragma: no cover - legacy shim
     return _setup_options()
@@ -256,18 +317,20 @@ def _market_pickers(groups: PeerGroups, kind: str, placeholder, *,
     blocks = [
         html.Div(
             [
-                html.Div(str(country), className="qs-peer-market-name") if per_market else None,
+                html.Div([html.I(className="bi bi-geo-alt"), html.Span(str(country))],
+                         className="qs-peer-market-name") if per_market else None,
                 dcc.Dropdown(
                     id={"type": kind, "country": str(country)},
                     options=list(options),
                     value=[str(c) for c in (chosen or [])],
                     multi=True,
                     placeholder=placeholder(country, per_market),
-                    className="studio-dd sm",
+                    maxHeight=DROPDOWN_MAX_HEIGHT,
+                    className="qs6-dd",
                 ),
-                html.Div(peer_min_note(chosen),
+                html.Div(peer_counter(chosen),
                          id={"type": "studio-peer-min", "country": str(country)},
-                         className="qs-peer-min") if minimum else None,
+                         className="qs-peer-min qs6-peer-min") if minimum else None,
             ],
             className="qs-peer-market",
         )
@@ -292,8 +355,39 @@ def custom_peer_picker(groups: PeerGroups = ()) -> html.Div:
     )
 
 
+def peer_counter(chosen: Optional[Sequence[str]]) -> html.Div:
+    """How far a custom peer set is from the minimum: "3 of 5 · 2 more needed", then "Ready".
+
+    A counter with a bar rather than a red sentence: the author is filling a set, and the
+    useful answer is how many more — the same floor the Generate check enforces
+    (:data:`core.peers.MIN_CUSTOM_PEERS`).
+    """
+    n = count_peers(chosen)
+    done = n >= MIN_CUSTOM_PEERS
+    missing = MIN_CUSTOM_PEERS - n
+    return html.Div(
+        [
+            html.Div(html.Div(className="qs6-peer-meter-fill",
+                              style={"width": f"{min(100, round(n * 100 / MIN_CUSTOM_PEERS))}%"}),
+                     className="qs6-peer-meter"),
+            html.Span([html.B(str(n)), f" of {MIN_CUSTOM_PEERS} minimum"],
+                      className="qs6-peer-n"),
+            html.Span([html.I(className="bi bi-check-circle-fill"), "Ready"] if done
+                      else f"{missing} more needed", className="qs6-peer-state"),
+        ],
+        className="qs6-peer-count" + (" is-ok" if done else ""),
+    )
+
+
+def _initials(name: str) -> str:
+    words = [w for w in str(name).replace("&", " ").split() if w[:1].isalnum()]
+    return ("".join(w[0] for w in words[:2]) or str(name)[:2]).upper()
+
+
 def _peer_chips(names: Sequence[str]) -> Optional[html.Div]:
-    return (html.Div([html.Span(str(n), className="qs-peer-chip") for n in names],
+    return (html.Div([html.Span([html.Span(_initials(n), className="qs-peer-ini"),
+                                 html.Span(str(n))], className="qs-peer-chip")
+                      for n in names],
                      className="qs-peer-chips") if names else None)
 
 
@@ -301,7 +395,10 @@ def _peer_group_row(country: str, names: Sequence[str]) -> html.Div:
     """One market's peer group: the country, then its own peers."""
     return html.Div(
         [
-            html.Div(str(country), className="qs-peer-group-name"),
+            html.Div([html.I(className="bi bi-geo-alt"), html.Span(str(country)),
+                      html.Span(f"{len(names)} peer" + ("s" if len(names) != 1 else ""),
+                                className="qs-peer-group-n") if names else None],
+                     className="qs-peer-group-name"),
             _peer_chips(names) or html.Div("No peer group in this market.",
                                            className="qs-peer-note warn"),
         ],
@@ -361,12 +458,46 @@ def _peers_panel() -> html.Div:
                 className="studio-peer-msg",
             ),
             html.Div(
-                custom_peer_picker(),
+                [
+                    html.Button([html.I(className="bi bi-magic"),
+                                 html.Span("Start from existing peers")],
+                                id="qs6-peer-seed", n_clicks=0, type="button",
+                                className="qs6-link-btn",
+                                title="Fill each market's picker with its Peers-table group, "
+                                      "then add or remove carriers"),
+                    html.Div(custom_peer_picker(), id="studio-peer-custom-wrap-inner"),
+                ],
                 id="studio-peer-custom-wrap",
                 style={"display": "none"},
             ),
         ],
         className="studio-field qs-peer-field",
+    )
+
+
+def data_source_of(dataset_state: Optional[Mapping[str, Any]]) -> str:
+    """``"governed"`` or ``"custom"`` — which source the form currently has selected."""
+    return (dataset_state or {}).get("source") or "governed"
+
+
+def source_status(dataset_state: Optional[Mapping[str, Any]]) -> Optional[html.Span]:
+    """The line under the source question when custom data is chosen: in use, or not yet."""
+    from studio.dataset.repository import get_repository
+
+    state = dataset_state or {}
+    if data_source_of(state) != "custom":
+        return None
+    record = get_repository().get(state.get("active") or "")
+    if record and record.status == "submitted":
+        return html.Span(
+            [html.I(className="bi bi-check-circle-fill"),
+             f"Using “{record.name}” — {record.n_rows:,} rows. Filters and figures below come from your data."],
+            className="qs-source-status ok",
+        )
+    return html.Span(
+        [html.I(className="bi bi-arrow-right-circle"),
+         "Finish upload, mapping and submit on the Data page to use your data here."],
+        className="qs-source-status",
     )
 
 
@@ -376,25 +507,8 @@ def _data_source_control(dataset_state: Optional[Mapping[str, Any]]) -> html.Div
     Mutually exclusive, so segmented pills (not checkboxes). Choosing "My data"
     routes to the Data page; once a dataset is submitted there, a status chip
     names it here and every figure below derives from it."""
-    from studio.dataset.repository import get_repository
-
-    state = dataset_state or {}
-    source = state.get("source") or "governed"
-    record = get_repository().get(state.get("active") or "") if source == "custom" else None
-    if source != "custom":
-        status = None
-    elif record and record.status == "submitted":
-        status = html.Span(
-            [html.I(className="bi bi-check-circle-fill"),
-             f"Using “{record.name}” — {record.n_rows:,} rows. Filters and figures below come from your data."],
-            className="qs-source-status ok",
-        )
-    else:
-        status = html.Span(
-            [html.I(className="bi bi-arrow-right-circle"),
-             "Finish upload, mapping and submit on the Data page to use your data here."],
-            className="qs-source-status",
-        )
+    source = data_source_of(dataset_state)
+    status = source_status(dataset_state)
     return html.Div(
         [
             _radio_field(
@@ -499,6 +613,7 @@ def _survey_panel() -> html.Div:
                     dcc.Dropdown(
                         id="studio-survey-carrier", options=[], value=None,
                         placeholder="Matched from the survey book",
+                        maxHeight=DROPDOWN_MAX_HEIGHT,
                         className="studio-dd sm",
                     ),
                     html.Div(survey_note(""), id="studio-survey-msg",
@@ -666,13 +781,50 @@ def _slide_preview(entry, url: Optional[str], label: str) -> html.Div:
     )
 
 
-def _slide_row(entry, *, included: bool, url: Optional[str]) -> html.Div:
+def page_groups(entries) -> List[Tuple[Any, ...]]:
+    """The pages an author actually chooses between: runs of IDENTICAL pages folded into one.
+
+    The product template carries the same Feedback page four times — one layout per number
+    of countries on it, of which each product block keeps one — so four ticks reading
+    "Feedback" offered a choice that does not exist. A run of consecutive pages with the same
+    section and the same title is one page to the author, and its tick covers all of them.
+    """
+    groups: List[List[Any]] = []
+    for entry in entries:
+        last = groups[-1][-1] if groups else None
+        if (last is not None and entry.section == last.section
+                and (entry.title or "") == (last.title or "")):
+            groups[-1].append(entry)
+        else:
+            groups.append([entry])
+    return [tuple(g) for g in groups]
+
+
+def group_key(group: Sequence[Any]) -> Any:
+    """The checkbox id's ``idx`` for a group: the page index, or ``"0,1,2,3"`` for a run."""
+    return group[0].index if len(group) == 1 else ",".join(str(e.index) for e in group)
+
+
+def base_page_count(basis: Optional[str], slides) -> int:
+    """Distinct pages the deck carries — a folded run of identical pages counts once."""
+    from studio.template_fill.deck_slides import catalog
+
+    return sum(
+        1 for axis in deck_axes(basis, slides) for group in page_groups(catalog(axis))
+        if any(slides.includes(axis, e.index) for e in group)
+    )
+
+
+def _slide_row(entry, *, included: bool, url: Optional[str],
+               label: Optional[str] = None, idx: Any = None) -> html.Div:
     """One template page, with the tick that decides whether the deck carries it."""
-    label, icon, note = _slide_meta(entry)
+    base, icon, note = _slide_meta(entry)
+    label = label or base
+    idx = entry.index if idx is None else idx
     return html.Div(
         [
             dbc.Checkbox(
-                id={"type": "qs-slide", "axis": entry.axis, "idx": entry.index},
+                id={"type": "qs-slide", "axis": entry.axis, "idx": idx},
                 value=included,
                 class_name="qs-slide-check",
             ),
@@ -709,7 +861,8 @@ def _axis_block(axis: str, slides) -> Optional[html.Div]:
         return None
     label, icon, repeat = _AXIS_META.get(axis, (axis.title(), "bi-file-earmark", ""))
     urls = slide_previews.urls(axis)
-    kept = [e for e in entries if slides.includes(axis, e.index)]
+    groups = page_groups(entries)
+    kept = [g for g in groups if any(slides.includes(axis, e.index) for e in g)]
     written = fields_for_axis(axis, hidden=slides.hidden(axis))
     return html.Div(
         [
@@ -717,8 +870,8 @@ def _axis_block(axis: str, slides) -> Optional[html.Div]:
                 [
                     html.I(className=f"bi {icon}"),
                     html.Span(label, className="qs-tsec-axis-name"),
-                    html.Span(f"{len(kept)}/{len(entries)} page"
-                              + ("s" if len(entries) != 1 else ""),
+                    html.Span(f"{len(kept)}/{len(groups)} page"
+                              + ("s" if len(groups) != 1 else ""),
                               className="qs-tsec-axis-n"),
                     html.Span(f"{written} written",
                               className="qs-tsec-axis-ai",
@@ -730,9 +883,10 @@ def _axis_block(axis: str, slides) -> Optional[html.Div]:
             ),
             html.Div(repeat, className="qs-tsec-axis-note") if repeat else None,
             html.Div(
-                [_slide_row(e, included=slides.includes(axis, e.index),
-                            url=urls[e.index] if e.index < len(urls) else None)
-                 for e in entries],
+                [_slide_row(g[0], included=any(slides.includes(axis, e.index) for e in g),
+                            url=urls[g[0].index] if g[0].index < len(urls) else None,
+                            idx=group_key(g))
+                 for g in groups],
                 className="qs-slide-list",
             ),
         ],
@@ -764,7 +918,7 @@ def template_sections_panel(basis: Optional[str] = None,
             className="qs-preview-empty",
         )
     built = deck_axes(basis, chosen)
-    pages = sum(len(chosen.kept(axis)) for axis in built)
+    pages = base_page_count(basis, chosen)
     return html.Div(
         [
             html.Div(
@@ -804,132 +958,8 @@ def setup_body(
     dataset: Optional[Mapping[str, Any]] = None,
     slides: Optional[Any] = None,
 ) -> html.Div:
-    # Order follows how a deck is actually briefed: what shape is it and who is it for,
-    # then where the numbers come from, then which slice of them, then the benchmarks.
-    sections = html.Div(
-        [
-            _setup_section(
-                "bi-sliders", "Audience & voice",
-                "Who reads this deck, and how it should read.",
-                _setup_options(), span=True,
-                tip_id="qs-tip-sec-shape",
-                tip="Answer these from the brief. They decide who the commentary is "
-                    "pitched at and how much prose each slide carries. WHICH pages the "
-                    "deck carries is the list on the right.",
-            ),
-            _setup_section(
-                "bi-database", "Data source",
-                "Which data the figures are computed from.",
-                _data_source_control(dataset),
-                span=True,
-                tip_id="qs-tip-sec-source",
-                tip="Every figure in the deck is computed from the source chosen here, "
-                    "and every cached build re-keys when it changes.",
-            ),
-            _setup_section(
-                "bi-funnel", "Scope & filters",
-                "Every list narrows to what the selection above it writes in.",
-                # No DATA SCOPE toggle here. It rendered two chips no callback ever read,
-                # directly under the basis question — which is the real "GPR or GPR +
-                # survey" choice — so the form showed the same decision twice and only one
-                # of them worked. (The chips still exist for the standalone demo rail.)
-                _filter_grid(filter_options, filter_values),
-                span=True,
-                tip_id="qs-tip-sec-filters",
-                tip="The slice of the book the deck reports on. The lists cascade, so "
-                    "each one only offers values that exist under the others. Country "
-                    "and Year accept several values; several countries build several "
-                    "country blocks — and several peer groups.",
-            ),
-            _setup_section(
-                "bi-people", "Peers",
-                "Confidential — aggregate benchmark only.",
-                _peers_panel(),
-                tip_id="qs-tip-sec-peers",
-                tip="Who the carrier is benchmarked against. Existing peers come from "
-                    "the governed Peers table, one group per market; custom peers are "
-                    "yours to pin, per market, with at least "
-                    f"{MIN_CUSTOM_PEERS} carriers each so the benchmark stays an "
-                    "aggregate. No peer is ever named in carrier-facing output.",
-            ),
-            html.Div(
-                _setup_section(
-                    "bi-clipboard-data", "Survey",
-                    "The survey book names carriers its own way — check the match.",
-                    _survey_panel(),
-                    tip_id="qs-tip-sec-survey",
-                    tip="The survey book is a separate flow with its own carrier names "
-                        "and its own peer groups. Shown only when the deck draws on it, "
-                        "so a survey page never reports another carrier's scores.",
-                ),
-                id="studio-survey-section",
-                style={"display": "none"},          # shown on the GPR + Carrier Survey basis
-            ),
-        ],
-        className="qs-setup-sections",
-    )
-    aside = html.Div(
-        [
-            _scope_preview(),
-            html.Button(
-                [html.I(className="bi bi-stars"), "Generate deck"],
-                id="studio-generate",
-                className="qs-generate-btn",
-            ),
-            # Why a Generate click was refused (no money measure, dataset not
-            # submitted). Written by the generate callback.
-            html.Div(id="studio-setup-msg", className="qs-setup-msg"),
-            # The deck's page list lives in the aside so the main form stays a single
-            # screen. It is a CONTROL, not a summary: each page carries the tick that
-            # decides whether the deck includes it, and the deck's shape is read back off
-            # those ticks (``studio.template_fill.deck_slides``).
-            html.Div(
-                [
-                    html.Div(
-                        [
-                            html.I(className="bi bi-collection"), "What's in your QBR",
-                            info_tip(
-                                "qs-tip-pages",
-                                "Every page of every sub-template, with the tick that "
-                                "decides whether your deck carries it. Untick a page and "
-                                "it is not built, not filled and not written — a "
-                                "sub-template with nothing ticked is left out of the deck "
-                                "entirely. Hover a page to see it as the template draws "
-                                "it; the preview is the template's own example, not this "
-                                "carrier's numbers.",
-                            ),
-                        ],
-                        className="qs-aside-card-head"),
-                    html.Div(template_sections_panel(basis=DATA_BASIS_DEFAULT, slides=slides),
-                             id="studio-template-sections"),
-                ],
-                className="qs-aside-card",
-            ),
-        ],
-        className="qs-setup-aside",
-    )
-    form = html.Div(
-        [
-            html.Div(
-                [
-                    html.Div(
-                        [
-                            html.Div("QBR Studio", className="qs-setup-eyebrow"),
-                            html.Div([html.I(className="bi bi-magic"), "QBR Creator"],
-                                     className="qs-setup-title"),
-                        ],
-                        className="qs-setup-head-text",
-                    ),
-                    html.Span(
-                        [html.I(className="bi bi-shield-check"), "Governed data"],
-                        className="qs-govern-chip",
-                        title="Every figure traces to the governed dataset; commentary is verified against it.",
-                    ),
-                ],
-                className="qs-setup-head",
-            ),
-            html.Div([sections, aside], className="qs-setup-layout"),
-        ],
-        className="qs-setup-card",
-    )
-    return html.Div([form_token(), form], className="qs-setup-wrap")
+    """The Setup page — composed in :mod:`studio.page.authoring.setup_layout`."""
+    from studio.page.authoring.setup_layout import compose_setup
+
+    return compose_setup(filter_options=filter_options, filter_values=filter_values,
+                         dataset=dataset, slides=slides)

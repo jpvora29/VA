@@ -13,7 +13,7 @@ from collections import OrderedDict
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from studio.review.assembled import assembled_commentary, diagnose_assembled, is_assembled
-from studio.review.capability import probe, reporting_year
+from studio.review.capability import probe, reporting_period, reporting_year
 from studio.review.causes import cause as cause_of
 from studio.review.commentary import diagnose_commentary
 from studio.review.model import (
@@ -51,6 +51,7 @@ class ReviewReportBuilder:
         self._capabilities: Tuple[Capability, ...] = ()
         self._findings: List[SlotFinding] = []
         self._commentary: Tuple[Any, ...] = ()
+        self._fields_ledger: Optional[Tuple[Any, ...]] = None
 
     def add_capabilities(self) -> "ReviewReportBuilder":
         """What the data behind this deck can and cannot support."""
@@ -77,11 +78,26 @@ class ReviewReportBuilder:
         )
         return self
 
+    def add_commentary_fields(self) -> "ReviewReportBuilder":
+        """Which commentary fields the delivered deck carries text in, and which it does not.
+
+        Read from the ledger the build recorded (the finished file cannot tell a written box
+        from the template's own copy). Absent on the editable template doc, whose prose
+        boxes :meth:`add_commentary` already reads directly.
+        """
+        from studio.template_fill.commentary_ledger import from_dicts
+
+        rows = self._doc.get("commentary_fields")
+        if self._assembled and rows is not None:
+            self._fields_ledger = tuple(from_dicts(rows))
+        return self
+
     def build(self) -> ReviewReport:
         return ReviewReport(
             source=ASSEMBLED if self._assembled else TEMPLATE,
             subject=str(self._values.get("subject_name") or ""),
             period_year=reporting_year(self._values),
+            period_label=reporting_period(self._values),
             slides_total=int(self._doc.get("n_slides") or 0),
             slides_hidden=len(self._doc.get("hidden") or []),
             slots_total=self._countable(),
@@ -89,6 +105,7 @@ class ReviewReportBuilder:
             capabilities=self._capabilities,
             groups=_group(self._findings + list(self._empty_commentary())),
             commentary=self._commentary,
+            commentary_fields=self._fields_ledger,
         )
 
     # ── the two figures the header reports ───────────────────────────────────
@@ -131,6 +148,7 @@ def build_review_report(doc: Optional[Mapping[str, Any]]) -> ReviewReport:
         .add_capabilities()
         .add_slot_findings()
         .add_commentary()
+        .add_commentary_fields()
         .build()
     )
 

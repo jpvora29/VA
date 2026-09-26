@@ -248,4 +248,6 @@ def test_the_tab_states_where_the_user_is_and_what_is_missing(seeded_page):
     assert "qs-pipeline" in seeded_page and "Map columns" in seeded_page
     # The three columns a deck cannot be built without are ticked off on screen.
     assert "qs-req-chip" in seeded_page
-    assert "qs-meter-fill" in seeded_page
+    # …in the Deck readiness rail, which counts them and holds the confirm action.
+    assert "Deck readiness" in seeded_page and "required fields ready" in seeded_page
+    assert "qs-map-submit" in seeded_page

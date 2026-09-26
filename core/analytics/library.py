@@ -331,8 +331,10 @@ def _peer_clauses(
         for j, p in enumerate(pinned):
             k = f"cp{j}"
             params[k] = p
-            ph.append(f"LOWER(:{k})")
-        member_clause = f'LOWER("{carrier_col}") IN ({", ".join(ph)})'
+            ph.append(f":{k}")
+        # Collated rather than LOWER()-wrapped so a NOCASE index can serve it — see
+        # ``core.analytics.sql.where_clause``.
+        member_clause = f'"{carrier_col}" COLLATE NOCASE IN ({", ".join(ph)})'
     else:
         peer_where = [f'LOWER("{peer["key"]}") = LOWER(:subject)']
         country_col = peer_country_column(spec, engine) if engine is not None else peer.get("country")

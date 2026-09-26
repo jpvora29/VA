@@ -592,3 +592,57 @@ def test_the_cache_key_changes_when_a_field_is_given_a_different_job():
     plan = E.plan_deck([columns])
     assert B.cache_key(section, columns[0], pack) != \
         B.cache_key(section, columns[0], pack, plan)
+
+
+# ── a multi-country overall page: a different market per field ─────────────
+#
+# Reported: on a three-country run the overall pages' fields all made the same point —
+# every field only had the combined book to argue from. Each field is now handed a market.
+
+_MARKETS = ("Singapore", "Japan", "Australia")
+
+
+def test_each_field_on_a_multi_country_page_owns_a_different_market():
+    plan = E.plan_deck([_columns()], markets=[_MARKETS])
+    owned = [t for c in _columns() for t in plan.fields[c.field_id].owns
+             if t.startswith(E.MARKET_TOPIC)]
+    assert sorted(owned) == sorted(E.market_topic(m.lower()) for m in _MARKETS)
+    assert len(owned) == len(set(owned))
+
+
+def test_a_field_keeps_its_own_first_finding_as_well_as_a_market():
+    plain = E.plan_deck([_columns()])
+    with_markets = E.plan_deck([_columns()], markets=[_MARKETS])
+    for column in _columns()[:3]:
+        assert plain.fields[column.field_id].owns[0] in with_markets.fields[column.field_id].owns
+
+
+def test_the_brief_names_the_country_in_words():
+    plan = E.plan_deck([_columns()], markets=[_MARKETS])
+    briefs = " ".join(plan.brief(c.field_id) for c in _columns())
+    for market in _MARKETS:
+        assert f"position in {market}" in briefs
+
+
+def test_a_market_fact_is_its_own_claim_so_two_countries_are_two_findings():
+    assert E.topic_of_fact("market.japan") == "market:japan"
+    assert E.claim_of(["market.japan"]) != E.claim_of(["market.singapore"])
+
+
+def test_a_single_market_run_plans_exactly_as_before():
+    assert E.plan_deck([_columns()], markets=[()]) == E.plan_deck([_columns()])
+
+
+def test_the_evidence_pack_carries_one_citable_fact_per_market():
+    from studio.template_fill.commentary_evidence import build_pack
+
+    facts = {**_facts(), "markets": [
+        {"name": "Japan", "current": 200e6, "pct": 24.2, "delta": 39e6, "sow": 4.1,
+         "sow_prior": 3.6, "pool": 4.9e9, "pool_pct": 8.0, "rank": 5, "of_n": 42},
+        {"name": "Singapore", "current": 210e6, "pct": 28.1, "delta": 46e6, "sow": 4.4,
+         "sow_prior": 3.9, "pool": 4.8e9, "pool_pct": 9.0, "rank": 4, "of_n": 37}]}
+    pack = build_pack(facts)
+    japan = pack.get("market.japan")
+    assert japan is not None and japan.entity == "Japan"
+    assert "24.2%" in japan.rendered and "rank #5 of 42" in japan.rendered
+    assert pack.get("market.singapore") is not None

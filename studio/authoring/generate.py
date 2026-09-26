@@ -50,15 +50,24 @@ def _friendly_options(dataset_store: Optional[Dict[str, Any]] = None) -> Dict[st
     otherwise the governed DB's cached distincts."""
     from studio.dataset.source import dataset_filter_options, dataset_in_use
 
-    from studio.compute import form_options, quarter_options
+    from studio.compute import form_options
 
     record = dataset_in_use(dataset_store)
     if record is not None:
-        # An uploaded dataset answers for its own columns; the quarter is the calendar's,
-        # not the book's, so it rides along either way.
+        # An uploaded dataset answers for its own columns — its own quarter labels too.
         return {**dataset_filter_options(record.dataset_id, FILTER_COLUMN),
-                "quarter": quarter_options()}
-    return form_options(cached_filter_options("gpr"))
+                "quarter": quarter_choices(record)}
+    return {**form_options(cached_filter_options("gpr")), "quarter": quarter_choices(None)}
+
+
+def quarter_choices(record) -> list:
+    """The Quarter dropdown: the book's own labels (dataset or warehouse), else Q1–Q4."""
+    from studio.compute import quarter_options
+    from studio.data import quarter_labels
+    from studio.dataset.source import dataset_quarter_labels
+
+    labels = dataset_quarter_labels(record.dataset_id) if record is not None else quarter_labels()
+    return quarter_options(labels)
 
 
 def _engine_for(selection: Dict[str, Any]):
@@ -75,6 +84,27 @@ def _engine_for(selection: Dict[str, Any]):
 
         return dataset_source(dataset_id)
     return engine
+
+
+def _book_for(selection: Dict[str, Any]):
+    """The run's working book: its markets sliced out once, its reporting period applied.
+
+    Everything Generate computes reads this (:mod:`studio.book`). A book that cannot be
+    built — a warehouse that is not a SQLite file, a disk that cannot be written — costs
+    speed and the period relabel, never the deck: it falls back to the source as it is,
+    loudly, because a calendar deck silently delivered for an R12M request would be a lie.
+    """
+    from studio.book import WorkingBook, book_spec, open_book
+
+    source = _engine_for(selection)
+    spec = book_spec(selection)
+    try:
+        return open_book(source, spec)
+    except Exception:  # noqa: BLE001 — a slow deck beats no deck
+        log.exception("studio book: could not build the working book for %s — computing on "
+                      "the source directly (period basis %s NOT applied)",
+                      spec.countries or "every market", spec.choice.basis)
+        return WorkingBook(engine=source)
 
 
 def _one(value):
@@ -150,7 +180,7 @@ def _result_for(selection_json: str):
     return compute_overall(
         filters=filters,
         breakdowns=sel.get("breakdowns") or BREAKDOWNS,
-        engine=_engine_for(sel),
+        book=_book_for(sel),
         peers=sel.get("peers") or None,
         peers_by_country=sel.get("peers_by_country") or None,
         style=sel.get("style") or "balanced",
@@ -313,6 +343,11 @@ def _assembled_review(path: str, selection: Optional[Dict[str, Any]]) -> Dict[st
         out["values"] = resolve_roles(_result_for(json.dumps(selection or {}, sort_keys=True)))
     except Exception as exc:  # noqa: BLE001
         log.warning("review: could not resolve the run's roles: %s", exc)
+    # What the writer did with every commentary field — recorded at build time, because
+    # the finished file cannot tell a written box from the template's own copy.
+    from studio.template_fill.commentary_ledger import read_sidecar
+
+    out["commentary_fields"] = read_sidecar(path)
     return out
 
 
@@ -359,6 +394,7 @@ def _assembled_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
         # because this document is already filled.
         "values": review["values"],
         "manifest": review["manifest"],
+        "commentary_fields": review.get("commentary_fields"),
         "overrides": {},
         "map_overrides": {},
         "added": {},

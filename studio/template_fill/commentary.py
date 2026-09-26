@@ -150,12 +150,12 @@ _TOPIC_EVIDENCE: Dict[str, Tuple[str, ...]] = {
     # premium and premium YoY as its largest tiles — a lead that opened on share of wallet
     # was arguing beside the numbers rather than about them.
     "thesis": ("carrier.", "marsh.", "sow.", "rank.", "peer."),
-    "key_messages": ("carrier.", "marsh.", "sow.", "peer.", "segment."),
+    "key_messages": ("carrier.", "market.", "marsh.", "sow.", "peer.", "segment."),
     "performance": ("mover.", "pool.", "trend.", "carrier.", "marsh."),
-    "working": ("mover.", "sow.", "segment.", "carrier.", "marsh."),
-    "challenges": ("carrier.", "marsh.", "sow.", "peer.", "segment.", "mover."),
-    "growth": ("segment.", "headroom", "peer.gap", "share.point_value"),
-    "priorities": ("segment.", "peer.gap", "mover.", "share.point_value"),
+    "working": ("mover.", "market.", "sow.", "segment.", "carrier.", "marsh."),
+    "challenges": ("carrier.", "market.", "marsh.", "sow.", "peer.", "segment.", "mover."),
+    "growth": ("segment.", "market.", "headroom", "peer.gap", "share.point_value"),
+    "priorities": ("segment.", "market.", "peer.gap", "mover.", "share.point_value"),
     "reflections": ("trend.", "mover.", "sow.", "carrier."),
 }
 _EVIDENCE_ALIAS = {"strengths": "working", "weaknesses": "challenges",
@@ -180,9 +180,13 @@ def _voice_rule(topic: str) -> str:
 
 
 _VOICE = (
-    "You are an experienced Marsh Insurer Consulting Group (ICG) analyst and insurance consulting "
-    "leader writing a carrier's QBR. Help the carrier understand its performance with Marsh, "
-    "material shortfalls, relative placement position and evidence-supported next steps. "
+    "You are an experienced Insurer Consulting Leader in Marsh's Insurer Consulting Group (ICG), "
+    "which provides analytics and consulting to insurance carriers. You are writing the slides for "
+    "this quarter's business review with a carrier's leadership: how the carrier performed with "
+    "Marsh, what drove it, where it stands against its peers and where the room is. Help the "
+    "carrier understand its performance with Marsh, material shortfalls, relative placement "
+    "position and evidence-supported next steps, in the words a seasoned broker would use across "
+    "the table. The PLAYBOOK in each request holds the detailed guidance for this section. "
     "Use direct, natural business English that a stakeholder understands on first reading. "
     "Exercise judgement through selecting and explaining the right finding, not through dramatic language. "
 )
@@ -1176,7 +1180,9 @@ def values(template: Template, result, *, ledger=None,
                 said = _topic_points(result, topic, facts)
                 said = _with_portfolio_stance(said, topic, result, extras)
                 if wants_survey:
-                    said = list(said) + [survey_line]
+                    # The line belongs to the PAGE that carries the score tile, so it keeps
+                    # its slot: appended to a full column it was the one cut by the limit.
+                    said = list(said)[:_MAX_COLUMN_BULLETS - 1] + [survey_line]
                 if ledger is not None:
                     said = ledger.take(said, limit=min(len(said), _MAX_COLUMN_BULLETS))
                 else:

@@ -118,7 +118,30 @@ _TOPIC_SHORT: Dict[ClaimTopic, str] = {
 }
 
 
+#: A market topic is per COUNTRY — ``market:japan`` — so a multi-country page can give each
+#: field its own market to lead on. Built from the ``market.<country>`` fact ids.
+MARKET_TOPIC = "market:"
+
+
+def market_topic(slug: str) -> ClaimTopic:
+    return f"{MARKET_TOPIC}{slug}" if slug else ""
+
+
+def _market_name(topic: ClaimTopic) -> str:
+    return topic[len(MARKET_TOPIC):].replace("_", " ").title()
+
+
+def _label(topic: ClaimTopic) -> str:
+    """How a topic is named to the writer (a market is named by its country)."""
+    if topic.startswith(MARKET_TOPIC):
+        return (f"the carrier's position in {_market_name(topic)} — its premium, growth, "
+                f"share and rank in that market")
+    return _TOPIC_LABEL.get(topic, topic)
+
+
 def _short(topic: ClaimTopic) -> str:
+    if topic.startswith(MARKET_TOPIC):
+        return f"{_market_name(topic)}"
     return _TOPIC_SHORT.get(topic, _TOPIC_LABEL.get(topic, topic))
 
 
@@ -179,6 +202,8 @@ _DIRECTION: Tuple[Tuple[re.Pattern, str], ...] = (
 def topic_of_fact(fact_id: str) -> ClaimTopic:
     """The claim topic one fact id belongs to, or ``""`` for one in no family."""
     key = (fact_id or "").strip()
+    if key.startswith("market."):
+        return market_topic(key.split(".")[1] if key.count(".") >= 1 else "")
     matches = [(prefix, topic) for prefix, topic in _TOPIC_OF_PREFIX
                if key.startswith(prefix)]
     return max(matches, key=lambda m: len(m[0]))[1] if matches else ""
@@ -236,7 +261,7 @@ def _entity(text: str) -> str:
 #: four-part one whose driver is the last part (see ``commentary_evidence._fact_id``).
 #: Every other family — the peer gap, rank, share of wallet, the mix, the trend — is about
 #: the whole book and names no driver.
-_ENTITY_AT: Dict[str, int] = {"mover": 1, "pool": 1, "segment": -1}
+_ENTITY_AT: Dict[str, int] = {"mover": 1, "pool": 1, "segment": -1, "market": 1}
 
 
 def entity_of_fact(fact_id: str) -> str:
@@ -326,7 +351,7 @@ class FieldPlan:
         parts: List[str] = []
         if self.owns:
             parts.append("THIS FIELD IS THE HOME FOR: "
-                         + "; ".join(_TOPIC_LABEL.get(t, t) for t in self.owns)
+                         + "; ".join(_label(t) for t in self.owns)
                          + ". Lead on it.")
         if self.synthesis:
             # A page carries more fields than there are findings to go round, and the
@@ -418,6 +443,29 @@ def _pages(columns: Sequence[PlannedColumn]) -> List[List[PlannedColumn]]:
     return list(grouped.values())
 
 
+def _slug(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", (name or "").lower()).strip("_")
+
+
+def with_markets(preferences: Mapping[str, Sequence[ClaimTopic]],
+                 markets: Sequence[ClaimTopic]) -> Dict[str, Tuple[ClaimTopic, ...]]:
+    """Each field's preferences with ONE market inserted second — a different one each.
+
+    Second, not last: the round-robin gives every field its first choice, then its second,
+    so the second slot is where each field is guaranteed a pick — and rotating the markets
+    across fields is what makes those picks different countries. A page with more fields
+    than markets simply wraps round; a page with no markets is unchanged.
+    """
+    if not markets:
+        return {fid: tuple(p) for fid, p in preferences.items()}
+    out: Dict[str, Tuple[ClaimTopic, ...]] = {}
+    for i, (fid, wanted) in enumerate(preferences.items()):
+        mine = markets[i % len(markets)]
+        head, rest = tuple(wanted[:1]), tuple(t for t in wanted[1:] if t != mine)
+        out[fid] = head + (mine,) + rest
+    return out
+
+
 def _allocate(preferences: Mapping[str, Sequence[ClaimTopic]]) -> Dict[ClaimTopic, str]:
     """``{topic: field_id}`` — a draft pick over the section's columns.
 
@@ -453,7 +501,8 @@ class EditorialPlanBuilder:
         #: topic -> the node that first owned it, anywhere in the deck.
         self._first_home: Dict[ClaimTopic, str] = {}
 
-    def add_section(self, columns: Sequence[PlannedColumn]) -> "EditorialPlanBuilder":
+    def add_section(self, columns: Sequence[PlannedColumn],
+                    markets: Sequence[str] = ()) -> "EditorialPlanBuilder":
         """One section's fields, allocated PAGE BY PAGE in the order the deck reads.
 
         A section is a BOOK and spans slides; ownership is a statement about one SLIDE.
@@ -466,18 +515,20 @@ class EditorialPlanBuilder:
         which is fed by :meth:`_remember` and still runs deck-wide, so a later page that
         reaches for what page two already said is told to add something or leave it.
         """
+        topics = tuple(t for t in (market_topic(_slug(m)) for m in markets) if t)
         for page in _pages(columns):
-            self._add_page(page)
+            self._add_page(page, topics)
         return self
 
-    def _add_page(self, columns: Sequence[PlannedColumn]) -> "EditorialPlanBuilder":
+    def _add_page(self, columns: Sequence[PlannedColumn],
+                  markets: Sequence[ClaimTopic] = ()) -> "EditorialPlanBuilder":
         """One slide's worth of fields: allocate its topics, then write each field's job."""
         if len(columns) < 2:
             # One field cannot repeat another, and a plan for it would only narrow what a
             # lone column may say. The recap memory is still fed, so a later page knows.
             self._remember(columns)
             return self
-        preferences = {c.field_id: _preferences(c) for c in columns}
+        preferences = with_markets({c.field_id: _preferences(c) for c in columns}, markets)
         owner = _allocate(preferences)
         nodes = {c.field_id: c.node for c in columns}
         for column in columns:
@@ -514,11 +565,16 @@ class EditorialPlanBuilder:
         return EditorialPlan(fields=dict(self._fields))
 
 
-def plan_deck(sections: Sequence[Sequence[PlannedColumn]]) -> EditorialPlan:
-    """The whole deck's editorial plan, sections in deck order."""
+def plan_deck(sections: Sequence[Sequence[PlannedColumn]],
+              markets: Optional[Sequence[Sequence[str]]] = None) -> EditorialPlan:
+    """The whole deck's editorial plan, sections in deck order.
+
+    ``markets`` is parallel to ``sections``: the countries each section's book spans, when
+    it spans several (the overall block of a multi-country run). Empty for the rest.
+    """
     builder = EditorialPlanBuilder()
-    for columns in sections:
-        builder.add_section(columns)
+    for i, columns in enumerate(sections):
+        builder.add_section(columns, (markets[i] if markets and i < len(markets) else ()))
     return builder.build()
 
 

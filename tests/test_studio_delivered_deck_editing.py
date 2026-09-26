@@ -239,7 +239,7 @@ def test_the_canvas_reflects_what_was_typed(template):
     pills = [
         str(getattr(item, "children", ""))
         for item in _walk(body)
-        if "qs-tf-pill" in str(getattr(item, "className", ""))
+        if "qs7-pill" in str(getattr(item, "className", ""))
     ]
     assert any("1 edited" in pill for pill in pills), "the slide bar counts the edits"
 
@@ -551,3 +551,64 @@ def test_resetting_every_edit_sends_the_build_again(template):
     tdoc = TE.set_text_edit(_tdoc(), block.address.key, "New.", original=block.original)
 
     assert _with_retyped_text(TE.clear_text_edit(tdoc, block.address.key)) == str(TEMPLATE)
+
+
+# ── table cells: the KPI tiles and "Key Highlights" of the portfolio pages ───
+#
+# Reported: "Portfolio pages do not have click to edit yet, lot of KPIs which are textual on
+# the portfolio analysis page do not support edit." Those words live in TABLE CELLS, which
+# only text boxes could be clicked before. A cell is addressed ``slide:shape:row:col``.
+
+
+def _worded_table(template):
+    for slide in template.slides:
+        for shape in slide.shapes:
+            if shape.kind == "table" and TE.editable_cells(shape, slide.index, {}):
+                return slide, shape
+    pytest.skip("no worded table in this template")
+
+
+def test_a_table_cell_is_addressed_by_its_row_and_column():
+    address = TE.parse_address("5:6:1:2")
+    assert address == TE.ShapeAddress(5, 6, 1, 2) and address.is_cell
+    assert address.key == "5:6:1:2"
+    assert TE.grouped({"5:6:1:2": ["x"], "5:6": ["y"]}) == {5: {(6, 1, 2): ["x"], 6: ["y"]}}
+
+
+def test_every_worded_cell_is_offered_and_blank_ones_are_not(template):
+    slide, shape = _worded_table(template)
+    blocks = TE.editable_cells(shape, slide.index, {})
+    worded = sum(1 for row in shape.table for cell in row if cell.strip())
+    assert len(blocks) == worded
+    assert all(b.address.is_cell for b in blocks)
+
+
+def test_the_canvas_puts_a_click_target_on_each_cell(template):
+    slide, shape = _worded_table(template)
+    assert shape.table_widths and shape.table_heights
+    tdoc = _rendered_tdoc()
+    body = TP.template_preview_body(tdoc, {"idx": tdoc["order"].index(slide.index)})
+    picks = {item.id["at"] for item in _of_type(body, "qs-tf-pick")}
+    cells = {b.address.key for b in TE.editable_cells(shape, slide.index, {})}
+    assert cells <= picks
+
+
+def test_clicking_a_cell_opens_its_words_in_the_edit_field(template):
+    slide, shape = _worded_table(template)
+    block = TE.editable_cells(shape, slide.index, {})[0]
+    tdoc = _rendered_tdoc()
+    editor = TP.text_editor_for(tdoc, {"idx": tdoc["order"].index(slide.index)},
+                                block.address.key)
+    lines = [item.value for item in _of_type(editor, "qs-tf-line")]
+    assert lines == list(block.lines)
+
+
+def test_a_retyped_cell_reaches_the_downloaded_deck(tmp_path, template):
+    slide, shape = _worded_table(template)
+    block = TE.editable_cells(shape, slide.index, {})[0]
+    out = apply_text_overrides(str(TEMPLATE), {block.address.key: ["TTM Aug 2026 GWP"]},
+                               str(tmp_path / "edited.pptx"))
+    deck = Presentation(out)
+    target = next(s for s in deck.slides[slide.index].shapes if s.shape_id == shape.shape_id)
+    cell = target.table.cell(block.address.row, block.address.col)
+    assert cell.text == "TTM Aug 2026 GWP"

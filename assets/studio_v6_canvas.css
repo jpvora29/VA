@@ -1,0 +1,205 @@
+/* ==========================================================================
+   Studio v6 — the focus canvas (studio/page/template_preview.py and
+   studio/page/template_editor.py).
+
+   The slide takes the room: an edit bar above it that appears when there is
+   something to edit, a Fields drawer that opens only when asked for, and the
+   pages as a captioned filmstrip underneath. Loads right after studio_v6.css
+   ("." sorts before "_"), whose --qs6-* tokens it uses.
+   ========================================================================== */
+.qs-root .qs7-canvas { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+
+/* The canvas area scrolls. An older skin clipped it (overflow: hidden) for a slide that was
+   never taller than the window; the filmstrip below the slide must be reachable. */
+.qs-root .qs-canvas-host:has(.qs7-canvas) { overflow-y: auto !important; }
+
+/* The canvas holds still. No entrance, no press, no pulse: every repaint of a slide used
+   to replay them, and the slide appeared to jump each time the author clicked or typed. */
+.qs-root .qs7-canvas *,
+.qs-root .qs7-canvas *::before,
+.qs-root .qs7-canvas *::after { animation: none !important; }
+.qs-root .qs7-canvas .qs-tf-box, .qs-root .qs7-canvas .qs-tf-cell,
+.qs-root .qs7-canvas .qs-tf-surface { transition: none !important; }
+
+/* ── the edit bar ─────────────────────────────────────────────────────────── */
+.qs-root .qs7-editor-host { flex: 1 1 auto; min-width: 0; }
+.qs-root .qs7-editbar { display: flex; flex-direction: column; gap: 12px; }
+.qs-root .qs7-editbar.is-empty { display: none; }
+.qs-root .qs7-edit-hint { display: inline-flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; color: var(--va-ink-700); }
+.qs-root .qs7-edit-hint i { color: var(--va-blue); font-size: 16px; }
+.qs-root .qs7-edit-sub { font-size: 12.5px; color: var(--va-ink-400); }
+.qs-root .qs7-edit-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.qs-root .qs7-edit-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.qs-root .qs7-close { flex: 0 0 auto; width: 32px; height: 32px; box-shadow: none; background: transparent; }
+.qs-root .qs7-edit-kicker { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--va-ink-400); }
+.qs-root .qs7-edit-label { font-size: 14px; font-weight: 700; color: var(--va-navy); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qs-root .qs7-tag {
+    align-self: flex-start; margin-top: 4px; padding: 1px 8px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 700; color: var(--va-ink-600); background: var(--va-surface-2);
+}
+.qs-root .qs7-tag.ok { color: #0f6b3a; background: rgba(31, 157, 85, 0.12); }
+.qs-root .qs7-ln-list {
+    min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 2px;
+}
+.qs-root .qs7-ln { display: flex; align-items: flex-start; gap: 8px; }
+.qs-root .qs7-ln-num { flex: 0 0 18px; padding-top: 10px; font-size: 11px; font-weight: 700; color: var(--va-ink-300); text-align: right; }
+.qs-root .qs7-ln-input {
+    flex: 1 1 auto; width: 100%; min-height: 40px; resize: none; overflow: hidden;
+    padding: 9px 12px; border: none; border-radius: 10px;
+    font: 500 14px/1.45 var(--va-font); color: var(--va-ink-900);
+    background: var(--va-surface-1); box-shadow: inset 0 0 0 1px var(--qs6-hair);
+    transition: box-shadow 140ms, background 140ms;
+}
+.qs-root .qs7-ln-input:focus { outline: none; background: var(--va-surface-0); box-shadow: inset 0 0 0 1.5px var(--va-blue); }
+.qs-root .qs7-ln-input.is-dirty { background: #fffdf4; box-shadow: inset 0 0 0 1px rgba(185, 129, 10, 0.4); }
+.qs-root .qs7-ln-input.is-dirty:focus { box-shadow: inset 0 0 0 1.5px var(--va-blue); }
+.qs-root .qs7-edit-actions { display: flex; align-items: center; gap: 6px; }
+.qs-root .qs7-edit-actions .qs7-btn.primary { flex: 1 1 auto; justify-content: center; }
+
+.qs-root .qs7-btn {
+    display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px;
+    border: none; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer;
+    transition: transform 90ms ease, box-shadow 160ms, background 160ms, color 160ms;
+}
+.qs-root .qs7-btn:active { transform: scale(0.97); }
+.qs-root .qs7-btn.primary { color: #fff; background: var(--va-blue); box-shadow: 0 8px 18px -10px rgba(11, 75, 255, 0.8); }
+.qs-root .qs7-btn.primary:hover { background: #0a41e0; }
+.qs-root .qs7-btn.ghost { color: var(--va-ink-800); background: var(--va-surface-0); box-shadow: inset 0 0 0 1px var(--qs6-hair-strong); }
+.qs-root .qs7-btn.ghost:hover { box-shadow: inset 0 0 0 1px rgba(11, 75, 255, 0.4); color: var(--va-navy); }
+.qs-root .qs7-btn.sm { height: 32px; padding: 0 12px; font-size: 12.5px; }
+.qs-root .qs7-icon-btn {
+    width: 40px; height: 40px; border: none; border-radius: 10px; cursor: pointer;
+    color: var(--va-ink-600); background: var(--va-surface-0); box-shadow: inset 0 0 0 1px var(--qs6-hair-strong);
+    transition: background 140ms, color 140ms, transform 90ms;
+}
+.qs-root .qs7-icon-btn:hover:not(:disabled) { color: var(--va-navy); background: var(--va-surface-1); }
+.qs-root .qs7-icon-btn:active:not(:disabled) { transform: scale(0.94); }
+.qs-root .qs7-icon-btn:disabled { opacity: 0.35; cursor: default; }
+.qs-root .qs7-ln-del { width: 32px; height: 32px; margin-top: 4px; box-shadow: none; background: transparent; color: var(--va-ink-300); }
+.qs-root .qs7-ln-del:hover { color: var(--va-danger) !important; background: rgba(197, 53, 50, 0.08) !important; }
+
+/* ── the stage ────────────────────────────────────────────────────────────── */
+/* The drawer floats over the stage rather than taking width from it: the slide is the
+   one thing on this page that must never get smaller. */
+.qs-root .qs7-body { position: relative; display: block; min-height: 0; }
+.qs-root .qs7-stage-wrap {
+    position: relative; min-width: 0;
+    display: flex; align-items: center;
+    padding: 18px; border-radius: 18px;
+    background: radial-gradient(120% 90% at 50% 0%, #f4f7fc 0%, #eceff6 100%);
+    box-shadow: inset 0 0 0 1px var(--qs6-hair);
+}
+.qs-root .qs7-stage.qs-tf-stage {
+    flex: 1 1 auto; min-width: 0; display: flex; justify-content: center; align-items: flex-start;
+    padding: 0 !important; background: transparent !important; box-shadow: none !important; border: none !important;
+}
+.qs-root .qs7-stage > .qs-tf-surface {
+    flex: 0 0 auto; border-radius: 4px;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.08), 0 24px 60px -28px rgba(10, 22, 54, 0.55) !important;
+}
+.qs-root .qs7-nav {
+    position: absolute; top: 50%; z-index: 4; margin-top: -20px;
+    width: 40px; height: 40px; border: none; border-radius: 50%; cursor: pointer;
+    color: var(--va-ink-700); background: var(--va-surface-0);
+    box-shadow: 0 0 0 1px var(--qs6-hair-strong), 0 6px 14px -8px rgba(10, 22, 54, 0.35);
+    transition: transform 120ms var(--qs6-ease), color 120ms, opacity 160ms;
+}
+.qs-root .qs7-nav:hover:not(:disabled) { color: var(--va-blue); }
+.qs-root .qs7-nav:disabled { opacity: 0; pointer-events: none; }
+.qs-root .qs7-stage-wrap > .qs7-nav.prev { left: 6px; }
+.qs-root .qs7-stage-wrap > .qs7-nav.next { right: 6px; }
+.qs-root .qs7-strip-row > .qs7-nav { position: static; margin-top: 0; flex: 0 0 auto; }
+.qs-root .qs7-strip-row > .qs7-nav:disabled { opacity: 0.3; }
+
+/* Live preview while typing, and the retype when applied (assets/studio_v6.js). */
+.qs-root .qs-tf-box.is-previewing,
+.qs-root .qs-tf-cell.is-previewing { z-index: 3; }
+.qs-root .qs7-live {
+    position: absolute; left: 0; top: 0; right: 0; min-height: 100%;
+    padding: 2px 4px; pointer-events: none; overflow: visible;
+    background: var(--qs-tf-paper, #fff); color: var(--qs-tf-ink, #0b1f44);
+    box-shadow: 0 0 0 1.5px rgba(11, 75, 255, 0.55), 0 6px 18px -8px rgba(11, 75, 255, 0.45);
+    border-radius: 3px;
+}
+.qs-root .qs-tf-box.is-previewing > .qs-tf-reflect:not(.qs7-live),
+.qs-root .qs-tf-cell.is-previewing > .qs-tf-reflect:not(.qs7-live) { visibility: hidden; }
+.qs-root .qs7-live .qs-tf-reflect-line { white-space: pre-wrap; }
+.qs-root .qs7-live .qs-tf-reflect-line + .qs-tf-reflect-line { margin-top: 0.45em; }
+.qs7-toast {
+    position: fixed; left: 50%; bottom: 36px; z-index: 900; transform: translate(-50%, 12px);
+    display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px;
+    font: 600 13px/1.2 var(--va-font, sans-serif); color: #fff; background: rgba(0, 15, 71, 0.92);
+    box-shadow: 0 14px 34px -14px rgba(0, 15, 71, 0.8); opacity: 0; pointer-events: none;
+    transition: opacity 200ms, transform 240ms cubic-bezier(.2, .8, .2, 1);
+}
+.qs7-toast.is-on { opacity: 1; transform: translate(-50%, 0); }
+
+/* ── the Fields drawer ───────────────────────────────────────────────────── */
+.qs-root .qs7-drawer {
+    display: none; position: absolute; top: 12px; right: 12px; z-index: 6;
+    width: min(360px, 46%); max-height: calc(100% - 24px); overflow-y: auto;
+    padding: 14px; border-radius: 16px; background: rgba(255, 255, 255, 0.97);
+    box-shadow: 0 0 0 1px var(--qs6-hair), 0 22px 48px -20px rgba(10, 22, 54, 0.55);
+}
+/* The panel is there only while a box is selected; it docks on the side of the stage the
+   box is NOT on (assets/studio_v6.js sets dock-left), so it never covers what is edited. */
+.qs-root .qs7-drawer:has(.qs7-editor-host > .qs7-editbar:not(.is-empty)) { display: block; }
+.qs-root .qs7-body.dock-left .qs7-drawer { right: auto; left: 12px; }
+.qs-root .qs7-drawer-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+.qs-root .qs7-h3 { margin: 0; font-family: var(--qs6-serif); font-size: 18px; font-weight: 700; color: var(--va-navy); }
+.qs-root .qs7-muted { font-size: 12px; color: var(--va-ink-400); }
+.qs-root .qs7-drawer .qs-tf-fp { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--qs6-hair); }
+.qs-root .qs7-edit-label { white-space: normal; }
+
+/* ── under the stage: toolbar + filmstrip ─────────────────────────────────── */
+.qs-root .qs7-below { display: flex; flex-direction: column; gap: 8px; }
+.qs-root .qs7-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 4px; }
+.qs-root .qs7-tool-left { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.qs-root .qs7-pos { font-family: var(--qs6-serif); font-size: 18px; font-weight: 700; color: var(--va-navy); }
+.qs-root .qs7-slide-title {
+    margin-left: 6px; font-size: 13.5px; font-weight: 600; color: var(--va-ink-700);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 52vw;
+}
+.qs-root .qs7-tool-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.qs-root .qs7-pill {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; color: var(--va-ink-600); background: var(--va-surface-1);
+    box-shadow: inset 0 0 0 1px var(--qs6-hair);
+}
+.qs-root .qs7-pill.ok { color: #0f6b3a; background: rgba(31, 157, 85, 0.1); box-shadow: inset 0 0 0 1px rgba(31, 157, 85, 0.2); }
+
+.qs-root .qs7-strip-row { display: flex; align-items: center; gap: 10px; }
+.qs-root .qs7-strip-row .qs-tf-strip {
+    flex: 1 1 auto; min-width: 0; margin-top: 0; border-top: none; padding: 6px 4px 10px; gap: 12px;
+}
+.qs-root .qs7-thumb.qs-strip-thumb {
+    flex: 0 0 176px; width: 176px; min-width: 0; max-width: 176px;
+    aspect-ratio: auto; display: flex; flex-direction: column; gap: 6px;
+    padding: 0; overflow: visible; background: transparent; box-shadow: none; border-radius: 0;
+}
+.qs-root .qs7-thumb .qs7-thumb-face {
+    position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; overflow: hidden;
+    border-radius: 9px; background: var(--va-surface-0);
+    box-shadow: 0 0 0 1px var(--qs6-hair-strong);
+    transition: transform 140ms var(--qs6-ease), box-shadow 140ms;
+}
+.qs-root .qs7-thumb:hover { transform: none; box-shadow: none; }
+.qs-root .qs7-thumb:hover .qs7-thumb-face {
+    box-shadow: 0 0 0 1px rgba(11, 75, 255, 0.45), 0 10px 20px -12px rgba(10, 22, 54, 0.5);
+}
+.qs-root .qs7-thumb.is-current { box-shadow: none; }
+.qs-root .qs7-thumb.is-current .qs7-thumb-face {
+    box-shadow: 0 0 0 2.5px var(--va-blue), 0 10px 22px -12px rgba(11, 75, 255, 0.7);
+}
+.qs-root .qs7-thumb .qs-strip-num { display: none; }
+.qs-root .qs7-thumb-cap {
+    display: block; padding: 0 2px; font-size: 12px; line-height: 1.3; text-align: left;
+    color: var(--va-ink-600); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.qs-root .qs7-thumb-cap b { margin-right: 4px; color: var(--va-ink-400); font-weight: 700; }
+.qs-root .qs7-thumb.is-current .qs7-thumb-cap,
+.qs-root .qs7-thumb.is-current .qs7-thumb-cap b { color: var(--va-blue); font-weight: 700; }
+
+@media (max-width: 1100px) {
+    .qs-root .qs7-drawer { position: static; width: auto; margin-top: 12px; }
+}

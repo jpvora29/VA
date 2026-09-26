@@ -149,12 +149,24 @@ def _carrier_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
     out: List[Evidence] = []
     c = f.get("carrier") or {}
     year = c.get("current_year")
-    when = f" in {int(year)}" if year else ""
+    names = f.get("period") or {}
+    when = f" in {names['current']}" if names.get("current") else (
+        f" in {int(year)}" if year else "")
     # The year is a NUMBER to the verifier, and almost every column names it ("Zurich wrote
     # $44M with Marsh in 2025"). Carried only in labels it was never an allowed value, so
     # any model sentence dating its own figure was dropped as unsupported — the same class
     # of silent failure as the "top-5" token below.
-    if year:
+    #
+    # On an R12M or date-range run the "year" is a PERIOD ("TTM Aug 2026"), and the pack
+    # says so in words: a writer told only "2026" dates a rolling-twelve-month figure to a
+    # calendar year it does not cover.
+    if names.get("current") and names.get("prior"):
+        _add(out, "period.year", "The reporting period these figures cover (a rolling "
+             "twelve months or the author's window — NOT a calendar year)",
+             names["current"], "reporting_year")
+        _add(out, "period.prior_year", "The same period a year earlier, which they are "
+             "compared with", names["prior"], "reporting_year")
+    elif year:
         _add(out, "period.year", "The reporting year these figures cover",
              str(int(year)), "reporting_year")
         _add(out, "period.prior_year", "The year they are compared with",
@@ -190,6 +202,41 @@ def _market_items(f: Mapping[str, Any]) -> List[Evidence]:
     if carrier is not None and market is not None and market > carrier:
         _add(out, "headroom", "Marsh premium in this scope placed with OTHER carriers",
              _money(market - carrier), "headroom")
+    return out
+
+
+def _country_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
+    """One compound fact per MARKET on a multi-country scope — ``market.<country>``.
+
+    Compound for the same reason the segment facts are: ``check_numbers`` scopes a
+    sentence's figures to the ids it cites, so a country's premium, growth, share and rank
+    travel in one citation. The editorial plan gives each field a different market to lead
+    on (``editorial.EditorialPlanBuilder``), which is what stops three fields on an overall
+    page restating the combined headline three ways.
+    """
+    out: List[Evidence] = []
+    for row in f.get("markets") or []:
+        name, current = row.get("name"), _num(row, "current")
+        if not name or current is None:
+            continue
+        parts = [f"{_money(current)} Marsh-placed premium"]
+        if _num(row, "pct") is not None:
+            parts[0] += f", {_direction(row['pct'])} {abs(row['pct']):.1f}% on the prior period"
+        sow, prior = _num(row, "sow"), _num(row, "sow_prior")
+        if sow is not None:
+            parts.append(f"share of Marsh placements {sow:.1f}%"
+                         + (f" (from {prior:.1f}%)" if prior is not None else ""))
+        if row.get("rank"):
+            parts.append(f"rank #{int(row['rank'])}"
+                         + (f" of {int(row['of_n'])}" if row.get("of_n") else ""))
+        pool = _num(row, "pool")
+        if pool is not None:
+            parts.append(f"total Marsh-placed premium in {name} {_money(pool)}"
+                         + (f" ({_direction(row['pool_pct'])} {abs(row['pool_pct']):.1f}%)"
+                            if _num(row, "pool_pct") is not None else ""))
+        _add(out, f"market.{_slug(name)}", f"{subject} in {name}: its premium, growth, share "
+             f"and rank in that market", "; ".join(parts), "share_of_wallet",
+             value=row.get("delta"), unit="currency_change", entity=str(name))
     return out
 
 
@@ -293,6 +340,65 @@ def _mover_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
             continue
         _add(out, f"pool.{name}", f"Total Marsh-placed premium in {name} {_direction(delta)} by",
              _money(abs(delta)), "marsh_book", value=delta, unit="currency_change", entity=name)
+    return out
+
+
+def _driver_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
+    """The one line (or country, industry) behind most of the year's move, sized.
+
+    The movers say how much each line moved; this says which of them the MEETING is about.
+    "Casualty accounts for $4.2M of the $5.0M fall" is the sentence an ICL opens a decline
+    with, and without it the writer has to add movers up itself — which the number check
+    rightly refuses. One compound fact, so the sentence cites one id for all its figures.
+    """
+    carrier = f.get("carrier") or {}
+    current, prior = _num(carrier, "current"), _num(carrier, "prior")
+    if current is None or prior is None or current == prior:
+        return []
+    total = current - prior
+    same_way = [r for r in (f.get("movers") or [])
+                if r.get("name") and isinstance(r.get("delta"), (int, float))
+                and math.isfinite(r["delta"]) and r["delta"] * total > 0]
+    if not same_way:
+        return []
+    top = max(same_way, key=lambda r: abs(r["delta"]))
+    kind, move = ("decline", "fall") if total < 0 else ("growth", "gain")
+    noun = str(f.get("mover_dim") or "segment")
+    share = abs(top["delta"]) / abs(total) * 100
+    if share > 100:
+        rendered = (f"{top['name']} {'fell' if total < 0 else 'grew'} by "
+                    f"{_money(abs(top['delta']))}, more than the carrier's whole "
+                    f"{_money(abs(total))} net {move}; the other {noun}s moved the other way")
+    else:
+        rendered = (f"{top['name']} accounts for {_money(abs(top['delta']))} of the "
+                    f"{_money(abs(total))} {move} ({share:.0f}% of it)")
+    out: List[Evidence] = []
+    _add(out, f"driver.{kind}",
+         f"The {noun} behind most of {subject}'s change in Marsh-placed premium", rendered,
+         "premium", value=top["delta"], unit="currency_change", entity=str(top["name"]))
+    return out
+
+
+def _survey_line_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
+    """The Marsh carrier survey score for each practice, on the survey basis only."""
+    out: List[Evidence] = []
+    for row in f.get("survey_lines") or []:
+        score = row.get("score")
+        if not isinstance(score, (int, float)) or not math.isfinite(score):
+            continue
+        practice, line = str(row.get("practice") or ""), str(row.get("line") or "")
+        delta, year, prior_year = row.get("delta"), row.get("year"), row.get("prior_year")
+        movement = ""
+        if isinstance(delta, (int, float)) and math.isfinite(delta) and prior_year:
+            way = "up" if delta > 0 else "down" if delta < 0 else "unchanged"
+            movement = (f", {way} {abs(delta):.2f} from {prior_year}" if delta
+                        else f", unchanged from {prior_year}")
+        also = (f" (the survey's name for {line.title()})"
+                if line and line != practice.lower() else "")
+        _add(out, f"survey.line.{_slug(practice)}",
+             f"Marsh carrier survey score for {practice}{also} in {row.get('country')}",
+             f"{score:.2f} in {year}{movement}", "survey_score",
+             value=float(score), unit="score", entity=line or practice.lower())
     return out
 
 
@@ -514,12 +620,15 @@ _BUILDERS = (
     _scope_items,
     lambda f, subject: _carrier_items(f, subject),
     lambda f, subject: _market_items(f),
+    _country_items,
     lambda f, subject: _standing_items(f, subject),
     lambda f, subject: _gap_items(f),
     lambda f, subject: _mover_items(f, subject),
+    _driver_items,
     lambda f, subject: _mix_items(f, subject),
     lambda f, subject: _trend_items(f, subject),
     lambda f, subject: _segment_items(f, subject),
+    _survey_line_items,
 )
 
 

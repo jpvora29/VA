@@ -16,7 +16,7 @@ from typing import Any, List, Sequence, Tuple
 
 from dash import html
 
-from studio.review.commentary import lost_claim_families
+from studio.review.commentary import field_reason, lost_claim_families
 from studio.review.model import Capability, CauseGroup, ReviewReport
 
 #: How many individual slots a cause card lists before it stops naming them. The pages
@@ -50,7 +50,7 @@ def _readiness_card(report: ReviewReport) -> html.Div:
     """
     scope = " · ".join(p for p in (
         report.subject,
-        f"FY{report.period_year}" if report.period_year else "",
+        report.period_label or (f"FY{report.period_year}" if report.period_year else ""),
         f"{report.slides_total - report.slides_hidden} of {report.slides_total} pages",
     ) if p)
     return html.Div(
@@ -282,7 +282,8 @@ def _commentary_card(report: ReviewReport) -> Any:
     not a lazy writer.
     """
     lost = lost_claim_families(report.capabilities)
-    if not report.commentary and not lost:
+    ledger = report.commentary_fields
+    if not report.commentary and not lost and not ledger:
         return html.Span()
     return html.Div(
         [
@@ -290,15 +291,86 @@ def _commentary_card(report: ReviewReport) -> Any:
                 [
                     html.Div([html.I(className="bi bi-chat-square-quote"), "Commentary"],
                              className="qs-panel-title"),
-                    _commentary_score(report),
+                    _ledger_score(ledger) if ledger else _commentary_score(report),
                 ],
                 className="qs-review-head",
             ),
-            _unwritten_line(report),
+            _unwritten_line(report) if report.commentary or not ledger else html.Span(),
+            _field_list(ledger, lost) if ledger else _no_ledger_note(report),
             _lost_claims(lost),
         ],
-        className="qs-review-card",
+        className="qs-review-card qs-rv-commentary",
     )
+
+
+# ── the commentary fields, one by one ────────────────────────────────────────
+
+_STATUS_CHIP = {
+    "empty": ("Not populated", "err", "bi-x-circle-fill"),
+    "draft": ("Standard wording", "warn", "bi-dash-circle-fill"),
+    "written": ("Written", "ok", "bi-check-circle-fill"),
+}
+
+
+def _ledger_score(ledger) -> Any:
+    written = sum(1 for f in ledger if f.populated)
+    empty = len(ledger) - written
+    return html.Div(f"{written} of {len(ledger)} fields populated",
+                    className="qs-review-score" + ("" if empty else " ok"))
+
+
+def _no_ledger_note(report: ReviewReport) -> Any:
+    if report.source != "assembled":
+        return html.Span()
+    return html.P("This deck was built before Studio recorded each commentary field. "
+                  "Generate it again to see which fields were populated.",
+                  className="qs-rv-note")
+
+
+def _field_row(outcome, lost: Tuple[str, ...]) -> html.Button:
+    label, tone, icon = _STATUS_CHIP.get(outcome.status, _STATUS_CHIP["written"])
+    where = " · ".join(p for p in (outcome.block, outcome.page) if p)
+    return html.Button(
+        [
+            html.Span(f"p{outcome.slide_no}", className="qs-rv-field-page"),
+            html.Span(
+                [html.Span(outcome.field, className="qs-rv-field-name"),
+                 html.Span(where, className="qs-rv-field-where")],
+                className="qs-rv-field-main",
+            ),
+            html.Span([html.I(className=f"bi {icon}"), label],
+                      className=f"qs-rv-field-chip {tone}"),
+            html.Span(field_reason(outcome, lost), className="qs-rv-field-why")
+            if outcome.status != "written" else None,
+        ],
+        id={"type": "qs-rv-open", "slide": max(0, outcome.slide_no - 1), "role": outcome.role,
+            "block": outcome.block},
+        n_clicks=0, className=f"qs-rv-field is-{outcome.status}",
+        title="Open this page on the Canvas",
+    )
+
+
+def _field_list(ledger, lost: Tuple[str, ...]) -> Any:
+    """Every commentary field: the ones not populated first, then the rest, by page."""
+    missing = [f for f in ledger if not f.populated]
+    standard = [f for f in ledger if f.status == "draft"]
+    written = [f for f in ledger if f.status == "written"]
+    blocks = []
+    if missing:
+        blocks.append(html.Div(f"Not populated ({len(missing)})", className="qs-rv-sub"))
+        blocks.append(html.Div([_field_row(f, lost) for f in missing], className="qs-rv-fields"))
+    else:
+        blocks.append(html.P("Every commentary field in the deck carries text.",
+                             className="qs-rv-note"))
+    rest = standard + written
+    if rest:
+        blocks.append(html.Details(
+            [html.Summary(f"Populated fields ({len(rest)})", className="qs-rv-sub qs-rv-more"),
+             html.Div([_field_row(f, lost) for f in sorted(rest, key=lambda o: o.slide_no)],
+                      className="qs-rv-fields")],
+            open=not missing,
+        ))
+    return html.Div(blocks, className="qs-rv-fieldwrap")
 
 
 def _commentary_score(report: ReviewReport) -> Any:

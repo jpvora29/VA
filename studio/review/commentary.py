@@ -72,4 +72,31 @@ def lost_claim_families(capabilities: Tuple[Capability, ...]) -> Tuple[str, ...]
     )
 
 
-__all__ = ["diagnose_commentary", "lost_claim_families", "COMMENTARY_PREFIX", "CLAIM_FAMILIES"]
+def field_reason(outcome: Any, lost: Tuple[str, ...] = ()) -> str:
+    """Why one commentary field reads the way it does -- for the Review list.
+
+    ``outcome`` is a ledger entry (:mod:`studio.template_fill.commentary_ledger`). An empty
+    field is one of three different things, and the fix differs for each: a qualitative page
+    that is written by hand, a field the data gave nothing to say about, and a field whose
+    sentences the verifiers dropped rather than ship them unverified.
+    """
+    from studio.template_fill import commentary_ledger as L
+
+    if outcome.status == L.EMPTY:
+        if outcome.section == "feedback":
+            return ("Qualitative page, written by hand from the meeting. Add the carrier's "
+                    "feedback on the Canvas before sending.")
+        if not outcome.had_draft:
+            gap = f" This scope cannot support {lost[0]}." if lost else ""
+            return ("Not written: the data gave this field nothing to say." + gap
+                    + " Write it on the Canvas, or widen the scope.")
+        return ("Not written: no sentence for this field could be traced to a fact, so the "
+                "box ships blank rather than unverified. Write it on the Canvas.")
+    if outcome.status == L.DRAFT:
+        return ("Written from the standard wording, not by the model: the model was "
+                "unavailable or its draft did not pass the checks.")
+    return "Written from this run's facts and verified."
+
+
+__all__ = ["diagnose_commentary", "lost_claim_families", "field_reason",
+           "COMMENTARY_PREFIX", "CLAIM_FAMILIES"]

@@ -90,13 +90,20 @@ def _from_sql(flow: str, engine, entity_column: str, subject: Any,
 
 
 def scope_figures(filters: Mapping[str, Any], *, flow: str = "gpr", engine=None,
-                  dataset_id: Optional[str] = None) -> ScopeFigures:
-    """The preview's figures for ``filters`` (already resolved to real column names)."""
+                  dataset_id: Optional[str] = None, rollup: bool = True) -> ScopeFigures:
+    """The preview's figures for ``filters`` (already resolved to real column names).
+
+    ``rollup=False`` asks the engine directly — right for a run's working book
+    (:mod:`studio.book`), which is already a small, indexed slice: a rollup over it would
+    cost more to build than the two queries it saves.
+    """
     from core.analytics.sql import flow_spec
 
     spec = flow_spec(flow)
     entity_column = spec.entity_columns.get("carrier", "")
     subject = filters.get(entity_column)
+    if not rollup:
+        return _from_sql(flow, engine, entity_column, subject, filters)
 
     cube, _measure = _rollup_for(flow, engine, dataset_id)
     from_rollup = _from_rollup(cube, entity_column, subject, filters)

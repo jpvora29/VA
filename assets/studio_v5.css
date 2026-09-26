@@ -1,0 +1,359 @@
+/* ==========================================================================
+   Studio v5 — correctness fixes and the refreshed QBR Studio surface.
+
+   Loads after every other studio_* sheet (Dash serves /assets alphabetically:
+   "studio_v5" sorts after "studio_review_v4") and before the va_shell* chrome,
+   which it never touches. Colours come from theme_tokens.css (--va-*).
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Open dropdowns show EVERY value.
+
+   Dash 4 bounds the popup shell (.dash-dropdown-content) with an inline
+   max-height taken from the component's maxHeight prop, and expects the SHELL
+   to scroll. The v4 skin set overflow:hidden on the shell and gave the list
+   inside it (.dash-dropdown-options) its own 260-280px max-height — so a list
+   taller than what was left of the shell ran past its bottom edge, and those
+   rows could never be scrolled into view. With 100+ options Dash virtualises
+   the list and sizes it from maxHeight, which is why the same bug showed only
+   four rows there. The shell is now a column: search/actions keep their
+   height, the list takes the rest and is the one thing that scrolls.
+   -------------------------------------------------------------------------- */
+.dash-dropdown-content {
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+}
+.dash-dropdown-content > .dash-dropdown-search-container,
+.dash-dropdown-content > .dash-dropdown-actions {
+    flex: 0 0 auto;
+}
+.dash-dropdown-content > .dash-dropdown-options {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+}
+/* A virtualised list scrolls itself; its wrapper must not add a second bar. */
+.dash-dropdown-content > .dash-dropdown-options:has(.dash-options-list-virtualized) {
+    overflow-y: hidden !important;
+}
+
+/* --------------------------------------------------------------------------
+   2. Canvas editing: a tap that answers, and nothing left behind.
+
+   Hover says "this is editable" with a faint dashed outline. A click plays a
+   short pulse (assets/studio_v5.js adds .qs-tap) and the edit panel flashes;
+   afterwards the box on the slide carries NO border — the persistent blue
+   selection ring and the browser focus ring both used to stay on the slide,
+   even after clicking elsewhere.
+   -------------------------------------------------------------------------- */
+.qs-tf-pick,
+.qs-tf-pick.is-selected,
+.qs-tf-pick:focus,
+.qs-tf-pick:focus-visible {
+    border: 1px solid transparent !important;
+    box-shadow: none !important;
+    outline: none !important;
+    background: transparent !important;
+    border-radius: 4px !important;
+    -webkit-tap-highlight-color: transparent;
+}
+.qs-tf-pick:hover {
+    border: 1px dashed rgba(37, 99, 235, 0.55) !important;
+    background: rgba(37, 99, 235, 0.05) !important;
+}
+.qs-tf-pick:focus-visible {                 /* keyboard users still see where they are */
+    border: 1px dashed rgba(37, 99, 235, 0.7) !important;
+}
+/* On a pseudo-element: the button's own background is !important above, and an
+   !important declaration beats a keyframe, so the pulse would never paint there. */
+.qs-tf-pick.qs-tap::after {
+    content: ""; position: absolute; inset: 0; border-radius: 4px; pointer-events: none;
+    animation: qs-v5-tap 520ms cubic-bezier(.2, .8, .2, 1) 1 forwards;
+}
+@keyframes qs-v5-tap {
+    0%   { background: rgba(37, 99, 235, 0.20); box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.45); }
+    45%  { background: rgba(37, 99, 235, 0.10); box-shadow: 0 0 0 7px rgba(37, 99, 235, 0.0); }
+    100% { background: transparent; box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+}
+.qs-tf-box.qs-tapped,
+.qs-tf-cell.qs-tapped {
+    animation: qs-v5-press 520ms cubic-bezier(.2, .8, .2, 1) 1;
+}
+@keyframes qs-v5-press {
+    0% { transform: scale(1); } 30% { transform: scale(0.985); } 100% { transform: scale(1); }
+}
+/* An edited box keeps its paper (so the new words read over the render) but loses the
+   blue rule that looked like a selection that never went away. */
+.qs-tf-surface .qs-tf-box.is-edited,
+.qs-tf-surface.has-rendered-bg .qs-tf-box.is-edited,
+.qs-tf-cell.is-edited {
+    border-left: none !important;
+    box-shadow: inset 0 -2px 0 rgba(37, 99, 235, 0.35);
+}
+.qs-tf-te.qs-flash { animation: qs-v5-flash 900ms ease-out 1; }
+@keyframes qs-v5-flash {
+    0%   { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.35); border-color: rgba(37, 99, 235, 0.8); }
+    100% { box-shadow: 0 0 0 10px rgba(37, 99, 235, 0); }
+}
+
+/* Table cells (KPI tiles, "Key Highlights") are click targets too. */
+.qs-tf-box.is-table-edit { pointer-events: none; padding: 0; background: transparent; }
+.qs-tf-cell {
+    position: absolute; pointer-events: auto; overflow: visible;
+    font-size: 11px; line-height: 1.2;
+}
+.qs-tf-cell.is-edited { background: var(--qs-tf-paper, #fff); color: var(--qs-tf-ink, #0b1f44); }
+
+/* --------------------------------------------------------------------------
+   3. Press ripple (assets/studio_v5.js) — a native-app answer to a tap.
+   -------------------------------------------------------------------------- */
+.qs-generate-btn, .qs-tf-addbtn, .qs-mode-btn, .qs-col-addbtn, .qs-map-submit,
+.qs-ds-use, .qs-v5-ripple { position: relative; overflow: hidden; }
+.qs-ripple {
+    position: absolute; border-radius: 50%; pointer-events: none;
+    background: currentColor; opacity: 0.22; transform: scale(0);
+    animation: qs-v5-ripple 620ms cubic-bezier(.2, .8, .2, 1) forwards;
+}
+@keyframes qs-v5-ripple { to { transform: scale(1); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+    .qs-tf-pick.qs-tap::after, .qs-tf-box.qs-tapped, .qs-tf-te.qs-flash, .qs-ripple { animation: none; }
+}
+
+/* ==========================================================================
+   4. Setup — a denser, calmer workspace.
+
+   What wasted the screen: every question sat in its own full-width card with a
+   three-line header, Peers sat in half a card beside nothing, and the page list
+   in the aside made the page ~1,700px tall so Generate scrolled away. Now two
+   short cards share a row, headers are one line, the aside is a sticky rail
+   that scrolls inside itself, and cards arrive with a short staggered rise.
+   ========================================================================== */
+.qs-root .qs-canvas-host { padding: 18px 24px 32px !important; scroll-behavior: smooth; }
+
+.qs-root .qs-setup-head {
+    padding: 16px 24px 14px !important;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+}
+.qs-root .qs-setup-eyebrow { font-size: 9px; letter-spacing: 0.2em; }
+.qs-root .qs-setup-title { font-size: 19px !important; margin-top: 1px !important; }
+.qs-root .qs-setup-title i { width: 26px; height: 26px; font-size: 13px; border-radius: 8px; }
+
+.qs-root .qs-setup-layout {
+    padding: 16px 20px 22px !important;
+    grid-template-columns: minmax(0, 1fr) 340px !important;
+    gap: 18px !important;
+}
+.qs-root .qs-setup-sections { gap: 14px !important; align-items: stretch; }
+
+/* One-line section header: icon chip, title, and the subtitle beside it. */
+.qs-root .qs-sec-head {
+    display: flex !important; align-items: center; flex-wrap: wrap; gap: 4px 12px;
+    padding: 10px 16px !important;
+    background: transparent !important;
+}
+.qs-root .qs-sec-title { font-size: 11.5px !important; letter-spacing: 0.06em; }
+.qs-root .qs-sec-title i { width: 24px !important; height: 24px !important; font-size: 12px !important; }
+.qs-root .qs-sec-sub {
+    margin: 0 !important; padding: 0 !important; font-size: 11.5px; color: var(--va-ink-400);
+}
+.qs-root .qs-sec-body { padding: 12px 16px 14px !important; }
+
+/* A half-width card stacks its two questions instead of squeezing them side by side. */
+.qs-root .qs-setup-section:not(.span) .qs-options-grid {
+    grid-template-columns: minmax(0, 1fr) !important; row-gap: 12px !important;
+}
+.qs-root .qs-setup-section .studio-field { gap: 6px; }
+
+/* Cards rise in, one after another — the page assembles rather than blinks. */
+@keyframes qs-v5-rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: none; }
+}
+.qs-root .qs-setup-sections > * { animation: qs-v5-rise 360ms cubic-bezier(.2, .8, .2, 1) both; }
+.qs-root .qs-setup-sections > *:nth-child(2) { animation-delay: 40ms; }
+.qs-root .qs-setup-sections > *:nth-child(3) { animation-delay: 80ms; }
+.qs-root .qs-setup-sections > *:nth-child(4) { animation-delay: 120ms; }
+.qs-root .qs-setup-sections > *:nth-child(5) { animation-delay: 160ms; }
+.qs-root .qs-setup-sections > *:nth-child(6) { animation-delay: 200ms; }
+.qs-root .qs-setup-aside > * { animation: qs-v5-rise 420ms cubic-bezier(.2, .8, .2, 1) both 60ms; }
+
+/* Filters: four across on a wide screen — two rows shorter. */
+.qs-root .studio-filter-grid { gap: 10px 12px !important; }
+@media (min-width: 1360px) {
+    .qs-root .qs-setup-section.span .studio-filter-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    }
+}
+/* "FILTERS" repeats the card's own title. */
+.qs-root .qs-setup-section .studio-field > .studio-field-label:not(.sm):not(.qs-question):first-child:has(+ .studio-filter-grid) {
+    display: none;
+}
+
+/* The aside is a rail: preview + Generate always in view, the page list scrolls inside. */
+.qs-root .qs-setup-aside {
+    position: sticky !important; top: 8px !important;
+    max-height: calc(100vh - var(--va-navbar-h, 56px) - 96px);
+    display: flex; flex-direction: column; gap: 12px !important;
+}
+.qs-root .qs-setup-aside > .qs-aside-card {
+    min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain;
+    scrollbar-width: thin;
+}
+@media (max-width: 1100px) {
+    .qs-root .qs-setup-layout { grid-template-columns: minmax(0, 1fr) !important; }
+    .qs-root .qs-setup-aside { position: static !important; max-height: none; }
+}
+
+/* Reporting period: toggle, dates and the sentence on one row where there is room. */
+.qs-root .qs-period-grid {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+    gap: 12px 18px !important; align-items: end;
+}
+.qs-root .qs-period-grid > .qs-period-note-wrap { grid-column: 1 / -1; }
+.qs-root .qs-period-note {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; border-radius: 10px;
+    font-size: 12px; line-height: 1.45; font-weight: 500;
+    color: var(--va-ink-600); background: var(--va-surface-1, #f5f7fb);
+    box-shadow: inset 0 0 0 1px var(--v4-hair, rgba(13, 27, 62, 0.07));
+    transition: background var(--va-transition-fast, 120ms), color var(--va-transition-fast, 120ms);
+}
+.qs-root .qs-period-note i { font-size: 13px; color: var(--va-blue); flex: 0 0 auto; }
+.qs-root .qs-period-note.ttm {
+    color: var(--va-navy); background: var(--va-blue-soft);
+    box-shadow: inset 0 0 0 1px rgba(11, 75, 255, 0.18);
+}
+/* The date range picker, dressed like the other fields. */
+.qs-root .qs-date-range .DateRangePickerInput,
+.qs-root .qs-date-range .dash-datepicker-input-wrapper,
+.qs-root .qs-date-range > div:first-child {
+    border-radius: 10px !important;
+}
+.qs-root .qs-date-range input { font-size: 12.5px !important; }
+
+/* The live preview: numbers that land, not blink (assets/studio_v5.js counts them in). */
+.qs-root .qs-prev-value { font-variant-numeric: tabular-nums; transition: color 200ms; }
+.qs-root .qs-prev-value.qs-changed { animation: qs-v5-land 520ms cubic-bezier(.2, .8, .2, 1) 1; }
+@keyframes qs-v5-land {
+    0% { transform: translateY(4px); opacity: .35; } 100% { transform: none; opacity: 1; }
+}
+.qs-root .qs-prev-sub { opacity: .8; }
+
+/* Controls respond like a native app: a quick press, and a clear focus. */
+.qs-root .qs-setup-section .dash-options-list-option,
+.qs-root .qs-setup-section button { transition: transform 90ms ease, background 140ms ease; }
+.qs-root .qs-setup-section .dash-options-list-option:active,
+.qs-root .qs-setup-aside .qs-generate-btn:active { transform: scale(0.985); }
+.qs-root .studio-dd .dash-dropdown:focus-visible,
+.qs-root .studio-dd.dash-dropdown:focus-visible {
+    box-shadow: 0 0 0 3px var(--va-focus-ring, rgba(11, 75, 255, 0.25)) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .qs-root .qs-setup-sections > *, .qs-root .qs-setup-aside > *,
+    .qs-root .qs-prev-value.qs-changed { animation: none !important; }
+}
+
+/* 4b. Fit-and-finish found on the first look at the new layout. */
+/* The rail must shrink its page LIST, never the preview or the button above it. */
+.qs-root .qs-setup-aside > *:not(.qs-aside-card) { flex: 0 0 auto !important; }
+/* Data source stacks its two questions in a half-width card, like Audience & voice. */
+.qs-root .qs-setup-section:not(.span) .qs-source-field {
+    display: grid !important; grid-template-columns: minmax(0, 1fr) !important; gap: 12px !important;
+}
+/* A two-choice toggle does not need the width of the page. */
+.qs-root .qs-setup-section.span .studio-report-radio,
+.qs-root #studio-peer-mode { max-width: 460px; }
+.qs-root .qs-period-grid .studio-report-radio { max-width: none; }
+
+/* ==========================================================================
+   5. The canvas — a deck editor, not a single picture.
+
+   The slide was a fixed 900px with dead space under it, eighteen pages sat
+   behind two arrows, and the side panel was mostly empty. The slide now fits
+   the width it is given (assets/studio_v5.js scales it; clicks still land,
+   because a CSS transform scales hit-testing too), the side panel stays in
+   view, and every page is a thumbnail in a filmstrip under the stage.
+   ========================================================================== */
+.qs-root .qs-tf-workspace { display: flex; gap: 16px; align-items: flex-start; }
+.qs-root .qs-tf-stage { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.qs-root .qs-tf-stage > .qs-tf-surface { transform-origin: 0 0; }
+.qs-root .qs-tf-stage.qs-fitted { overflow: visible; }
+.qs-root .qs-tf-side { position: sticky; top: 0; align-self: flex-start; }
+
+.qs-root .qs-tf-strip {
+    display: flex; gap: 10px; overflow-x: auto; overscroll-behavior-x: contain;
+    padding: 12px 4px 6px; margin-top: 12px; scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+    border-top: 1px solid var(--v4-hair, rgba(13, 27, 62, 0.07));
+}
+.qs-root .qs-strip-thumb {
+    position: relative; flex: 0 0 136px; aspect-ratio: 16 / 9;
+    padding: 0; overflow: hidden; cursor: pointer; scroll-snap-align: center;
+    border: none; border-radius: 9px; background: var(--va-surface-0, #fff);
+    box-shadow: 0 0 0 1px var(--v4-hair-strong, rgba(13, 27, 62, 0.12));
+    transition: transform 140ms cubic-bezier(.2, .8, .2, 1), box-shadow 140ms;
+}
+.qs-root .qs-strip-thumb:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.45), 0 8px 18px -10px rgba(10, 22, 54, 0.45);
+}
+.qs-root .qs-strip-thumb.is-current {
+    box-shadow: 0 0 0 2px var(--va-blue, #2563eb), 0 8px 18px -10px rgba(37, 99, 235, 0.6);
+}
+.qs-root .qs-strip-img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.qs-root .qs-strip-title {
+    padding: 8px 9px; font-size: 10px; line-height: 1.3; font-weight: 600; text-align: left;
+    color: var(--va-ink-500); display: -webkit-box; -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical; overflow: hidden;
+}
+.qs-root .qs-strip-num {
+    position: absolute; left: 6px; bottom: 5px; padding: 1px 6px; border-radius: 6px;
+    font-size: 10px; font-weight: 700; color: #fff; background: rgba(11, 31, 68, 0.72);
+}
+.qs-root .qs-tf-preview { animation: qs-v5-rise 300ms cubic-bezier(.2, .8, .2, 1) both; }
+
+/* ==========================================================================
+   6. Data page — shorter rows, a rail that stays with you, no void.
+   ========================================================================== */
+.qs-root .qs-map-row { padding-top: 10px !important; padding-bottom: 10px !important; row-gap: 6px; }
+.qs-root .qs-map-row .qs-map-fieldlabel,
+.qs-root .qs-map-row .qs-map-fieldhead { margin-bottom: 2px; }
+.qs-root .qs-map-samples { margin-top: 4px !important; }
+.qs-root .qs-map-rows { gap: 8px !important; }
+.qs-root .qs-map-row { transition: box-shadow 140ms, transform 140ms; }
+.qs-root .qs-map-row:hover { transform: translateY(-1px); }
+
+/* The rail (upload + saved datasets) stays in view while the mapping scrolls. */
+.qs-root .qs-data-main + *,
+.qs-root .qs-setup-aside:has(.qs-ds-list) { position: sticky; top: 8px; align-self: flex-start; }
+
+/* No dataset yet: a compact, inviting empty state instead of a page-high void. */
+.qs-root .qs-empty { min-height: 0 !important; padding: 56px 24px !important; }
+.qs-root .qs-setup-card:has(.qs-empty) { min-height: 0 !important; }
+.qs-root .qs-data-drop { transition: transform 160ms cubic-bezier(.2, .8, .2, 1), box-shadow 160ms; }
+.qs-root .qs-data-drop:hover { transform: translateY(-2px); }
+
+/* Column tools: the settings boxes appear with the reading that needs them. */
+.qs-root .qs-addcol-bar { flex-wrap: wrap; row-gap: 10px; }
+.qs-root #qs-col-arg1-wrap, .qs-root #qs-col-arg2-wrap { animation: qs-v5-rise 200ms ease-out both; }
+.qs-root .qs-addcol-bar {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)) !important;
+    gap: 10px 12px !important; align-items: end;
+}
+.qs-root .qs-addcol-bar > .qs-col-addbtn { justify-self: start; min-width: 150px; }
+
+/* ==========================================================================
+   7. Review — use the width: the capability checks sit two across.
+   ========================================================================== */
+@media (min-width: 1200px) {
+    .qs-root .qs-rv-caps {
+        display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 24px;
+    }
+}
+.qs-root .qs-review-card { animation: qs-v5-rise 320ms cubic-bezier(.2, .8, .2, 1) both; }

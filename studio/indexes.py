@@ -29,6 +29,7 @@ follows a schema rename instead of breaking on one.
 from __future__ import annotations
 
 import os
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, List, Optional, Sequence, Tuple
@@ -61,14 +62,24 @@ _SHAPES: Tuple[Tuple[str, ...], ...] = (
 
 @dataclass(frozen=True)
 class IndexSpec:
-    """One index to create: its name, its table, and its columns in order."""
+    """One index to create: its name, its table, and its columns in order.
+
+    ``nocase`` names the TEXT columns, which are indexed ``COLLATE NOCASE``. The
+    analytics layer compares text case-insensitively as ``"col" COLLATE NOCASE = :v``
+    (``core.analytics.sql.where_clause``), and SQLite only uses an index for that when
+    the index column carries the same collation. The earlier plain-collation indexes
+    could never be SEARCHED by a text filter — at best scanned end to end as a covering
+    index — which is why they bought so little on a large book.
+    """
 
     name: str
     table: str
     columns: Tuple[str, ...]
+    nocase: Tuple[str, ...] = ()
 
     def create_sql(self) -> str:
-        cols = ", ".join(f'"{c}"' for c in self.columns)
+        cols = ", ".join(f'"{c}"' + (" COLLATE NOCASE" if c in self.nocase else "")
+                         for c in self.columns)
         return f'CREATE INDEX IF NOT EXISTS "{self.name}" ON "{self.table}" ({cols})'
 
 
@@ -126,12 +137,14 @@ def index_plan(flow: str = "gpr") -> Tuple[IndexSpec, ...]:
     if spec is None:
         return ()
     measure = _measure_column(spec)
+    year = _year_column(spec)
     plan: List[IndexSpec] = []
     seen: set = set()
     for shape in _SHAPES:
         columns = _columns_for(spec, shape)
         if not columns:
             continue
+        text_columns = tuple(c for c in columns if c != year)
         if measure:  # covering: the aggregate never has to touch the table
             columns = (*columns, measure)
         if columns in seen:
@@ -139,9 +152,13 @@ def index_plan(flow: str = "gpr") -> Tuple[IndexSpec, ...]:
         seen.add(columns)
         plan.append(
             IndexSpec(
-                name=f"{_PREFIX}_{spec.primary_table}_{'_'.join(shape)}".lower(),
+                # ``_nc`` because the collation changed: an existing warehouse holds the
+                # old BINARY indexes under the old names, and reusing a name would make
+                # ``missing_indexes`` believe the useful one was already there.
+                name=f"{_PREFIX}_{spec.primary_table}_{'_'.join(shape)}_nc".lower(),
                 table=spec.primary_table,
                 columns=columns,
+                nocase=text_columns,
             )
         )
     return tuple(plan)
@@ -212,3 +229,49 @@ def ensure_indexes(flow: str = "gpr", engine: Any = None) -> List[str]:
             time.time() - started,
         )
     return made
+
+
+# A database file larger than this builds its missing indexes on a background thread.
+# Indexing an 80M-row book is minutes per index, and ``get_engine`` is first called from
+# inside a request — so a synchronous build there is a page that hangs on first load with
+# no explanation. A small book (the seed, a test fixture) still builds inline, where the
+# seconds are invisible and a test can rely on the index being there.
+_BACKGROUND_BYTES = 256 * 1024 * 1024
+
+
+def _database_bytes(engine: Any) -> int:
+    path = getattr(getattr(engine, "url", None), "database", None)
+    try:
+        return os.path.getsize(path) if path else 0
+    except OSError:
+        return 0
+
+
+def _ensure_each(flows: Sequence[str], engine: Any) -> None:
+    for flow in flows:
+        try:
+            ensure_indexes(flow, engine)
+        except Exception as exc:  # noqa: BLE001 - indexing must never block startup
+            logger.warning("studio: analytics indexing for %s skipped: %s", flow, exc)
+
+
+def ensure_indexes_soon(flows: Sequence[str], engine: Any) -> Optional[threading.Thread]:
+    """``ensure_indexes`` for each flow — inline on a small database, else on ONE daemon thread.
+
+    One thread for every flow, not one each: two ``CREATE INDEX`` on one SQLite file
+    contend for its write lock, and the loser fails with "database is locked" after the
+    busy timeout. Returns the thread when one was started. Nothing is started when nothing
+    is missing, so every launch after the first pays a ``sqlite_master`` read and no thread.
+    """
+    pending = [flow for flow in flows if missing_indexes(flow, engine)]
+    if not pending:
+        return None
+    if _database_bytes(engine) < _BACKGROUND_BYTES:
+        _ensure_each(pending, engine)
+        return None
+    logger.info("studio: building %s analytics indexes in the background (one-time for "
+                "this database; decks built meanwhile are slower)", ", ".join(pending))
+    thread = threading.Thread(target=_ensure_each, args=(pending, engine),
+                              name="studio-index-build", daemon=True)
+    thread.start()
+    return thread

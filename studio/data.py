@@ -14,7 +14,7 @@ import json
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import create_engine, text
 
@@ -63,16 +63,15 @@ def _ensure_analytics_indexes(engine) -> None:
     Guarded end to end: opting out, a read-only file, or a flow whose table is not
     in this database all mean a slower build, never a broken one.
     """
-    from studio.indexes import auto_index_enabled, ensure_indexes
+    from studio.indexes import auto_index_enabled, ensure_indexes_soon
 
     if not auto_index_enabled():
         logger.info("studio: STUDIO_AUTO_INDEX=off — skipping analytics indexes")
         return
-    for flow in ("gpr", "survey"):
-        try:
-            ensure_indexes(flow, engine)
-        except Exception as exc:  # noqa: BLE001 - indexing must never block startup
-            logger.warning("studio: analytics indexing for %s skipped: %s", flow, exc)
+    try:
+        ensure_indexes_soon(("gpr", "survey"), engine)
+    except Exception as exc:  # noqa: BLE001 - indexing must never block startup
+        logger.warning("studio: analytics indexing skipped: %s", exc)
 
 
 _OPTION_CAP = 100_000  # effectively "all" for a dropdown, but bounds a pathological column
@@ -392,6 +391,102 @@ def cached_filter_options(flow: str) -> Dict[str, List[Dict[str, Any]]]:
     return opts
 
 
+# ── the period profile: the latest billing month and the book's own quarter labels ──
+
+
+_PERIOD_MEM: Dict[str, Dict[str, Any]] = {}
+
+
+def _period_file(flow: str) -> Path:
+    sig = hashlib.blake2s(f"period|{flow}|{_db_signature()}".encode("utf-8"),
+                          digest_size=8).hexdigest()
+    return _CACHE_DIR / f"period_{flow}_{sig}.json"
+
+
+def _scan_period_profile(flow: str) -> Dict[str, Any]:
+    """One grouped read of the period columns: which quarters exist, and the latest month."""
+    from studio import period as P
+
+    spec = get_flow_registry().get(flow)
+    if spec is None:
+        return {}
+    table = spec.primary_table
+    from core.analytics.sql import table_columns
+
+    columns = table_columns(get_engine(), table)
+    parts = P.date_parts_sql(
+        date_column="Billing_Date" if "Billing_Date" in columns else None,
+        iso=P.is_iso_date(_distinct(get_engine(), table, "Billing_Date", 50))
+        if "Billing_Date" in columns else False,
+        month_name_column="Month_Name" if "Month_Name" in columns else None)
+    latest = (f'MAX(CAST("Year" AS INTEGER) * 100 + {parts.month})'
+              if parts is not None and "Year" in columns else "NULL")
+    has_quarter = "Quarter" in columns
+    # ONE pass: grouped by quarter when there is a quarter column, so the labels and the
+    # latest month come back together rather than costing a scan each.
+    sql = (f'SELECT "Quarter", {latest} FROM "{table}" GROUP BY "Quarter"' if has_quarter
+           else f'SELECT NULL, {latest} FROM "{table}"')
+    out: Dict[str, Any] = {"quarters": [], "latest": None}
+    try:
+        with get_engine().connect() as conn:
+            rows = conn.execute(text(sql)).fetchall()
+    except Exception as exc:  # noqa: BLE001 - the form still works without it
+        logger.warning("studio: period profile for %s unavailable: %s", flow, exc)
+        return out
+    out["quarters"] = [r[0] for r in rows if r[0] not in (None, "")]
+    best = max((int(r[1]) for r in rows if r[1]), default=None)
+    if best:
+        out["latest"] = [best // 100, best % 100]
+    return out
+
+
+_PROFILE_THREADS: Dict[str, Any] = {}
+
+
+def _profile_soon(flow: str) -> None:
+    """Read the period profile on a daemon thread, once — so a form that asked without
+    waiting finds it on its next look instead of never."""
+    import threading
+
+    running = _PROFILE_THREADS.get(flow)
+    if running is not None and running.is_alive():
+        return
+    thread = threading.Thread(target=period_profile, args=(flow,), name="studio-period-profile",
+                              daemon=True)
+    _PROFILE_THREADS[flow] = thread
+    thread.start()
+
+
+def period_profile(flow: str = "gpr", *, wait: bool = True) -> Optional[Dict[str, Any]]:
+    """``{"quarters": [the book's Quarter labels], "latest": [year, month]}`` — cached.
+
+    Memory, then disk (keyed on the database's signature, like the filter options), then
+    one scan. ``wait=False`` never scans: the Setup form asks that way and falls back to
+    Q1–Q4 and "the latest month" until the startup warm-up has filled it in, because on an
+    80M-row book that scan is minutes and the form must not wait for it.
+    """
+    path = _period_file(flow)
+    key = str(path)
+    if key in _PERIOD_MEM:
+        return _PERIOD_MEM[key]
+    disk = _read_disk_cache(path)
+    if disk is not None:
+        _PERIOD_MEM[key] = disk
+        return disk
+    if not wait:
+        _profile_soon(flow)
+        return None
+    profile = _scan_period_profile(flow)
+    _PERIOD_MEM[key] = profile
+    _write_disk_cache(path, profile)
+    return profile
+
+
+def quarter_labels(flow: str = "gpr") -> List[str]:
+    """The warehouse's own ``Quarter`` labels, once the warm-up has read them (else ``[]``)."""
+    return list((period_profile(flow, wait=False) or {}).get("quarters") or [])
+
+
 def warm_filter_cache(flow: str = "gpr") -> List[str]:
     """Build the on-disk cube now so the next app launch is instant. Returns a report.
 
@@ -417,10 +512,13 @@ def warm_filter_cache(flow: str = "gpr") -> List[str]:
                 f"(raise STUDIO_CUBE_MAX_ROWS above {cap:,} to cube it anyway)"]
 
     cached_filter_options(flow)                    # the initial lists, off the cube
+    profile = period_profile(flow) or {}           # quarters + latest month, for Setup
     return [f"{spec.primary_table}: {cube.n_rows:,} combination(s) over "
             f"{len(columns)} column(s), measure={measure}",
             f"cached in {filter_cube.disk_dir()}",
-            f"option lists cached in {_cache_file(flow).name}"]
+            f"option lists cached in {_cache_file(flow).name}",
+            f"latest billing month {profile.get('latest')}, "
+            f"{len(profile.get('quarters') or [])} quarter label(s)"]
 
 
 def ensure_filter_indexes(flow: str = "gpr") -> List[str]:

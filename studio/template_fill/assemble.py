@@ -26,8 +26,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from logger import get_logger
 from studio.compute import DATA_BASIS_PREMIUM, DATA_BASIS_WITH_SURVEY
 from studio.template_fill import (
-    commentary, commentary_metrics, commentary_qa, feedback, grids, gwp_page, kpi_band,
-    lc_page, prune, rewrites,
+    commentary, commentary_ledger, commentary_metrics, commentary_qa, feedback, grids,
+    gwp_page, kpi_band, lc_page, prune, rewrites,
 )
 from studio.template_fill import roles as R
 from studio.template_fill.survey import facts as survey_facts
@@ -504,7 +504,14 @@ def plan_subdecks(result, *, slides: Optional[DeckSlides] = None,
 
         plan the sub-decks  ->  write every column at once  ->  score what they ship
     """
-    planned = (
+    planned = plan_unwritten(result, slides=slides, data_basis=data_basis)
+    return write_and_score(planned)
+
+
+def plan_unwritten(result, *, slides: Optional[DeckSlides] = None,
+                   data_basis: Optional[str] = None) -> List[SubDeck]:
+    """The ordered sub-decks with their commentary still PENDING (drafts, not prose)."""
+    return (
         SubDeckPlanBuilder(result, slides=slides, data_basis=data_basis)
         .add_overall()
         .add_products()
@@ -512,10 +519,43 @@ def plan_subdecks(result, *, slides: Optional[DeckSlides] = None,
         .add_end()
         .build()
     )
+
+
+def write_and_score(planned: Sequence[SubDeck]) -> List[SubDeck]:
+    """Every pending column written, then each sub-deck's prose scored for the log."""
     decks = _write_prose(planned)
     for sub in decks:
         _report_quality(sub)
     return decks
+
+
+def commentary_outcomes(planned: Sequence[SubDeck], written: Sequence[SubDeck]):
+    """What happened to each commentary field -- for Review (:mod:`commentary_ledger`)."""
+    pages = {sub.template: _template_pages(sub.template) for sub in planned}
+    return commentary_ledger.ledger([sub.values for sub in planned],
+                                    [sub.values for sub in written],
+                                    blocks=[(sub.label, sub.template, tuple(sub.hidden))
+                                            for sub in planned],
+                                    pages=pages)
+
+
+def _template_pages(template_name: str):
+    """One template's page titles, sections and prose-box headers, for the ledger."""
+    from studio.template_fill.sections import classify_sections
+
+    try:
+        template = analyze(get_binding_map(template_name).path)
+        sections = classify_sections(template)
+    except Exception as exc:  # noqa: BLE001 -- a ledger never costs the deck
+        logger.warning("commentary ledger: could not read %s: %s", template_name, exc)
+        return commentary_ledger.TemplatePages()
+    headers = {(slide.index, int(shape.shape_id)): commentary._column_topic(slide, shape)
+               for slide in template.slides for shape in slide.shapes if shape.kind == "text"}
+    return commentary_ledger.TemplatePages(
+        titles=tuple(slide.title() for slide in template.slides),
+        sections=tuple(sections[slide.index].value for slide in template.slides),
+        headers=headers,
+    )
 
 
 _manifest_cache: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
@@ -591,13 +631,16 @@ def assemble_deck(result, *, out_path: Optional[str] = None, work_dir: Optional[
     label = f"assemble:{result.subject or 'deck'}"
     with telemetry.job(label), build_memo(label):
         with telemetry.phase("plan"):
-            decks = plan_subdecks(result, slides=slides, data_basis=data_basis)
+            planned = plan_unwritten(result, slides=slides, data_basis=data_basis)
+            decks = write_and_score(planned)
+            outcomes = commentary_outcomes(planned, decks)
         with telemetry.phase("fill"):
             filled = _fill_subdecks(decks,
                                     work_dir or tempfile.mkdtemp(prefix="qbr_assemble_"))
         out = out_path or str(Path.cwd() / "qbr_assembled.pptx")
         with telemetry.phase("merge"):
             merge_to_file(filled, out)
+        commentary_ledger.write_sidecar(out, outcomes)
 
     logger.info("assemble_deck: %d sub-deck(s) [%s] -> %s",
                 len(decks), ", ".join(d.label for d in decks), out)

@@ -25,7 +25,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 from logger import get_logger
 from studio import compute as C
 from studio import segments as SEG
-from studio.template_fill import facts_mix, facts_trend
+from studio.template_fill import facts_driver, facts_mix, facts_survey_lines, facts_trend
 from studio.template_fill import rewrites
 from studio.template_fill import roles as R
 from studio.template_fill.analyze import Shape, Template
@@ -296,6 +296,9 @@ def _is_pinned(filters: Dict[str, Any], column: str) -> bool:
     return len(values) == 1
 
 
+_DIM_NOUN = {_PRODUCT_COL: "line", _COUNTRY_COL: "country", _INDUSTRY_COL: "industry"}
+
+
 def _driver_dim(filters: Dict[str, Any]) -> str:
     """The dimension a YoY move is best decomposed by IN THIS SCOPE.
 
@@ -415,7 +418,16 @@ def _facts(result, filters: Dict[str, Any]) -> Dict[str, Any]:
     pool = _safe(C.movement_by_dim, result.flow, dim, base, result.engine, top=8) or []
     segments = _segment_facts(result, filters)
     return {"subject": str(subject or ""), "scope": dict(base), "carrier": carrier, "marsh": marsh, "rank": rank,
+            # What the reporting year MEANS on this run — "TTM Aug 2026" on the R12M basis.
+            # Without it the pack says "in 2026" and the writer claims a calendar year.
+            "period": _period_names(result, carrier),
             "sow": sow, "peer": peer, "movers": movers, "pool": pool,
+            # What the movers are broken down BY on this scope ("line", "country",
+            # "industry"), so the driver fact can name the kind of thing that drove it.
+            "mover_dim": _DIM_NOUN.get(dim, "segment"),
+            # Survey scores by practice, on the survey basis, for a one-market scope — so
+            # a premium movement can be read beside the same line's survey score.
+            "survey_lines": facts_survey_lines.load(result, filters),
             # The two families that are not another reading of the headline: HOW the book
             # is distributed, and WHERE it is heading. Without them every column argued
             # from the same six numbers, which is why every column read alike.
@@ -423,9 +435,58 @@ def _facts(result, filters: Dict[str, Any]) -> Dict[str, Any]:
             "trend": facts_trend.load(result, filters, annual_pct=carrier.get("pct")),
             "segments": segments,
             "segments_track": _tracks_its_parent(result, filters),
+            # One row per MARKET when the scope spans several. The overall pages of a
+            # multi-country run otherwise argue only from the combined book, so every field
+            # reached for the same headline; with a country each, they can say different
+            # things (see ``editorial.EditorialPlanBuilder`` — it hands each field a market).
+            "markets": _market_facts(result, filters),
             # Which PRODUCT each named segment is really about. Empty on a product page,
             # where the scope already pins it (:mod:`studio.segment_drivers`).
             "segment_drivers": _segment_driver_facts(result, filters, segments)}
+
+
+def _scope_markets(filters: Dict[str, Any]) -> Tuple[str, ...]:
+    value = filters.get(_COUNTRY_COL)
+    values = tuple(value) if isinstance(value, (list, tuple, set)) else ((value,) if value else ())
+    return tuple(str(v) for v in values if v not in (None, "", "all", "All"))
+
+
+def _market_facts(result, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """``[{name, current, prior, delta, pct, sow, sow_prior, pool, pool_pct, rank, of_n}]``.
+
+    Only for a scope spanning two or more countries — a single-country scope IS its market,
+    and its own facts already say everything a row here would. Biggest carrier book first.
+    """
+    markets = _scope_markets(filters)
+    if len(markets) < 2 or not result.subject:
+        return []
+    base = {k: v for k, v in filters.items() if k != _CARRIER_COL}
+    mine = _safe(C.movement_by_dim, result.flow, _COUNTRY_COL, filters, result.engine,
+                 top=len(markets)) or []
+    pool = {r["name"]: r for r in (_safe(C.movement_by_dim, result.flow, _COUNTRY_COL, base,
+                                         result.engine, top=len(markets)) or [])}
+    shares = _safe(C.sow_by_market, result.flow, filters, result.engine, result.subject) or {}
+    ranks = _safe(C.rank_by_market, result.flow, filters, result.engine, result.subject) or {}
+    rows = []
+    for row in mine:
+        name = row["name"]
+        market = pool.get(name) or {}
+        rows.append({**row, "sow": (shares.get(name) or {}).get("current"),
+                     "sow_prior": (shares.get(name) or {}).get("prior"),
+                     "pool": market.get("current"), "pool_pct": market.get("pct"),
+                     "rank": (ranks.get(name) or {}).get("rank"),
+                     "of_n": (ranks.get(name) or {}).get("of_n")})
+    rows.sort(key=lambda r: r.get("current") or 0.0, reverse=True)
+    return rows
+
+
+def _period_names(result, carrier: Mapping[str, Any]) -> Dict[str, str]:
+    """``{"current": "TTM Aug 2026", "prior": "TTM Aug 2025"}`` — empty on the calendar year."""
+    window = getattr(result, "period", None)
+    year = (carrier or {}).get("current_year")
+    if window is None or not getattr(window, "relabels", False) or year is None:
+        return {}
+    return {"current": window.label(int(year)), "prior": window.label(int(year) - 1)}
 
 
 def _segment_driver_facts(result, filters: Dict[str, Any],
@@ -638,10 +699,78 @@ def _peer_share_gap(f: Dict[str, Any]) -> Optional[float]:
     return theirs - mine
 
 
+# ── markets: on a multi-country scope, each field gets a DIFFERENT country ──────────────
+#
+# The combined figures are the same for every field on the page, so every field that only
+# had them said the same thing — "3 points, all the same" on a three-country run. Each field
+# below names the market that best answers ITS question (strongest, weakest, most headroom),
+# and never one an earlier field on the page already took.
+
+
+def _grew(row: Mapping[str, Any]) -> bool:
+    return (row.get("pct") or 0) > 0
+
+
+def _market_line(f: Dict[str, Any], row: Mapping[str, Any]) -> str:
+    """"In Japan, Zurich's Marsh-placed premium grew 45.2% to $120M; share of Marsh
+    placements rose to 5.1% from 4.3%, #3 of 37." — every figure off the market row."""
+    name, subject = row["name"], _subject(f)
+    line = f"In {name}, {subject}'s Marsh-placed premium {_moved(row['pct'])} to " \
+           f"{_money(row['current'])}" if row.get("pct") is not None else \
+           f"In {name}, {subject} wrote {_money(row['current'])} with Marsh"
+    sow, prior = row.get("sow"), row.get("sow_prior")
+    if sow is not None and prior is not None and not U.is_flat(sow - prior):
+        line += f"; share of Marsh placements {'rose' if sow > prior else 'fell'} to " \
+                f"{sow:.1f}% from {prior:.1f}%"
+    elif sow is not None:
+        line += f"; share of Marsh placements {sow:.1f}%"
+    if row.get("rank"):
+        line += f", #{int(row['rank'])} of {int(row['of_n'])}" if row.get("of_n") else ""
+    return line + "."
+
+
+def _market_pick(f: Dict[str, Any], kind: str) -> Optional[Mapping[str, Any]]:
+    """The market that answers ``kind`` — distinct across the page's three questions."""
+    rows = [r for r in (f.get("markets") or []) if r.get("current") is not None]
+    if len(rows) < 2:
+        return None
+    by_growth = sorted(rows, key=lambda r: r.get("pct") if r.get("pct") is not None else 0.0)
+    best, worst = by_growth[-1], by_growth[0]
+    headroom = sorted((r for r in rows if r not in (best, worst)),
+                      key=lambda r: (r.get("pool") or 0.0) - (r.get("current") or 0.0),
+                      reverse=True)
+    if kind == "working":
+        return best if _grew(best) else None
+    if kind == "challenges":
+        return worst if worst is not best else None
+    if kind == "growth":
+        return headroom[0] if headroom else None
+    return None
+
+
+def _market_point(f: Dict[str, Any], kind: str) -> Optional[str]:
+    row = _market_pick(f, kind)
+    if row is None:
+        return None
+    if kind == "growth" and row.get("pool") and row.get("current") is not None:
+        room = row["pool"] - row["current"]
+        if room > 0:
+            return (f"{row['name']} carries the largest untaken pool: Marsh placed "
+                    f"{_money(room)} there with other carriers, of {_money(row['pool'])} in "
+                    f"total.")
+    line = _market_line(f, row)
+    if kind == "challenges" and _grew(row):
+        # Still growing, so the challenge is RELATIVE — say so rather than list a gain
+        # under "Challenges" and leave the reader to work out why it is there.
+        return "Growth was slowest in " + line[len("In "):].replace(", ", ": ", 1)
+    return line
+
+
 def _working_points(f: Dict[str, Any]) -> List[str]:
     """Successes: what grew, what drove it, and what the growth bought."""
     c, m, r, s = f["carrier"], f.get("marsh") or {}, f["rank"], f["sow"]
     parts: List[str] = []
+    market = _market_point(f, "working")
     if (c.get("pct") or 0) > 0:
         line = (f"{_subject(f, opening=True)} grew its Marsh-placed premium {_mag(c['pct'])} "
                 f"year on year to {_money(c['current'])}")
@@ -650,6 +779,8 @@ def _working_points(f: Dict[str, Any]) -> List[str]:
         elif m.get("pct") is not None:
             line += f", against a wider Marsh book that {_moved(m['pct'])}"
         parts.append(line + ".")
+    if market:
+        parts.append(market)
     risers = _named_moves(f.get("movers") or [], rising=True, floor=_material_floor(f))
     if risers and (c.get("delta") or 0) > 0:
         parts.append(f"The increase was led by {risers}, out of a total movement of "
@@ -691,6 +822,9 @@ def _challenges_points(f: Dict[str, Any]) -> List[str]:
         if m.get("pct") is not None and m["pct"] > c["pct"]:
             line += f", while the wider Marsh book {_moved(m['pct'])}, so this is lost share"
         parts.append(line + ".")
+    market = _market_point(f, "challenges")
+    if market:
+        parts.append(market)
     if (r.get("delta") or 0) < 0:
         parts.append(f"Rank within the Marsh book slipped {_places(int(r['delta']))} to "
                      f"{_rank_of(r)}.")
@@ -767,7 +901,9 @@ def _growth_points(f: Dict[str, Any]) -> List[str]:
     """Named placement gaps and clearly qualified benchmark scenarios."""
     from studio.template_fill import segment_prose as P
     found = _segments(f)
-    parts = P.points(found, *SEG.OPPORTUNITY_KINDS, subject=_subject(f), limit=3)
+    market = _market_point(f, "growth")
+    parts = ([market] if market else []) + P.points(found, *SEG.OPPORTUNITY_KINDS,
+                                                    subject=_subject(f), limit=3)
     if not parts and _tracks_parent(f):
         parts.append(P.tracking_note(share=(f.get("sow") or {}).get("current")))
     gap, point = _peer_share_gap(f), _point_of_share(f)
@@ -802,7 +938,9 @@ def _key_messages_points(f: Dict[str, Any]) -> List[str]:
     c, r, s, peer = (f.get(key) or {} for key in ("carrier", "rank", "sow", "peer"))
     parts = []
     if c.get("current") is not None:
-        year = f" in {int(c['current_year'])}" if c.get("current_year") else ""
+        named = (f.get("period") or {}).get("current")
+        year = (f" in {named}" if named else
+                f" in {int(c['current_year'])}" if c.get("current_year") else "")
         change = f", {_up_down(c['pct'])} year on year" if c.get("pct") is not None else ""
         parts.append(f"{_subject(f, opening=True)} wrote {_money(c['current'])} with Marsh{year}{change}.")
     if s.get("current") is not None:
@@ -955,7 +1093,7 @@ _COMPOSERS: Dict[str, Callable[[Dict[str, Any]], List[str]]] = {
 # the panel's question, and these deepen the answer. That matters to the ledger, which
 # thins a page whose claims are already spoken for — a bigger pool is the fix, and a pool
 # bucketed per column is the only kind that measured better (see ``stance.PortfolioExtras``).
-_FACT_FAMILIES = (facts_mix, facts_trend)
+_FACT_FAMILIES = (facts_driver, facts_mix, facts_trend)
 
 
 def points(kind: str, f: Dict[str, Any]) -> List[str]:
@@ -973,7 +1111,11 @@ def points(kind: str, f: Dict[str, Any]) -> List[str]:
         return []
     said = list(composer(f))
     for family in _FACT_FAMILIES:
-        said += [line for line in family.lines_for(kind, f) if line not in said]
+        extra = [line for line in family.lines_for(kind, f) if line not in said]
+        # A family that LEADS (the driver of the year's move) goes straight after the
+        # headline, where a trimmed panel still keeps it; the rest deepen the answer last.
+        at = min(1, len(said)) if getattr(family, "LEADS", False) else len(said)
+        said[at:at] = extra
     return said or _fallback_points(kind, f)
 
 

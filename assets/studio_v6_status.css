@@ -1,0 +1,138 @@
+/* ==========================================================================
+   Studio v6 — the build card and the peer panel.
+
+   The build card lives in `.qs-gen-host`, which is mounted OUTSIDE `.qs-root`
+   (studio.authoring.layout.generate_progress_host), so its rules are scoped to
+   the host and use only the app-wide --va-* tokens.
+   ========================================================================== */
+
+/* ── the build card ───────────────────────────────────────────────────────── */
+.qs-gen-host { width: 360px !important; right: 24px !important; bottom: 92px !important; }
+.qs-gen-host .qs6-gen {
+    padding: 16px 18px 14px !important; border-radius: 18px !important;
+    background: rgba(255, 255, 255, 0.98) !important; color: var(--va-ink-800);
+    box-shadow: 0 0 0 1px rgba(13, 27, 62, 0.08), 0 28px 60px -24px rgba(0, 15, 71, 0.5) !important;
+    font-family: var(--va-font);
+}
+.qs-gen-host .qs6-gen-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.qs-gen-host .qs6-gen-titles { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.qs-gen-host .qs6-gen-title { font-size: 15px; font-weight: 700; color: var(--va-navy); }
+.qs-gen-host .qs6-gen-scope {
+    align-self: flex-start; padding: 2px 9px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 600; color: var(--va-ink-600); background: var(--va-surface-2);
+}
+.qs-gen-host .qs6-gen-clock {
+    display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px;
+    font-size: 13px; font-weight: 700; color: var(--va-navy); background: var(--va-blue-soft);
+    font-variant-numeric: tabular-nums;
+}
+.qs-gen-host .qs6-gen-clock i { color: var(--va-blue); }
+
+.qs-gen-host .qs6-gen-track {
+    position: relative; margin: 14px 0 12px; height: 8px; border-radius: 999px;
+    background: var(--va-surface-2); overflow: hidden;
+}
+.qs-gen-host .qs6-gen-fill {
+    position: relative; height: 100%; border-radius: 999px; overflow: hidden;
+    background: linear-gradient(90deg, var(--va-blue) 0%, var(--va-cyan) 100%);
+    transition: width 600ms cubic-bezier(.2, .8, .2, 1);
+}
+/* A sheen moves along the filled part so a long phase never looks frozen. */
+.qs-gen-host .qs6-gen-fill::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.55) 50%, transparent 100%);
+    transform: translateX(-100%); animation: qs6-gen-sheen 1.6s ease-in-out infinite;
+}
+@keyframes qs6-gen-sheen { to { transform: translateX(100%); } }
+
+.qs-gen-host .qs6-gen-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.qs-gen-host .qs6-gen-step { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--va-ink-400); }
+.qs-gen-host .qs6-gen-dot {
+    display: inline-flex; align-items: center; justify-content: center; flex: 0 0 22px;
+    width: 22px; height: 22px; border-radius: 50%; font-size: 11px; font-weight: 700;
+    color: var(--va-ink-400); background: var(--va-surface-2);
+}
+.qs-gen-host .qs6-gen-step.is-done { color: var(--va-ink-600); }
+.qs-gen-host .qs6-gen-step.is-done .qs6-gen-dot { color: #fff; background: var(--va-good); }
+.qs-gen-host .qs6-gen-step.is-now { color: var(--va-navy); font-weight: 700; }
+.qs-gen-host .qs6-gen-step.is-now .qs6-gen-dot { background: var(--va-blue-soft); }
+.qs-gen-host .qs6-gen-spin {
+    width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid rgba(11, 75, 255, 0.25); border-top-color: var(--va-blue);
+    animation: qs6-gen-spin 800ms linear infinite;
+}
+@keyframes qs6-gen-spin { to { transform: rotate(360deg); } }
+.qs-gen-host .qs6-gen-msg {
+    margin: 12px 0 0; padding-top: 10px; border-top: 1px solid rgba(13, 27, 62, 0.07);
+    font-size: 12.5px; line-height: 1.45; color: var(--va-ink-500);
+}
+.qs-gen-host .qs6-gen-msg:empty { display: none; }
+
+.qs-gen-host .qs6-gen.is-failed {
+    display: flex; align-items: flex-start; gap: 12px;
+    box-shadow: 0 0 0 1.5px rgba(197, 53, 50, 0.45), 0 28px 60px -24px rgba(0, 15, 71, 0.5) !important;
+}
+.qs-gen-host .qs6-gen-erricon {
+    display: inline-flex; align-items: center; justify-content: center; flex: 0 0 34px;
+    width: 34px; height: 34px; border-radius: 10px; color: var(--va-danger);
+    background: rgba(197, 53, 50, 0.1); font-size: 16px;
+}
+.qs-gen-host .qs6-gen.is-failed .qs6-gen-msg { margin-top: 4px; padding-top: 0; border-top: none; color: var(--va-ink-700); }
+
+@media (prefers-reduced-motion: reduce) {
+    .qs-gen-host .qs6-gen-fill::after, .qs-gen-host .qs6-gen-spin { animation: none; }
+}
+
+/* ── the peer panel ───────────────────────────────────────────────────────── */
+.qs-root .qs6-sec .qs-peer-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.qs-root .qs6-sec .qs-peer-group {
+    padding: 12px 14px; border-radius: 14px; background: var(--va-surface-1);
+    box-shadow: inset 0 0 0 1px var(--qs6-hair);
+}
+.qs-root .qs6-sec .qs-peer-group-name,
+.qs-root .qs6-sec .qs-peer-market-name {
+    display: flex; align-items: center; gap: 7px; margin-bottom: 9px;
+    font-size: 13px; font-weight: 700; color: var(--va-navy);
+}
+.qs-root .qs6-sec .qs-peer-group-name i,
+.qs-root .qs6-sec .qs-peer-market-name i { color: var(--va-blue); }
+.qs-root .qs6-sec .qs-peer-group-n { margin-left: auto; font-size: 11.5px; font-weight: 600; color: var(--va-ink-400); }
+.qs-root .qs6-sec .qs-peer-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.qs-root .qs6-sec .qs-peer-chip {
+    display: inline-flex; align-items: center; gap: 7px; margin: 0 !important;
+    padding: 3px 10px 3px 3px !important; border-radius: 999px;
+    font-size: 12.5px; font-weight: 600; color: var(--va-ink-800); background: var(--va-surface-0) !important;
+    box-shadow: inset 0 0 0 1px var(--qs6-hair-strong) !important;
+}
+.qs-root .qs6-sec .qs-peer-ini {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 50%;
+    font-size: 9.5px; font-weight: 800; letter-spacing: 0.02em; color: var(--va-navy);
+    background: var(--va-blue-soft);
+}
+.qs-root .qs6-sec .qs-peer-note { margin-top: 10px; font-size: 12.5px; color: var(--va-ink-500); }
+.qs-root .qs6-sec .qs-peer-note.warn { color: #8a5f00; }
+
+/* Custom peers: one card per market, each with its own live counter. */
+.qs-root .qs6-sec .qs-peer-markets { display: grid; gap: 10px; margin-top: 10px; }
+.qs-root .qs6-sec .qs-peer-markets.per-market { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.qs-root .qs6-sec .qs-peer-market {
+    padding: 12px 14px; border-radius: 14px; background: var(--va-surface-1);
+    box-shadow: inset 0 0 0 1px var(--qs6-hair);
+}
+.qs-root .qs6-sec .qs6-peer-min { margin-top: 8px; color: inherit !important; }
+.qs-root .qs6-peer-count { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px 10px; }
+.qs-root .qs6-peer-meter { grid-column: 1 / -1; height: 5px; border-radius: 999px; background: var(--va-surface-2); overflow: hidden; }
+.qs-root .qs6-peer-meter-fill { height: 100%; border-radius: 999px; background: #d59a12; transition: width 240ms ease; }
+.qs-root .qs6-peer-count.is-ok .qs6-peer-meter-fill { background: var(--va-good); }
+.qs-root .qs6-peer-n { font-size: 12.5px; color: var(--va-ink-600); }
+.qs-root .qs6-peer-n b { color: var(--va-navy); }
+.qs-root .qs6-peer-state { font-size: 12px; font-weight: 700; color: #8a5f00; }
+.qs-root .qs6-peer-count.is-ok .qs6-peer-state { display: inline-flex; align-items: center; gap: 5px; color: var(--va-good); }
+.qs-root .qs6-link-btn {
+    display: inline-flex; align-items: center; gap: 7px; margin-top: 12px; padding: 7px 12px;
+    border: none; border-radius: 999px; cursor: pointer;
+    font-size: 12.5px; font-weight: 700; color: var(--va-blue); background: var(--va-blue-soft);
+    transition: background 120ms;
+}
+.qs-root .qs6-link-btn:hover { background: rgba(11, 75, 255, 0.14); }

@@ -84,7 +84,8 @@ class DatasetRepository:
             n_cols=profile.n_cols,
             profile=profile,
         )
-        frame.to_sql(RAW_TABLE, self.engine(dataset_id), if_exists="replace", index=False)
+        frame.to_sql(RAW_TABLE, self.engine(dataset_id), if_exists="replace", index=False,
+                     chunksize=50_000)
         self._write_record(record)
         # ASCII arrow: the → char breaks logging on cp1252 Windows consoles.
         logger.info("dataset saved: %s (%s rows) -> %s", record.name, record.n_rows, dataset_id)

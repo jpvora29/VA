@@ -42,6 +42,10 @@ GPR_FILTERS: List[Mapping[str, Any]] = [
     {"id": "client_segment", "label": "Client Segment", "ph": "All"},
 ]
 
+# How tall an open Studio dropdown may grow. Dash's default is 200px, and its popup shell
+# spends a third of that on the search box — see assets/studio_v5.css for the other half.
+DROPDOWN_MAX_HEIGHT = 340
+
 # Dimensions a user can break results down by (group-by).
 BREAKDOWNS: List[Mapping[str, str]] = [
     {"label": "Industry", "value": "SIC_Major_Class"},
@@ -113,6 +117,9 @@ def _filter_grid(
                     value=values.get(f["id"]),
                     placeholder=f["ph"],
                     multi=f.get("multi", False),
+                    # Taller than Dash's 200px default: the popup also holds a search box
+                    # and Select-all, which left room for barely four rows.
+                    maxHeight=DROPDOWN_MAX_HEIGHT,
                     className="studio-dd sm",
                 ),
             ],

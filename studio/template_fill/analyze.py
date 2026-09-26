@@ -38,6 +38,8 @@ class Shape:
     h: int = 0
     paragraphs: List[str] = field(default_factory=list)          # text shapes
     table: Optional[List[List[str]]] = None                       # table cells [r][c]
+    table_widths: List[int] = field(default_factory=list)          # column widths, EMU
+    table_heights: List[int] = field(default_factory=list)         # row heights, EMU
     chart_type: Optional[str] = None                              # chart shapes
     chart_categories: List[str] = field(default_factory=list)
     chart_series: List[Tuple[str, List[float]]] = field(default_factory=list)
@@ -296,6 +298,10 @@ def _extract(shape, box, template_path: str, slide_idx: int, palette: Optional[d
     rec.fill_color = _solid_fill(shape, palette)
     if kind == "table":
         rec.table = _read_table(shape)
+        # Cell geometry, so the canvas can put a click target on each cell (KPI tables and
+        # the "Key Highlights" cell are words the author may need to change).
+        rec.table_widths = [int(c.width or 0) for c in shape.table.columns]
+        rec.table_heights = [int(r.height or 0) for r in shape.table.rows]
     elif kind == "chart":
         rec.chart_type, rec.chart_categories, rec.chart_series, rec.chart_external = _read_chart(shape)
     elif kind == "picture":

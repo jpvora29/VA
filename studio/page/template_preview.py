@@ -11,7 +11,7 @@ Also hosts the template Review — the diagnosis of why the deck is not finished
 (:mod:`studio.review`), the live validation with Re-validate / Auto-fix, and Export.
 """
 import re
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from dash import dcc, html
 
@@ -19,6 +19,7 @@ from studio.template_fill import registry
 from studio.template_fill import validate as TV
 from studio.template_fill.fill import _label_subs
 from studio.template_fill import text_edits as TE
+from studio.page import template_editor as TED
 from studio.template_fill.model import materialize_fields
 from studio.template_fill.preview_assets import cached_doc_backgrounds
 
@@ -314,20 +315,23 @@ def _editable_box(shape, slide, slide_idx, edits, selected, style, font_px) -> O
     if block is None:
         return None
     children: List[Any] = [_pick_target(block, selected)]
+    # The paper, ink and type are set on EVERY editable box, not only an edited one: the
+    # edit bar previews the author's words on the slide as they type (assets/studio_v6.js),
+    # and that preview has to look like the box it is about to replace.
+    paper, ink = _ink(shape, slide)
+    style["--qs-tf-paper"], style["--qs-tf-ink"] = paper, ink
+    if font_px:
+        style["fontSize"] = f"{font_px:.1f}px"
+    if shape.font_face:
+        style["fontFamily"] = f"{shape.font_face}, Arial, sans-serif"
+    if shape.bold:
+        style["fontWeight"] = "700"
+    if shape.italic:
+        style["fontStyle"] = "italic"
+    if shape.align:
+        style["textAlign"] = shape.align
     if block.edited:
         children.append(_reflection(block))
-        paper, ink = _ink(shape, slide)
-        style["--qs-tf-paper"], style["--qs-tf-ink"] = paper, ink
-        if font_px:
-            style["fontSize"] = f"{font_px:.1f}px"
-        if shape.font_face:
-            style["fontFamily"] = f"{shape.font_face}, Arial, sans-serif"
-        if shape.bold:
-            style["fontWeight"] = "700"
-        if shape.italic:
-            style["fontStyle"] = "italic"
-        if shape.align:
-            style["textAlign"] = shape.align
         # Cover at least the words it replaces, and grow past them when the author
         # wrote more — clipping would hide their own text, and a box that outgrows
         # the template's is worth seeing before the export.
@@ -337,7 +341,61 @@ def _editable_box(shape, slide, slide_idx, edits, selected, style, font_px) -> O
         className="qs-tf-box is-editable" + (" is-edited" if block.edited else "")
         + (" is-selected" if selected else ""),
         style=style,
+        **{"data-at": block.address.key},
     )
+
+
+def _spans(sizes: Sequence[int], total_px: float) -> List[Tuple[float, float]]:
+    """``[(offset_px, size_px)]`` for rows or columns, stretched to the shape's frame.
+
+    Declared row heights are minimums — PowerPoint grows a row that wraps — so the sizes are
+    scaled to fill the frame rather than trusted as drawn.
+    """
+    whole = float(sum(max(int(s or 0), 0) for s in sizes)) or 1.0
+    out, at = [], 0.0
+    for size in sizes:
+        span = max(int(size or 0), 0) / whole * total_px
+        out.append((at, span))
+        at += span
+    return out
+
+
+def _editable_cells(shape, slide, slide_idx, edits, selected_key, style, w_px, h_px,
+                    font_px) -> Optional[html.Div]:
+    """Every worded cell of a table as its own click target — KPIs and "Key Highlights".
+
+    The table's own grid decides where each target sits (``Shape.table_widths/heights``),
+    so a click lands on the cell the author is looking at, and an edited cell draws its
+    new words over the render's stale ones exactly like a text box does.
+    """
+    blocks = TE.editable_cells(shape, slide_idx, edits)
+    if not blocks:
+        return None
+    table = shape.table or []
+    cols = _spans(shape.table_widths or [1] * max(len(r) for r in table), w_px)
+    rows = _spans(shape.table_heights or [1] * len(table), h_px)
+    paper, ink = _ink(shape, slide)
+    cells: List[Any] = []
+    for block in blocks:
+        r, c = block.address.row, block.address.col
+        if r >= len(rows) or c >= len(cols):
+            continue
+        selected = selected_key == block.address.key
+        cell_style = {"left": f"{cols[c][0]:.0f}px", "top": f"{rows[r][0]:.0f}px",
+                      "width": f"{cols[c][1]:.0f}px", "height": f"{rows[r][1]:.0f}px"}
+        children: List[Any] = [_pick_target(block, selected)]
+        cell_style.update({"--qs-tf-paper": paper, "--qs-tf-ink": ink})
+        if font_px:
+            cell_style["fontSize"] = f"{font_px:.1f}px"
+        if block.edited:
+            children.append(_reflection(block))
+            cell_style.update({"minHeight": cell_style["height"], "height": "auto"})
+        cells.append(html.Div(
+            children, style=cell_style,
+            className="qs-tf-cell is-editable" + (" is-edited" if block.edited else "")
+            + (" is-selected" if selected else ""),
+            **{"data-at": block.address.key}))
+    return html.Div(cells, className="qs-tf-box is-table-edit", style=style)
 
 
 def _render_shape(shape, fields_by_target, scale, slide_idx, values, subs, *,
@@ -361,6 +419,13 @@ def _render_shape(shape, fields_by_target, scale, slide_idx, values, subs, *,
     if rendered_background and shape.kind == "text":
         return _editable_box(
             shape, slide, slide_idx, edits, selected, style,
+            _font_px(shape, scale, w_px, h_px, rendered_background=True),
+        )
+    if rendered_background and shape.kind == "table" and shape.table:
+        # Tables carry words too — the KPI tiles and "Key Highlights" of the portfolio
+        # pages — so each worded cell gets its own click target over the render.
+        return _editable_cells(
+            shape, slide, slide_idx, edits, selected_key, style, w_px, h_px,
             _font_px(shape, scale, w_px, h_px, rendered_background=True),
         )
     if rendered_background and shape.kind in ("table", "chart", "picture", "ole"):
@@ -452,16 +517,20 @@ def text_editor_for(tdoc, view, selected_key) -> html.Div:
     ``studio.authoring.export.show_editor``).
     """
     if not tdoc or not tdoc.get("template_path"):
-        return _editor_placeholder()
+        return TED.edit_bar(None)
     try:
         template, _ = registry.derive_manifest(tdoc["template_path"])
     except Exception as exc:  # noqa: BLE001 — an unreadable deck is not an edit failure
         logger.warning("edit field: could not read the delivered deck: %s", exc)
-        return _editor_placeholder()
+        return TED.edit_bar(None)
     idx, slide = _slide_at(template, tdoc, view)
-    return _text_editor(
-        _selected_block(slide, idx, TE.text_edits(tdoc), selected_key)
-    )
+    edits = TE.text_edits(tdoc)
+    block = _selected_block(slide, idx, edits, selected_key)
+    if block is None:
+        return TED.edit_bar(None)
+    label = next((lbl for blk, lbl in TED.text_blocks(slide, idx, edits)
+                  if blk.address == block.address), "")
+    return TED.edit_bar(block, label)
 
 
 def _selected_block(slide, slide_idx: int, edits, selected_key) -> Optional[TE.EditableText]:
@@ -472,7 +541,8 @@ def _selected_block(slide, slide_idx: int, edits, selected_key) -> Optional[TE.E
     shape = next(
         (sh for sh in slide.shapes if int(sh.shape_id) == address.shape_id), None
     )
-    return TE.editable_text(shape, slide_idx, edits) if shape is not None else None
+    cell = (address.row, address.col) if address.is_cell else None
+    return TE.editable_text(shape, slide_idx, edits, cell) if shape is not None else None
 
 
 def _editor_rows(block: TE.EditableText) -> List[Any]:
@@ -639,6 +709,32 @@ def _render_on_demand(tdoc: Mapping[str, Any], idx: int, slide_count: int,
     return [rendered_urls[i] or fresh[i] for i in range(slide_count)]
 
 
+def _filmstrip(template, order: Sequence[int], pos: int,
+               rendered_urls: Sequence[Optional[str]]) -> html.Div:
+    """Every page of the deck as a thumbnail — the way a deck editor is navigated.
+
+    Eighteen pages behind a pair of arrows made "go to the Portfolio page" a count. Each
+    thumbnail is the page's exact render where one exists and its title otherwise; a click
+    uses the same ``qs-goto`` the arrows do, so there is one way pages change.
+    """
+    thumbs = []
+    for i, slide_idx in enumerate(order):
+        slide = template.slides[slide_idx]
+        url = rendered_urls[slide_idx] if slide_idx < len(rendered_urls) else None
+        face = (html.Img(src=url, className="qs-strip-img", alt="")
+                if url else html.Div(slide.title() or slide.layout, className="qs-strip-title"))
+        name = slide.title() or slide.layout
+        thumbs.append(html.Button(
+            [html.Span([face, html.Span(str(i + 1), className="qs-strip-num")],
+                       className="qs7-thumb-face"),
+             html.Span([html.B(str(i + 1)), " ", name], className="qs7-thumb-cap")],
+            id={"type": "qs-goto", "idx": i, "src": "strip"},
+            className="qs-strip-thumb qs7-thumb" + (" is-current" if i == pos else ""),
+            title=f"Slide {i + 1} · {name}",
+        ))
+    return html.Div(thumbs, className="qs-tf-strip", **{"aria-label": "Slides"})
+
+
 def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> html.Div:
     template, _ = registry.derive_manifest(tdoc["template_path"])
     fields = materialize_fields(dict(tdoc))
@@ -710,56 +806,65 @@ def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> h
     filled = sum(1 for f in fields.values() if f["slide_idx"] == idx and f["filled"])
     placeholders = sum(1 for f in fields.values() if f["slide_idx"] == idx and f["placeholder"])
     slide_fields = [f for f in fields.values() if f["slide_idx"] == idx]
-    return html.Div(
+    blocks = TED.text_blocks(slide, idx, edits)
+    selected = _selected_block(slide, idx, edits, selected_key)
+    label = next((lbl for blk, lbl in blocks if selected and blk.address == selected.address), "")
+    title = slide.title() or slide.layout
+    last = len(order) - 1
+
+    def arrow(step: int, src: str) -> html.Button:
+        target = min(last, max(0, pos + step))
+        return html.Button(
+            html.I(className="bi bi-chevron-left" if step < 0 else "bi bi-chevron-right"),
+            id={"type": "qs-goto", "idx": target, "src": src},
+            className="qs7-nav " + ("prev" if step < 0 else "next"),
+            disabled=(pos == 0) if step < 0 else (pos >= last),
+            title="Previous slide" if step < 0 else "Next slide",
+        )
+
+    # No edit bar above the slide and no list of every box: the panel exists only while a
+    # box is selected, holds that box's editor, and floats over the side of the stage the
+    # box is NOT on (assets/studio_v6.js), so the slide keeps its full width.
+    stage_row = html.Div(
         [
+            html.Div([arrow(-1, "tf"), html.Div(surface, className="qs-tf-stage qs7-stage"),
+                      arrow(1, "tf")],
+                     className="qs7-stage-wrap"),
+            TED.edit_panel(html.Div(TED.edit_bar(selected, label), id="qs-tf-editor",
+                                    className="qs7-editor-host"),
+                           _fields_panel(slide_fields)),
+        ],
+        className="qs7-body",
+    )
+    toolbar = html.Div(
+        [
+            html.Div([html.Span(f"{pos + 1}", className="qs7-pos"),
+                      html.Span(f"of {len(order)}", className="qs7-muted"),
+                      html.Span(title, className="qs7-slide-title", title=title)],
+                     className="qs7-tool-left"),
             html.Div(
-                [
-                    html.Div(
-                        [
-                            html.Button(html.I(className="bi bi-chevron-left"),
-                                        id={"type": "qs-goto", "idx": max(0, pos - 1), "src": "tf"},
-                                        className="qs-tf-addbtn", disabled=pos == 0),
-                            html.Button(html.I(className="bi bi-chevron-right"),
-                                        id={"type": "qs-goto", "idx": min(len(order) - 1, pos + 1), "src": "tf"},
-                                        className="qs-tf-addbtn", disabled=pos >= len(order) - 1),
-                            html.Span([html.I(className="bi bi-easel"),
-                                       f" Slide {pos + 1} of {len(order)} · {slide.title() or slide.layout}"],
-                                      className="qs-tf-title"),
-                        ],
-                        className="qs-tf-actions",
-                    ),
-                    html.Div(
-                        [html.Span([html.I(className="bi bi-check2-circle"), f" {filled} filled"], className="qs-tf-pill ok"),
-                         html.Span([html.I(className="bi bi-dash-circle"), f" {placeholders} placeholder"], className="qs-tf-pill warn"),
-                         html.Span([html.I(className="bi bi-image"), " exact render" if rendered_background else " geometry preview"],
-                                   className="qs-tf-pill ok" if rendered_background else "qs-tf-pill"),
-                         html.Span([html.I(className="bi bi-pencil"), f" {slide_edits} edited"],
-                                   className="qs-tf-pill ok") if slide_edits else None,
-                         html.Button([html.I(className="bi bi-plus-lg"), " Add note"],
-                                     id={"type": "qs-tf-add", "slide": idx}, className="qs-tf-addbtn")],
-                        className="qs-tf-actions",
-                    ),
-                ],
-                className="qs-tf-bar",
-            ),
-            html.Div(
-                [
-                    html.Div(surface, className="qs-tf-stage"),
-                    html.Div(
-                        [
-                            html.Div(
-                                _text_editor(_selected_block(slide, idx, edits, selected_key)),
-                                id="qs-tf-editor",
-                            ),
-                            _fields_panel(slide_fields),
-                        ],
-                        className="qs-tf-side",
-                    ),
-                ],
-                className="qs-tf-workspace",
+                # Filled/placeholder counts describe a template being filled. On a
+                # delivered deck both are always zero, so they only add noise there.
+                [html.Span([html.I(className="bi bi-check2-circle"), f" {filled} filled"], className="qs-tf-pill ok")
+                 if (filled or placeholders) else None,
+                 html.Span([html.I(className="bi bi-dash-circle"), f" {placeholders} placeholder"], className="qs-tf-pill warn")
+                 if (filled or placeholders) else None,
+                 html.Span([html.I(className="bi bi-image"), " Exact render" if rendered_background else " Layout preview"],
+                           className="qs7-pill" + (" ok" if rendered_background else "")),
+                 html.Span([html.I(className="bi bi-pencil"), f" {slide_edits} edited"],
+                           className="qs7-pill ok") if slide_edits else None,
+                 html.Button([html.I(className="bi bi-plus-lg"), " Add note"],
+                             id={"type": "qs-tf-add", "slide": idx}, className="qs7-btn ghost sm")],
+                className="qs7-tool-right",
             ),
         ],
-        className="qs-tf-preview",
+        className="qs7-toolbar",
+    )
+    strip = html.Div([arrow(-1, "strip"), _filmstrip(template, order, pos, rendered_urls),
+                      arrow(1, "strip")], className="qs7-strip-row")
+    return html.Div(
+        [stage_row, html.Div([toolbar, strip], className="qs7-below")],
+        className="qs-tf-preview qs7-canvas",
     )
 
 
