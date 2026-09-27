@@ -526,6 +526,71 @@ def test_new_figures_have_one_decimal_and_old_records_replay_at_two():
     from core.answers.facts import figure_precision, format_value as render
 
     assert render(54.5454, "percent") == "54.5%"
-    assert render(1_254_000, "currency") == "$1.3m"
+    assert render(1_254_000, "currency") == "$1.3M"
+    assert render(2_480_000_000, "currency") == "$2.5B"
     with figure_precision(2):
         assert render(54.5454, "percent") == "54.55%"
+        assert render(1_254_000, "currency") == "$1.25m"
+
+
+# ── round 3: answer card v3, geography, units ─────────────────────────────────
+
+
+def test_every_arrow_is_coloured_even_without_a_figure():
+    from ui.components.deltas import mark_deltas
+
+    out = mark_deltas("rank ▲ up two, share ▼, premium ▲ +14.2%")
+    assert out.count("delta-up") == 2 and out.count("delta-down") == 1
+    assert "▲ 14.2%" in out and "+" not in out.replace("delta delta", "")
+
+
+def test_a_question_naming_no_country_gets_a_country_view_first():
+    from core.analytics.markets import build_geography_views
+    from core.answers.chart_plan import build_chart_plan
+
+    calls = []
+
+    def build(**kwargs):
+        calls.append(kwargs["dimension"])
+        return _pack()
+
+    by_country, by_region = build_geography_views({"Carrier_Group": "GENERALI"},
+                                                  subject="GENERALI", build=build)
+    assert calls == ["Country"] and by_country is not None and by_region is None
+    assert build_geography_views({"Country": "Singapore"}, subject="X", build=build) == (None, None)
+    plan = build_chart_plan(_pack(), scope={"Year": 2025}, by_country=_pack())
+    assert plan[0].key == "country_premium" and plan[0].tab == "Premium by country"
+
+
+def test_the_kpis_come_from_the_product_table_and_name_the_largest_market():
+    from ui.answer_layout import scorecards
+    from ui.evidence import EvidenceView
+
+    kinds = {"Carrier premium": "money", "Marsh premium": "money"}
+    country = EvidenceView("By country", ["Country", "Marsh premium", "Carrier premium"],
+                           [{"Country": "China", "Marsh premium": 30.0, "Carrier premium": 12.0},
+                            {"Country": "Canada", "Marsh premium": float("nan"),
+                             "Carrier premium": float("nan")}], column_kinds=kinds, unit="M")
+    product = EvidenceView("By product", ["Product line", "Marsh premium", "Carrier premium"],
+                           [{"Product line": "Property", "Marsh premium": 30.0, "Carrier premium": 12.0}],
+                           column_kinds=kinds, unit="M")
+    (card,) = scorecards([country, product])
+    assert card.market == "" and card.top_line == "Property" and card.premium == 12.0
+    assert card.extras["top_market"] == "China"
+
+
+def test_a_long_section_takes_the_full_row():
+    from ui.answer_layout import split_sections
+    from ui.components.answer_summary import section_cards
+
+    body = "### By market\n" + "\n".join(f"- point {i}" for i in range(7)) + "\n\n### Mix\n- one"
+    cards = section_cards(*split_sections(body))[0].children
+    assert [c.className for c in cards] == ["answer-section tone-default is-wide",
+                                            "answer-section tone-default is-wide"]
+
+
+def test_big_books_read_in_billions_everywhere():
+    from core.analytics.positioning import money_scale
+
+    assert money_scale([2.5e9]) == (1e9, "B")
+    assert format_value(2.5e9, "money") == "$2.5B"

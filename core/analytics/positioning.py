@@ -91,8 +91,8 @@ RANK_FIELD = "Carriers"
 #: Columns the DISPLAY table shows, in order. `COLUMNS` remains the set of
 #: measures the claim layer names; this is the reader's table.
 DISPLAY_COLUMNS: Tuple[str, ...] = (
-    SLICE, CARRIER_PREMIUM, MARSH_PREMIUM, MOVEMENT_PERCENT,
-    RANK, SHARE_OF_PORTFOLIO, SHARE_OF_WALLET, RANK_FIELD,
+    SLICE, MARSH_PREMIUM, CARRIER_PREMIUM, MOVEMENT_PERCENT,
+    SHARE_OF_WALLET, SHARE_OF_PORTFOLIO, RANK, RANK_FIELD,
 )
 
 #: How each column is rendered and compared. The UI needs one fact about a column
@@ -124,7 +124,7 @@ DIRECTIONAL: Tuple[str, ...] = (MOVEMENT_PERCENT,)
 #: make the reader do the conversion in their head to compare it with last
 #: quarter's. `k` stays for a genuinely small slice, where millions would print
 #: a column of "$0.00M".
-SCALES: Tuple[Tuple[float, str], ...] = ((1e6, "M"), (1e3, "k"))
+SCALES: Tuple[Tuple[float, str], ...] = ((1e9, "B"), (1e6, "M"), (1e3, "K"))
 
 
 def money_scale(values: Sequence[Optional[float]]) -> Tuple[float, str]:
@@ -387,18 +387,17 @@ def _row(position: SlicePosition, dimension: str, *, scale: float = 1.0) -> Dict
     thing — true, and it cost the column its ordering, because a cell holding two
     numbers and a direction glyph is a string. It gets a column of its own.
     """
-    # Column order is the reader's order (`DISPLAY_COLUMNS`): what the carrier
-    # wrote, the book it wrote it in, how it moved, where it ranks, then the two
-    # shares — portfolio (how much of the carrier) before wallet (how much of
-    # Marsh's line).
+    # Column order is the reader's order (`DISPLAY_COLUMNS`): the Marsh book,
+    # the carrier's share of it in money, how that moved, then its share of the
+    # wallet, the line's weight in the carrier's own book, and where it ranks.
     return {
         slice_heading(dimension): position.slice,
-        CARRIER_PREMIUM: _scaled(position.carrier_premium, scale),
         MARSH_PREMIUM: _scaled(position.marsh_premium, scale),
+        CARRIER_PREMIUM: _scaled(position.carrier_premium, scale),
         MOVEMENT_PERCENT: position.premium_change_percent,
-        RANK: position.rank,
-        SHARE_OF_PORTFOLIO: _rounded(position.share_of_portfolio),
         SHARE_OF_WALLET: _rounded(position.share_of_wallet),
+        SHARE_OF_PORTFOLIO: _rounded(position.share_of_portfolio),
+        RANK: position.rank,
         RANK_FIELD: position.rank_of,
     }
 

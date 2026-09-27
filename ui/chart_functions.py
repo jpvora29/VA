@@ -849,7 +849,8 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
         except ValueError:
             max_y = 0
         if max_y and max_y >= 10_000:
-            fig.update_yaxes(tickformat="~s")
+            # "B" not "G": Plotly's business exponent format (K, M, B).
+            fig.update_yaxes(exponentformat="B", separatethousands=True)
         unit = measure_unit(spec)
         if unit == "money":
             fig.update_yaxes(tickprefix="$")
@@ -908,11 +909,12 @@ def _bar_gap(df: pd.DataFrame, spec: "_Spec") -> float:
 
 
 def _unit_hover(fig: go.Figure, unit: str) -> None:
-    """Tooltips that state the unit: "$1.24M", "41.0%"."""
-    body = {"money": "$%{y:,.3~s}", "pct": "%{y:.1f}%"}.get(unit, "%{y:,.3~s}")
+    """Tooltips that state the unit, formatted here: "$1.2M", "$2.4B", "41.0%"."""
     for trace in fig.data:
         if trace.type in ("bar", "scatter") and getattr(trace, "orientation", None) != "h":
-            trace.hovertemplate = f"{body}<extra>%{{fullData.name}}</extra>"
+            values = [] if trace.y is None else list(trace.y)
+            trace.customdata = [[format_value(v, unit)] for v in values]
+            trace.hovertemplate = "%{customdata[0]}<extra>%{fullData.name}</extra>"
 
 
 def _style_horizontal(fig: go.Figure, spec: "_Spec", df: pd.DataFrame) -> None:
@@ -924,8 +926,8 @@ def _style_horizontal(fig: go.Figure, spec: "_Spec", df: pd.DataFrame) -> None:
     bar.textposition = "outside"
     bar.cliponaxis = False
     bar.textfont = dict(size=10.5, color=_INK)
-    body = {"money": "$%{x:,.3~s}", "pct": "%{x:.1f}%"}.get(unit, "%{x:,.3~s}")
-    bar.hovertemplate = f"<b>%{{y}}</b><br>{body}<extra></extra>"
+    bar.customdata = [[format_value(v, unit)] for v in values]
+    bar.hovertemplate = "<b>%{y}</b><br>%{customdata[0]}<extra></extra>"
     count = len(values)
     fig.update_layout(height=max(260, 34 * count + 90), bargap=0.32, hovermode="closest",
                       margin=dict(l=8, r=56, t=56, b=36))
@@ -937,7 +939,7 @@ def _style_horizontal(fig: go.Figure, spec: "_Spec", df: pd.DataFrame) -> None:
                      tickfont=dict(size=11, color=_TICK_INK), automargin=True,
                      tickprefix="$" if unit == "money" else "",
                      ticksuffix="%" if unit == "pct" else "",
-                     tickformat="~s" if unit != "pct" else None)
+                     exponentformat="B")
 
 
 def _number_or(value, default: float) -> float:
@@ -1021,11 +1023,11 @@ def bubble_figure(df: pd.DataFrame, raw: Dict[str, Any]) -> Optional[go.Figure]:
             name=str(name) if series else _pretty(size),
             text=labels, textposition="top center",
             textfont=dict(size=10.5, color=_INK),
-            customdata=sub[[size]].values,
+            customdata=[[format_value(v, "money")] for v in sub[size]],
             marker=dict(size=sub[size], sizemode="area", sizeref=sizeref, sizemin=7,
                         color=colour, opacity=0.72, line=dict(color="white", width=1.5)),
             hovertemplate=("<b>%{text}</b><br>" + _pretty(x) + ": %{x:.1f}%<br>"
-                           + _pretty(y) + ": %{y:.1f}%<br>Premium: $%{customdata[0]:,.3~s}"
+                           + _pretty(y) + ": %{y:.1f}%<br>Premium: %{customdata[0]}"
                            + "<extra>%{fullData.name}</extra>"),
         ))
     mean_x, mean_y = float(frame[x].mean()), float(frame[y].mean())

@@ -150,14 +150,26 @@ def markets_turn(engine, query):
     from core.answers.grounded import AnswerRequest, compose_answer
     from core.graph.analyst_subgraph import _with_market, chart_views_for
 
-    scope = {"Carrier_Group": "GENERALI", "Country": list(ASIA_MARKETS), "Year": 2025}
+    from core.analytics.markets import build_geography_views
+
+    named = [m for m in ASIA_MARKETS if m.lower() in query.lower()]
+    scope = {"Carrier_Group": "GENERALI", "Year": 2025}
+    if named:
+        scope["Country"] = named if len(named) > 1 else named[0]
     packs = build_market_positions(scope, dimension="Product_Line", subject="GENERALI",
                                    engine=engine)
-    views = chart_views_for(packs, scope, question=query, engine=engine)
+    by_country, by_region = (build_geography_views(scope, subject="GENERALI", engine=engine)
+                             if len(packs) == 1 else (None, None))
+    views = chart_views_for(packs, scope, question=query, engine=engine,
+                            by_country=by_country, by_region=by_region)
     evidence = tuple(
         {"flow": "gpr", "lens": "positioning", "sql": "-- positioning", "scope": market_scope,
          "rows": _with_market(pack.numeric_rows(), market)}
         for market, pack, market_scope in packs
+    ) + tuple(
+        {"flow": "gpr", "lens": "positioning", "sql": "-- positioning", "scope": scope,
+         "rows": geography.numeric_rows()}
+        for geography in (by_country, by_region) if geography is not None
     )
     answer = compose_answer(AnswerRequest(query, evidence))
     return {

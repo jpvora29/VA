@@ -115,8 +115,8 @@ def test_the_table_carries_every_column_the_reader_asked_for(pack):
     # standing — in that order. The movement has a column of its own so that
     # every figure in the table stays a sortable number.
     assert list(row) == [
-        pack.heading, P.CARRIER_PREMIUM, P.MARSH_PREMIUM, P.MOVEMENT_PERCENT,
-        P.RANK, P.SHARE_OF_PORTFOLIO, P.SHARE_OF_WALLET, P.RANK_FIELD,
+        pack.heading, P.MARSH_PREMIUM, P.CARRIER_PREMIUM, P.MOVEMENT_PERCENT,
+        P.SHARE_OF_WALLET, P.SHARE_OF_PORTFOLIO, P.RANK, P.RANK_FIELD,
     ]
 
 
@@ -297,39 +297,28 @@ def test_a_trace_value_is_tested_for_emptiness_without_numpy_ambiguity():
 # --------------------------------------------------------------------------- #
 
 
-def test_an_answer_with_a_chart_reads_side_by_side():
-    from ui.components.chatbot import _reading_area
+def test_the_scorecard_totals_the_position_table():
+    """KPI tiles are sums and one ratio of the table the answer was written from."""
+    from ui.answer_layout import scorecard_from
 
-    area = _reading_area("HEAD", "PROSE", "VIEWS")
-    assert len(area) == 1
-    split = area[0]
-    assert split.className == "answer-split"
-    assert [child.className for child in split.children] == ["answer-points", "answer-visual"]
-
-
-def test_an_answer_with_no_chart_keeps_the_full_column():
-    """Half a card of text beside empty space reads as a page that failed to load."""
-    from ui.components.chatbot import _reading_area
-
-    assert _reading_area("HEAD", "PROSE", None) == ["HEAD", "PROSE"]
-
-
-def test_the_points_come_before_the_visual_so_stacking_keeps_reading_order():
-    from ui.components.chatbot import _reading_area
-
-    split = _reading_area("HEAD", "PROSE", "VIEWS")[0]
-    points, visual = split.children
-    # Each column opens with its label; the content follows in reading order, so
-    # a stacked layout still puts the argument before the evidence.
-    assert points.children[1:] == ["HEAD", "PROSE"]
-    assert visual.children[1:] == ["VIEWS"]
+    rows = [{"Product line": "Property", "Marsh premium": 30.0, "Carrier premium": 12.0,
+             "YoY %": 20.0, "Share of portfolio": 60.0},
+            {"Product line": "Marine", "Marsh premium": 10.0, "Carrier premium": 8.0,
+             "YoY %": -20.0, "Share of portfolio": 40.0}]
+    card = scorecard_from("Singapore", list(rows[0]), rows, "M")
+    assert card.market == "Singapore" and card.premium == 20.0
+    assert round(card.share_of_wallet, 1) == 50.0
+    # 12 was 10 and 8 was 10: 20 against 20 is flat.
+    assert round(card.yoy, 6) == 0.0
+    assert (card.top_line, card.top_share) == ("Property", 60.0)
+    assert card.mover_line in ("Property", "Marine") and abs(card.mover_yoy) == 20.0
 
 
-def test_the_stylesheet_collapses_the_split_on_a_narrow_screen():
-    from pathlib import Path
+def test_sections_split_on_headings_and_keep_the_intro():
+    from ui.answer_layout import ACTION, RISK, split_sections
 
-    css = Path("assets/va_shell_chat.css").read_text(encoding="utf-8")
-    assert ".answer-split" in css
-    assert "grid-template-columns: 1fr;" in css
-    # Both tracks must refuse to be pushed wider by a wide table.
-    assert css.count("min-width: 0;") >= 2
+    intro, sections = split_sections("Lead.\n\n### Singapore\n- a\n\n### Watch-outs\n- b\n\n### Empty\n")
+    assert intro == "Lead."
+    assert [(s.title, s.tone) for s in sections] == [("Singapore", "default"), ("Watch-outs", RISK)]
+    assert sections[0].icon == "bi bi-geo-alt"
+    assert split_sections("### What it means\n- x")[1][0].tone == ACTION

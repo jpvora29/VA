@@ -165,7 +165,12 @@ CLAIM_SECTIONS: tuple[tuple[str, frozenset[str]], ...] = (
 OTHER_SECTION = "Also worth knowing"
 
 
+MARKET_SECTION = "By market"
+
+
 def section_of(kind: str) -> str:
+    if kind.startswith("market_"):
+        return MARKET_SECTION
     for title, kinds in CLAIM_SECTIONS:
         if kind in kinds:
             return title
@@ -211,7 +216,7 @@ def present_claims(claims: Sequence[AnswerClaim]) -> str:
         groups.setdefault(section_of(claim.kind), []).append(claim)
     if len(groups) < 2:
         return render_claims(claims)
-    order = [title for title, _ in CLAIM_SECTIONS] + [OTHER_SECTION]
+    order = [MARKET_SECTION] + [title for title, _ in CLAIM_SECTIONS] + [OTHER_SECTION]
     parts = [lead.text]
     for title in order:
         if groups.get(title):

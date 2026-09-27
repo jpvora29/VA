@@ -158,8 +158,12 @@ def format_value(value: float, unit: str) -> str:
     answer and were inconsistent with the one-decimal table beside it.
     """
     places = _DECIMALS.get()
+    # Business units in capitals ("$7.5M", "$1.2B"); a record written before
+    # v5 is replayed with the lower-case units it was stored with.
+    scales = ((1e9, "B"), (1e6, "M"), (1e3, "K")) if places == 1 else \
+        ((1e9, "bn"), (1e6, "m"), (1e3, "k"))
     if unit == "currency":
-        for scale, suffix in ((1e9, "bn"), (1e6, "m"), (1e3, "k")):
+        for scale, suffix in scales:
             if abs(value) >= scale:
                 return f"${value / scale:,.{places}f}".rstrip("0").rstrip(".") + suffix
         return f"${value:,.{places}f}".rstrip("0").rstrip(".")

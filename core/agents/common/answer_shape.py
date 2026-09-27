@@ -130,6 +130,10 @@ _BY_LINE = """[BY PRODUCT — whenever the brief holds per-line positions]
 - When the question named several markets, keep them apart — a "### Singapore"
   group per market, or the market leading each point. Never add markets
   together unless the brief gives the total.
+- When the question named NO market and the brief carries per-country
+  positions, include a "### By market" group first: the largest markets with
+  premium, ▲/▼ change and share of wallet — where the book is, before what it
+  is.
 
 [NUMBERS]
 - Every percentage, and every money figure in millions, with ONE decimal:

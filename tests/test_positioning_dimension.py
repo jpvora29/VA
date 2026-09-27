@@ -193,19 +193,32 @@ def test_the_focus_is_chosen_from_the_question():
 # --------------------------------------------------------------------------- #
 
 
-def test_each_column_is_labelled_so_the_reader_knows_where_to_start():
-    from ui.components.chatbot import _reading_area
+def _classes(node) -> list:
+    out = [getattr(node, "className", "") or ""]
+    children = getattr(node, "children", None)
+    for child in children if isinstance(children, (list, tuple)) else [children]:
+        if child is not None and hasattr(child, "to_plotly_json"):
+            out += _classes(child)
+    return out
 
-    points, visual = _reading_area("HEAD", "PROSE", "VIEWS")[0].children
-    assert points.children[0].children == "Insight"
-    assert visual.children[0].children == "Evidence"
+
+def test_the_evidence_band_is_labelled_so_the_reader_knows_where_to_start():
+    from ui.components.chatbot import ai_message
+    from ui.evidence import EvidenceView
+
+    view = EvidenceView(label="By product", columns=["Product line", "Premium"],
+                        records=[{"Product line": "Property", "Premium": 5.0}])
+    message = ai_message("Premium grew.", True, idx=1, shape="analyst",
+                         evidence=[view], card_idx=1, pane_ids=[1])
+    assert "answer-evidence" in _classes(message)
+    assert "answer-column-label" in _classes(message)
 
 
-def test_an_answer_with_no_chart_is_not_labelled_at_all():
-    """A single column needs no signpost saying which column it is."""
-    from ui.components.chatbot import _reading_area
+def test_an_answer_with_no_evidence_has_no_evidence_band():
+    """A band with nothing in it is a signpost to nowhere."""
+    from ui.components.chatbot import ai_message
 
-    assert _reading_area("HEAD", "PROSE", None) == ["HEAD", "PROSE"]
+    assert "answer-evidence" not in _classes(ai_message("Premium grew.", True, idx=1))
 
 
 def test_the_stylesheet_styles_the_column_labels():

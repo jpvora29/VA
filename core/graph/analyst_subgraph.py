@@ -29,7 +29,8 @@ from typing_extensions import Annotated, TypedDict
 
 from core.agents.analyst.chart_picker import ChartFocus, pick_charts
 from core.analytics.dimensions import choose_dimension, pinned_columns
-from core.analytics.markets import build_market_positions, carrier_mentions, resolve_subject
+from core.analytics.markets import (build_geography_views, build_market_positions,
+                                    carrier_mentions, resolve_subject)
 from core.analytics.positioning import build_positioning_comparison
 from core.analytics.tools.scope import pin_latest_year
 from core.answers.chart_plan import TABLE, is_chart
@@ -680,6 +681,12 @@ def positioning_node(state: AnalystState) -> dict:
                   reason="no slice returned a figure for this scope")
         return {}
 
+    # No country named: the same positions by country (and by region when the
+    # list is long), so the answer can say WHERE the book is before what it is.
+    by_country, by_region = (
+        build_geography_views(scope, subject=subject, build=build_positioning_comparison)
+        if len(packs) == 1 else (None, None)
+    )
     records = [
         build_evidence(
             flow="gpr",
@@ -693,8 +700,17 @@ def positioning_node(state: AnalystState) -> dict:
         )
         for market, pack, market_scope in packs
     ]
+    for geography in (by_country, by_region):
+        if geography is not None:
+            records.append(build_evidence(
+                flow="gpr", rows=geography.numeric_rows(), lens=POSITIONING_LENS,
+                tool="build_positioning",
+                parameters={"dimension": geography.dimension, "subject": subject},
+                requested_scope=scope, actual_scope=scope, metric="premium",
+            ))
     plan = chart_views_for(packs, scope, question=state["question"],
-                           route=state.get("route", ""))
+                           route=state.get("route", ""),
+                           by_country=by_country, by_region=by_region)
     missing = sorted({column for _, pack, _ in packs for column in pack.missing})
     if missing:
         log_event(logger, "positioning_partial", logging.WARNING,
@@ -754,7 +770,8 @@ def _market_quarters(per_market: List[tuple]) -> List[dict]:
 
 
 def chart_views_for(packs: List[tuple], scope: dict, *, question: str, route: str = "",
-                    engine: Any = None) -> List[dict]:
+                    engine: Any = None, by_country: Any = None,
+                    by_region: Any = None) -> List[dict]:
     """The charts this answer should carry, as renderable views.
 
     The quarterly pair is fetched here rather than reused from the solvers'
@@ -784,6 +801,8 @@ def chart_views_for(packs: List[tuple], scope: dict, *, question: str, route: st
             operation=detect_operation(question),
             markets=[(m, p) for m, p, _ in packs] if multi else (),
             market_quarterly_rows=market_rows,
+            by_country=by_country,
+            by_region=by_region,
         )
     ]
     # The positioning table is a VIEW, not only an input to the commentary. It
@@ -792,12 +811,17 @@ def chart_views_for(packs: List[tuple], scope: dict, *, question: str, route: st
     # reach the reader however carefully it was assembled.
     # The tables lead — one per market. They are the evidence every sentence
     # above them was written from, so they are what a reader checks first.
-    tables = [_positioning_view(pack, market_scope, market=market)
+    tables = [_positioning_view(pack, market_scope, market=market,
+                                tab="By product" if by_country is not None else "")
               for market, pack, market_scope in packs]
+    if by_country is not None:
+        # Where first, then what: the country table leads a question that
+        # named no country.
+        tables.insert(0, _positioning_view(by_country, scope, tab="By country"))
     return [*tables, *views]
 
 
-def _positioning_view(pack, scope: dict, *, market: str = "") -> dict:
+def _positioning_view(pack, scope: dict, *, market: str = "", tab: str = "") -> dict:
     """The positioning table as a table-only view (no chart spec, so rows render).
 
     Declares its `kind` rather than leaving `chart_data` empty and letting every
@@ -811,7 +835,7 @@ def _positioning_view(pack, scope: dict, *, market: str = "") -> dict:
     unit = pack.money_suffix()
     return {
         "kind": TABLE,
-        "tab": market or "Position",
+        "tab": market or tab or "Position",
         "title": f"Position by {level}{describe_scope(scope, pack.dimension)}"
                  + (f" — {market}" if market else ""),
         "rows": pack.rows(),

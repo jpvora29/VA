@@ -847,3 +847,222 @@
 }
 .chatbot-area .composer-hints-keys { justify-content: center; }
 .chatbot-area .composer-hints-note { text-align: center; }
+
+/* ============================================================================
+   Answer card v3 — built for a business reader.
+   Summary band (answer + KPIs) → analysis as section cards → evidence. Every
+   band is FULL WIDTH; nothing sits in a half column.
+   ========================================================================== */
+
+.chatbot-area .answer-v3 { padding: 22px 24px 18px; }
+
+/* Direction always carries colour, wherever it is written. */
+.chatbot-area .delta.delta-up { color: #0F7A33; }
+.chatbot-area .delta.delta-down { color: #C0393E; }
+.chatbot-area .delta.delta-flat { color: var(--va-ink-500); }
+.chatbot-area .delta {
+    padding: 0 5px;
+    border-radius: 6px;
+    font-weight: 700;
+}
+.chatbot-area .delta.delta-up { background: rgba(31, 157, 85, 0.09); }
+.chatbot-area .delta.delta-down { background: rgba(197, 53, 50, 0.08); }
+
+/* ── Executive summary ───────────────────────────────────────────────────── */
+.answer-summary {
+    margin: 0 0 18px;
+    padding: 16px 18px 18px;
+    border: 1px solid rgba(11, 75, 255, 0.12);
+    border-radius: 16px;
+    background: linear-gradient(180deg, #f7f9ff 0%, #ffffff 100%);
+}
+.answer-summary-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    color: var(--va-blue);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.chatbot-area .answer-v3 .answer-headline {
+    max-width: 92ch;
+    color: var(--va-navy);
+    font-size: 17px !important;
+    font-weight: 650;
+    line-height: 1.5;
+}
+.chatbot-area .answer-v3 .answer-headline p,
+.chatbot-area .answer-v3 .answer-standfirst p { margin: 0; }
+.chatbot-area .answer-v3 .answer-standfirst {
+    max-width: 92ch;
+    margin-top: 4px;
+    color: var(--va-ink-600);
+    font-size: 14px;
+    line-height: 1.55;
+}
+
+/* KPI tiles — one scope. */
+.kpi-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+}
+.kpi-tile {
+    padding: 12px 14px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: 12px;
+    background: #fff;
+}
+.kpi-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--va-ink-500);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+.kpi-icon { color: var(--va-blue); font-size: 12px; }
+.kpi-value {
+    margin-top: 4px;
+    color: var(--va-navy);
+    font-size: 21px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.kpi-note { margin-top: 3px; font-size: 12px; }
+.kpi-muted { color: var(--va-ink-400); font-weight: 500; }
+
+/* One card per market. */
+.market-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+}
+.market-card {
+    padding: 12px 14px;
+    border: 1px solid var(--va-border-soft);
+    border-top: 3px solid var(--va-blue);
+    border-radius: 12px;
+    background: #fff;
+}
+.market-card-name {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--va-ink-700);
+    font-size: 12.5px;
+    font-weight: 800;
+}
+.market-card-name .bi { color: var(--va-blue); }
+.market-card-value {
+    margin-top: 4px;
+    color: var(--va-navy);
+    font-size: 22px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+}
+.market-card-change { margin-top: 2px; font-size: 12px; }
+.market-card-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--va-border-soft);
+    color: var(--va-ink-500);
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+/* ── The analysis ────────────────────────────────────────────────────────── */
+.chatbot-area .answer-v3 .answer-analysis { max-width: none; }
+.answer-intro { max-width: 92ch; margin-bottom: 14px; }
+.answer-sections {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-flow: row dense;
+    align-items: start;
+    gap: 12px;
+}
+/* A wide section lays its points out in two columns, so a long list stays
+   short and scannable instead of becoming a full-width wall of lines. */
+.chatbot-area .answer-section.is-wide ul {
+    column-count: 2;
+    column-gap: 28px;
+}
+.chatbot-area .answer-section.is-wide ul > li { break-inside: avoid; }
+@media (max-width: 900px) {
+    .chatbot-area .answer-section.is-wide ul { column-count: 1; }
+}
+@media (max-width: 900px) { .answer-sections { grid-template-columns: 1fr; } }
+.answer-section {
+    min-width: 0;
+    padding: 14px 16px 8px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: 14px;
+    background: #fff;
+}
+.answer-section.is-wide { grid-column: 1 / -1; }
+.answer-section-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    color: var(--va-navy);
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+}
+.answer-section-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    background: var(--va-blue-soft);
+    color: var(--va-blue);
+    font-size: 13px;
+}
+.answer-section.tone-action {
+    border-color: rgba(11, 75, 255, 0.25);
+    background: linear-gradient(180deg, #f3f6ff 0%, #ffffff 100%);
+}
+.answer-section.tone-action .answer-section-icon { background: var(--va-blue); color: #fff; }
+.answer-section.tone-risk {
+    border-color: rgba(185, 129, 10, 0.28);
+    background: linear-gradient(180deg, #fffaf0 0%, #ffffff 100%);
+}
+.answer-section.tone-risk .answer-section-icon { background: #fdf0d5; color: var(--va-warn); }
+
+/* Points inside a section: a quiet list, one idea per row. */
+.chatbot-area .answer-section .insight-card-body > p:first-of-type,
+.chatbot-area .answer-section p {
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--va-ink-700);
+}
+.chatbot-area .answer-section ul { margin: 0; padding: 0; }
+.chatbot-area .answer-section ul > li {
+    padding: 7px 0 7px 16px;
+    border-bottom: 1px solid var(--va-border-soft);
+    font-size: 13.5px;
+    line-height: 1.55;
+}
+.chatbot-area .answer-section ul > li:last-child { border-bottom: none; }
+.chatbot-area .answer-section li > strong:first-child { color: var(--va-navy); }
+.chatbot-area .answer-section table { width: 100%; }
+
+/* ── Evidence, full width under the analysis ─────────────────────────────── */
+.answer-evidence { margin-top: 18px; }
+.answer-evidence .answer-column-label { margin-bottom: 8px; }

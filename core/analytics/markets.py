@@ -165,3 +165,53 @@ def build_market_positions(
         if pack:
             out.append((market, pack, market_scope))
     return out
+
+
+#: More countries than this and a region view is drawn as well.
+REGION_THRESHOLD = 12
+
+
+def build_geography_views(
+    scope: Mapping[str, Any],
+    *,
+    subject: str,
+    flow: str = "gpr",
+    engine: Any = None,
+    build: Optional[Callable[..., Any]] = None,
+) -> Tuple[Any, Any]:
+    """(by-country pack, by-region pack) for a question that named NO country.
+
+    "How is Generali performing?" is a question about every market it writes
+    in, and the reader's first need is WHERE: premium, movement, share of wallet
+    and rank per country. Built by the same positioning primitives as the
+    product table, so the columns mean the same thing. The region pack is only
+    built when the country list is too long to read as one chart. Either is
+    None when not applicable or not computable.
+    """
+    country = entity_column(flow, "country")
+    if not country or values_of(scope, country):
+        return None, None
+    if build is None:
+        from core.analytics.positioning import build_positioning_comparison as build
+
+    def one(dimension: str) -> Any:
+        kwargs = dict(dimension=dimension, filters=dict(scope), subject=subject)
+        if engine is not None:
+            kwargs.update(flow=flow, engine=engine)
+        try:
+            pack = build(**kwargs)
+        except Exception:  # noqa: BLE001 - a geography view is additive
+            return None
+        if not pack:
+            return None
+        # A country with no book and no carrier premium is not a market here.
+        from dataclasses import replace as _replace
+
+        kept = tuple(p for p in pack.positions if (p.marsh_premium or p.carrier_premium))
+        return _replace(pack, positions=kept) if kept else None
+
+    by_country = one(country)
+    by_region = None
+    if by_country is not None and len(by_country.positions) > REGION_THRESHOLD:
+        by_region = one("Region")
+    return by_country, by_region

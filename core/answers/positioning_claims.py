@@ -406,7 +406,7 @@ def positions_from_facts(
         if fact.lens != LENS:
             continue
         field_name = _field_for(fact.metric)
-        name = _slice_of(fact, dimension) or _any_slice(fact)
+        name = _slice_of(fact, dimension) or _own_slice(fact)
         if not field_name or not name:
             continue
         origin.setdefault((name, field_name), fact.id)
@@ -445,7 +445,32 @@ def focus_for(question: str) -> str:
 _MARKET_KEYS = frozenset({"country", "market"})
 
 
+#: Dimensions that are the turn's CONTEXT (who, when), never a table's slice.
+#: A by-country row carries the carrier from its scope; that carrier is not
+#: what the row is cut by.
+_CONTEXT_KEYS = frozenset({"carrier_group", "carrier", "carrier_name", "insurer",
+                           "year", "survey_year", "quarter", "month_name"})
+
+
+def _slice_key(fact: AnswerFact) -> str:
+    """The dimension a fact's slice is cut by (product, industry, country…)."""
+    keys = [str(k).lower() for k, _ in fact.dimensions]
+    if "product_line" in keys:
+        return "product_line"
+    own = [k for k in keys if k not in _MARKET_KEYS and k not in _CONTEXT_KEYS]
+    if own:
+        return own[0]
+    markets = [k for k in keys if k in _MARKET_KEYS]
+    return markets[0] if markets else (keys[0] if keys else "")
+
+
 def _market_of(fact: AnswerFact) -> str:
+    """The market a fact is TAGGED with — never the market it is cut BY.
+
+    A by-country row's slice IS its country; it belongs to no market.
+    """
+    if _slice_key(fact) in _MARKET_KEYS:
+        return ""
     for key, value in fact.dimensions:
         if str(key).lower() in _MARKET_KEYS:
             return str(value)
@@ -453,12 +478,30 @@ def _market_of(fact: AnswerFact) -> str:
 
 
 def _by_market(facts: Sequence[AnswerFact]) -> dict:
-    """Positioning facts grouped by market, in order of first appearance."""
+    """Positioning facts grouped by (market, what they are cut by).
+
+    A by-country table and a by-product table in one turn are two readings,
+    not one book: pooled, "Singapore" and "Property" would each claim a share
+    of the same 100%.
+    """
     groups: dict = {}
     for fact in facts:
         if fact.lens == LENS:
-            groups.setdefault(_market_of(fact), []).append(fact)
+            groups.setdefault((_market_of(fact), _slice_key(fact)), []).append(fact)
     return groups
+
+
+#: Kind prefix for a finding about a MARKET as a slice of the book (a table cut
+#: by country), so the answer can gather "where" before "what".
+MARKET_KIND = "market_"
+
+
+def _tagged(claim: AnswerClaim, market: str, by_country: bool) -> AnswerClaim:
+    if market:
+        claim = replace(claim, text=f"{market} — {claim.text}")
+    if by_country and not claim.kind.startswith(MARKET_KIND):
+        claim = replace(claim, kind=MARKET_KIND + claim.kind)
+    return claim
 
 
 def _round_robin(per_market: Sequence[Sequence[AnswerClaim]]) -> Tuple[AnswerClaim, ...]:
@@ -489,14 +532,18 @@ def positioning_claims(pack_facts: Sequence[AnswerFact], question: str = "") -> 
             return ()
         built = compile_positioning(pack, focus=focus_for(question))
         return _cite_original_facts(built, origin)
+    # A market prefix only means something when there are two markets to tell
+    # apart; one market's name on every line is noise.
+    several = len({market for market, _ in groups if market}) > 1
     per_market = []
-    for market, facts in groups.items():
-        pack, origin = positions_from_facts(facts, with_origin=True)
+    for (market, dimension), facts in groups.items():
+        pack, origin = positions_from_facts(facts, dimension or "product_line", with_origin=True)
         if not pack:
             continue
         built = compile_positioning(pack, focus=focus_for(question))
+        by_country = dimension in _MARKET_KEYS
         per_market.append(tuple(
-            replace(claim, text=f"{market} — {claim.text}") if market else claim
+            _tagged(claim, market if several else "", by_country)
             for claim in _cite_original_facts(built, origin)
         ))
     return _round_robin(per_market)
@@ -520,7 +567,7 @@ def _cite_original_facts(built: PositioningClaims, origin: dict) -> Tuple[Answer
             fact = synthetic.get(fact_id)
             if fact is None:
                 continue
-            key = (_slice_of(fact, "product_line") or _any_slice(fact), _field_for(fact.metric))
+            key = (_slice_of(fact, "product_line") or _own_slice(fact), _field_for(fact.metric))
             original = origin.get(key)
             if original:
                 ids.append(original)
@@ -532,6 +579,15 @@ def _cite_original_facts(built: PositioningClaims, origin: dict) -> Tuple[Answer
 def _any_slice(fact: AnswerFact) -> str:
     """The fact's single dimension value, whatever the dimension is called."""
     return str(fact.dimensions[0][1]) if fact.dimensions else ""
+
+
+def _own_slice(fact: AnswerFact) -> str:
+    """The slice value, skipping a market tag when the fact carries one."""
+    key = _slice_key(fact)
+    for k, value in fact.dimensions:
+        if str(k).lower() == key:
+            return str(value)
+    return _any_slice(fact)
 
 
 # --------------------------------------------------------------------------- #

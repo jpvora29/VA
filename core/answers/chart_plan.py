@@ -464,6 +464,63 @@ def market_quarterly(inputs: "ChartInputs") -> Optional[ChartSpec]:
     )
 
 
+#: How many countries a by-country chart names before it stops being readable.
+COUNTRY_CHART_LIMIT = 12
+
+
+def country_premium(inputs: "ChartInputs") -> Optional[ChartSpec]:
+    """Premium by country — WHERE the book is, for a question that named none.
+
+    Up to eight countries: last year against this year, side by side. More than
+    that: this year only, as a ranking (drawn sideways by the renderer), because
+    sixteen paired bars are a texture, not a comparison.
+    """
+    pack = inputs.by_country
+    if pack is None or len(pack.positions) < 2:
+        return None
+    value = (lambda p: p.marsh_premium) if pack.is_market_view else (lambda p: p.carrier_premium)
+    sized = sorted((p for p in pack.positions if value(p)), key=lambda p: -(value(p) or 0.0))
+    if len(sized) < 2:
+        return None
+    year = _period_label(inputs.scope)
+    current = year or "Current"
+    prior = str(int(year) - 1) if year.isdigit() else "Prior year"
+    subject = pack.subject or "Marsh book"
+    paired = len(sized) <= 8 and not pack.is_market_view and all(
+        p.prior_premium is not None for p in sized)
+    if paired:
+        rows = tuple({MARKET_AXIS: p.slice, prior: p.prior_premium, current: value(p)}
+                     for p in sized)
+        return ChartSpec(key="country_premium", tab="Premium by country",
+                         title=f"{subject} premium by country, {prior} vs {current}",
+                         rows=rows, chart_type="bar", x=MARKET_AXIS, y=(prior, current),
+                         x_title="Country", y_title=PREMIUM_AXIS)
+    rows = tuple({"Country": p.slice, PREMIUM_AXIS: value(p)}
+                 for p in sized[:COUNTRY_CHART_LIMIT])
+    return ChartSpec(key="country_premium", tab="Premium by country",
+                     title=f"{subject} premium by country" + (f", {year}" if year else "")
+                           + (f" (top {COUNTRY_CHART_LIMIT})" if len(sized) > COUNTRY_CHART_LIMIT else ""),
+                     rows=rows, chart_type="bar", x="Country", y=(PREMIUM_AXIS,),
+                     x_title="Country", y_title=PREMIUM_AXIS)
+
+
+def region_mix(inputs: "ChartInputs") -> Optional[ChartSpec]:
+    """Premium by region, as parts of the whole — the view above many countries."""
+    pack = inputs.by_region
+    if pack is None:
+        return None
+    value = (lambda p: p.marsh_premium) if pack.is_market_view else (lambda p: p.carrier_premium)
+    sized = [p for p in pack.positions if value(p) and value(p) > 0]
+    if not 2 <= len(sized) <= 8:
+        return None
+    return ChartSpec(key="region_mix", tab="By region",
+                     title=f"{pack.subject or 'Marsh book'} premium by region"
+                           + (f", {_period_label(inputs.scope)}" if _period_label(inputs.scope) else ""),
+                     rows=tuple({"Region": p.slice, PREMIUM_AXIS: value(p)} for p in sized),
+                     chart_type="donut", x="Region", y=(PREMIUM_AXIS,),
+                     x_title="Region", y_title=PREMIUM_AXIS)
+
+
 # --------------------------------------------------------------------------- #
 # The plan
 # --------------------------------------------------------------------------- #
@@ -485,6 +542,9 @@ class ChartInputs:
     markets: Sequence[Tuple[str, PositioningPack]] = ()
     #: {Quarter, <market>: current-year premium, ...} for the per-market line.
     market_quarterly_rows: Sequence[Mapping[str, Any]] = ()
+    #: Positions by country / by region, for a question that named no country.
+    by_country: Optional[PositioningPack] = None
+    by_region: Optional[PositioningPack] = None
 
 
 def _from_pack(
@@ -511,6 +571,8 @@ _CATALOGUE: Mapping[str, Callable[[ChartInputs], Optional[ChartSpec]]] = {
     "mix": mix_chart,
     "market_compare": market_compare,
     "market_quarterly": market_quarterly,
+    "country_premium": country_premium,
+    "region_mix": region_mix,
 }
 
 #: Which charts matter most, per analytical operation, best first. A key whose
@@ -554,6 +616,8 @@ def build_chart_plan(
     limit: int = MAX_CHARTS,
     markets: Sequence[Tuple[str, PositioningPack]] = (),
     market_quarterly_rows: Sequence[Mapping[str, Any]] = (),
+    by_country: Optional[PositioningPack] = None,
+    by_region: Optional[PositioningPack] = None,
 ) -> List[ChartSpec]:
     """The charts this answer should carry, most informative first.
 
@@ -565,8 +629,12 @@ def build_chart_plan(
     inputs = ChartInputs(pack=None if markets else pack,
                          quarterly_rows=() if markets else quarterly_rows,
                          scope=dict(scope or {}), markets=tuple(markets),
-                         market_quarterly_rows=market_quarterly_rows)
+                         market_quarterly_rows=market_quarterly_rows,
+                         by_country=by_country, by_region=by_region)
     order = _MULTI_MARKET_ORDER if markets else chart_order(operation)
+    if by_country is not None and not markets:
+        # No country named: WHERE the book is comes first.
+        order = ("country_premium", "region_mix", *order)
     drawn = (
         _CATALOGUE[key](inputs) for key in order if key in _CATALOGUE
     )

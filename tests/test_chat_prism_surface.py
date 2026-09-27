@@ -43,7 +43,6 @@ from ui.components.chatbot import (
     ai_message,
     chatbot_page,
     custom_peers_cue,
-    reads_beside_the_prose,
     user_message,
     welcome_hero,
 )
@@ -51,6 +50,7 @@ from ui.components.provenance import dataset_label, provenance_drawer
 from ui.components.turn import format_stamp
 
 CHAT_CSS = Path("assets/va_shell_chat.css").read_text(encoding="utf-8")
+V2_CSS = __import__("pathlib").Path("assets/va_shell_chat_v2.css").read_text(encoding="utf-8")
 SHELL_CSS = Path("assets/va_shell.css").read_text(encoding="utf-8")
 
 CONTRIBUTION = {
@@ -629,48 +629,35 @@ def _view(*, chart):
     )
 
 
-def split_class(message) -> str:
-    return next(
-        (getattr(n, "className", "") or "") for n in walk(message)
-        if "answer-split" in (getattr(n, "className", "") or "")
-    )
+def _classes_in_order(message) -> list:
+    return [getattr(n, "className", "") or "" for n in walk(message)]
 
 
-def _answer_with(view):
+def _answer_with(view, content="Premium grew 12%. Property led it."):
     return ai_message(
-        "Premium grew 12%.", True, idx=1, shape="analyst",
+        content, True, idx=1, shape="analyst",
         evidence=[view], card_idx=1, pane_ids=[1],
     )
 
 
-def test_a_chart_sits_beside_the_finding_it_illustrates():
-    assert "is-stacked" not in split_class(_answer_with(_view(chart=True)))
+def test_the_answer_reads_summary_then_analysis_then_evidence():
+    """Full-width bands in a business reader's order — nothing in a half column."""
+    order = [c for c in _classes_in_order(_answer_with(_view(chart=True)))
+             if c in ("answer-summary", "answer-analysis", "answer-evidence")]
+    assert order == ["answer-summary", "answer-analysis", "answer-evidence"]
+    assert not any("answer-split" in c for c in _classes_in_order(_answer_with(_view(chart=False))))
 
 
-def test_a_table_takes_the_whole_card():
-    """The measured defect: at 1280 a table-only answer put a 552px panel beside
-    a 778px column of prose, cut its last column off, and scrolled sideways —
-    while the stylesheet carried a rule for full-width tables that could never
-    match, because inside the split the panel is not a child of the card."""
-    assert "is-stacked" in split_class(_answer_with(_view(chart=False)))
+def test_titled_parts_become_cards_and_actions_become_wide_callouts():
+    content = ("Premium grew 12%.\n\n### Where the growth came from\n- Property\n\n"
+               "### Against the peer set\n- Rank 2\n\n### What it means\n- Defend Property")
+    classes = _classes_in_order(_answer_with(_view(chart=True), content))
+    cards = [c for c in classes if c.startswith("answer-section ")]
+    assert cards == ["answer-section tone-default", "answer-section tone-default",
+                     "answer-section tone-action is-wide"]
 
 
-def test_the_layout_is_decided_from_the_views_not_the_markup():
-    """Every pane contains a table — a chart view hides one behind its
-    Chart/Data switch — so the rendered tree cannot answer "is this a table?"."""
-    assert reads_beside_the_prose([_view(chart=True)]) is True
-    assert reads_beside_the_prose([_view(chart=False)]) is False
-    # The view ON SCREEN decides: a table leading a panel of charts needs the
-    # full width, or its share and rank columns are cut off.
-    assert reads_beside_the_prose([_view(chart=False), _view(chart=True)]) is False
-    assert reads_beside_the_prose([_view(chart=True), _view(chart=False)]) is True
-    assert reads_beside_the_prose([]) is False
-
-
-def test_the_prose_keeps_a_readable_measure():
-    """Stacked, the reading column is the whole card, and a card wide enough for
-    a financial table ran to 118 characters a line — measured, against a
-    comfortable ceiling of about 75."""
-    rule = rule_for(CHAT_CSS, ".answer-points")
-    assert "max-width" in rule
-    assert "ch" in rule
+def test_the_summary_prose_keeps_a_readable_measure():
+    """The bands are full width; the sentences inside them are not."""
+    rule = rule_for(V2_CSS, ".chatbot-area .answer-v3 .answer-headline")
+    assert "max-width" in rule and "ch" in rule

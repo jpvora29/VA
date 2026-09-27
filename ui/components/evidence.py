@@ -143,6 +143,7 @@ _MONEY_NAME = re.compile(r"premium|gwp|amount|revenue|spend|value|headroom|walle
 
 #: Kinds only inferred here (never declared by a producer).
 PERCENT_FRACTION = "percent_fraction"
+MONEY_BILLIONS = "money_billions"
 MONEY_WHOLE = "money_whole"
 DECIMAL = "decimal"
 
@@ -158,6 +159,8 @@ def inferred_kind(column: str, values: List[Any]) -> str:
         # A share stored as 0.195 prints as 19.5%, one stored as 19.5 as 19.5%.
         return PERCENT_FRACTION if largest <= 1.0 else P.PERCENT
     if _MONEY_NAME.search(column):
+        if largest >= 1_000_000_000:
+            return MONEY_BILLIONS
         return P.MONEY_MILLIONS if largest >= 1_000_000 else MONEY_WHOLE
     if _COUNT_NAME.search(column) or all(float(v).is_integer() for v in values):
         return P.COUNT
@@ -177,6 +180,10 @@ def _format_for(kind: str, unit: str) -> Optional[Format]:
             scheme=Scheme.fixed, precision=1 if unit else 0, group=Group.yes,
             symbol=Symbol.yes, symbol_prefix="$", symbol_suffix=unit,
         )
+    if kind == MONEY_BILLIONS:
+        return Format(scheme=Scheme.fixed, precision=1, group=Group.yes,
+                      symbol=Symbol.yes, symbol_prefix="$", symbol_suffix="B",
+                      ).si_prefix(Prefix.giga)
     if kind == MONEY_WHOLE:
         return Format(scheme=Scheme.fixed, precision=0, group=Group.yes,
                       symbol=Symbol.yes, symbol_prefix="$")
@@ -277,7 +284,10 @@ def data_table(view: EvidenceView) -> Any:
         data=view.records,
         page_size=_PAGE_SIZE,
         sort_action="native",
-        filter_action="native" if len(view.records) > _PAGE_SIZE else "none",
+        # A filter row whenever there is something to find: type "Singap" under
+        # Country or "Prop" under Product line. Case-insensitive.
+        filter_action="native" if len(view.records) > 3 else "none",
+        filter_options={"case": "insensitive", "placeholder_text": "Filter…"},
         style_data_conditional=[
             # A quiet hover tint: enough to track a row across a wide table,
             # not enough to read as a selection.

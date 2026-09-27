@@ -443,7 +443,7 @@ def _millions_engine():
 def test_money_uses_one_scale_across_the_whole_table():
     """Per-row units ("$1.2M" above "$840k") make a column impossible to compare."""
     assert P.money_scale([1_770_000.0, 900_000.0]) == (1e6, "M")
-    assert P.money_scale([1_770.0, 900.0]) == (1e3, "k")
+    assert P.money_scale([1_770.0, 900.0]) == (1e3, "K")
     assert P.money_scale([12.0, 4.0]) == (1.0, "")
 
 
@@ -451,12 +451,12 @@ def test_an_absent_figure_does_not_drag_the_scale_down():
     assert P.money_scale([2_000_000.0, None]) == (1e6, "M")
 
 
-def test_a_book_over_a_billion_still_reads_in_millions():
-    """Premium is reported in millions. Flipping the table to "$2.50bn" makes it
-    incomparable with every other scope the reader looks at that day."""
+def test_a_book_over_a_billion_reads_in_billions():
+    """Business asked for millions, and billions once a book is that large —
+    "$2,500.0M" is harder to read than "$2.5B"."""
     scale, suffix = P.money_scale([2_500_000_000.0])
-    assert (scale, suffix) == (1e6, "M")
-    assert 2_500_000_000.0 / scale == 2500.0
+    assert (scale, suffix) == (1e9, "B")
+    assert 2_500_000_000.0 / scale == 2.5
 
 
 def test_the_tool_path_prints_millions_too_and_never_an_si_gigabyte():
@@ -485,8 +485,8 @@ def test_premium_reads_in_millions_at_a_realistic_scale():
 
 def test_the_columns_are_in_the_order_a_reader_reads_them(compared):
     assert list(compared.rows()[0]) == [
-        compared.heading, P.CARRIER_PREMIUM, P.MARSH_PREMIUM, P.MOVEMENT_PERCENT,
-        P.RANK, P.SHARE_OF_PORTFOLIO, P.SHARE_OF_WALLET, P.RANK_FIELD,
+        compared.heading, P.MARSH_PREMIUM, P.CARRIER_PREMIUM, P.MOVEMENT_PERCENT,
+        P.SHARE_OF_WALLET, P.SHARE_OF_PORTFOLIO, P.RANK, P.RANK_FIELD,
     ]
     # The declared order and the rendered order are the same list.
     assert list(P.DISPLAY_COLUMNS)[1:] == list(compared.rows()[0])[1:]

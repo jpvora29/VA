@@ -14,7 +14,8 @@ from ui.components.answer_actions import (
 )
 from ui.components.answer_lead import Lead, split_lead
 from ui.components.contribution import contribution_panel
-from ui.components.deltas import mark_deltas
+from ui.answer_layout import scorecards, split_sections
+from ui.components.answer_summary import section_cards, summary_band
 from ui.components.evidence import evidence_panel
 from ui.components.scope_bar import scope_bar
 from ui.components.turn import assistant_header, user_footer
@@ -460,10 +461,12 @@ def _answer_body(content: str, idx: int, editing: bool, className: str = ""):
     would.
     """
     if not editing:
-        # Read mode: every signed change becomes a coloured ▲/▼ (ui.components.deltas).
-        marked = dcc.Markdown(mark_deltas(content), className=className or None,
-                              dangerously_allow_html=True)
-        return html.Div(marked, id={"type": "answer-body", "idx": idx})
+        # Read mode: the analysis as section cards, every change a coloured ▲/▼
+        # (ui.answer_layout reads the sections; ui.components.answer_summary
+        # draws them).
+        intro, sections = split_sections(content)
+        return html.Div(section_cards(intro, sections, className),
+                        id={"type": "answer-body", "idx": idx}, className="answer-analysis")
     body = dcc.Markdown(content, className=className) if className else dcc.Markdown(content)
     return html.Div(
         [
@@ -513,38 +516,6 @@ def answer_scope(scope: list | None):
     """
     bar = scope_bar(scope, compact=True)
     return html.Div(bar, className="answer-scope") if bar is not None else None
-
-
-def _lead_block(lead: Lead, figures: list):
-    """The finding, set as the finding: one line, its qualifier, its key numbers."""
-    if not lead.has_headline and not figures:
-        return None
-    return html.Div(
-        [
-            html.H2(lead.headline, className="answer-headline")
-            if lead.has_headline
-            else None,
-            html.P(lead.standfirst, className="answer-standfirst")
-            if lead.standfirst
-            else None,
-            html.Div(
-                [
-                    html.Div(
-                        [
-                            html.Div(figure.value, className="answer-figure-value"),
-                            html.Div(figure.label, className="answer-figure-label"),
-                        ],
-                        className="answer-figure",
-                    )
-                    for figure in figures
-                ],
-                className="answer-figures",
-            )
-            if figures
-            else None,
-        ],
-        className="answer-lead",
-    )
 
 
 def ai_message(
@@ -614,17 +585,8 @@ def ai_message(
         has_analysis=bool(evidence) or bool((contribution or {}).get("drivers")),
     )
     pills = answer_scope(scope)
-    # ONE panel, charts and table together as tabs. Splitting them put the table
-    # below the prose where it read as an afterthought; the reader wants to flip
-    # between "what moved" and the figures behind it in the same place. The
-    # width problem that split solved is solved instead by letting a table view
-    # break the card's grid (see `.answer-visual:has(.ev-table)` in the
-    # stylesheet), so the table is full width WITHOUT leaving the panel.
     panel_idx = idx if card_idx is None else card_idx
     views = evidence_panel(evidence or [], panel_idx, pane_ids or []) if evidence else None
-    # A chart sits beside the finding; a table takes the whole card (see
-    # `reads_beside_the_prose`).
-    beside = reads_beside_the_prose(evidence)
     drivers = contribution_panel(contribution)
     # The "Source & calculation" drawer is no longer drawn. Business readers
     # read its figure-by-figure audit as doubt about the answer rather than as
@@ -636,91 +598,40 @@ def ai_message(
     # While the prose is being rewritten it must be ONE editable region, or the
     # serialiser saves the body and silently drops the headline above it.
     lead = Lead(body=content) if editing else split_lead(content)
-    # A single source for the headline and prose. Independent driver tiles can
-    # describe another cut; keep those numbers in their own driver panel.
-    head = _lead_block(lead, [])
-    # A card carrying a chart or a table needs the room; a bare paragraph does
-    # not, and stretching every answer to full width makes short ones look empty.
+    # The reading order a business reader wants, top to bottom and full width:
+    #   EXECUTIVE SUMMARY  the answer, then its numbers (KPI tiles, or one card
+    #                      per market), computed from the position tables below
+    #   THE ANALYSIS       each titled part as a card, two to a row; actions and
+    #                      watch-outs as full-width callouts
+    #   EVIDENCE           the tables and charts, full width
+    # A half-width prose column beside a half-width table left both cramped.
+    summary = summary_band(lead.headline if lead.has_headline else "",
+                           lead.standfirst or "", scorecards(evidence or []))
     wide = " has-evidence" if (views is not None or drivers is not None) else ""
-
     card_class = "message insight-card" if is_insight else "message gpt-message"
     body_class = "insight-card-body" if is_insight else ""
     prose = _answer_body(lead.body, idx, editing, className=body_class)
+    evidence_block = (
+        html.Div([_column_label("Evidence"), views], className="answer-evidence")
+        if views is not None else None
+    )
     card = html.Div(
         [
             pills,
-            *_reading_area(head, prose, views, beside=beside),
+            summary,
+            prose,
+            evidence_block,
             drivers,
             footer,
             next_questions(followups, idx),
             panel,
         ],
-        className=card_class + wide,
+        className=card_class + wide + " answer-v3",
     )
     return html.Div(
         [assistant_header(source=source, ts=ts), card],
         className="turn turn-assistant",
     )
-
-
-def reads_beside_the_prose(evidence) -> bool:
-    """Whether this evidence belongs BESIDE the finding rather than under it.
-
-    A chart does: it is fixed-height, it reads fine at half the card, and having
-    it next to the sentence it illustrates is the whole point of the split.
-
-    A table does not. A view with no chart IS a table (`ui.evidence.EvidenceView`),
-    and a table of financial columns needs the full card — at half width its last
-    column is cut off and the reader scrolls sideways through their own evidence,
-    while the prose column runs on for another 500px beside a panel that stopped.
-    That was the measured shape of an answer whose only evidence was a table.
-
-    Decided here, from the views, rather than in the stylesheet: every pane
-    contains a table (a chart view hides one behind its Chart/Data switch), so
-    "is this a table panel?" is not a question the rendered markup can answer.
-    """
-    # The FIRST view decides: it is the one on screen. A position table leading
-    # a panel of charts needs the full width as much as a lone table does — at
-    # half width its share and rank columns were cut off.
-    views = list(evidence or [])
-    return bool(views) and bool(getattr(views[0], "has_chart", False))
-
-
-def _reading_area(head, prose, views, *, beside: bool = True):
-    """The finding and the picture of it, side by side when there is a picture.
-
-    Stacked, a chart pushes the points that explain it below the fold, and the
-    reader scrolls between the claim and its evidence. Side by side they are read
-    together, which is how an analyst presents: the argument on the left, the
-    thing it is an argument about on the right.
-
-    The split only happens when there IS something to put on the right. A prose
-    answer with no chart keeps the full column, because half a card of text with
-    empty space beside it reads as a page that failed to load. On a narrow screen
-    the grid collapses back to one column (see `.answer-split` in
-    `assets/va_shell_chat.css`), so the order here is also the stacking order:
-    finding, points, then chart.
-    """
-    if views is None:
-        return [head, prose]
-    return [
-        html.Div(
-            [
-                html.Div(
-                    [_column_label("Insight"), head, prose],
-                    className="answer-points",
-                ),
-                html.Div(
-                    [_column_label("Evidence"), views],
-                    className="answer-visual",
-                ),
-            ],
-            # Stacked is the SAME container with one column, not a second layout:
-            # the labels, the panel's margins and the reading order are already
-            # right for it (they are what the narrow breakpoint falls back to).
-            className="answer-split" + ("" if beside else " is-stacked"),
-        )
-    ]
 
 
 def _column_label(text: str):
