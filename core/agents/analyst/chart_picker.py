@@ -39,7 +39,7 @@ logger = get_logger(__name__)
 # several lenses, and showing one of them made the other lenses invisible — the
 # reader got a single picture of a multi-part answer. The two ceilings are equal on
 # purpose, so which path built the charts does not change how many the reader gets.
-MAX_CHARTS = 3
+MAX_CHARTS = 4
 _LLM_ROW_CAP = 60
 
 # Column-name hints that make a dataset more worth charting (time series, peer

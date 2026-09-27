@@ -14,6 +14,7 @@ against — so an offline pipeline produces exactly what it always did.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence
 
@@ -171,6 +172,21 @@ def section_of(kind: str) -> str:
     return OTHER_SECTION
 
 
+_MARKET_PREFIX = re.compile(r"^([A-Z][^—\n]{1,40}?) — (.+)$", re.S)
+
+
+def _market_groups(claims: Sequence[AnswerClaim]) -> dict[str, list[str]]:
+    """{market: [claim text without its prefix]} when EVERY claim names one of
+    at least two markets ("Singapore — …"); {} otherwise."""
+    groups: dict[str, list[str]] = {}
+    for claim in claims:
+        match = _MARKET_PREFIX.match(claim.text)
+        if not match:
+            return {}
+        groups.setdefault(match.group(1), []).append(match.group(2))
+    return groups if len(groups) >= 2 else {}
+
+
 def present_claims(claims: Sequence[AnswerClaim]) -> str:
     """The verified findings as a READ, not a list: lead, then labelled groups.
 
@@ -182,6 +198,14 @@ def present_claims(claims: Sequence[AnswerClaim]) -> str:
     if not claims:
         return ""
     lead, rest = claims[0], list(claims[1:])
+    by_market = _market_groups(rest)
+    if by_market:
+        # Several markets: one group per market, in the order the claims name
+        # them, each point without the market it now sits under.
+        parts = [lead.text]
+        for market, texts in by_market.items():
+            parts.append(f"### {market}\n" + "\n".join(f"- {text}" for text in texts))
+        return "\n\n".join(parts)
     groups: dict[str, list[AnswerClaim]] = {}
     for claim in rest:
         groups.setdefault(section_of(claim.kind), []).append(claim)
@@ -310,6 +334,15 @@ def content_supported(text: str, ledger: str, claims: Sequence[AnswerClaim],
 
 
 def validate_record(record: Mapping, text: str, evidence: Sequence[Mapping] | None = None) -> bool:
+    """Replay a stored record at the figure precision it was written with."""
+    from core.answers.facts import figure_precision
+
+    version = record.get("version", 1) if isinstance(record, Mapping) else 1
+    with figure_precision(1 if version >= 5 else 2):
+        return _validate_record(record, text, evidence)
+
+
+def _validate_record(record: Mapping, text: str, evidence: Sequence[Mapping] | None = None) -> bool:
     """Reconstruct the factual sentences instead of trusting a stored badge.
 
     Editing a value or sentence invalidates the record, including changes to a

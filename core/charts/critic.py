@@ -216,7 +216,10 @@ class ChartSpecCritic:
         resolve = _make_resolver(df)
         intent = str(spec.get("intent") or "")
         title = str(spec.get("title") or "")
-        trendy = wants_trend(intent, title)
+        # A spec from the deterministic chart plan (`core.answers.chart_plan`)
+        # chose its type from the data it was built on; a quarters-by-market line
+        # is a trend by construction even when the question never said "trend".
+        trendy = wants_trend(intent, title) or bool(spec.get("planned"))
 
         def role_of(col: Optional[str]) -> Optional[ColumnRole]:
             return roles.get(col) if col else None

@@ -439,17 +439,67 @@ def focus_for(question: str) -> str:
     return PENETRATION if detect_operation(question) == PENETRATION_INTENT else ""
 
 
+#: Dimension keys that name a MARKET. A turn over several markets records one
+#: position table per market; their slices share names ("Property" in each), so
+#: they must be told apart before positions are rebuilt.
+_MARKET_KEYS = frozenset({"country", "market"})
+
+
+def _market_of(fact: AnswerFact) -> str:
+    for key, value in fact.dimensions:
+        if str(key).lower() in _MARKET_KEYS:
+            return str(value)
+    return ""
+
+
+def _by_market(facts: Sequence[AnswerFact]) -> dict:
+    """Positioning facts grouped by market, in order of first appearance."""
+    groups: dict = {}
+    for fact in facts:
+        if fact.lens == LENS:
+            groups.setdefault(_market_of(fact), []).append(fact)
+    return groups
+
+
+def _round_robin(per_market: Sequence[Sequence[AnswerClaim]]) -> Tuple[AnswerClaim, ...]:
+    """Each market's strongest claim, then each market's next — so a claim limit
+    trims every market a little rather than dropping the last market whole."""
+    out: List[AnswerClaim] = []
+    depth = max((len(claims) for claims in per_market), default=0)
+    for index in range(depth):
+        for claims in per_market:
+            if index < len(claims):
+                out.append(claims[index])
+    return tuple(out)
+
+
 def positioning_claims(pack_facts: Sequence[AnswerFact], question: str = "") -> Tuple[AnswerClaim, ...]:
     """Positioning claims for whatever positions the recorded facts describe.
 
     The entry point `core.answers.insights` calls. Returns nothing when the turn
     gathered no positioning evidence, which is every turn that did not ask for it.
+    Several markets are compiled one by one and each claim leads with its market
+    ("Singapore — Property is …"); pooled, their slices overwrote each other and
+    the answer described one market without saying which.
     """
-    pack, origin = positions_from_facts(pack_facts, with_origin=True)
-    if not pack:
-        return ()
-    built = compile_positioning(pack, focus=focus_for(question))
-    return _cite_original_facts(built, origin)
+    groups = _by_market(pack_facts)
+    if len(groups) <= 1:
+        pack, origin = positions_from_facts(pack_facts, with_origin=True)
+        if not pack:
+            return ()
+        built = compile_positioning(pack, focus=focus_for(question))
+        return _cite_original_facts(built, origin)
+    per_market = []
+    for market, facts in groups.items():
+        pack, origin = positions_from_facts(facts, with_origin=True)
+        if not pack:
+            continue
+        built = compile_positioning(pack, focus=focus_for(question))
+        per_market.append(tuple(
+            replace(claim, text=f"{market} — {claim.text}") if market else claim
+            for claim in _cite_original_facts(built, origin)
+        ))
+    return _round_robin(per_market)
 
 
 def _cite_original_facts(built: PositioningClaims, origin: dict) -> Tuple[AnswerClaim, ...]:

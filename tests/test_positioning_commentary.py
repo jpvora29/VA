@@ -296,7 +296,10 @@ def test_cross_metric_claims_assert_no_cause(compared):
 
 def test_a_performance_answer_carries_three_purposeful_charts(compared):
     plan = build_chart_plan(compared, quarterly_rows=_quarterly_rows(), scope=SCOPE)
-    assert [spec.key for spec in plan] == ["quarterly", "contribution", "premium"]
+    # Timing, where it stands (share of portfolio vs wallet, sized by premium),
+    # what moved, and the mix — four different readings, not three bar charts.
+    assert [spec.key for spec in plan] == ["quarterly", "position_map", "contribution", "mix"]
+    assert [spec.chart_type for spec in plan] == ["bar", "bubble", "waterfall", "donut"]
 
 
 def test_the_charts_are_ordered_by_what_the_question_asked_for(compared):
@@ -482,8 +485,8 @@ def test_premium_reads_in_millions_at_a_realistic_scale():
 
 def test_the_columns_are_in_the_order_a_reader_reads_them(compared):
     assert list(compared.rows()[0]) == [
-        compared.heading, P.MARSH_PREMIUM, P.CARRIER_PREMIUM, P.MOVEMENT_PERCENT,
-        P.SHARE_OF_WALLET, P.SHARE_OF_PORTFOLIO, P.RANK, P.RANK_FIELD,
+        compared.heading, P.CARRIER_PREMIUM, P.MARSH_PREMIUM, P.MOVEMENT_PERCENT,
+        P.RANK, P.SHARE_OF_PORTFOLIO, P.SHARE_OF_WALLET, P.RANK_FIELD,
     ]
     # The declared order and the rendered order are the same list.
     assert list(P.DISPLAY_COLUMNS)[1:] == list(compared.rows()[0])[1:]

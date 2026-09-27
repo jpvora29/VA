@@ -660,7 +660,10 @@ def test_the_layout_is_decided_from_the_views_not_the_markup():
     Chart/Data switch — so the rendered tree cannot answer "is this a table?"."""
     assert reads_beside_the_prose([_view(chart=True)]) is True
     assert reads_beside_the_prose([_view(chart=False)]) is False
-    assert reads_beside_the_prose([_view(chart=False), _view(chart=True)]) is True
+    # The view ON SCREEN decides: a table leading a panel of charts needs the
+    # full width, or its share and rank columns are cut off.
+    assert reads_beside_the_prose([_view(chart=False), _view(chart=True)]) is False
+    assert reads_beside_the_prose([_view(chart=True), _view(chart=False)]) is True
     assert reads_beside_the_prose([]) is False
 
 

@@ -27,7 +27,40 @@ def fixture_engine():
                      [dict(zip("abcdef", (*row, f"{row[3]}-06-15"))) for row in ROWS if row[0] != "CHUBB"])
         conn.execute(text("INSERT INTO GPR VALUES ('CHUBB','Canada',:Product_Line,:Year,:Premium,:Billing_Date)"),
                      [dict(row, Billing_Date=f"{row['Year']}-06-15") for row in growth_evidence()[0]["rows"]])
+        conn.execute(text("INSERT INTO GPR VALUES (:a,:b,:c,:d,:e,:f)"), asia_rows())
     return engine
+
+
+ASIA_MARKETS = ("Singapore", "Hong Kong", "China")
+
+
+def asia_rows():
+    """Three carriers, three markets, four lines, two years, four quarters.
+
+    Deterministic arithmetic rather than random numbers, so the rendered page
+    is the same on every run. GENERALI grows in Singapore, shrinks in Hong Kong
+    and is mixed in China — so the per-market tables disagree, which is the
+    point of showing them separately.
+    """
+    base = {"Property": 4.0e6, "Casualty": 2.6e6, "Marine": 1.4e6, "Cyber": 0.9e6}
+    carrier_weight = {"GENERALI": 1.0, "AIG": 1.3, "AXA": 0.8}
+    market_weight = {"Singapore": 1.0, "Hong Kong": 0.7, "China": 1.6}
+    growth = {("GENERALI", "Singapore"): 1.18, ("GENERALI", "Hong Kong"): 0.86,
+              ("GENERALI", "China"): 1.04}
+    rows = []
+    for carrier, cw in carrier_weight.items():
+        for market, mw in market_weight.items():
+            for product_index, (product, value) in enumerate(base.items()):
+                for year in (2024, 2025):
+                    lift = growth.get((carrier, market), 1.07) if year == 2025 else 1.0
+                    tilt = 1.0 + 0.12 * ((product_index + len(market)) % 3 - 1)
+                    annual = value * cw * mw * lift * (tilt if carrier == "GENERALI" else 1.0)
+                    for quarter, month in enumerate(("02", "05", "08", "11"), start=1):
+                        share = (0.22, 0.24, 0.26, 0.28)[quarter - 1]
+                        rows.append(dict(zip("abcdef", (carrier, market, product, year,
+                                                        round(annual * share, 2),
+                                                        f"{year}-{month}-15"))))
+    return rows
 
 
 class OfflineSelection:
@@ -106,6 +139,37 @@ def positioning_turn(engine, query):
     }
 
 
+def markets_turn(engine, query):
+    """A multi-market performance turn through the REAL per-market path.
+
+    The same `build_market_positions` and `chart_views_for` the analyst graph
+    calls — one position table per market, market-aware charts — against the
+    fixture warehouse. Only the model calls are absent.
+    """
+    from core.analytics.markets import build_market_positions
+    from core.answers.grounded import AnswerRequest, compose_answer
+    from core.graph.analyst_subgraph import _with_market, chart_views_for
+
+    scope = {"Carrier_Group": "GENERALI", "Country": list(ASIA_MARKETS), "Year": 2025}
+    packs = build_market_positions(scope, dimension="Product_Line", subject="GENERALI",
+                                   engine=engine)
+    views = chart_views_for(packs, scope, question=query, engine=engine)
+    evidence = tuple(
+        {"flow": "gpr", "lens": "positioning", "sql": "-- positioning", "scope": market_scope,
+         "rows": _with_market(pack.numeric_rows(), market)}
+        for market, pack, market_scope in packs
+    )
+    answer = compose_answer(AnswerRequest(query, evidence))
+    return {
+        "current_route": "premium",
+        "gpr_response": answer.text,
+        "gpr_response_record": answer.as_dict(),
+        "gpr_query_result": packs[0][1].rows() if packs else [],
+        "analyst_charts": views,
+        "analyst_evidence": [],
+    }
+
+
 class FixtureWorkflow:
     def __init__(self):
         self.engine = fixture_engine()
@@ -125,6 +189,11 @@ class FixtureWorkflow:
         if "slow" in query.lower():
             cancel.wait(8)
         if cancel.is_set():
+            return
+        if "generali" in query.lower():
+            self.states[thread_id] = markets_turn(self.engine, query)
+            yield {"node": "gpr_insight"}
+            yield from self._tail(query, thread_id, cancel)
             return
         if "position" in query.lower() or "performance" in query.lower():
             self.states[thread_id] = positioning_turn(self.engine, query)

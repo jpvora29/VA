@@ -19,6 +19,7 @@ an answer that produced numbers should never show nothing.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional, Sequence
 
 from dash import dash_table, dcc, html
@@ -125,7 +126,42 @@ def _kind_of(view: EvidenceView, column: str) -> str:
         return declared
     values = [row.get(column) for row in view.records]
     present = [v for v in values if v not in (None, "")]
-    return NUMBER if present and all(_is_number(v) for v in present) else P.TEXT
+    if not (present and all(_is_number(v) for v in present)):
+        return P.TEXT
+    return inferred_kind(column, present)
+
+
+#: What an untyped column's NAME says it holds. A result set straight from a
+#: query ("Premium", "YoY_Growth_%", "Share_of_Wallet") used to print its floats
+#: raw — 12345678.912 in a premium column — which reads as a data dump rather
+#: than as evidence. The name is a better guide than the values alone.
+_YEAR_NAME = re.compile(r"year|quarter|month|period|week|date", re.I)
+_RANK_NAME = re.compile(r"\brank", re.I)
+_COUNT_NAME = re.compile(r"count|number of|\bn_|clients|carriers|policies|responses", re.I)
+_PCT_NAME = re.compile(r"%|pct|percent|share|sow\b|rate|yoy|growth|ratio|penetration", re.I)
+_MONEY_NAME = re.compile(r"premium|gwp|amount|revenue|spend|value|headroom|wallet", re.I)
+
+#: Kinds only inferred here (never declared by a producer).
+PERCENT_FRACTION = "percent_fraction"
+MONEY_WHOLE = "money_whole"
+DECIMAL = "decimal"
+
+
+def inferred_kind(column: str, values: List[Any]) -> str:
+    """A format for a numeric column nobody typed, from its name and values."""
+    largest = max(abs(float(v)) for v in values)
+    if _YEAR_NAME.search(column):
+        return NUMBER
+    if _RANK_NAME.search(column):
+        return P.RANK_KIND
+    if _PCT_NAME.search(column):
+        # A share stored as 0.195 prints as 19.5%, one stored as 19.5 as 19.5%.
+        return PERCENT_FRACTION if largest <= 1.0 else P.PERCENT
+    if _MONEY_NAME.search(column):
+        return P.MONEY_MILLIONS if largest >= 1_000_000 else MONEY_WHOLE
+    if _COUNT_NAME.search(column) or all(float(v).is_integer() for v in values):
+        return P.COUNT
+    return DECIMAL
 
 
 def _format_for(kind: str, unit: str) -> Optional[Format]:
@@ -136,12 +172,18 @@ def _format_for(kind: str, unit: str) -> Optional[Format]:
     is careful about, which a table printing 0 would throw away in the last inch.
     """
     if kind == P.MONEY:
-        # Precision follows the scale the rows were already divided by: a column
-        # in millions wants two decimals, one in whole currency units wants none.
+        # One decimal at the table's scale ("$160.0M"); whole units get none.
         return Format(
-            scheme=Scheme.fixed, precision=2 if unit else 0, group=Group.yes,
+            scheme=Scheme.fixed, precision=1 if unit else 0, group=Group.yes,
             symbol=Symbol.yes, symbol_prefix="$", symbol_suffix=unit,
         )
+    if kind == MONEY_WHOLE:
+        return Format(scheme=Scheme.fixed, precision=0, group=Group.yes,
+                      symbol=Symbol.yes, symbol_prefix="$")
+    if kind == PERCENT_FRACTION:
+        return Format(scheme=Scheme.percentage, precision=1)
+    if kind == DECIMAL:
+        return Format(scheme=Scheme.fixed, precision=1, group=Group.yes)
     if kind == P.MONEY_MILLIONS:
         # Raw magnitude, printed in millions: 1_770_000 -> "$1.77M",
         # 2_500_000_000 -> "$2,500.00M". Dash divides by the `si_prefix`, so the
@@ -152,7 +194,7 @@ def _format_for(kind: str, unit: str) -> Optional[Format]:
         # "$840M" then "$2.5G" — incomparable down the page, and "G" is a
         # gigabyte, not a currency unit.
         return Format(
-            scheme=Scheme.fixed, precision=2, group=Group.yes,
+            scheme=Scheme.fixed, precision=1, group=Group.yes,
             symbol=Symbol.yes, symbol_prefix="$", symbol_suffix="M",
         ).si_prefix(Prefix.mega)
     if kind == P.PERCENT:
@@ -208,7 +250,10 @@ def _direction_styles(view: EvidenceView) -> List[Dict[str, Any]]:
     """
     styles: List[Dict[str, Any]] = []
     for column in view.columns:
-        if _kind_of(view, column) != P.SIGNED_PERCENT:
+        kind = _kind_of(view, column)
+        signed = kind == P.SIGNED_PERCENT or (
+            kind in (P.PERCENT, PERCENT_FRACTION) and re.search(r"yoy|growth|change", column, re.I))
+        if not signed:
             continue
         styles.extend([
             {"if": {"column_id": column, "filter_query": f"{{{column}}} > 0"},

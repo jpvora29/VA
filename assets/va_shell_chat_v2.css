@@ -35,10 +35,23 @@
         radial-gradient(1100px 420px at 50% -8%, rgba(11, 75, 255, 0.07), transparent 70%),
         radial-gradient(700px 300px at 85% 105%, rgba(0, 168, 224, 0.06), transparent 70%);
 }
+/* The group is centred, but it must still SCROLL when the window is shorter
+   than the greeting + memory + starters: the row may shrink (min-height 0),
+   its column follows the row's height, and the viewport inside scrolls. A
+   column of `height: auto` grew past the space and the composer covered it. */
 .chatbot-area .container-fluid > .row.chat-row:has(#chat-box .welcome-hero) {
     flex: 0 1 auto;
+    min-height: 0;
 }
-.chatbot-area .chat-row:has(#chat-box .welcome-hero) > [class*="col"] { height: auto; }
+.chatbot-area .chat-row:has(#chat-box .welcome-hero) > [class*="col"] {
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+}
+.chatbot-area .chat-row:has(#chat-box .welcome-hero) #chat-viewport {
+    min-height: 0;
+    overflow-y: auto;
+}
 .chatbot-area .chat-bot-text-area:has(.welcome-hero) {
     min-height: 0;
     justify-content: flex-start;
@@ -817,3 +830,20 @@
 
 /* A chart drawn on first view keeps its box while it waits. */
 .ev-lazy-chart { width: 100%; }
+
+/* ── Direction in the prose: ▲ rise, ▼ fall (ui/components/deltas.py) ──── */
+.delta { font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.delta-up { color: #0F7A33; }
+.delta-down { color: #C0393E; }
+
+/* The caveat sits centred under the composer, as it always did; the key hints
+   ride above it, also centred, so the pair reads as one quiet footer. */
+.chatbot-area .composer-hints {
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 3px;
+    text-align: center;
+}
+.chatbot-area .composer-hints-keys { justify-content: center; }
+.chatbot-area .composer-hints-note { text-align: center; }

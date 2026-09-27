@@ -14,6 +14,7 @@ from ui.components.answer_actions import (
 )
 from ui.components.answer_lead import Lead, split_lead
 from ui.components.contribution import contribution_panel
+from ui.components.deltas import mark_deltas
 from ui.components.evidence import evidence_panel
 from ui.components.scope_bar import scope_bar
 from ui.components.turn import assistant_header, user_footer
@@ -458,9 +459,12 @@ def _answer_body(content: str, idx: int, editing: bool, className: str = ""):
     rather than collapsing into one paragraph the way raw contentEditable text
     would.
     """
-    body = dcc.Markdown(content, className=className) if className else dcc.Markdown(content)
     if not editing:
-        return html.Div(body, id={"type": "answer-body", "idx": idx})
+        # Read mode: every signed change becomes a coloured ▲/▼ (ui.components.deltas).
+        marked = dcc.Markdown(mark_deltas(content), className=className or None,
+                              dangerously_allow_html=True)
+        return html.Div(marked, id={"type": "answer-body", "idx": idx})
+    body = dcc.Markdown(content, className=className) if className else dcc.Markdown(content)
     return html.Div(
         [
             html.Div(
@@ -675,7 +679,11 @@ def reads_beside_the_prose(evidence) -> bool:
     contains a table (a chart view hides one behind its Chart/Data switch), so
     "is this a table panel?" is not a question the rendered markup can answer.
     """
-    return any(getattr(view, "has_chart", False) for view in (evidence or []))
+    # The FIRST view decides: it is the one on screen. A position table leading
+    # a panel of charts needs the full width as much as a lone table does — at
+    # half width its share and rank columns were cut off.
+    views = list(evidence or [])
+    return bool(views) and bool(getattr(views[0], "has_chart", False))
 
 
 def _reading_area(head, prose, views, *, beside: bool = True):
@@ -776,7 +784,7 @@ def command_menu():
 
 
 def composer_hints():
-    """Under the composer: the keys that make it fast, and one honest note."""
+    """Under the composer: the keys that make it fast, and the standing caveat."""
     def key(label: str, text: str):
         return html.Span([html.Kbd(label), text])
 
@@ -787,7 +795,7 @@ def composer_hints():
                  key("/", "commands"), key("Ctrl + K", "focus")],
                 className="composer-hints-keys",
             ),
-            html.Span("Answers are computed from the governed ICG data.",
+            html.Span("Virtual Analyst can make mistakes. Verify important figures.",
                       className="composer-hints-note"),
         ],
         className="composer-hints",

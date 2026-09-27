@@ -41,7 +41,7 @@ BRIEF_CLAIMS = 20
 #: How many figures ride along as raw material for a table. Generous, because a
 #: product-line table is exactly the "missing information" a claim list cannot
 #: carry; capped, because a brief is not a data dump.
-BRIEF_FIGURES = 80
+BRIEF_FIGURES = 200
 
 # A line that is already structure — a heading, a bullet, a numbered point, a
 # table row, a quote, a fence — is kept or dropped whole; only a prose paragraph

@@ -115,8 +115,8 @@ def test_the_table_carries_every_column_the_reader_asked_for(pack):
     # standing — in that order. The movement has a column of its own so that
     # every figure in the table stays a sortable number.
     assert list(row) == [
-        pack.heading, P.MARSH_PREMIUM, P.CARRIER_PREMIUM, P.MOVEMENT_PERCENT,
-        P.SHARE_OF_WALLET, P.SHARE_OF_PORTFOLIO, P.RANK, P.RANK_FIELD,
+        pack.heading, P.CARRIER_PREMIUM, P.MARSH_PREMIUM, P.MOVEMENT_PERCENT,
+        P.RANK, P.SHARE_OF_PORTFOLIO, P.SHARE_OF_WALLET, P.RANK_FIELD,
     ]
 
 

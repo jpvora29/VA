@@ -540,7 +540,7 @@ def _pie(fig: go.Figure, df: pd.DataFrame, spec: _Spec, *, hole: float) -> None:
     if hole > 0:
         total = grouped[ycol].sum()
         fig.add_annotation(
-            text=f"<b>{_format_number(total)}</b><br>{_pretty(ycol)}",
+            text=f"<b>{format_value(total, measure_unit(spec))}</b><br>{_pretty(ycol)}",
             x=0.5, y=0.5, showarrow=False, font=dict(size=15, color="#001538"),
         )
 
@@ -983,6 +983,84 @@ def _spans_zero(df, columns) -> bool:
     return negative and positive
 
 
+# ── Bubble: two shares and a size ─────────────────────────────────────────────
+
+
+def bubble_figure(df: pd.DataFrame, raw: Dict[str, Any]) -> Optional[go.Figure]:
+    """Share of portfolio (x) against share of wallet (y), bubble = premium.
+
+    Built outside the bar/line pipeline because it is a different kind of
+    chart: two measures on the axes, a third as area, a label on every point,
+    and colour by market. Dashed lines at the averages split it into the four
+    readings an analyst uses — core franchise (top right), under-held big line
+    (bottom right), niche strength (top left), marginal (bottom left).
+    """
+    x = str(raw.get("x") or "")
+    y = str((raw.get("y") or [""])[0])
+    size = str(raw.get("size") or "")
+    text = str(raw.get("text") or "")
+    series = str((raw.get("series") or [""])[0] or "")
+    needed = [c for c in (x, y, size) if c]
+    if len(needed) < 3 or any(c not in df.columns for c in needed):
+        return None
+    frame = df.copy()
+    for column in needed:
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    frame = frame.dropna(subset=needed)
+    frame = frame[frame[size] > 0]
+    if len(frame) < 2:
+        return None
+    sizeref = 2.0 * float(frame[size].max()) / (44.0 ** 2)
+    groups = list(frame.groupby(series, sort=False)) if series in frame.columns else [("", frame)]
+    fig = go.Figure()
+    for index, (name, sub) in enumerate(groups):
+        colour = ColorPalette.color_for(index) if series else CURRENT_COLOR
+        labels = sub[text].astype(str) if text in sub.columns else None
+        fig.add_trace(go.Scatter(
+            x=sub[x], y=sub[y], mode="markers+text" if labels is not None else "markers",
+            name=str(name) if series else _pretty(size),
+            text=labels, textposition="top center",
+            textfont=dict(size=10.5, color=_INK),
+            customdata=sub[[size]].values,
+            marker=dict(size=sub[size], sizemode="area", sizeref=sizeref, sizemin=7,
+                        color=colour, opacity=0.72, line=dict(color="white", width=1.5)),
+            hovertemplate=("<b>%{text}</b><br>" + _pretty(x) + ": %{x:.1f}%<br>"
+                           + _pretty(y) + ": %{y:.1f}%<br>Premium: $%{customdata[0]:,.3~s}"
+                           + "<extra>%{fullData.name}</extra>"),
+        ))
+    mean_x, mean_y = float(frame[x].mean()), float(frame[y].mean())
+    for kind, value in (("x", mean_x), ("y", mean_y)):
+        fig.add_shape(type="line", xref="x" if kind == "x" else "paper",
+                      yref="paper" if kind == "x" else "y",
+                      x0=value if kind == "x" else 0, x1=value if kind == "x" else 1,
+                      y0=0 if kind == "x" else value, y1=1 if kind == "x" else value,
+                      line=dict(color=_ZERO_LINE, width=1, dash="dash"))
+    fig.update_layout(
+        template="plotly_white",
+        title=dict(text=_clean_title(_Spec(chart_type="bubble", x=x, y=[y],
+                                           title=str(raw.get("title") or ""))),
+                   x=0.02, xanchor="left", y=1.0, yanchor="top", yref="container",
+                   pad=dict(t=12), font=dict(size=14.5, color=_TITLE_INK, family=_FONT_FAMILY)),
+        font=dict(family=_FONT_FAMILY, size=12.5, color=_INK),
+        paper_bgcolor="white", plot_bgcolor="white",
+        margin=dict(l=8, r=24, t=64 if series else 56, b=48),
+        showlegend=bool(series),
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0,
+                    font=dict(size=11), itemsizing="constant"),
+        hoverlabel=dict(bgcolor="white", font_size=12, font_family=_FONT_FAMILY,
+                        bordercolor=_AXIS_LINE),
+    )
+    fig.update_xaxes(title=dict(text=str(raw.get("x_title") or _pretty(x)),
+                                font=dict(size=12, color="#5A6B82")),
+                     ticksuffix="%", showgrid=True, gridcolor=_GRID, griddash="dot",
+                     zeroline=False, tickfont=dict(size=11, color=_TICK_INK), automargin=True)
+    fig.update_yaxes(title=dict(text=str(raw.get("y_title") or _pretty(y)),
+                                font=dict(size=12, color="#5A6B82")),
+                     ticksuffix="%", showgrid=True, gridcolor=_GRID, griddash="dot",
+                     zeroline=False, tickfont=dict(size=11, color=_TICK_INK), automargin=True)
+    return fig
+
+
 # ───── PUBLIC API ───────────────────────────────────────────────────────────
 
 
@@ -1002,6 +1080,10 @@ def generate_chart(
 
         if not isinstance(df, pd.DataFrame):
             df = pd.DataFrame(df or [])
+
+        if str(raw.get("chart_type") or "").strip().lower() == "bubble":
+            figure = bubble_figure(df, raw)
+            return (figure, "Successful") if figure is not None else (None, "Underlying data")
 
         # Pre-render critic: repair field roles / orientation / type against the
         # FULL result frame (the sanitizer below drops unreferenced columns).

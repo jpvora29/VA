@@ -91,8 +91,8 @@ RANK_FIELD = "Carriers"
 #: Columns the DISPLAY table shows, in order. `COLUMNS` remains the set of
 #: measures the claim layer names; this is the reader's table.
 DISPLAY_COLUMNS: Tuple[str, ...] = (
-    SLICE, MARSH_PREMIUM, CARRIER_PREMIUM, MOVEMENT_PERCENT,
-    SHARE_OF_WALLET, SHARE_OF_PORTFOLIO, RANK, RANK_FIELD,
+    SLICE, CARRIER_PREMIUM, MARSH_PREMIUM, MOVEMENT_PERCENT,
+    RANK, SHARE_OF_PORTFOLIO, SHARE_OF_WALLET, RANK_FIELD,
 )
 
 #: How each column is rendered and compared. The UI needs one fact about a column
@@ -353,6 +353,10 @@ class PositioningPack:
                     row[column] = value
             if position.rank is not None:
                 row[RANK] = position.rank
+            if position.rank_of is not None:
+                # The field size, so "rank #3 of 12" is a figure the writer
+                # may quote rather than one the number check deletes.
+                row[RANK_FIELD] = position.rank_of
             # The prior period rides along unlabelled. `rows()` is what a reader
             # sees; this is what the claim layer rebuilds from, and a movement
             # cannot be rebuilt from a current value alone.
@@ -383,14 +387,18 @@ def _row(position: SlicePosition, dimension: str, *, scale: float = 1.0) -> Dict
     thing — true, and it cost the column its ordering, because a cell holding two
     numbers and a direction glyph is a string. It gets a column of its own.
     """
+    # Column order is the reader's order (`DISPLAY_COLUMNS`): what the carrier
+    # wrote, the book it wrote it in, how it moved, where it ranks, then the two
+    # shares — portfolio (how much of the carrier) before wallet (how much of
+    # Marsh's line).
     return {
         slice_heading(dimension): position.slice,
-        MARSH_PREMIUM: _scaled(position.marsh_premium, scale),
         CARRIER_PREMIUM: _scaled(position.carrier_premium, scale),
+        MARSH_PREMIUM: _scaled(position.marsh_premium, scale),
         MOVEMENT_PERCENT: position.premium_change_percent,
-        SHARE_OF_WALLET: _rounded(position.share_of_wallet),
-        SHARE_OF_PORTFOLIO: _rounded(position.share_of_portfolio),
         RANK: position.rank,
+        SHARE_OF_PORTFOLIO: _rounded(position.share_of_portfolio),
+        SHARE_OF_WALLET: _rounded(position.share_of_wallet),
         RANK_FIELD: position.rank_of,
     }
 

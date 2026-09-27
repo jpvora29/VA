@@ -413,3 +413,119 @@ def test_reopening_a_chat_does_not_rewrite_it(repository):
     with repository.app_engine.connect() as conn:
         after = conn.execute(select(conversations.c.updated_at)).scalar_one()
     assert before == after
+
+
+# ── round 2: markets, subject, charts, deltas, table formats ─────────────────
+
+
+from core.analytics.markets import best_match, market_scopes, resolve_subject  # noqa: E402
+
+
+def test_one_carrier_filter_is_the_subject():
+    subject, scope = resolve_subject({"Carrier_Group": ["GENERALI"], "Country": "Singapore"})
+    assert subject == "GENERALI" and scope["Carrier_Group"] == ["GENERALI"]
+
+
+def test_several_matching_carriers_narrow_to_the_one_named():
+    subject, scope = resolve_subject(
+        {"Carrier_Group": ["GENERALI GLOBAL CORPORATE", "GENERALI"]}, ["Generali"])
+    assert subject == "GENERALI" and scope["Carrier_Group"] == "GENERALI"
+
+
+def test_a_carrier_only_mentioned_is_matched_and_added():
+    subject, scope = resolve_subject({"Country": "Singapore"}, ["Generali"],
+                                     matcher=lambda f, c, t: ["GENERALI"])
+    assert subject == "GENERALI" and scope["Carrier_Group"] == "GENERALI"
+
+
+def test_no_carrier_at_all_is_a_market_question():
+    assert resolve_subject({"Country": "Singapore"})[0] == ""
+
+
+def test_best_match_prefers_the_named_whole_word_then_the_shortest():
+    assert best_match(["AXA XL", "AXA"], ["AXA"]) == "AXA"
+
+
+def test_each_named_country_gets_its_own_scope():
+    scopes = market_scopes({"Country": ["Singapore", "Hong Kong"], "Year": 2025})
+    assert [(m, s["Country"]) for m, s in scopes] == [("Singapore", "Singapore"),
+                                                      ("Hong Kong", "Hong Kong")]
+    assert market_scopes({"Country": "Singapore"}) == [("", {"Country": "Singapore"})]
+
+
+def _pack(subject="GENERALI", scale=1.0):
+    from core.analytics.positioning import PositioningPack, SlicePosition
+
+    return PositioningPack(tuple(
+        SlicePosition(name, carrier_premium=v * scale, marsh_premium=v * 3,
+                      share_of_wallet=w, share_of_portfolio=p, rank=2, rank_of=5,
+                      prior_premium=v * 0.9)
+        for name, v, w, p in (("Property", 4e6, 31.6, 41.5), ("Casualty", 3e6, 34.4, 30.7),
+                              ("Marine", 2e6, 37.0, 18.5), ("Cyber", 1e6, 25.0, 9.3))
+    ), "Product_Line", (), subject)
+
+
+def test_a_multi_market_question_gets_market_charts_not_pooled_ones():
+    from core.answers.chart_plan import build_chart_plan
+
+    markets = [("Singapore", _pack()), ("Hong Kong", _pack(scale=0.6))]
+    rows = [{"Quarter": "Q1", "Singapore": 1.0, "Hong Kong": 0.5},
+            {"Quarter": "Q2", "Singapore": 1.2, "Hong Kong": 0.6}]
+    plan = build_chart_plan(_pack(), scope={"Year": 2025}, markets=markets,
+                            market_quarterly_rows=rows)
+    assert [(c.key, c.chart_type) for c in plan] == [
+        ("market_compare", "bar"), ("market_quarterly", "line"), ("position_map", "bubble")]
+    bubble = plan[-1]
+    assert bubble.series == ("Market",) and {r["Market"] for r in bubble.rows} == {"Singapore", "Hong Kong"}
+
+
+def test_the_position_map_draws_as_sized_labelled_bubbles():
+    from core.answers.chart_plan import ChartInputs, position_map
+
+    view = position_map(ChartInputs(pack=_pack())).as_view()
+    frame = pd.DataFrame(view["rows"])
+    figure, _ = generate_chart(frame, view["chart_data"])
+    trace = figure.data[0]
+    assert trace.mode == "markers+text" and list(trace.text) == ["Property", "Casualty", "Marine", "Cyber"]
+    assert figure.layout.xaxis.ticksuffix == "%"
+
+
+def test_market_claims_are_kept_apart_and_named():
+    from core.answers.grounded import AnswerRequest, compose_answer
+
+    evidence = tuple(
+        {"flow": "gpr", "lens": "positioning", "sql": "-- p",
+         "rows": [{"Country": market, **row} for row in pack.numeric_rows()]}
+        for market, pack in (("Singapore", _pack()), ("Hong Kong", _pack(scale=0.6)))
+    )
+    answer = compose_answer(AnswerRequest("How is Generali performing?", evidence))
+    assert "### Singapore" in answer.text and "### Hong Kong" in answer.text
+
+
+def test_signed_changes_become_coloured_arrows():
+    from ui.components.deltas import mark_deltas
+
+    out = mark_deltas("- Property ▲ 14.2% and Marine -$20 (-33.3%) over 2024-2025\n|---:|\nx < y")
+    assert out.count("delta-up") == 1 and out.count("delta-down") == 2
+    assert "2024-2025" in out and "|---:|" in out and "&lt;" in out
+    assert out.startswith("- Property")
+
+
+def test_untyped_columns_are_formatted_by_what_they_hold():
+    from ui.components import evidence as ev
+
+    assert ev.inferred_kind("Premium", [12_345_678.9]) == ev.P.MONEY_MILLIONS
+    assert ev.inferred_kind("Premium", [940_000.0]) == ev.MONEY_WHOLE
+    assert ev.inferred_kind("Share_of_Wallet", [0.195]) == ev.PERCENT_FRACTION
+    assert ev.inferred_kind("YoY_%", [12.34]) == ev.P.PERCENT
+    assert ev.inferred_kind("Year", [2024.0]) == ev.NUMBER
+    assert ev.inferred_kind("Score", [3.456]) == ev.DECIMAL
+
+
+def test_new_figures_have_one_decimal_and_old_records_replay_at_two():
+    from core.answers.facts import figure_precision, format_value as render
+
+    assert render(54.5454, "percent") == "54.5%"
+    assert render(1_254_000, "currency") == "$1.3m"
+    with figure_precision(2):
+        assert render(54.5454, "percent") == "54.55%"

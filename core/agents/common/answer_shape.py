@@ -115,6 +115,27 @@ _MEASURES = """[NAME MEASURES THE WAY THE BUSINESS DOES]
   repeating them."""
 
 
+# Applies to every analytical shape. The reported gap: a performance answer
+# talked about the timeline and never said how each product line stood — the
+# per-line premium, movement, rank and shares were in the evidence and unused.
+_BY_LINE = """[BY PRODUCT — whenever the brief holds per-line positions]
+- When `figures_you_may_quote` carries premium, movement, rank, share of
+  portfolio or share of wallet per product line (per industry when the question
+  fixed a product), include a group headed "### By product" (or "### By
+  industry"): one point per line, largest first, at most six, in this form:
+  **Property** — $8.2M ▲ 14.2% · rank #3 of 12 · 41.5% of the book · 12.5% share
+  of wallet — then one clause on what it means.
+- Put ▲ before a rise and ▼ before a fall ("▲ 14.2%", "▼ $1.3M"). Never a
+  sign AND an arrow; never an arrow on a level that did not move.
+- When the question named several markets, keep them apart — a "### Singapore"
+  group per market, or the market leading each point. Never add markets
+  together unless the brief gives the total.
+
+[NUMBERS]
+- Every percentage, and every money figure in millions, with ONE decimal:
+  "$8.2M", "41.5%", "▲ 3.0pp". Copy the brief's figure, rounded to one decimal."""
+
+
 @dataclass(frozen=True)
 class AnswerShape:
     """One way of answering, and the phrasings that call for it.
@@ -443,6 +464,7 @@ def shape_contract(key: Optional[str]) -> str:
         blocks.append(_TABLES)
     if shape.is_scannable:
         blocks.append(_SCANNABLE)
+        blocks.append(_BY_LINE)
     blocks += [_MEASURES, _VARIETY, _CONFIDENTIALITY]
     return "\n\n".join(blocks)
 

@@ -210,8 +210,11 @@ def test_a_tampered_ledger_is_rejected_even_when_the_prose_is_clean():
 
 
 def test_records_written_before_narration_still_verify_unchanged():
-    plain = compose_answer(AnswerRequest(QUESTION, growth_evidence()))
-    # A v3 record stored the ledger verbatim as its content.
+    from core.answers.facts import figure_precision
+
+    # A v3 record was written at two decimals and stored the ledger verbatim.
+    with figure_precision(2):
+        plain = compose_answer(AnswerRequest(QUESTION, growth_evidence()))
     record = dict(plain.as_dict(), version=3, content=plain.ledger)
     record.pop("ledger"), record.pop("narrated")
     assert validate_record(record, plain.ledger, growth_evidence())
@@ -335,7 +338,7 @@ def test_a_figure_no_claim_cites_can_still_be_quoted_and_still_verifies():
     plain = compose_answer(AnswerRequest(QUESTION, evidence))
     assert "64" not in {f.rendered for f in plain.facts}   # no claim states it
 
-    written = "Chubb's premium grew 26.21%, and underwriting scores 64 with the brokers."
+    written = "Chubb's premium grew 26.2%, and underwriting scores 64 with the brokers."
     answer, _ = narrated(written, evidence=evidence)
     assert answer.narrated and "64" in answer.text
     assert validate_record(answer.as_dict(), answer.text, evidence)

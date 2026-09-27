@@ -21,7 +21,7 @@ so concurrent writes merge safely. Dependency-bound steps run serially in
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
@@ -29,6 +29,7 @@ from typing_extensions import Annotated, TypedDict
 
 from core.agents.analyst.chart_picker import ChartFocus, pick_charts
 from core.analytics.dimensions import choose_dimension, pinned_columns
+from core.analytics.markets import build_market_positions, carrier_mentions, resolve_subject
 from core.analytics.positioning import build_positioning_comparison
 from core.analytics.tools.scope import pin_latest_year
 from core.answers.chart_plan import TABLE, is_chart
@@ -644,11 +645,12 @@ def positioning_node(state: AnalystState) -> dict:
         return {}
 
     scope = positioning_scope(state)
-    # A question that names no carrier still deserves a table — it is a question
-    # about the market, and the pack drops the carrier-specific columns for it
-    # (see `PositioningPack.is_market_view`). Only the columns change, not
-    # whether the reader gets one.
-    subject = _subject_carrier(state, scope)
+    # The carrier the table is about. A question that names none still deserves
+    # a table — it is about the market, and the pack drops the carrier columns
+    # (see `PositioningPack.is_market_view`). A question that DOES name one must
+    # never fall into that view: several matching spellings, or a carrier only
+    # mentioned, used to leave the table with Marsh's figures and nothing else.
+    subject, scope = _subject_carrier(state, scope)
 
     dimension = positioning_dimension(state, scope)
     if not dimension:
@@ -658,15 +660,16 @@ def positioning_node(state: AnalystState) -> dict:
                   scope=sorted(scope))
         return {}
 
-    try:
-        pack = build_positioning_comparison(
-            dimension=dimension, filters=scope, subject=subject
-        )
-    except Exception as exc:  # noqa: BLE001 - positioning is additive, never fatal
+    # One table per market. Three countries summed into one table is a figure
+    # nobody asked for — each market is its own position.
+    def failed(market: str, exc: Exception) -> None:
         log_event(logger, "positioning_failed", logging.WARNING,
-                  node="analyst_positioning", route=state["route"], error=str(exc))
-        return {}
-    if not pack:
+                  node="analyst_positioning", route=state["route"],
+                  market=market, error=str(exc))
+
+    packs = build_market_positions(scope, dimension=dimension, subject=subject,
+                                   on_error=failed, build=build_positioning_comparison)
+    if not packs:
         # The queries ran and returned nothing usable. Silent until now, which is
         # why a missing table was impossible to diagnose from the outside: the
         # reader saw no table and no reason, and neither did the log.
@@ -677,55 +680,96 @@ def positioning_node(state: AnalystState) -> dict:
                   reason="no slice returned a figure for this scope")
         return {}
 
-    record = build_evidence(
-        flow="gpr",
-        rows=pack.numeric_rows(),
-        lens=POSITIONING_LENS,
-        tool="build_positioning",
-        parameters={"dimension": pack.dimension, "subject": subject},
-        requested_scope=scope,
-        actual_scope=scope,
-        metric="premium",
-    )
-    plan = _chart_plan_for(state, pack, scope)
-    if pack.missing:
+    records = [
+        build_evidence(
+            flow="gpr",
+            rows=_with_market(pack.numeric_rows(), market),
+            lens=POSITIONING_LENS,
+            tool="build_positioning",
+            parameters={"dimension": pack.dimension, "subject": subject, "market": market},
+            requested_scope=market_scope,
+            actual_scope=market_scope,
+            metric="premium",
+        )
+        for market, pack, market_scope in packs
+    ]
+    plan = chart_views_for(packs, scope, question=state["question"],
+                           route=state.get("route", ""))
+    missing = sorted({column for _, pack, _ in packs for column in pack.missing})
+    if missing:
         log_event(logger, "positioning_partial", logging.WARNING,
                   node="analyst_positioning", route=state["route"],
-                  missing=list(pack.missing),
+                  missing=missing,
                   reason="these columns could not be computed for this warehouse")
     log_event(logger, "positioning_gathered", node="analyst_positioning",
-              route=state["route"], slices=len(pack.positions),
-              dimension=pack.dimension, subject=subject or "(market)",
-              missing=list(pack.missing), charts=[spec.get("tab") for spec in plan])
-    return {"evidence": [record], "chart_plan": plan}
+              route=state["route"], markets=[m or "(one)" for m, _, _ in packs],
+              slices=sum(len(p.positions) for _, p, _ in packs),
+              dimension=dimension, subject=subject or "(market)",
+              missing=missing, charts=[spec.get("tab") for spec in plan])
+    return {"evidence": records, "chart_plan": plan}
 
 
-def _chart_plan_for(state: AnalystState, pack, scope: dict) -> List[dict]:
+def _with_market(rows: List[dict], market: str) -> List[dict]:
+    """Stamp each row with its market, so a fact names the country it is about."""
+    if not market:
+        return rows
+    return [{"Country": market, **row} for row in rows]
+
+
+def _quarterly_for(scope: dict, *, route: str = "", engine: Any = None) -> List[dict]:
+    """{Quarter, <prior year>, <year>} rows for one scope; [] when unavailable."""
+    from core.analytics.movement import compute_aligned_periods
+    from core.analytics.types import PrimitiveArgs
+    from core.answers.chart_plan import quarterly_rows_from
+
+    try:
+        facts = compute_aligned_periods(
+            PrimitiveArgs(flow="gpr", metric="premium", filters=scope), engine=engine
+        )
+        if not facts:
+            return []
+        dims = facts[0].dims
+        return quarterly_rows_from(
+            facts,
+            current_year=int(dims.get("year")),
+            prior_year=int(dims.get("prior_year")),
+        )
+    except Exception as exc:  # noqa: BLE001 - a missing chart never costs the answer
+        log_event(logger, "quarterly_chart_unavailable", logging.WARNING,
+                  node="analyst_positioning", route=route, error=str(exc))
+        return []
+
+
+def _market_quarters(per_market: List[tuple]) -> List[dict]:
+    """{Quarter, <market>: current-year premium} — one line per market."""
+    by_quarter: dict = {}
+    for market, rows in per_market:
+        for row in rows:
+            years = sorted(k for k in row if str(k).isdigit())
+            if not years:
+                continue
+            quarter = row.get("Quarter")
+            by_quarter.setdefault(quarter, {"Quarter": quarter})[market] = row[years[-1]]
+    return [by_quarter[q] for q in sorted(by_quarter, key=str)]
+
+
+def chart_views_for(packs: List[tuple], scope: dict, *, question: str, route: str = "",
+                    engine: Any = None) -> List[dict]:
     """The charts this answer should carry, as renderable views.
 
     The quarterly pair is fetched here rather than reused from the solvers'
     evidence because the chart needs the two years side by side as columns, and
-    a solver's rows are whatever shape its query returned.
+    a solver's rows are whatever shape its query returned. `packs` is one
+    (market, pack, scope) per market; a single-market question has one, unnamed.
     """
-    from core.analytics.movement import compute_aligned_periods, resolve_year_pair
-    from core.analytics.types import PrimitiveArgs
-    from core.answers.chart_plan import build_chart_plan, quarterly_rows_from
+    from core.answers.chart_plan import build_chart_plan
 
-    quarterly: List[dict] = []
-    try:
-        facts = compute_aligned_periods(
-            PrimitiveArgs(flow="gpr", metric="premium", filters=scope)
-        )
-        if facts:
-            dims = facts[0].dims
-            quarterly = quarterly_rows_from(
-                facts,
-                current_year=int(dims.get("year")),
-                prior_year=int(dims.get("prior_year")),
-            )
-    except Exception as exc:  # noqa: BLE001 - a missing chart never costs the answer
-        log_event(logger, "quarterly_chart_unavailable", logging.WARNING,
-                  node="analyst_positioning", route=state["route"], error=str(exc))
+    multi = len(packs) > 1
+    quarterly = [] if multi else _quarterly_for(packs[0][2], route=route, engine=engine)
+    market_rows = (
+        _market_quarters([(m, _quarterly_for(s, route=route, engine=engine)) for m, _, s in packs])
+        if multi else []
+    )
 
     # The OPERATION decides which charts lead: a movement question opens on the
     # waterfall, a position request on premium by line. Read off the question by
@@ -734,22 +778,26 @@ def _chart_plan_for(state: AnalystState, pack, scope: dict) -> List[dict]:
     views = [
         spec.as_view()
         for spec in build_chart_plan(
-            pack,
+            packs[0][1],
             quarterly_rows=quarterly,
             scope=scope,
-            operation=detect_operation(state["question"]),
+            operation=detect_operation(question),
+            markets=[(m, p) for m, p, _ in packs] if multi else (),
+            market_quarterly_rows=market_rows,
         )
     ]
     # The positioning table is a VIEW, not only an input to the commentary. It
     # was being computed, feeding the claims, and then never rendered: the panel
     # is built from this list alone, so a result set that is not in it does not
     # reach the reader however carefully it was assembled.
-    # The table leads. It is the evidence every sentence above it was written
-    # from, so it is what a reader checks first; a chart is the illustration.
-    return [_positioning_view(pack, scope), *views]
+    # The tables lead — one per market. They are the evidence every sentence
+    # above them was written from, so they are what a reader checks first.
+    tables = [_positioning_view(pack, market_scope, market=market)
+              for market, pack, market_scope in packs]
+    return [*tables, *views]
 
 
-def _positioning_view(pack, scope: dict) -> dict:
+def _positioning_view(pack, scope: dict, *, market: str = "") -> dict:
     """The positioning table as a table-only view (no chart spec, so rows render).
 
     Declares its `kind` rather than leaving `chart_data` empty and letting every
@@ -763,8 +811,9 @@ def _positioning_view(pack, scope: dict) -> dict:
     unit = pack.money_suffix()
     return {
         "kind": TABLE,
-        "tab": "Position",
-        "title": f"Position by {level}{describe_scope(scope, pack.dimension)}",
+        "tab": market or "Position",
+        "title": f"Position by {level}{describe_scope(scope, pack.dimension)}"
+                 + (f" — {market}" if market else ""),
         "rows": pack.rows(),
         "chart_data": {},
         "lens": "positioning",
@@ -776,16 +825,25 @@ def _positioning_view(pack, scope: dict) -> dict:
     }
 
 
-def _subject_carrier(state: AnalystState, scope: dict) -> str:
-    """The carrier the answer is about, from the turn's resolved filters."""
-    from core.registry import get_flow_registry
+def _subject_carrier(state: AnalystState, scope: dict) -> tuple:
+    """(carrier the answer is about, scope narrowed to it).
 
-    spec = get_flow_registry().get("gpr")
-    column = (getattr(spec, "entity_columns", {}) or {}).get("carrier") if spec else None
-    value = scope.get(column) if column else None
-    if isinstance(value, (list, tuple)):
-        value = value[0] if len(value) == 1 else None
-    return str(value) if value else ""
+    See `core.analytics.markets.resolve_subject`: one carrier filter is the
+    subject; several are narrowed to the one the user named; a carrier only
+    MENTIONED is matched against the stored values and added to the scope.
+    """
+    def matcher(flow: str, column: str, term: str) -> List[str]:
+        from core.mcp.tools import match_column_values
+
+        return list(match_column_values(flow, column, term, top_n=3, score_cutoff=80) or [])
+
+    mentions = carrier_mentions(state.get("routing_context"))
+    subject, narrowed = resolve_subject(scope, mentions, flow="gpr", matcher=matcher)
+    if narrowed != scope:
+        log_event(logger, "positioning_subject_resolved", node="analyst_positioning",
+                  route=state.get("route", ""), subject=subject, mentions=mentions,
+                  reason="the question named a carrier the scope held ambiguously or not at all")
+    return subject, narrowed
 
 
 def writer_node(state: AnalystState) -> dict:

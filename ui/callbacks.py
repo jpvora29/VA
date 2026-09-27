@@ -169,6 +169,12 @@ clientside_callback(
         if (!el) {
             return window.dash_clientside.no_update;
         }
+        // An empty chat is read from the greeting down, never from its bottom.
+        if (el.querySelector && el.querySelector('#chat-box .welcome-hero')) {
+            el.__chatThread = (cursor || {}).thread_id || null;
+            requestAnimationFrame(() => { el.scrollTop = 0; });
+            return window.dash_clientside.no_update;
+        }
         // One-time: track whether the user is pinned to the bottom. Once they
         // scroll up we stop auto-following the live stream so they can read
         // earlier messages while the answer keeps generating; returning near the

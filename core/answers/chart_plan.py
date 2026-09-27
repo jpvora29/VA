@@ -46,7 +46,7 @@ from core.analytics.positioning import CARRIER_PREMIUM, MARSH_PREMIUM, Positioni
 
 #: At most this many charts. Three is what fits a column beside the prose without
 #: the reader scrolling the panel; a fourth is always the least useful one.
-MAX_CHARTS = 3
+MAX_CHARTS = 4
 
 #: What a view IS, as opposed to what it shows. The position table and a bar chart
 #: both travel to the renderer down the same channel, and until this existed the
@@ -82,6 +82,9 @@ class ChartSpec:
     #: Two or three words for the tab. The full title says what the chart shows
     #: and is too long to sit in a tab strip; the tab says which chart it is.
     tab: str = ""
+    #: Bubble charts only: the column sizing each bubble and the one labelling it.
+    size: str = ""
+    text: str = ""
 
     def as_view(self) -> Dict[str, Any]:
         """The shape `ui.evidence.build_views` already consumes."""
@@ -98,6 +101,9 @@ class ChartSpec:
                 "title": self.title,
                 "x_title": self.x_title,
                 "y_title": self.y_title,
+                "planned": True,
+                **({"size": self.size} if self.size else {}),
+                **({"text": self.text} if self.text else {}),
             },
         }
 
@@ -313,6 +319,151 @@ def wallet_chart(
     )
 
 
+MARKET_AXIS = "Market"
+SOP_AXIS = "Share of portfolio (%)"
+SOW_AXIS = "Share of wallet (%)"
+BUBBLE_SIZE = "Carrier premium"
+
+
+def _markets_or_single(inputs: "ChartInputs") -> List[Tuple[str, PositioningPack]]:
+    if inputs.markets:
+        return [(name, pack) for name, pack in inputs.markets if pack]
+    return [("", inputs.pack)] if inputs.pack else []
+
+
+def position_map(inputs: "ChartInputs") -> Optional[ChartSpec]:
+    """Where each line sits: share of the carrier's book against share of Marsh's.
+
+    A bubble per product (per market, coloured, when the question named several):
+    right is where the carrier's book is concentrated, up is where it holds the
+    wallet, and the bubble is how much premium is at stake. Top-right is the core
+    franchise; bottom-right is a big line the carrier under-holds — the finding a
+    premium bar chart cannot show.
+    """
+    markets = _markets_or_single(inputs)
+    if not markets or any(pack.is_market_view for _, pack in markets):
+        return None
+    rows = []
+    label = _dimension_label(markets[0][1])
+    for market, pack in markets:
+        for p in pack.positions:
+            if None in (p.share_of_portfolio, p.share_of_wallet, p.carrier_premium):
+                continue
+            if not p.carrier_premium:
+                continue
+            row = {label: p.slice, SOP_AXIS: round(p.share_of_portfolio, 1),
+                   SOW_AXIS: round(p.share_of_wallet, 1), BUBBLE_SIZE: p.carrier_premium}
+            if market:
+                row[MARKET_AXIS] = market
+            rows.append(row)
+    if len(rows) < 3:
+        return None
+    subject = markets[0][1].subject
+    period = _period_label(inputs.scope)
+    return ChartSpec(
+        key="position_map",
+        tab="Position map",
+        title=f"{subject}: share of portfolio vs share of wallet"
+              + (f", {period}" if period else ""),
+        rows=tuple(rows),
+        chart_type="bubble",
+        x=SOP_AXIS,
+        y=(SOW_AXIS,),
+        series=(MARKET_AXIS,) if len(markets) > 1 else (),
+        x_title=SOP_AXIS,
+        y_title=SOW_AXIS,
+        size=BUBBLE_SIZE,
+        text=label,
+    )
+
+
+def mix_chart(inputs: "ChartInputs") -> Optional[ChartSpec]:
+    """The carrier's book by line, as parts of a whole (one market only).
+
+    A donut only when it is honest: three to eight parts of ONE total. More parts
+    than that, or several markets, and bars say it better.
+    """
+    pack = inputs.pack
+    if pack is None or inputs.markets or pack.is_market_view:
+        return None
+    sized = [p for p in pack.positions if p.carrier_premium and p.carrier_premium > 0]
+    if not 3 <= len(sized) <= 8:
+        return None
+    label = _dimension_label(pack)
+    period = _period_label(inputs.scope)
+    return ChartSpec(
+        key="mix",
+        tab="Portfolio mix",
+        title=f"{pack.subject} premium mix by {label.lower()}"
+              + (f", {period}" if period else "") + _where(inputs.scope),
+        rows=tuple({label: p.slice, CARRIER_PREMIUM: p.carrier_premium} for p in sized),
+        chart_type="donut",
+        x=label,
+        y=(CARRIER_PREMIUM,),
+        x_title=label,
+        y_title=CARRIER_PREMIUM,
+    )
+
+
+def market_compare(inputs: "ChartInputs") -> Optional[ChartSpec]:
+    """The markets side by side: this year against last, per country.
+
+    The comparison a multi-market question is asking for, and the one a pooled
+    total hides: one market can fall while the sum grows.
+    """
+    markets = [(m, p) for m, p in _markets_or_single(inputs) if m]
+    if len(markets) < 2:
+        return None
+    market_view = any(p.is_market_view for _, p in markets)
+    year = _period_label(inputs.scope)
+    current = year or "Current"
+    prior = str(int(year) - 1) if year.isdigit() else "Prior year"
+    rows = []
+    for market, pack in markets:
+        now = sum((p.marsh_premium if market_view else p.carrier_premium) or 0.0
+                  for p in pack.positions)
+        before = [p.prior_premium for p in pack.positions if p.prior_premium is not None]
+        row = {MARKET_AXIS: market, current: now}
+        if before and not market_view:
+            row[prior] = sum(before)
+        rows.append(row)
+    y = (prior, current) if all(prior in r for r in rows) else (current,)
+    subject = markets[0][1].subject or "Marsh book"
+    return ChartSpec(
+        key="market_compare",
+        tab="By market",
+        title=f"{subject} premium by market" + (f", {prior} vs {current}" if len(y) == 2 else ""),
+        rows=tuple(rows),
+        chart_type="bar",
+        x=MARKET_AXIS,
+        y=y,
+        x_title=MARKET_AXIS,
+        y_title=PREMIUM_AXIS,
+    )
+
+
+def market_quarterly(inputs: "ChartInputs") -> Optional[ChartSpec]:
+    """Each market's quarters as a line — the timing, market by market."""
+    rows = [dict(r) for r in inputs.market_quarterly_rows or [] if r]
+    if len(rows) < 2:
+        return None
+    markets = [k for k in rows[0] if k != QUARTER_AXIS]
+    if len(markets) < 2:
+        return None
+    year = _period_label(inputs.scope)
+    return ChartSpec(
+        key="market_quarterly",
+        tab="Quarterly",
+        title="Quarterly premium by market" + (f", {year}" if year else ""),
+        rows=tuple(rows),
+        chart_type="line",
+        x=QUARTER_AXIS,
+        y=tuple(markets),
+        x_title=QUARTER_AXIS,
+        y_title=PREMIUM_AXIS,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # The plan
 # --------------------------------------------------------------------------- #
@@ -329,6 +480,11 @@ class ChartInputs:
     pack: Optional[PositioningPack] = None
     quarterly_rows: Sequence[Mapping[str, Any]] = ()
     scope: Mapping[str, Any] = field(default_factory=dict)
+    #: One (market, pack) per country when the question named several. Empty for
+    #: a single-market question, which uses `pack`.
+    markets: Sequence[Tuple[str, PositioningPack]] = ()
+    #: {Quarter, <market>: current-year premium, ...} for the per-market line.
+    market_quarterly_rows: Sequence[Mapping[str, Any]] = ()
 
 
 def _from_pack(
@@ -351,6 +507,10 @@ _CATALOGUE: Mapping[str, Callable[[ChartInputs], Optional[ChartSpec]]] = {
     "quarterly": lambda inputs: quarterly_chart(
         inputs.quarterly_rows, scope=inputs.scope
     ),
+    "position_map": position_map,
+    "mix": mix_chart,
+    "market_compare": market_compare,
+    "market_quarterly": market_quarterly,
 }
 
 #: Which charts matter most, per analytical operation, best first. A key whose
@@ -359,19 +519,25 @@ _CATALOGUE: Mapping[str, Callable[[ChartInputs], Optional[ChartSpec]]] = {
 #: The default is the performance order: it is the richest question, and an
 #: operation with no row here is one the patterns could not name — which is much
 #: more likely to be a performance question than a penetration one.
-_DEFAULT_ORDER: Tuple[str, ...] = ("quarterly", "contribution", "premium", "wallet")
+_DEFAULT_ORDER: Tuple[str, ...] = (
+    "quarterly", "position_map", "contribution", "mix", "premium", "wallet")
 
 _ORDER: Mapping[str, Tuple[str, ...]] = {
-    PERFORMANCE: ("quarterly", "contribution", "premium", "wallet"),
+    PERFORMANCE: ("quarterly", "position_map", "contribution", "mix", "premium", "wallet"),
     # What moved leads; the quarters say when it moved; the sizes say off what base.
-    MOVEMENT: ("contribution", "quarterly", "premium"),
+    MOVEMENT: ("contribution", "quarterly", "position_map", "premium"),
     # The reader asked where the carrier stands. Sizes first, standing beside them.
-    POSITION: ("premium", "wallet", "contribution"),
+    POSITION: ("premium", "position_map", "wallet", "contribution"),
     # Headroom is a share question: where the carrier is thin against a real book.
-    PENETRATION: ("wallet", "premium", "contribution"),
-    # A breakdown asked how premium is spread, which is the premium chart's job.
-    BREAKDOWN: ("premium", "contribution", "wallet"),
+    PENETRATION: ("wallet", "position_map", "premium", "contribution"),
+    # A breakdown asked how premium is spread: the mix first, then the sizes.
+    BREAKDOWN: ("mix", "premium", "contribution", "wallet"),
 }
+
+#: A question naming several markets is, first, a comparison of those markets —
+#: whatever operation it asked for. Single-market charts (which would each
+#: describe ONE country or a pooled total) are not drawn for it.
+_MULTI_MARKET_ORDER: Tuple[str, ...] = ("market_compare", "market_quarterly", "position_map")
 
 
 def chart_order(operation: str) -> Tuple[str, ...]:
@@ -386,6 +552,8 @@ def build_chart_plan(
     scope: Mapping[str, Any] = (),
     operation: str = "",
     limit: int = MAX_CHARTS,
+    markets: Sequence[Tuple[str, PositioningPack]] = (),
+    market_quarterly_rows: Sequence[Mapping[str, Any]] = (),
 ) -> List[ChartSpec]:
     """The charts this answer should carry, most informative first.
 
@@ -394,9 +562,13 @@ def build_chart_plan(
     data is missing is skipped rather than drawn empty, so a thin turn produces
     fewer charts and never a blank one.
     """
-    inputs = ChartInputs(pack=pack, quarterly_rows=quarterly_rows, scope=dict(scope or {}))
+    inputs = ChartInputs(pack=None if markets else pack,
+                         quarterly_rows=() if markets else quarterly_rows,
+                         scope=dict(scope or {}), markets=tuple(markets),
+                         market_quarterly_rows=market_quarterly_rows)
+    order = _MULTI_MARKET_ORDER if markets else chart_order(operation)
     drawn = (
-        _CATALOGUE[key](inputs) for key in chart_order(operation) if key in _CATALOGUE
+        _CATALOGUE[key](inputs) for key in order if key in _CATALOGUE
     )
     return [spec for spec in drawn if spec is not None][:limit]
 

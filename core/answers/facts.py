@@ -5,6 +5,9 @@ matching alone is deliberately not a substitute for this identity.
 """
 from __future__ import annotations
 
+import contextvars
+from contextlib import contextmanager
+from typing import Iterator
 import hashlib
 import json
 import math
@@ -132,13 +135,35 @@ def metric_unit(metric: str, declared: str = "") -> str:
     return "number"
 
 
+#: Decimals a rendered figure carries. One for every answer written now; two
+#: only while REPLAYING a record written before answer version 5, whose stored
+#: sentences said "54.55%" and must be rebuilt exactly to verify.
+_DECIMALS: contextvars.ContextVar[int] = contextvars.ContextVar("figure_decimals", default=1)
+
+
+@contextmanager
+def figure_precision(decimals: int) -> Iterator[None]:
+    """Render figures at `decimals` places inside the block (record replay)."""
+    token = _DECIMALS.set(decimals)
+    try:
+        yield
+    finally:
+        _DECIMALS.reset(token)
+
+
 def format_value(value: float, unit: str) -> str:
+    """One decimal at most, everywhere a reader sees a figure: "$8.2m", "41.5%".
+
+    Two decimals ("54.55%", "$1.25m") read as false precision in a business
+    answer and were inconsistent with the one-decimal table beside it.
+    """
+    places = _DECIMALS.get()
     if unit == "currency":
         for scale, suffix in ((1e9, "bn"), (1e6, "m"), (1e3, "k")):
             if abs(value) >= scale:
-                return f"${value / scale:,.2f}".rstrip("0").rstrip(".") + suffix
-        return f"${value:,.2f}".rstrip("0").rstrip(".")
-    text = f"{value:,.2f}".rstrip("0").rstrip(".")
+                return f"${value / scale:,.{places}f}".rstrip("0").rstrip(".") + suffix
+        return f"${value:,.{places}f}".rstrip("0").rstrip(".")
+    text = f"{value:,.{places}f}".rstrip("0").rstrip(".")
     return text + {"percent": "%", "percentage_points": " percentage points"}.get(unit, "")
 
 
