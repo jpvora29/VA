@@ -179,9 +179,20 @@ def test_every_filter_sits_together_before_the_timeline():
     form = _rendered(setup_body([], filter_options={}, filter_values={}))
     assert "More filters" not in form
     timeline = form.index("studio-period-basis")
-    for col in ("carrier", "country", "year", "quarter", "product_line", "region",
-                "business_line", "cover_line", "industry", "sub_industry", "client_segment"):
+    for col in ("region", "country", "carrier", "year", "quarter", "product_line",
+                "business_line", "industry", "sub_industry", "client_segment"):
         assert form.index(f'"col": "{col}"') < timeline, col
+
+
+def test_the_filters_run_in_briefing_order_with_reader_labels():
+    form = _rendered(setup_body([], filter_options={}, filter_values={}))
+    order = ("region", "country", "carrier", "year", "quarter", "product_line",
+             "business_line", "industry", "sub_industry", "client_segment")
+    positions = [form.index(f'"col": "{col}"') for col in order]
+    assert positions == sorted(positions)
+    for label in ("Country", "Product", "Sub-product", "Segment"):
+        assert f'"{label}"' in form, label
+    assert '"col": "cover_line"' not in form
 
 
 def test_the_action_bar_says_whether_the_brief_is_ready():

@@ -51,10 +51,6 @@ class KpiCard(BaseModel):
         default="",
         description="Short change/context note, e.g. '-9.2% YoY', '+0.3 vs prior', 'near peer avg'. Empty when there is no comparison.",
     )
-    tone: Tone = Field(
-        default="neutral",
-        description="Sentiment of the metric from the carrier's perspective: 'good' (favourable), 'warn' (caution), 'danger' (adverse), 'neutral'.",
-    )
     icon: str = Field(
         default="bi bi-graph-up",
         description="A Bootstrap-icon class that fits the metric (e.g. 'bi bi-currency-dollar', 'bi bi-trophy', 'bi bi-stars', 'bi bi-pie-chart').",
@@ -72,11 +68,22 @@ class CommentarySection(BaseModel):
 
 
 class RiskItem(BaseModel):
-    """A single risk/watch item rendered as a labelled severity bar."""
+    """A watch item and the measured figure that shows it — never a rating.
 
-    label: str = Field(description="Short risk name, e.g. 'Rank decline'.")
-    severity: str = Field(description="One of 'High', 'Med', 'Low'.")
-    tone: Tone = Field(default="warn", description="Bar colour tone matching the severity.")
+    It used to carry a High/Med/Low severity drawn as a bar. Two readers never
+    agreed what "Med" meant and the label had no number behind it, so the item
+    now states the figure instead.
+    """
+
+    label: str = Field(description="Short risk name, e.g. 'Property premium decline'.")
+    evidence: str = Field(
+        default="",
+        description=(
+            "The measured figure behind the risk, copied from the rows or commentary with its "
+            "comparison, e.g. 'Premium -$3.2M (-14.3% QoQ)' or 'Share of wallet 8.2% -> 7.0%'. "
+            "Never a rating such as High/Medium/Low or a 0-100 score."
+        ),
+    )
 
 
 class InsightCard(BaseModel):
@@ -86,6 +93,14 @@ class InsightCard(BaseModel):
         description="A punchy, self-contained takeaway, e.g. 'Rank dropped 4 places', "
         "'Property drives 62% of premium', 'Cyber whitespace exists'.",
     )
+    figure: str = Field(
+        default="",
+        description=(
+            "The one measured figure that proves the takeaway, copied verbatim from the rows or "
+            "commentary, e.g. '62%', '$3.2M', '#14 of 18'. Empty only when the takeaway states no "
+            "number. Never a score or rating."
+        ),
+    )
     detail: str = Field(
         default="",
         description="One short supporting sentence giving the so-what. May be empty.",
@@ -93,10 +108,6 @@ class InsightCard(BaseModel):
     icon: str = Field(
         default="bi bi-lightbulb",
         description="A Bootstrap-icon class fitting the insight (e.g. 'bi bi-arrow-down-right', 'bi bi-pie-chart', 'bi bi-binoculars').",
-    )
-    tone: Tone = Field(
-        default="neutral",
-        description="Sentiment from the carrier's perspective: good/warn/danger/neutral.",
     )
 
 
@@ -426,15 +437,22 @@ class BoardroomCoreSignature(Signature):
     [OBJECTIVE]
     Produce a `BoardroomCore` a C-suite reader could absorb in seconds:
     - 3-5 KPI cards with the most decision-relevant numbers, each formatted for
-      display and tagged with the correct sentiment tone from the carrier's
-      perspective (a premium decline is 'danger', a rank improvement is 'good').
+      display, with a signed `delta` ('+12% YoY', '-$3.2M QoQ') when a
+      comparison is stated. The first KPI is the headline figure of the board.
     - A single-sentence `headline` stating the bottom line.
     - 2-4 `insights`: polished executive callouts — punchy narrative takeaways
       (e.g. 'Rank dropped 4 places', 'Property drives 62% of premium'), each
-      with a one-line so-what. These are conclusions, not bare metrics.
+      with the `figure` that proves it and a one-line so-what.
     - 1-3 commentary sections (heading + 2-4 crisp bullets) distilled from the
       written analysis.
-    - 0-4 risk items only if the analysis genuinely surfaces risks.
+    - 0-4 risk items only if the analysis genuinely surfaces risks, each with
+      the measured `evidence` that shows it.
+
+    [EVIDENT, NOT INTERPRETED]
+    Every figure on the board is a measure a reader can check: premium in
+    currency, share of wallet, a rank, a percentage change with its basis.
+    Never produce a rating — no High/Medium/Low, no 0-100 score, no
+    "strength" or "priority" number, no good/bad sentiment label.
 
     [NARRATIVE FUNNEL — the board reads top-left to bottom-right]
     Order everything wide → narrow so the dashboard tells one story:
@@ -546,8 +564,9 @@ class BoardroomComparisonSignature(Signature):
     Build the side-by-side Comparison view for a boardroom dashboard. The
     answer compares two or more entities (carrier vs peer set, several
     carriers, or one metric across subjects) — align every metric row's values
-    to the SAME subject order, formatted for display, with optional tones from
-    the subject's perspective. `highlight` = index of the carrier in focus.
+    to the SAME subject order, formatted for display. Leave `tones` empty: the
+    board states figures, not a verdict on them. `highlight` = index of the
+    carrier in focus.
     Individual peers stay aggregated: a 'Peer avg' subject is fine, named peer
     carriers are not. Use ONLY values present in the commentary or rows.
     """

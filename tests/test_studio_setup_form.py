@@ -1133,13 +1133,20 @@ def test_every_flag_says_what_it_is_waiting_for():
             assert flag.label.strip() and flag.label != "Loading…", flag.id
 
 
-def test_the_overlay_never_swallows_a_click():
-    """It is a progress cue, not a modal: a change made while it is up must still land."""
+def test_the_overlay_blocks_the_page_while_it_is_up():
+    """Nothing behind a loader is operable: a filter ticked mid-recalculation used to land
+    against a half-updated form. The overlay takes the pointer; the tracker takes the
+    keyboard and any click on a layer stacked above it."""
     from pathlib import Path
 
     css = Path("assets/studio_authoring.css").read_text(encoding="utf-8")
-    block = css.split(".qs-page-loader {", 1)[1].split("}", 1)[0]
-    assert "pointer-events: none" in block
+    on_block = css.split(".qs-page-loader.is-on {", 1)[1].split("}", 1)[0]
+    assert "pointer-events: auto" in on_block
+
+    js = Path("assets/va_busy.js").read_text(encoding="utf-8")
+    for event in ("keydown", "keyup", "focusin", "pointerdown", "click"):
+        assert f'"{event}"' in js, event
+    assert "capture: true" in js
 
 
 def test_the_overlay_is_shown_by_display_not_by_a_fade():

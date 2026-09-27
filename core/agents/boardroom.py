@@ -35,7 +35,6 @@ from core.boardroom.derive import complete_widget
 from core.llm import Predictor
 from core.observability import log_event
 from core.schemas.boardroom import (
-    BoardroomBattlecardsSignature,
     BoardroomComparisonSignature,
     BoardroomCoreSignature,
     BoardroomDigest,
@@ -77,8 +76,11 @@ _CORE_PREDICTOR = Predictor(
 # plot plotting share of wallet against a broker score (two unrelated measures on
 # one chart - the Product Portfolio Map answers that question properly).
 #
-# Their schemas and renderers stay in the codebase so saved boards still open and
-# the widget library can still add one by hand.
+# Battlecards are retired with them: their strengths, weaknesses and "broker
+# perception" were the model's reading of the data, not measures — Top Carriers and
+# the Comparison table state the same head-to-head in figures.
+#
+# Their schemas and renderers stay in the codebase so saved boards still open.
 _WIDGET_SIGNATURES: Dict[str, Tuple[Any, str]] = {
     "watchlist": (BoardroomWatchlistSignature, "watchlist"),
     "headroom": (BoardroomHeadroomSignature, "headroom"),
@@ -88,7 +90,6 @@ _WIDGET_SIGNATURES: Dict[str, Tuple[Any, str]] = {
     "top_carriers": (BoardroomTopCarriersSignature, "top_carriers"),
     "timeline": (BoardroomTimelineSignature, "timeline"),
     "comparison": (BoardroomComparisonSignature, "comparison"),
-    "battlecards": (BoardroomBattlecardsSignature, "battlecards"),
 }
 
 _WIDGET_PREDICTORS: Dict[str, Tuple[Predictor, str]] = {
@@ -322,8 +323,6 @@ def detect_widget_signals(
     carriers = _distinct_values(row_sets, _CARRIER_COLS)
     if len(carriers) >= 2 or "peer" in (commentary or "").lower():
         signals.add("comparison")
-    if carriers:
-        signals.add("battlecards")
     if has_premium and len(carriers) >= 2:
         signals.add("top_carriers")
     return signals
@@ -464,7 +463,6 @@ def boardroom_node(state: AgentState) -> Dict[str, Any]:
         commentary=core.commentary,
         risks=core.risks,
         comparison=widgets.get("comparison"),
-        battlecards=widgets.get("battlecards") or [],
         timeline=widgets.get("timeline") or [],
         watchlist=widgets.get("watchlist"),
         headroom=widgets.get("headroom"),

@@ -29,19 +29,10 @@ from core.boardroom.money import format_money
 
 _TONES = ("good", "warn", "danger", "neutral")
 
-# Presence states, in the language the board reads them in.
-_STATUS_LABEL = {
-    "no_premium": "No current premium",
-    "low_presence": "Low presence",
-    "established": "Established",
-    "unknown": "",
-}
-_STATUS_TONE = {
-    "no_premium": "warn",
-    "low_presence": "neutral",
-    "established": "good",
-    "unknown": "neutral",
-}
+# The one presence state the figures state outright. "Low presence" and
+# "Established" were the model's reading of a share of wallet with no threshold
+# anyone could see; the share itself is printed on the same row, so they are gone.
+_NO_PREMIUM_LABEL = "No current premium"
 # What replaced the severity label: the list is ordered by money at risk, and it
 # says so where the "why this priority?" drawer used to be.
 _WATCH_ORDER_NOTE = "Ordered by the premium exposed. No severity is assigned — each row states the movement and the periods it was measured over."
@@ -129,11 +120,15 @@ def _to_number(value: Any) -> Optional[float]:
         return None
 
 
-def _status_pill(status: str):
-    label = _STATUS_LABEL.get(status or "unknown", "")
-    if not label:
+def _status_pill(row: Dict[str, Any]):
+    """"No current premium" when the row's carrier premium IS zero — a fact, not a rating.
+
+    Read from the figure rather than from the model's ``status``, so the pill can
+    never disagree with the premium printed beside it.
+    """
+    if _to_number(row.get("carrier_premium_value")) != 0:
         return None
-    return html.Span(label, className=f"bm-x-status {_STATUS_TONE.get(status, 'neutral')}")
+    return html.Span(_NO_PREMIUM_LABEL, className="bm-x-status warn")
 
 
 # ── plotting helpers, shared by the bubble map and the retired positioning plot ──
@@ -296,7 +291,7 @@ def _watch_item(item: Dict[str, Any]):
             if breach
             else None,
         ],
-        className=f"bm-x-row watch {tone(item.get('tone'))}",
+        className=f"bm-x-row watch {_move_tone(item.get('movement_pct')) or 'warn'}",
         **{"data-premium": str(_number(item.get("premium_exposed_value")))},
     )
 
@@ -331,7 +326,7 @@ def _headroom_row(row: Dict[str, Any]):
             html.Div(
                 [
                     html.Span(row.get("product_line", ""), className="bm-x-row-title"),
-                    _status_pill(row.get("status", "unknown")),
+                    _status_pill(row),
                     html.Span(gap, className="bm-x-headline-value", title="Whitespace premium"),
                 ],
                 className="bm-x-row-head",
@@ -410,7 +405,7 @@ def _whitespace_row(row: Dict[str, Any]):
                 [
                     html.Span(row.get("industry", ""), className="bm-x-row-title"),
                     _band_pill(band),
-                    _status_pill(row.get("status", "unknown")),
+                    _status_pill(row),
                     html.Span(gap, className="bm-x-headline-value", title="Whitespace premium"),
                 ],
                 className="bm-x-row-head",
@@ -679,7 +674,7 @@ def _bubble(bubble: Dict[str, Any], *, x_low, x_high, y_low, y_high, largest, x_
             ),
             html.Span(bubble.get("product_line", ""), className="bm-x-bubble-label"),
         ],
-        className=f"bm-x-bubble-point {tone(bubble.get('tone'))}",
+        className=f"bm-x-bubble-point {_move_tone(bubble.get('growth_pct')) or 'neutral'}",
         style={
             "left": f"{_position_pct(wallet, x_low, x_high):.1f}%",
             "bottom": f"{_position_pct(portfolio, y_low, y_high):.1f}%",
@@ -959,7 +954,7 @@ def render_positioning_actual(data: Dict[str, Any]):
                 html.Span(className="bm-x-dot" + (" subject" if p.get("is_subject") else "")),
                 html.Span(p.get("label", ""), className="bm-x-dot-label"),
             ],
-            className=f"bm-x-point {tone(p.get('tone'))}",
+            className="bm-x-point neutral",
             style={
                 "left": f"{_position_pct(p.get('x_value'), x_low, x_high):.1f}%",
                 "bottom": f"{_position_pct(p.get('y_value'), y_low, y_high):.1f}%",

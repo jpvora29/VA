@@ -1,8 +1,8 @@
 """The Setup form stays live while it works — so the LAST change has to be the one that wins.
 
-The busy overlay is a progress cue with ``pointer-events: none`` (``assets/studio_authoring.css``
-says so in as many words: "a change made while it is up must still land"), and four callbacks
-answer every filter change concurrently. Two changes in quick succession therefore put two sets
+The busy overlay blocks the page while it is up, but it only appears after a grace period
+(``ui/shell/busy.py``), and four callbacks answer every filter change concurrently. Two changes
+made inside that grace therefore still put two sets
 of answers in flight, and without a guard the one that happens to arrive last repaints the form —
 which may be the answer to the selection the user has already left.
 

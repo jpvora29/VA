@@ -111,17 +111,20 @@ def test_two_periods_and_a_measure_fire_the_watchlist():
     assert "watchlist" in boardroom.detect_widget_signals(rows, "")
 
 
-def test_carriers_fire_comparison_and_battlecards():
+def test_carriers_fire_comparison_but_never_battlecards():
+    """Battlecards were the model's reading of strengths and weaknesses, not measures;
+    the comparison states the same head-to-head in figures."""
     rows = [("premium", [{"Carrier_Group": "ZURICH GROUP", "P": 1}, {"Carrier_Group": "AXA", "P": 2}])]
     signals = boardroom.detect_widget_signals(rows, "")
-    assert {"comparison", "battlecards"} <= signals
+    assert "comparison" in signals
+    assert "battlecards" not in signals
+    assert "battlecards" not in boardroom._WIDGET_SIGNATURES
 
 
 def test_peer_commentary_fires_comparison_without_carrier_rows():
     rows = [("premium", [{"Year": 2024, "P": 1}])]
     signals = boardroom.detect_widget_signals(rows, "Zurich trails the peer average.")
     assert "comparison" in signals
-    assert "battlecards" not in signals  # no carrier values in rows
 
 
 def test_two_carriers_with_premium_fire_top_carriers():
@@ -224,7 +227,6 @@ def test_staged_node_assembles_core_plus_detected_widgets(monkeypatch):
             "whitespace": (never_stub, "whitespace"),
             "quarterly": (never_stub, "quarterly"),
             "comparison": (never_stub, "comparison"),
-            "battlecards": (never_stub, "battlecards"),
         },
     )
 

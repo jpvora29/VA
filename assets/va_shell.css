@@ -791,6 +791,20 @@ body {
 }
 .va-busy-label:empty { display: none; }
 
+/* Above every in-page layer (an open dropdown menu included), so nothing behind the
+   overlay can be reached while it is up — va_busy.js also swallows the keyboard. */
+.va-busy-overlay.is-on { z-index: 5000; }
+html.va-busy-locked,
+html.va-busy-locked body { cursor: progress; }
+
+/* Studio's Generate spinner is a dcc.Loading, whose fullscreen plate already sits
+   over the page; make sure no rule upstream let clicks through it. */
+.qs-gen-loader .dash-spinner-container,
+.dash-spinner-container.qs-gen-loader {
+    pointer-events: auto;
+    cursor: progress;
+}
+
 /* ── the sign-in card's two bodies ────────────────────────────────────────────
    SSO where an identity provider is configured, the username box where none is
    (ui/components/sidebar.py). The SSO control is an <a>, not a <button>, because

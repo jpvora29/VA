@@ -28,6 +28,13 @@
  *
  * One tracker serves every scope (Studio, and the shell above it), so per-overlay state
  * is keyed by overlay id rather than held in a module variable.
+ *
+ * LOCK — while an overlay is on screen the page behind it is not operable. The overlay
+ * itself swallows the pointer (CSS), and the guard below swallows the keyboard and any
+ * click that lands on something stacked above the overlay (an open dropdown menu). A
+ * filter ticked while the options were still being recalculated used to land against
+ * the half-updated form. Focus is taken off the page when the overlay appears and handed
+ * back when the last overlay lifts, so the user keeps their place.
  */
 (function () {
   "use strict";
@@ -35,6 +42,78 @@
   var MIN_VISIBLE_MS = 320;
   var ON = "is-on";
   var FLAG = ".va-busy-flag";
+
+  /**
+   * Everything that counts as "the app is loading": the busy overlays, and Studio's
+   * Generate spinner (a dcc.Loading, so it has no tracker of its own). A loader inside a
+   * hidden workspace pane has no client rects — it is not on screen, so it locks nothing.
+   */
+  var LOADERS = ".va-busy-overlay.is-on, .qs-gen-loader .dash-spinner-container, " +
+    ".dash-spinner-container.qs-gen-loader";
+  var LOCKED = "va-busy-locked";
+
+  /** The element that had focus when the page was locked, handed back on release. */
+  var lastFocus = null;
+
+  function visibleLoader() {
+    var nodes = document.querySelectorAll(LOADERS);
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].getClientRects().length) {
+        return nodes[i];
+      }
+    }
+    return null;
+  }
+
+  function lockPage() {
+    var active = document.activeElement;
+    if (active && active !== document.body && !lastFocus) {
+      lastFocus = active;
+    }
+    if (active && typeof active.blur === "function") {
+      active.blur();
+    }
+    document.documentElement.classList.add(LOCKED);
+    document.body.setAttribute("aria-busy", "true");
+  }
+
+  function releasePage() {
+    if (visibleLoader()) {
+      return; // another area is still loading
+    }
+    document.documentElement.classList.remove(LOCKED);
+    document.body.removeAttribute("aria-busy");
+    var target = lastFocus;
+    lastFocus = null;
+    if (target && target.isConnected && typeof target.focus === "function") {
+      target.focus({ preventScroll: true });
+    }
+  }
+
+  /** Swallow an event aimed at the page while a loader is showing. */
+  function guard(event) {
+    var loader = visibleLoader();
+    if (!loader) {
+      return;
+    }
+    if (event.target && loader.contains && loader.contains(event.target)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.type === "focusin" && event.target && typeof event.target.blur === "function") {
+      event.target.blur();
+    }
+  }
+
+  [
+    "keydown", "keypress", "keyup", "focusin",
+    "pointerdown", "mousedown", "mouseup", "click", "dblclick", "contextmenu",
+    "touchstart", "dragstart", "drop",
+  ].forEach(function (type) {
+    // Capture phase on window, so it runs before React's own root listener.
+    window.addEventListener(type, guard, { capture: true, passive: false });
+  });
 
   /** overlay id -> { shownAt, showTimer, hideTimer, label } */
   var state = {};
@@ -76,6 +155,9 @@
     }
     s.shownAt = Date.now();
     el.classList.add(ON);
+    if (el.getClientRects().length) {
+      lockPage();
+    }
   }
 
   function raise(el, args) {
@@ -117,6 +199,7 @@
     s.hideTimer = window.setTimeout(function () {
       s.hideTimer = null;
       el.classList.remove(ON);
+      releasePage();
     }, Math.max(0, MIN_VISIBLE_MS - held));
   }
 

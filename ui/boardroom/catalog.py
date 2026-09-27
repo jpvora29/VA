@@ -55,16 +55,16 @@ def _lib(kind, label, icon, category, content, default_data, size="md"):
 #   Add-ons group   = a few brand-new widgets, each fully built (renderer + editor).
 LIBRARY: List[Dict[str, Any]] = [
     _lib("kpi", "KPI strip", "bi bi-speedometer2", "Boardroom widgets", "kpis",
-         {"kpis": [{"label": "Metric", "value": "0", "delta": "", "tone": "neutral", "icon": "bi bi-graph-up"}]},
+         {"kpis": [{"label": "Metric", "value": "0", "delta": "", "icon": "bi bi-graph-up"}]},
          "full"),
     _lib("commentary", "Commentary", "bi bi-card-text", "Boardroom widgets", "bespoke",
          {"headline": "", "sections": [{"heading": "Commentary", "points": ["First point"]}], "risks": []},
          "full"),
     _lib("insights", "Insight cards", "bi bi-stars", "Boardroom widgets", "bespoke",
-         {"insights": [{"headline": "New insight", "detail": "Supporting detail", "tone": "neutral", "icon": "bi bi-lightbulb"}]},
+         {"insights": [{"figure": "", "headline": "New insight", "detail": "Supporting detail", "icon": "bi bi-lightbulb"}]},
          "full"),
     _lib("timeline", "Timeline", "bi bi-hourglass-split", "Boardroom widgets", "bespoke",
-         {"timeline": [{"period": "2024", "title": "Milestone", "detail": "", "category": "other", "tone": "neutral"}]},
+         {"timeline": [{"period": "2024", "title": "Milestone", "detail": "", "category": "other"}]},
          "lg"),
     _lib("rich_text", "Rich text", "bi bi-text-paragraph", "Add-ons", "text",
          {"text": "Type your notes here…"}, "full"),
@@ -81,7 +81,7 @@ LIBRARY: List[Dict[str, Any]] = [
                         "premium_exposed_value": None, "movement": "", "movement_pct": None,
                         "adverse": True, "comparison": "", "trigger": "",
                         "consecutive_periods": 1, "breached_kpi": "",
-                        "periods_comparable": True, "owner_action": "", "tone": "warn"}],
+                        "periods_comparable": True, "owner_action": ""}],
              "basis": "", "note": ""}},
          "full"),
     _lib("headroom", "Product line headroom", "bi bi-bar-chart-steps", "Explainable", "bespoke",
@@ -120,7 +120,7 @@ LIBRARY: List[Dict[str, Any]] = [
              "bubbles": [{"product_line": "Product line", "share_of_wallet_pct": None,
                           "share_of_portfolio_pct": None, "premium": "", "premium_value": None,
                           "marsh_premium": "", "marsh_premium_value": None, "growth": "",
-                          "growth_pct": None, "peer_share_of_wallet_pct": None, "tone": "neutral"}],
+                          "growth_pct": None, "peer_share_of_wallet_pct": None}],
              "wallet_benchmark_pct": None, "portfolio_benchmark_pct": None,
              "benchmark_label": "Carrier average / market mix", "basis": "", "note": ""}},
          "lg"),
@@ -134,7 +134,7 @@ LIBRARY: List[Dict[str, Any]] = [
     _lib("positioning_actual", "Positioning (actuals)", "bi bi-crosshair2", "Explainable", "bespoke",
          {"positioning_actual": {
              "points": [{"label": "Carrier", "x_value": None, "x_display": "", "y_value": None,
-                         "y_display": "", "is_subject": True, "tone": "neutral"}],
+                         "y_display": "", "is_subject": True}],
              "x_label": "Share of wallet", "x_unit": "%", "y_label": "Broker score", "y_unit": "",
              "x_benchmark": None, "y_benchmark": None, "benchmark_label": "Peer average", "note": ""}},
          "lg"),
@@ -173,12 +173,20 @@ LIBRARY: List[Dict[str, Any]] = [
 LIBRARY_BY_KIND: Dict[str, Dict[str, Any]] = {w["kind"]: w for w in LIBRARY}
 CATEGORIES = ["Boardroom widgets", "Explainable", "Add-ons", "Analytics"]
 
+# Kinds a saved board may still hold but nobody can add any more. The first three
+# were built on a 0-100 score the model made up; battlecards on the model's reading
+# of strengths and weaknesses. Each stays in LIBRARY_BY_KIND so a saved one still
+# renders and still opens in the editor.
+NOT_OFFERED = frozenset({"opportunity_radar", "opportunity_map", "positioning", "battlecards"})
+
 
 def library_by_category() -> Dict[str, List[Dict[str, Any]]]:
+    """The add-widget library, grouped — only the kinds a user may still add."""
     out: Dict[str, List[Dict[str, Any]]] = {c: [] for c in CATEGORIES}
     for w in LIBRARY:
-        out[w["category"]].append(w)
-    return out
+        if w["kind"] not in NOT_OFFERED:
+            out[w["category"]].append(w)
+    return {c: items for c, items in out.items() if items}
 
 
 def content_of(kind: str) -> str:

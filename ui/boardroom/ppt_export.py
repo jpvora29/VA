@@ -33,7 +33,7 @@ from pptx.util import Emu, Inches, Pt
 
 from core.scope import chips_from_dicts, scope_line
 from logger import get_logger
-from ui.boardroom import catalog, model, ppt_explainable
+from ui.boardroom import catalog, model, ppt_explainable, retired
 from ui.boardroom.ppt_kit import (
     BULLET,
     COL_W,
@@ -58,12 +58,12 @@ from ui.boardroom.ppt_kit import (
     _rounded,
     _set_cell,
     _textbox,
-    _tone,
     _tone_color,
     _tone_soft,
 )
 from ui.boardroom.ppt_kit import text_lines as _text_lines
 from ui.boardroom.themes import theme as bm_theme
+from ui.boardroom.widgets_library import delta_direction
 from ui.color_pallet import ColorPalette
 
 logger = get_logger(__name__)
@@ -105,13 +105,9 @@ def _estimate_height(widget: Dict[str, Any], w_in: float) -> float:
         return 0.45 + 0.34 * (len(comp.get("metrics") or []) + 1)
     if kind == "timeline":
         return 0.45 + 0.52 * len(data.get("timeline") or [])
-    if kind == "opportunity_map":
-        m = data.get("opportunity_map") or {}
-        return 0.7 + 0.34 * (len(m.get("rows") or []) + 1)
-    if kind == "opportunity_radar":
-        return 0.4 + 0.95 * len(data.get("opportunities") or [])
-    if kind == "positioning":
-        return 3.7
+    if kind in retired.RETIRED_KINDS:
+        rows = retired.evidence_rows(kind, data)
+        return 0.6 + sum(0.26 + (0.2 if r.facts else 0) + (0.22 if r.note else 0) for r in rows)
     if kind == "battlecards":
         cards = data.get("battlecards") or []
         per_row = 2 if w_in > 7 else 1
@@ -279,6 +275,11 @@ def _add_native_chart(slide, x, y, w, h, fig, fallback_title: str = "") -> bool:
 # Each takes (slide, x, y, w, h, widget, ctx) with the rect in inches.
 
 
+# A KPI's change is coloured by its own sign (up / down), never by the model's
+# opinion of whether it is good news — the same rule the screen follows.
+_DIRECTION_TONE = {"up": "good", "down": "danger"}
+
+
 def _render_kpis(slide, x, y, w, h, widget, ctx):
     kpis = (widget.get("data") or {}).get("kpis") or []
     if not kpis:
@@ -292,7 +293,7 @@ def _render_kpis(slide, x, y, w, h, widget, ctx):
         r, c = divmod(i, per_row)
         tx = x + c * (tile_w + gap)
         ty = y + r * (tile_h + gap)
-        tone = _tone(card.get("tone"))
+        tone = _DIRECTION_TONE.get(delta_direction(card.get("delta") or ""), "neutral")
         _rounded(slide, tx, ty, tile_w, tile_h, fill=WHITE, line=LIGHT_BORDER)
         _dot(slide, tx + 0.12, ty + tile_h / 2 - 0.11, 0.22, _tone_soft(tone, 0.25))
         _dot(slide, tx + 0.185, ty + tile_h / 2 - 0.045, 0.09, _tone_color(tone))
@@ -317,14 +318,15 @@ def _render_commentary(slide, x, y, w, h, widget, ctx):
             _para(tf, pt, size=10, color=GRAY, bullet=True, space_after=2)
     risks = data.get("risks") or []
     if risks:
-        _para(tf, "Risks & watch items", size=11, bold=True, color=NAVY, first=first, space_after=2)
+        _para(tf, "Watch items", size=11, bold=True, color=NAVY, first=first, space_after=2)
         for r in risks:
+            evidence = (r.get("evidence") or "").strip()
             _para(
                 tf,
-                f"{r.get('label', '')} - {r.get('severity', '')}",
+                r.get("label", "") + (f" - {evidence}" if evidence else ""),
                 size=10,
                 bold=True,
-                color=_tone_color(r.get("tone")),
+                color=NAVY,
                 bullet=True,
                 space_after=2,
             )
@@ -343,11 +345,13 @@ def _render_insights(slide, x, y, w, h, widget, ctx):
         r, c = divmod(i, per_row)
         cx = x + c * (card_w + gap)
         cy = y + r * (card_h + gap)
-        tone = _tone(card.get("tone"))
-        _rounded(slide, cx, cy, card_w, card_h, fill=_tone_soft(tone, 0.10), line=LIGHT_BORDER)
-        _rect(slide, cx, cy, 0.045, card_h, _tone_color(tone))
+        _rounded(slide, cx, cy, card_w, card_h, fill=WHITE, line=LIGHT_BORDER)
+        _rect(slide, cx, cy, 0.045, card_h, _tone_color("neutral"))
         _, tf = _textbox(slide, cx + 0.15, cy + 0.08, card_w - 0.28, card_h - 0.16)
-        _para(tf, card.get("headline", ""), size=10.5, bold=True, color=NAVY, first=True, space_after=2)
+        figure = (card.get("figure") or "").strip()
+        if figure:
+            _para(tf, figure, size=14, bold=True, color=_tone_color("neutral"), first=True, space_after=0)
+        _para(tf, card.get("headline", ""), size=10.5, bold=True, color=NAVY, first=not figure, space_after=2)
         if card.get("detail"):
             _para(tf, card["detail"], size=9, color=GRAY, space_after=0)
 
@@ -374,14 +378,13 @@ def _render_comparison(slide, x, y, w, h, widget, ctx):
         )
     for i, m in enumerate(metrics):
         _set_cell(table.cell(i + 1, 0), m.get("label", ""), size=9.5, bold=True)
-        values, tones = m.get("values") or [], m.get("tones") or []
+        values = m.get("values") or []
         for j in range(len(subjects)):
             val = values[j] if j < len(values) else "-"
-            tn = tones[j] if j < len(tones) else None
             _set_cell(
                 table.cell(i + 1, j + 1), val, size=9.5,
                 bold=j == highlight,
-                color=_tone_color(tn) if tn else NAVY,
+                color=NAVY,
                 fill=_tone_soft("neutral", 0.06) if j == highlight else None,
                 align=PP_ALIGN.CENTER,
             )
@@ -399,122 +402,36 @@ def _render_timeline(slide, x, y, w, h, widget, ctx):
         ey = y + i * row_h
         _, tf = _textbox(slide, x, ey, 0.85, row_h)
         _para(tf, e.get("period", ""), size=9, bold=True, color=GRAY, first=True, align=PP_ALIGN.RIGHT)
-        _dot(slide, rail_x - 0.05, ey + 0.05, 0.12, _tone_color(e.get("tone")))
+        _dot(slide, rail_x - 0.05, ey + 0.05, 0.12, _tone_color("neutral"))
         _, tf = _textbox(slide, rail_x + 0.18, ey, w - (rail_x - x) - 0.2, row_h)
         _para(tf, e.get("title", ""), size=10, bold=True, color=NAVY, first=True, space_after=0)
         if e.get("detail"):
             _para(tf, e["detail"], size=8.5, color=GRAY, space_after=0)
 
 
-def _render_opportunity_map(slide, x, y, w, h, widget, ctx):
-    m = (widget.get("data") or {}).get("opportunity_map") or {}
-    rows, cols = m.get("rows") or [], m.get("cols") or []
-    cells = {(c.get("row"), c.get("col")): c for c in (m.get("cells") or [])}
-    if not rows or not cols:
-        return
-    legend = m.get("legend") or ""
-    table_h = h - (0.25 if legend else 0)
-    shape = slide.shapes.add_table(
-        len(rows) + 1, len(cols) + 1, Inches(x), Inches(y), Inches(w), Inches(table_h)
-    )
-    table = shape.table
-    table.first_row = False
-    _set_cell(table.cell(0, 0), "", fill=SOFT_BG)
-    for j, c in enumerate(cols):
-        _set_cell(table.cell(0, j + 1), c, size=9, bold=True, fill=SOFT_BG, align=PP_ALIGN.CENTER)
-    for i, r in enumerate(rows):
-        _set_cell(table.cell(i + 1, 0), r, size=9, bold=True)
-        for j, c in enumerate(cols):
-            cell = cells.get((r, c))
-            if cell:
-                inten = max(0, min(100, int(cell.get("intensity", 0) or 0)))
-                _set_cell(
-                    table.cell(i + 1, j + 1), str(inten), size=9, bold=inten >= 60,
-                    color=NAVY,
-                    fill=_tone_soft(cell.get("tone"), 0.10 + 0.006 * inten),
-                    align=PP_ALIGN.CENTER,
-                )
-            else:
-                _set_cell(table.cell(i + 1, j + 1), "", fill=WHITE)
-    if legend:
-        _, tf = _textbox(slide, x, y + table_h + 0.04, w, 0.2)
-        _para(tf, legend, size=8.5, italic=True, color=GRAY, first=True)
+def _render_retired(slide, x, y, w, h, widget, ctx):
+    """A retired score widget: the figures it carried, then why the score is gone.
 
-
-def _render_radar(slide, x, y, w, h, widget, ctx):
-    ops = (widget.get("data") or {}).get("opportunities") or []
-    ops = sorted(ops, key=lambda o: o.get("gap_score", 0), reverse=True)
-    if not ops:
-        return
-    item_h = min(0.95, h / len(ops))
-    for i, o in enumerate(ops):
-        oy = y + i * item_h
-        tone = _tone(o.get("tone"))
-        gap = max(0, min(100, int(o.get("gap_score", 0) or 0)))
-        _, tf = _textbox(slide, x, oy, w - 0.55, 0.24)
-        p = _para(tf, o.get("area", ""), size=10.5, bold=True, color=NAVY, first=True, space_after=0)
-        dim = (o.get("dimension") or "").title()
-        if dim:
-            run = p.add_run()
-            run.text = f"   {dim}"
-            run.font.name = FONT
-            run.font.size = Pt(8.5)
-            run.font.color.rgb = GRAY
-        _, tf = _textbox(slide, x + w - 0.5, oy, 0.5, 0.24)
-        _para(tf, str(gap), size=11, bold=True, color=_tone_color(tone), first=True, align=PP_ALIGN.RIGHT)
-        _rounded(slide, x, oy + 0.3, w, 0.1, fill=SOFT_BG, line=None, radius=0.5)
-        if gap > 0:
-            _rounded(slide, x, oy + 0.3, max(0.12, w * gap / 100), 0.1, fill=_tone_color(tone), line=None, radius=0.5)
-        detail = []
-        if o.get("carrier_level"):
-            detail.append(f"Carrier: {o['carrier_level']}")
-        if o.get("peer_level"):
-            detail.append(f"Marsh/Peers: {o['peer_level']}")
-        line2 = " | ".join(detail)
-        rec = o.get("recommendation") or ""
-        if line2 or rec:
-            _, tf = _textbox(slide, x, oy + 0.46, w, item_h - 0.48)
-            if line2:
-                _para(tf, line2, size=8.5, color=GRAY, first=True, space_after=1)
-            if rec:
-                _para(tf, "→ " + rec, size=9, italic=True, color=NAVY, first=not line2, space_after=0)
-
-
-def _render_positioning(slide, x, y, w, h, widget, ctx):
-    mx = (widget.get("data") or {}).get("positioning") or {}
-    pts = mx.get("points") or []
-    if not pts:
-        return
-    note = mx.get("note") or ""
-    plot_h = h - 0.5 - (0.25 if note else 0)
-    plot_w = min(w - 0.3, plot_h * 1.35)
-    px0 = x + (w - plot_w) / 2
-    py0 = y + 0.06
-    _rounded(slide, px0, py0, plot_w, plot_h, fill=SOFT_BG, line=LIGHT_BORDER, radius=0.03)
-    _rect(slide, px0 + plot_w / 2, py0 + 0.04, 0.012, plot_h - 0.08, LIGHT_BORDER)
-    _rect(slide, px0 + 0.04, py0 + plot_h / 2, plot_w - 0.08, 0.012, LIGHT_BORDER)
-    quads = [("Emerging", 0.06, 0.05), ("Strong", plot_w - 1.1, 0.05),
-             ("Underperforming", 0.06, plot_h - 0.28), ("Vulnerable", plot_w - 1.1, plot_h - 0.28)]
-    for label, qx, qy in quads:
-        _, tf = _textbox(slide, px0 + qx, py0 + qy, 1.05, 0.2)
-        _para(tf, label, size=8, bold=True, color=GRAY, first=True)
-    for p in pts:
-        vx = max(0, min(100, int(p.get("premium_strength", 50) or 0)))
-        vy = max(0, min(100, int(p.get("broker_perception", 50) or 0)))
-        is_subject = bool(p.get("is_subject"))
-        d = 0.22 if is_subject else 0.15
-        cx = px0 + 0.15 + (plot_w - 0.3) * vx / 100 - d / 2
-        cy = py0 + 0.15 + (plot_h - 0.3) * (100 - vy) / 100 - d / 2
-        _dot(slide, cx, cy, d, _hex_rgb("#001f52") if is_subject else _tone_color(p.get("tone")),
-             line=WHITE if is_subject else None)
-        _, tf = _textbox(slide, cx + d + 0.02, cy - 0.02, 1.4, 0.2)
-        _para(tf, p.get("label", ""), size=8.5, bold=is_subject, color=NAVY, first=True)
-    _, tf = _textbox(slide, px0, py0 + plot_h + 0.04, plot_w, 0.2)
-    _para(tf, "Premium strength →   (↑ Broker perception)", size=8, italic=True, color=GRAY,
-          first=True, align=PP_ALIGN.CENTER)
+    Drawn from the same rows as the screen (``ui.boardroom.retired``), so the
+    slide can never show a 0-100 number the board no longer shows.
+    """
+    kind = widget.get("kind")
+    data = widget.get("data") or {}
+    _, tf = _textbox(slide, x, y, w, h)
+    first = True
+    for row in retired.evidence_rows(kind, data):
+        _para(tf, row.title, size=10.5, bold=True, color=NAVY, first=first, space_after=0)
+        first = False
+        facts = "  |  ".join(f"{label}: {value}" for label, value in row.facts)
+        if facts:
+            _para(tf, facts, size=8.5, color=GRAY, space_after=0)
+        if row.note:
+            _para(tf, "-> " + row.note, size=9, italic=True, color=NAVY, space_after=2)
+    note = retired.widget_note(kind, data)
     if note:
-        _, tf = _textbox(slide, x, y + h - 0.22, w, 0.2)
-        _para(tf, note, size=8.5, italic=True, color=GRAY, first=True)
+        _para(tf, note, size=8.5, italic=True, color=GRAY, first=first, space_after=2)
+        first = False
+    _para(tf, retired.RETIRED_NOTE, size=8, italic=True, color=GRAY, first=first)
 
 
 def _render_battlecards(slide, x, y, w, h, widget, ctx):
@@ -689,9 +606,9 @@ _RENDERERS: Dict[str, Callable] = {
     "insights": _render_insights,
     "comparison": _render_comparison,
     "timeline": _render_timeline,
-    "opportunity_map": _render_opportunity_map,
-    "opportunity_radar": _render_radar,
-    "positioning": _render_positioning,
+    "opportunity_map": _render_retired,
+    "opportunity_radar": _render_retired,
+    "positioning": _render_retired,
     "battlecards": _render_battlecards,
     "charts": _render_chart,
 }

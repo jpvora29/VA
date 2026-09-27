@@ -19,16 +19,16 @@ from dash import dcc, html
 from studio.page.authoring import setup as S
 from studio.page.layout import DROPDOWN_MAX_HEIGHT, GPR_FILTERS
 
-# Every filter, together, in the order a QBR is briefed: who, where, when, then the slice.
-SETUP_FILTERS = ("carrier", "country", "year", "quarter", "product_line", "region",
-                 "business_line", "cover_line", "industry", "sub_industry", "client_segment")
+# Every filter, together, in the order a QBR is briefed: where, who, when, then the slice.
+# Business line is the level under product line, so it is the form's "Sub-product".
+SETUP_FILTERS = ("region", "country", "carrier", "year", "quarter", "product_line",
+                 "business_line", "industry", "sub_industry", "client_segment")
 
-# Sentence-case names for a reader; "Country" is the market the QBR is held for.
+# Sentence-case names for a reader.
 FILTER_LABELS = {
-    "carrier": "Carrier", "country": "Market", "year": "Year", "quarter": "Quarter",
-    "product_line": "Product line", "region": "Region", "business_line": "Business line",
-    "cover_line": "Cover line", "industry": "Industry", "sub_industry": "Sub-industry",
-    "client_segment": "Client segment",
+    "region": "Region", "country": "Country", "carrier": "Carrier", "year": "Year",
+    "quarter": "Quarter", "product_line": "Product", "business_line": "Sub-product",
+    "industry": "Industry", "sub_industry": "Sub-industry", "client_segment": "Segment",
 }
 
 _FILTERS = {f["id"]: f for f in GPR_FILTERS}
@@ -185,8 +185,8 @@ def market_and_period(options: Mapping[str, Any], values: Mapping[str, Any]) -> 
     )
     return section("Market & period", [grid, timeline], tip_id="qs-tip-sec-filters",
                    tip="The slice of the book the deck reports on. The lists cascade, so "
-                       "each one only offers values that exist under the others. Market and "
-                       "Year accept several values; several markets build several country "
+                       "each one only offers values that exist under the others. Country and "
+                       "Year accept several values; several countries build several country "
                        "blocks — and several peer groups.")
 
 

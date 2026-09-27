@@ -34,11 +34,8 @@ from ui.boardroom.ppt_kit import (
     _tone_color,
 )
 
-_STATUS_LABEL = {
-    "no_premium": "No current premium",
-    "low_presence": "Low presence",
-    "established": "Established",
-}
+# The one presence state the figures state outright (see widgets_explainable).
+_NO_PREMIUM_LABEL = "No current premium"
 
 
 def _num(value: Any) -> float:
@@ -161,9 +158,8 @@ def _headroom_like_rows(slide, x, y, w, h, rows, *, name_key: str, change_key: s
             detail.append(f"Peers hold {_pct(row.get('peer_share_of_wallet_pct'))}")
         if (row.get(change_key) or "").strip():
             detail.append(str(row.get(change_key)))
-        status = _STATUS_LABEL.get(row.get("status") or "", "")
-        if status:
-            detail.append(status)
+        if row.get("carrier_premium_value") not in (None, "") and _num(row.get("carrier_premium_value")) == 0:
+            detail.append(_NO_PREMIUM_LABEL)
         band = opportunity.band_label((row.get("opportunity") or "").strip())
         if band:
             detail.append(band)
@@ -434,7 +430,7 @@ def render_positioning_actual(slide, x, y, w, h, widget, ctx):
         subject = bool(p.get("is_subject"))
         d = 0.22 if subject else 0.15
         cx, cy = px(p.get("x_value")) - d / 2, py(p.get("y_value")) - d / 2
-        _dot_at(slide, cx, cy, d, subject, p.get("tone"))
+        _dot_at(slide, cx, cy, d, subject, "neutral")
         shown = f"{p.get('label', '')}  ({p.get('x_display') or p.get('x_value')}, {p.get('y_display') or p.get('y_value')})"
         _, tf = _textbox(slide, cx + d + 0.02, cy - 0.02, 1.8, 0.2)
         _para(tf, shown, size=8, bold=subject, color=NAVY, first=True)

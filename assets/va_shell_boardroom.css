@@ -590,3 +590,356 @@
 .bm-x-row.whitespace.band-losing { border-left-color: var(--va-danger); }
 .bm-x-row.whitespace.band-held,
 .bm-x-row.whitespace.band-flat { border-left-color: var(--va-border-mid); }
+
+/* ============================================================================
+   Executive brief — the board as a reading document.
+
+   design/boards-concepts-2026-09-09/boardroom-1-executive-brief.png: a quiet
+   breadcrumb bar, the chapters as numbered tabs that never scroll away, and on
+   each chapter an eyebrow, the question it answers as a serif headline, the
+   scope line, then the evidence. The navy glass header and frosted tiles of the
+   older layer are flattened here: the figures are what should stand out.
+   Scoped to `.bm-brief` (ui/boardroom/render.py) so nothing else changes.
+   ========================================================================== */
+.message.boardroom-card.bm-brief {
+    padding: 0;
+    gap: 0;
+    background: var(--va-surface-0);
+    border: 1px solid var(--va-border-soft);
+    border-radius: 18px;
+    box-shadow: var(--va-shadow-sm);
+    overflow: visible;
+}
+
+/* ── breadcrumb bar ── */
+.bm-brief .bm-header {
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 16px 28px;
+    background: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    color: var(--va-ink-800);
+    border-bottom: none;
+    box-shadow: none;
+}
+.bm-brief .bm-breadcrumb {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+.bm-brief .bm-eyebrow {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--va-navy);
+    font-size: 12px;
+    letter-spacing: 0.1em;
+}
+.bm-brief .bm-eyebrow .bi { color: var(--va-ink-500); }
+.bm-brief .bm-crumb-sep { color: var(--va-ink-300); }
+.bm-brief .bm-crumb { font-size: 14px; color: var(--va-ink-600); }
+
+.bm-brief .bm-export-btn {
+    background: var(--va-surface-0);
+    border: 1px solid var(--va-border-mid);
+    color: var(--va-ink-800);
+    border-radius: var(--va-radius-md);
+    backdrop-filter: none;
+    transition: border-color var(--va-transition-fast), color var(--va-transition-fast);
+}
+.bm-brief .bm-export-btn:hover:not(:disabled) {
+    background: var(--va-surface-0);
+    border-color: var(--va-blue);
+    color: var(--va-blue);
+    transform: none;
+}
+.bm-brief .bm-export-btn.active { background: var(--va-blue); border-color: var(--va-blue); color: #fff; }
+.bm-brief .bm-export-btn:focus-visible { outline: none; box-shadow: var(--va-focus-ring); }
+
+/* ── chapter tabs ── */
+.bm-brief .bm-chapter-bar {
+    padding: 0 28px;
+    border-bottom: 1px solid var(--va-border-soft);
+}
+.bm-brief .bm-chapters {
+    display: flex;
+    gap: 34px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.bm-brief .bm-chapters::-webkit-scrollbar { display: none; }
+.bm-brief .bm-chapter {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    margin-bottom: -1px;
+    padding: 12px 2px 11px;
+    border: none;
+    border-bottom: 3px solid transparent;
+    background: none;
+    color: var(--va-ink-600);
+    font-size: 14.5px;
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.bm-brief .bm-chapter:hover { color: var(--va-navy); }
+.bm-brief .bm-chapter.is-active {
+    color: var(--va-blue);
+    font-weight: 700;
+    border-bottom-color: var(--va-blue);
+}
+.bm-brief .bm-chapter:focus-visible { outline: none; box-shadow: var(--va-focus-ring); border-radius: 6px; }
+
+/* ── the chapter ── */
+.bm-brief .bm-pages { padding: 30px 28px 8px; }
+.bm-brief .bm-page { gap: 22px; }
+
+.bm-brief-head { display: flex; flex-direction: column; gap: 8px; }
+.bm-brief-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--va-ink-500);
+}
+.bm-brief-eyebrow .bi { color: var(--va-blue); letter-spacing: 0; }
+.bm-brief-headline {
+    margin: 0;
+    max-width: 30ch;
+    font-family: var(--font-serif, Georgia, serif);
+    font-size: clamp(26px, 3.1vw, 40px);
+    font-weight: 700;
+    line-height: 1.12;
+    letter-spacing: -0.015em;
+    color: var(--va-navy);
+}
+.bm-scope-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 9px;
+    font-size: 15px;
+    color: var(--va-ink-600);
+}
+.bm-scope-subject { font-weight: 700; color: var(--va-ink-800); }
+.bm-scope-sep { color: var(--va-ink-300); }
+
+/* ── flatter surfaces: the evidence, not the chrome ── */
+.bm-brief .bm-comparison,
+.bm-brief .bm-battlecard,
+.bm-brief .bm-insight-card,
+.bm-brief .bm-timeline,
+.bm-brief .bm-chart-panel,
+.bm-brief .bm-charts-grid .bm-chart-panel,
+.bm-brief .bm-commentary-widget .bm-rail-editable {
+    background: var(--va-surface-0) !important;
+    border: 1px solid var(--va-border-soft);
+    border-radius: 14px;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: none;
+    transition: none;
+}
+.bm-brief .bm-comparison:hover,
+.bm-brief .bm-battlecard:hover,
+.bm-brief .bm-insight-card:hover,
+.bm-brief .bm-chart-panel:hover,
+.bm-brief .bm-kpi-card:hover {
+    transform: none;
+    box-shadow: none;
+    background: var(--va-surface-0) !important;
+}
+.bm-brief .bm-section-title { color: var(--va-ink-600); letter-spacing: 0.12em; }
+.bm-brief .bm-section-title .bi { color: var(--va-blue); }
+
+/* ── the headline figure: the first KPI, then its supporting stats ── */
+.bm-brief .bm-kpi-brief {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 20px 48px;
+}
+.bm-brief .bm-kpi-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 0;
+    overflow: visible;
+    background: none !important;
+    border: none;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    animation: none;
+}
+.bm-brief .bm-kpi-card::before { display: none; }
+.bm-brief .bm-kpi-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--va-ink-500);
+}
+.bm-brief .bm-kpi-value {
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+    color: var(--va-navy);
+}
+.bm-brief .bm-kpi-card.is-hero .bm-kpi-value {
+    margin-top: 4px;
+    font-size: clamp(44px, 6vw, 72px);
+    line-height: 1;
+    letter-spacing: -0.03em;
+    color: var(--va-blue);
+}
+.bm-brief .bm-kpi-delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 2px;
+    font-size: 13px;
+    font-weight: 700;
+}
+.bm-brief .bm-kpi-card.is-hero .bm-kpi-delta { margin-top: 8px; font-size: 20px; }
+.bm-brief .bm-kpi-delta.up { color: var(--va-good); }
+.bm-brief .bm-kpi-delta.down { color: var(--va-danger); }
+.bm-brief .bm-kpi-delta.flat { color: var(--va-ink-500); }
+.bm-brief .bm-kpi-rest {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px 0;
+    padding-bottom: 6px;
+}
+.bm-brief .bm-kpi-rest .bm-kpi-card {
+    padding: 0 26px;
+    border-left: 1px solid var(--va-border-soft);
+    border-radius: 0;
+}
+
+/* ── the written read ── */
+.bm-brief .bm-brief-rail {
+    gap: 22px;
+    padding: 0;
+    background: none;
+    border: none;
+    box-shadow: none;
+}
+.bm-takeaway {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-left: 20px;
+    border-left: 3px solid var(--va-blue);
+}
+.bm-takeaway-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--va-ink-500);
+}
+.bm-brief .bm-takeaway .bm-headline {
+    padding: 0;
+    border: none;
+    background: none;
+    font-size: clamp(20px, 2.2vw, 27px);
+    font-weight: 700;
+    line-height: 1.25;
+    color: var(--va-navy);
+}
+.bm-commentary-cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 18px 32px;
+}
+.bm-brief .bm-commentary-heading { font-size: 11px; letter-spacing: 0.12em; color: var(--va-ink-600); }
+.bm-brief .bm-commentary-list li { font-size: 14px; line-height: 1.55; color: var(--va-ink-700); }
+
+/* A watch item and its figure on one line — the figure is what ranks it. */
+.bm-brief .bm-risk-block { gap: 8px; }
+.bm-brief .bm-risk-item {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 4px 16px;
+    padding: 10px 14px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: var(--va-radius-md);
+}
+.bm-brief .bm-risk-name { font-size: 13.5px; color: var(--va-ink-800); }
+.bm-risk-evidence {
+    font-size: 13px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--va-navy);
+}
+
+/* Insights: the proving figure leads, no sentiment colour. */
+.bm-brief .bm-insight-plain {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 16px 18px;
+}
+.bm-insight-figure {
+    font-size: 26px;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    color: var(--va-blue);
+}
+.bm-brief .bm-insight-plain .bm-insight-headline { font-size: 16px; color: var(--va-navy); }
+
+/* ── chapter footer ── */
+.bm-brief-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px 18px;
+    margin-top: 8px;
+    padding: 16px 0 14px;
+    border-top: 1px solid var(--va-border-soft);
+}
+.bm-foot-where { font-size: 13.5px; color: var(--va-ink-500); }
+.bm-foot-steps { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.bm-foot-step {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 4px;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    color: var(--va-blue);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.bm-foot-step.prev { color: var(--va-ink-600); }
+.bm-foot-step:hover { text-decoration: underline; text-underline-offset: 3px; }
+.bm-foot-step:focus-visible { outline: none; box-shadow: var(--va-focus-ring); }
+
+.bm-brief .bm-addpage-bar { margin: 0 28px 18px; }
+
+@media (max-width: 720px) {
+    .bm-brief .bm-header,
+    .bm-brief .bm-chapter-bar,
+    .bm-brief .bm-pages { padding-left: 16px; padding-right: 16px; }
+    .bm-brief .bm-chapters { gap: 22px; }
+    /* Stacked, a divider on the left of each stat reads as stray lines. */
+    .bm-brief .bm-kpi-rest { flex-direction: column; }
+    .bm-brief .bm-kpi-rest .bm-kpi-card { padding-left: 0; border-left: none; }
+}

@@ -1,7 +1,14 @@
 """Render an editable Boardroom document to Dash.
 
+The board reads as an executive brief: a breadcrumb bar with the board's two
+actions, the chapters as numbered tabs that are always in view, and on every
+page an eyebrow, the question the chapter answers set as its headline, the scope
+line, the widgets, and a footer that walks to the previous and next chapter.
+Switching chapter is clientside (``ui.boardroom.callbacks``), so it costs no
+server round trip and never re-renders a chart.
+
 Two modes:
-  * view  — clean dashboard (hidden widgets/pages dropped), slider pager.
+  * view  — clean dashboard (hidden widgets/pages dropped).
   * edit  — adds a per-widget control bar, page toolbars, an "add widget" affordance
             and page management, plus governed-grid size handles.
 
@@ -21,7 +28,6 @@ from dash import dcc, html
 from ui.boardroom import catalog, widgets_generated, widgets_library
 from ui.boardroom.model import GRID_COLUMNS, SIZE_SPAN, SIZES, widget_height, widget_span
 from ui.boardroom.themes import theme
-from ui.components.scope_bar import scope_bar
 
 _SIZE_LABELS = {"sm": "S", "md": "M", "lg": "L", "full": "Full"}
 
@@ -266,31 +272,93 @@ def _page_toolbar(page, card_idx):
     )
 
 
-def _page_heading(page, page_index, total):
-    """The funnel step: which stage this page is, and the question it answers.
+def _scope_line(doc):
+    """"Zurich — Canada / Canada / Property": who the board is about, then its scope.
 
-    Without it the pager's page names are the only clue that the board narrows
-    from overview to a single industry, and a page seen on its own says nothing
-    about where in the argument it sits.
+    Plain text rather than pills — the chapter headline is the loudest thing on
+    the page and the scope is its caption. Each value keeps where it came from
+    as a tooltip, which is what the pills used to say.
     """
+    parts = [html.Span(doc.get("title", ""), className="bm-scope-subject")] if doc.get("title") else []
+    for chip in doc.get("scope") or []:
+        value = str((chip or {}).get("value") or "").strip()
+        if not value:
+            continue
+        label = str(chip.get("label") or "").strip()
+        source = str(chip.get("source") or "").strip()
+        tip = f"{label}: {value}" + (f" ({source})" if source else "")
+        parts.append(html.Span(value, className="bm-scope-value", title=tip))
+    if not parts:
+        return None
+    joined: List[Any] = []
+    for i, part in enumerate(parts):
+        if i:
+            joined.append(html.Span("/", className="bm-scope-sep", **{"aria-hidden": "true"}))
+        joined.append(part)
+    return html.Div(joined, className="bm-scope-line")
+
+
+def _page_heading(doc, page):
+    """The chapter's eyebrow, its question set as the headline, and the scope.
+
+    The question is the headline because it is what every widget below answers —
+    a page seen on its own then says where in the argument it sits. The scope
+    line repeats on every chapter so no page can be read out of scope.
+    """
+    title = (page.get("title") or "").strip()
     caption = (page.get("caption") or "").strip()
     return html.Div(
         [
             html.Div(
-                [
-                    html.Span(f"Step {page_index + 1} of {total}", className="bm-step-index"),
-                    html.I(className=page.get("icon") or "bi bi-file-earmark"),
-                    html.Span(page.get("title", ""), className="bm-step-title"),
-                ],
-                className="bm-step-id",
+                [html.I(className=page.get("icon") or "bi bi-file-earmark"), html.Span(title)],
+                className="bm-brief-eyebrow",
             ),
-            html.Div(caption, className="bm-step-caption") if caption else None,
+            html.H2(caption or title, className="bm-brief-headline"),
+            _scope_line(doc),
         ],
-        className="bm-step-head",
+        className="bm-brief-head",
     )
 
 
-def _render_page(page, figures, edit_mode, card_idx, page_index, active_page=0, total=1):
+def _page_footer(pages, card_idx, page_index):
+    """"2 of 4 — Pain points", with the way back and the way on, both named."""
+    total = len(pages)
+    if total <= 1:
+        return None
+    title = pages[page_index].get("title", "")
+    steps = []
+    if page_index > 0:
+        steps.append(
+            html.Button(
+                [html.I(className="bi bi-arrow-left"),
+                 html.Span(pages[page_index - 1].get("title", "Previous"))],
+                id=_id("bm-goto", card_idx, page=page_index - 1, src=page_index),
+                n_clicks=0,
+                className="bm-foot-step prev",
+                title="Previous chapter",
+            )
+        )
+    if page_index < total - 1:
+        steps.append(
+            html.Button(
+                [html.Span(f"Next: {pages[page_index + 1].get('title', '')}"),
+                 html.I(className="bi bi-arrow-right")],
+                id=_id("bm-goto", card_idx, page=page_index + 1, src=page_index),
+                n_clicks=0,
+                className="bm-foot-step next",
+                title="Next chapter",
+            )
+        )
+    return html.Div(
+        [
+            html.Div(f"{page_index + 1} of {total} — {title}", className="bm-foot-where"),
+            html.Div(steps, className="bm-foot-steps"),
+        ],
+        className="bm-brief-foot",
+    )
+
+
+def _render_page(doc, page, figures, edit_mode, card_idx, page_index, active_page=0):
     # Filtered to dicts: an empty board saved before `build()` was fixed holds an
     # icon STRING where its widget list belongs, and iterating that hands each
     # character to `_render_widget` — which takes the whole transcript down.
@@ -308,7 +376,7 @@ def _render_page(page, figures, edit_mode, card_idx, page_index, active_page=0, 
     if not grid_items:
         body = [html.Div([html.I(className="bi bi-grid-3x3-gap"), html.Span("Empty page — add a widget")], className="bm-charts-empty")]
 
-    children = [_page_heading(page, page_index, total)]
+    children = [_page_heading(doc, page)]
     if edit_mode:
         children.append(_page_toolbar(page, card_idx))
     children.extend(body)
@@ -321,6 +389,7 @@ def _render_page(page, figures, edit_mode, card_idx, page_index, active_page=0, 
                 className="bm-page-notes",
             )
         )
+    children.append(_page_footer(doc.get("pages") or [], card_idx, page_index))
 
     return html.Div(
         children,
@@ -334,17 +403,20 @@ def _render_page(page, figures, edit_mode, card_idx, page_index, active_page=0, 
 
 
 def _header(doc, edit_mode, card_idx):
-    # The board states the scope it was built from, in the same pills the chat
-    # composer shows and the same order the exported slide prints.
-    scope = scope_bar(doc.get("scope"), compact=True)
+    """The breadcrumb bar: where you are, and the board's two actions.
+
+    The breadcrumb names the review (the subtitle, e.g. "Q2 2026 premium
+    performance"); the subject and its scope are stated on every chapter by the
+    scope line, so they are not repeated up here.
+    """
+    crumb = (doc.get("subtitle") or "").strip() or doc.get("title", "")
     title_block = html.Div(
         [
-            html.Div([html.I(className="bi bi-grid-1x2-fill"), html.Span("Boardroom")], className="bm-eyebrow"),
-            html.Div(doc.get("title", "Boardroom"), className="bm-title"),
-            html.Div(doc.get("subtitle", ""), className="bm-subtitle") if doc.get("subtitle") else None,
-            scope,
+            html.Span([html.I(className="bi bi-grid-1x2-fill"), html.Span("Boardroom")], className="bm-eyebrow"),
+            html.Span("/", className="bm-crumb-sep", **{"aria-hidden": "true"}),
+            html.Span(crumb, className="bm-crumb"),
         ],
-        className="bm-title-block",
+        className="bm-title-block bm-breadcrumb",
     )
     actions = [
         html.Button(
@@ -365,28 +437,32 @@ def _header(doc, edit_mode, card_idx):
     return html.Div([title_block, html.Div(actions, className="bm-actions")], className="bm-header")
 
 
-def _pager(pages, card_idx, active_page=0):
+def _chapters(pages, card_idx, active_page=0):
+    """The chapters as numbered tabs, always in view above the page.
+
+    They replace a slider that sat BELOW the pages, where a reader only found it
+    after scrolling past the whole first chapter. The store beside them holds
+    the open chapter for ``track_active_page``, so an edit-driven re-render
+    reopens the same one.
+    """
     if len(pages) <= 1:
         return None
-    marks = {p: {"label": f"{p + 1}. " + pg.get("title", f"Page {p+1}")} for p, pg in enumerate(pages)}
+    tabs = [
+        html.Button(
+            [html.Span(f"{p + 1}.", className="bm-chapter-n"), html.Span(pg.get("title", f"Page {p + 1}"))],
+            id=_id("bm-chapter", card_idx, page=p),
+            n_clicks=0,
+            className="bm-chapter" + (" is-active" if p == active_page else ""),
+            title=pg.get("caption") or pg.get("title", ""),
+        )
+        for p, pg in enumerate(pages)
+    ]
     return html.Div(
         [
-            html.Div(
-                [
-                    html.I(className="bi bi-funnel"),
-                    html.Span(
-                        f"{len(pages)} steps, widest first · drag to move through the board"
-                    ),
-                ],
-                className="bm-pager-caption",
-            ),
-            dcc.Slider(
-                id=_id("bm-slider", card_idx),
-                min=0, max=len(pages) - 1, step=None, value=active_page, marks=marks, included=False,
-                className="bm-slider",
-            ),
+            html.Nav(tabs, className="bm-chapters", **{"aria-label": "Board chapters"}),
+            dcc.Store(id=_id("bm-nav", card_idx), data=active_page),
         ],
-        className="bm-pager",
+        className="bm-chapter-bar",
     )
 
 
@@ -407,15 +483,15 @@ def render_document(
     active_page = max(0, min(active_page or 0, max(0, len(pages) - 1)))
 
     page_divs = [
-        _render_page(pg, figures, edit_mode, card_idx, p, active_page, total=len(pages))
+        _render_page(doc, pg, figures, edit_mode, card_idx, p, active_page)
         for p, pg in enumerate(pages)
     ]
 
-    children = [_header(doc, edit_mode, card_idx), html.Div(page_divs, className="bm-pages")]
-
-    pager = _pager(pages, card_idx, active_page)
-    if pager is not None:
-        children.append(pager)
+    children = [_header(doc, edit_mode, card_idx)]
+    chapters = _chapters(pages, card_idx, active_page)
+    if chapters is not None:
+        children.append(chapters)
+    children.append(html.Div(page_divs, className="bm-pages"))
 
     if edit_mode:
         children.append(
@@ -425,5 +501,6 @@ def render_document(
             )
         )
 
-    cls = "message boardroom-card" + (" is-editing" if edit_mode else "")
-    return html.Div(children, className=cls)
+    cls = "message boardroom-card bm-brief" + (" is-editing" if edit_mode else "")
+    # `data-bm-card` lets the chapter switch scroll THIS card back to its top.
+    return html.Div(children, className=cls, **{"data-bm-card": str(card_idx)})

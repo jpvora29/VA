@@ -1945,10 +1945,13 @@ body.qs-cv-dragging { user-select: none; cursor: grabbing; }
     background: rgba(233, 239, 249, 0.45);
     -webkit-backdrop-filter: blur(6px) saturate(108%);
     backdrop-filter: blur(6px) saturate(108%);
-    /* A progress cue, not a control: a change made while it is up must still land. */
-    pointer-events: none;
 }
+/* While it is up the page behind it is not operable: the overlay takes the pointer, and
+   assets/va_busy.js takes the keyboard. A filter ticked mid-recalculation used to land
+   against a half-updated form. */
 .qs-page-loader.is-on {
+    pointer-events: auto;
+    cursor: progress;
     display: flex;
     animation: qs-page-loader-in 120ms ease both;
 }

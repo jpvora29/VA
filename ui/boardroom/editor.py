@@ -57,19 +57,9 @@ DIMENSION_OPTS = [
     {"label": "Country", "value": "country"},
     {"label": "Other", "value": "other"},
 ]
-SEVERITY_OPTS = [
-    {"label": "High", "value": "High"},
-    {"label": "Medium", "value": "Med"},
-    {"label": "Low", "value": "Low"},
-]
-# Presence, not intensity: an explainable widget says "the carrier writes nothing
-# here", never "this scores 100".
-STATUS_OPTS = [
-    {"label": "No current premium", "value": "no_premium"},
-    {"label": "Low presence", "value": "low_presence"},
-    {"label": "Established", "value": "established"},
-    {"label": "Not stated", "value": "unknown"},
-]
+# No severity, score, presence or tone field anywhere: each was a rating the reader
+# could not check. A watch item states its figure; presence is read from the premium
+# (zero is "no current premium"); colour comes from the sign of a stated change.
 
 
 # ── repeatable-list specs: drive BOTH the structured form and the apply parser ──
@@ -80,70 +70,60 @@ STATUS_OPTS = [
 LIST_SPECS: Dict[str, Dict[str, Any]] = {
     "kpis": {
         "path": "kpis", "singular": "KPI", "key_field": "label",
-        "template": {"label": "", "value": "", "delta": "", "tone": "neutral", "icon": "bi bi-graph-up"},
+        "template": {"label": "", "value": "", "delta": "", "icon": "bi bi-graph-up"},
         "fields": [
             {"key": "label", "label": "Label", "type": "text"},
             {"key": "value", "label": "Value", "type": "text"},
             {"key": "delta", "label": "Delta", "type": "text"},
-            {"key": "tone", "label": "Tone", "type": "tone"},
             {"key": "icon", "label": "Icon", "type": "icon"},
         ],
     },
     "insights": {
         "path": "insights", "singular": "Insight", "key_field": "headline",
-        "template": {"headline": "", "detail": "", "tone": "neutral", "icon": "bi bi-lightbulb"},
+        "template": {"figure": "", "headline": "", "detail": "", "icon": "bi bi-lightbulb"},
         "fields": [
+            {"key": "figure", "label": "Figure that proves it (as shown)", "type": "text"},
             {"key": "headline", "label": "Headline", "type": "text"},
             {"key": "detail", "label": "Detail", "type": "textarea"},
-            {"key": "tone", "label": "Tone", "type": "tone"},
             {"key": "icon", "label": "Icon", "type": "icon"},
         ],
     },
     "timeline": {
         "path": "timeline", "singular": "Event", "key_field": "title",
-        "template": {"period": "", "title": "", "detail": "", "category": "other", "tone": "neutral"},
+        "template": {"period": "", "title": "", "detail": "", "category": "other"},
         "fields": [
             {"key": "period", "label": "Period", "type": "text"},
             {"key": "title", "label": "Title", "type": "text"},
             {"key": "detail", "label": "Detail", "type": "textarea"},
             {"key": "category", "label": "Category", "type": "select", "options": CATEGORY_OPTS},
-            {"key": "tone", "label": "Tone", "type": "tone"},
         ],
     },
     "opportunities": {
         "path": "opportunities", "singular": "Opportunity", "key_field": "area",
         "template": {"area": "", "dimension": "product", "carrier_level": "", "peer_level": "",
-                     "gap_score": 50, "recommendation": "", "tone": "good"},
+                     "recommendation": ""},
         "fields": [
             {"key": "area", "label": "Area", "type": "text"},
             {"key": "dimension", "label": "Dimension", "type": "select", "options": DIMENSION_OPTS},
-            {"key": "gap_score", "label": "Gap score (0-100)", "type": "number"},
             {"key": "carrier_level", "label": "Carrier level", "type": "text"},
             {"key": "peer_level", "label": "Marsh / peer level", "type": "text"},
             {"key": "recommendation", "label": "Recommendation", "type": "text"},
-            {"key": "tone", "label": "Tone", "type": "tone"},
         ],
     },
     "points": {
         "path": "positioning.points", "singular": "Carrier", "key_field": "label",
-        "template": {"label": "", "premium_strength": 50, "broker_perception": 50,
-                     "is_subject": False, "tone": "neutral"},
+        "template": {"label": "", "is_subject": False},
         "fields": [
             {"key": "label", "label": "Carrier", "type": "text"},
-            {"key": "premium_strength", "label": "Premium strength (0-100)", "type": "number"},
-            {"key": "broker_perception", "label": "Broker perception (0-100)", "type": "number"},
             {"key": "is_subject", "label": "Subject (carrier in focus)", "type": "bool"},
-            {"key": "tone", "label": "Tone", "type": "tone"},
         ],
     },
     "cells": {
         "path": "opportunity_map.cells", "singular": "Cell", "key_field": "row",
-        "template": {"row": "", "col": "", "intensity": 50, "tone": "neutral", "note": ""},
+        "template": {"row": "", "col": "", "note": ""},
         "fields": [
             {"key": "row", "label": "Row (product)", "type": "text"},
             {"key": "col", "label": "Column (market)", "type": "text"},
-            {"key": "intensity", "label": "Intensity (0-100)", "type": "number"},
-            {"key": "tone", "label": "Tone", "type": "tone"},
             {"key": "note", "label": "Note", "type": "text"},
         ],
     },
@@ -153,7 +133,6 @@ LIST_SPECS: Dict[str, Dict[str, Any]] = {
         "fields": [
             {"key": "label", "label": "Metric", "type": "text"},
             {"key": "values", "label": "Values — one per subject (comma-separated)", "type": "csv"},
-            {"key": "tones", "label": "Tones — optional (comma-separated)", "type": "csv"},
         ],
     },
     "battlecards": {
@@ -171,11 +150,10 @@ LIST_SPECS: Dict[str, Dict[str, Any]] = {
     },
     "risks": {
         "path": "risks", "singular": "Risk", "key_field": "label",
-        "template": {"label": "", "severity": "Med", "tone": "warn"},
+        "template": {"label": "", "evidence": ""},
         "fields": [
             {"key": "label", "label": "Risk", "type": "text"},
-            {"key": "severity", "label": "Severity", "type": "select", "options": SEVERITY_OPTS},
-            {"key": "tone", "label": "Tone", "type": "tone"},
+            {"key": "evidence", "label": "The figure that shows it (e.g. Premium -$3.2M QoQ)", "type": "text"},
         ],
     },
     # ── explainable widgets: actual measures, and no severity field anywhere ──
@@ -188,7 +166,7 @@ LIST_SPECS: Dict[str, Dict[str, Any]] = {
                      "share_of_wallet_pct": None, "share_of_portfolio_pct": None,
                      "movement": "", "movement_pct": None, "adverse": True,
                      "comparison": "", "trigger": "", "consecutive_periods": 1, "breached_kpi": "",
-                     "periods_comparable": True, "owner_action": "", "tone": "warn"},
+                     "periods_comparable": True, "owner_action": ""},
         "fields": [
             {"key": "risk", "label": "Risk", "type": "text"},
             {"key": "scope", "label": "Scope (country / product / carrier)", "type": "text"},
@@ -205,7 +183,6 @@ LIST_SPECS: Dict[str, Dict[str, Any]] = {
             {"key": "breached_kpi", "label": "Governed KPI breached", "type": "text"},
             {"key": "periods_comparable", "label": "Periods complete and comparable", "type": "bool"},
             {"key": "owner_action", "label": "Owner / action", "type": "text"},
-            {"key": "tone", "label": "Tone", "type": "tone"},
         ],
     },
     "headroom_rows": {
@@ -226,7 +203,6 @@ LIST_SPECS: Dict[str, Dict[str, Any]] = {
             {"key": "whitespace_premium", "label": "Whitespace premium (as shown)", "type": "text"},
             {"key": "whitespace_premium_value", "label": "Whitespace premium (number)", "type": "decimal"},
             {"key": "market_change", "label": "Market movement (with basis)", "type": "text"},
-            {"key": "status", "label": "Presence", "type": "select", "options": STATUS_OPTS},
             {"key": "focus", "label": "Suggested focus", "type": "text"},
         ],
     },
@@ -255,7 +231,6 @@ LIST_SPECS: Dict[str, Dict[str, Any]] = {
             {"key": "marsh_change_pct", "label": "Market movement (%)", "type": "decimal"},
             {"key": "carrier_change", "label": "Carrier movement (with basis)", "type": "text"},
             {"key": "carrier_change_pct", "label": "Carrier movement (%)", "type": "decimal"},
-            {"key": "status", "label": "Presence", "type": "select", "options": STATUS_OPTS},
             {"key": "focus_reason", "label": "Why focus here", "type": "textarea"},
         ],
     },
@@ -280,7 +255,7 @@ LIST_SPECS: Dict[str, Dict[str, Any]] = {
         "path": "portfolio_map.bubbles", "singular": "Product line", "key_field": "product_line",
         "template": {"product_line": "", "share_of_wallet_pct": None, "share_of_portfolio_pct": None,
                      "premium": "", "premium_value": None, "marsh_premium": "", "marsh_premium_value": None,
-                     "growth": "", "growth_pct": None, "peer_share_of_wallet_pct": None, "tone": "neutral"},
+                     "growth": "", "growth_pct": None, "peer_share_of_wallet_pct": None},
         "fields": [
             {"key": "product_line", "label": "Product line", "type": "text"},
             {"key": "share_of_wallet_pct", "label": "Share of wallet (%) - x axis", "type": "decimal"},
@@ -292,7 +267,6 @@ LIST_SPECS: Dict[str, Dict[str, Any]] = {
             {"key": "growth", "label": "Growth (with basis)", "type": "text"},
             {"key": "growth_pct", "label": "Growth (%)", "type": "decimal"},
             {"key": "peer_share_of_wallet_pct", "label": "Peers hold - share of wallet (%)", "type": "decimal"},
-            {"key": "tone", "label": "Tone", "type": "tone"},
         ],
     },
     "carrier_standings": {
@@ -322,7 +296,6 @@ LIST_SPECS: Dict[str, Dict[str, Any]] = {
             {"key": "y_value", "label": "Y — actual value", "type": "decimal"},
             {"key": "y_display", "label": "Y — as shown", "type": "text"},
             {"key": "is_subject", "label": "Subject (carrier in focus)", "type": "bool"},
-            {"key": "tone", "label": "Tone", "type": "tone"},
         ],
     },
 }

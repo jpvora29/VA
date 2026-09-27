@@ -19,22 +19,60 @@ def tone(value: str | None) -> str:
     return v if v in _TONES else "neutral"
 
 
-def _kpi_tile(card: Dict[str, Any]):
-    t = tone(card.get("tone"))
-    delta = card.get("delta") or ""
+# A stated change's direction, read from its own sign. The colour of a KPI's change
+# used to be the model's opinion ("tone") of whether it was good news; the sign is
+# on the page and anyone can check it.
+_UP_SIGNS = ("+", "▲", "↑")
+_DOWN_SIGNS = ("-", "−", "–", "▼", "↓")
+
+
+def delta_direction(delta: str) -> str:
+    """'up', 'down', or '' when the change states no direction."""
+    text = (delta or "").strip()
+    if text.startswith(_UP_SIGNS):
+        return "up"
+    if text.startswith(_DOWN_SIGNS):
+        return "down"
+    return ""
+
+
+def _kpi_delta(delta: str):
+    direction = delta_direction(delta)
+    if not delta:
+        return None
+    icon = {"up": "bi bi-arrow-up-right", "down": "bi bi-arrow-down-right"}.get(direction)
+    return html.Div(
+        [html.I(className=icon) if icon else None, html.Span(delta)],
+        className=f"bm-kpi-delta {direction or 'flat'}",
+    )
+
+
+def _kpi_tile(card: Dict[str, Any], *, hero: bool = False):
     return html.Div(
         [
-            html.Div(html.I(className=card.get("icon") or "bi bi-graph-up"), className=f"bm-kpi-icon {t}"),
-            html.Div(
-                [
-                    html.Div(card.get("label", ""), className="bm-kpi-label"),
-                    html.Div(card.get("value", ""), className="bm-kpi-value"),
-                ]
-                + ([html.Div(delta, className=f"bm-kpi-delta {t}")] if delta else []),
-                className="bm-kpi-copy",
-            ),
+            html.Div(card.get("label", ""), className="bm-kpi-label"),
+            html.Div(card.get("value", ""), className="bm-kpi-value"),
+            _kpi_delta(card.get("delta") or ""),
         ],
-        className="bm-kpi-card",
+        className="bm-kpi-card" + (" is-hero" if hero else ""),
+    )
+
+
+def _kpi_strip(kpis: List[Dict[str, Any]]):
+    """The first KPI is the headline figure; the rest sit beside it as supporting stats.
+
+    The digest orders KPIs widest first (overall premium before a segment), so the
+    first one IS the number the board opens on.
+    """
+    if not kpis:
+        return html.Div(className="bm-kpi-grid")
+    hero, rest = kpis[0], kpis[1:]
+    return html.Div(
+        [
+            _kpi_tile(hero, hero=True),
+            html.Div([_kpi_tile(c) for c in rest], className="bm-kpi-rest") if rest else None,
+        ],
+        className="bm-kpi-grid bm-kpi-brief",
     )
 
 
@@ -148,8 +186,7 @@ def render_content(content: str, widget: Dict[str, Any]):
         )
 
     if content == "kpis":
-        kpis = data.get("kpis") or []
-        return html.Div([_kpi_tile(c) for c in kpis], className="bm-kpi-grid")
+        return _kpi_strip(data.get("kpis") or [])
 
     # Unknown content — show the raw text fallback so nothing crashes.
     return html.Div(str(data), className="bm-richtext")

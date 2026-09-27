@@ -12,7 +12,19 @@ import copy
 import json
 from typing import Any, Dict, Optional
 
-from dash import ALL, Input, Output, State, callback, ctx, dcc, html, no_update
+from dash import (
+    ALL,
+    MATCH,
+    Input,
+    Output,
+    State,
+    callback,
+    clientside_callback,
+    ctx,
+    dcc,
+    html,
+    no_update,
+)
 
 from ui.boardroom import builder, editor, model
 from ui.boardroom.figures import figures_for_specs
@@ -166,17 +178,62 @@ def dnd_reorder(evt, chat_history):
     return chat_history if moved else no_update
 
 
+# The chapter switch: a tab or a previous/next button names the page it opens in
+# its own id, so one function serves both. Clientside, because showing a page is
+# a style flip — a server round trip would re-run nothing and only add latency.
+# A "next" from the footer also scrolls the card back to its top, where the new
+# chapter starts; a tab is already at the top.
+clientside_callback(
+    """
+    function(tabClicks, stepClicks, pageIds, tabIds) {
+        const nu = window.dash_clientside.no_update;
+        const ctx = window.dash_clientside.callback_context;
+        const trig = (ctx && ctx.triggered && ctx.triggered.length) ? ctx.triggered[0] : null;
+        if (!trig || !trig.value) { return [nu, nu, nu]; }
+        const cut = trig.prop_id.lastIndexOf(".");
+        let id = null;
+        try { id = JSON.parse(trig.prop_id.slice(0, cut)); } catch (e) { return [nu, nu, nu]; }
+        const n = (pageIds || []).length;
+        let active = Number(id.page);
+        if (!(active >= 0)) { active = 0; }
+        if (active > n - 1) { active = n - 1; }
+        const styles = (pageIds || []).map(function (p) {
+            return Number(p.page) === active ? {} : {display: "none"};
+        });
+        const classes = (tabIds || []).map(function (t) {
+            return "bm-chapter" + (Number(t.page) === active ? " is-active" : "");
+        });
+        if (id.type === "bm-goto") {
+            const card = document.querySelector('[data-bm-card="' + id.idx + '"]');
+            if (card && card.getBoundingClientRect().top < 0) {
+                card.scrollIntoView({block: "start", behavior: "smooth"});
+            }
+        }
+        return [styles, classes, active];
+    }
+    """,
+    Output({"type": "bm-page", "idx": MATCH, "page": ALL}, "style"),
+    Output({"type": "bm-chapter", "idx": MATCH, "page": ALL}, "className"),
+    Output({"type": "bm-nav", "idx": MATCH}, "data"),
+    Input({"type": "bm-chapter", "idx": MATCH, "page": ALL}, "n_clicks"),
+    Input({"type": "bm-goto", "idx": MATCH, "page": ALL, "src": ALL}, "n_clicks"),
+    State({"type": "bm-page", "idx": MATCH, "page": ALL}, "id"),
+    State({"type": "bm-chapter", "idx": MATCH, "page": ALL}, "id"),
+    prevent_initial_call=True,
+)
+
+
 @callback(
     Output("boardroom-active-page", "data"),
-    Input({"type": "bm-slider", "idx": ALL}, "value"),
-    State({"type": "bm-slider", "idx": ALL}, "id"),
+    Input({"type": "bm-nav", "idx": ALL}, "data"),
+    State({"type": "bm-nav", "idx": ALL}, "id"),
     State("boardroom-active-page", "data"),
     prevent_initial_call=True,
 )
 def track_active_page(values, ids, store):
-    """Remember each card's current page so an edit-driven re-render restores it
+    """Remember each card's current chapter so an edit-driven re-render restores it
     instead of snapping back to page 0. Writes a side store that render_chat reads
-    as State, so navigating pages never triggers a server re-render itself."""
+    as State, so navigating chapters never triggers a server re-render itself."""
     out = dict(store or {})
     for v, i in zip(values, ids):
         if v is not None and isinstance(i, dict):
