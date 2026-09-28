@@ -54,6 +54,18 @@ def _public_url(path: Path) -> Optional[str]:
     return "/assets/" + rel.as_posix()
 
 
+def public_url_exists(url: Optional[str]) -> bool:
+    """True when an ``/assets/...`` URL still has its file behind it.
+
+    A document keeps the render URLs it was built with, and the cache under them is
+    pruned; a stale URL drew a blank slide instead of falling back to a fresh render.
+    """
+    if not url or not url.startswith("/assets/"):
+        return bool(url)
+    path = Path.cwd() / "assets" / url[len("/assets/"):]
+    return path.exists() and path.stat().st_size > 0
+
+
 def cache_picture(template_path: str, slide_idx: int, shape_id: int, ext: str, blob: bytes) -> Optional[str]:
     """Persist a picture shape and return a Dash-served URL when possible."""
     suffix = (ext or "png").lower().lstrip(".")

@@ -124,7 +124,22 @@
 .qs-root .qs-tf-box.is-previewing > .qs-tf-reflect:not(.qs7-live),
 .qs-root .qs-tf-cell.is-previewing > .qs-tf-reflect:not(.qs7-live) { visibility: hidden; }
 .qs-root .qs7-live .qs-tf-reflect-line { white-space: pre-wrap; }
-.qs-root .qs7-live .qs-tf-reflect-line + .qs-tf-reflect-line { margin-top: 0.45em; }
+.qs-root .qs7-live:not(.is-styled) .qs-tf-reflect-line + .qs-tf-reflect-line { margin-top: 0.45em; }
+
+/* Retyped words in the deck's own formatting (studio/template_fill/para_style.py): each
+   line carries its paragraph's size, colour, weight and indent inline; the box carries
+   the text frame's insets and anchor. The bullet hangs at marL + indent, the way
+   PowerPoint draws it. .qs-tf-protos holds one styled line per paragraph for the live
+   typing preview to clone — never shown. */
+.qs-root .qs-tf-protos { display: none !important; }
+.qs-root .qs-tf-reflect.is-styled {
+    gap: 0; box-sizing: border-box; min-height: inherit; padding: 0;
+}
+.qs-root .qs7-live.is-styled { padding: 0; min-height: 100%; }
+.qs-root .qs-tf-reflect.is-styled .qs-tf-reflect-line {
+    position: relative; line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.qs-root .qs-tf-reflect.is-styled .qs-tf-bullet { position: absolute; top: 0; line-height: inherit; }
 .qs7-toast {
     position: fixed; left: 50%; bottom: 36px; z-index: 900; transform: translate(-50%, 12px);
     display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px;

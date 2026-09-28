@@ -14,7 +14,7 @@ import json
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from sqlalchemy import create_engine, text
 
@@ -398,7 +398,8 @@ _PERIOD_MEM: Dict[str, Dict[str, Any]] = {}
 
 
 def _period_file(flow: str) -> Path:
-    sig = hashlib.blake2s(f"period|{flow}|{_db_signature()}".encode("utf-8"),
+    # "v2": the profile carries the quarter scopes; an older cache file lacks them.
+    sig = hashlib.blake2s(f"period-v2|{flow}|{_db_signature()}".encode("utf-8"),
                           digest_size=8).hexdigest()
     return _CACHE_DIR / f"period_{flow}_{sig}.json"
 
@@ -437,7 +438,48 @@ def _scan_period_profile(flow: str) -> Dict[str, Any]:
     best = max((int(r[1]) for r in rows if r[1]), default=None)
     if best:
         out["latest"] = [best // 100, best % 100]
+    out.update(_scan_quarter_scopes(table, columns, parts, has_quarter))
     return out
+
+
+def _scan_quarter_scopes(table: str, columns, parts, has_quarter: bool) -> Dict[str, Any]:
+    """``{"scope_columns": [...], "scopes": [[region, country, carrier, year, quarter]…]}``.
+
+    One DISTINCT pass, so Setup can offer only the quarters that hold data for the market
+    and year picked (:mod:`studio.quarter_scope`) without a query per filter change.
+    """
+    from studio.quarter_scope import SCOPE_COLUMNS, quarter_label
+
+    scope = [c for c in SCOPE_COLUMNS if c in columns]
+    if has_quarter:
+        quarter = '"Quarter"'
+    elif parts is not None:
+        quarter = f"(({parts.month}) + 2) / 3"
+    else:
+        return {}
+    picked = ", ".join([f'"{c}"' for c in scope] + [quarter])
+    try:
+        with get_engine().connect() as conn:
+            rows = conn.execute(text(f'SELECT DISTINCT {picked} FROM "{table}"')).fetchall()
+    except Exception as exc:  # noqa: BLE001 - the form still offers every quarter without it
+        logger.warning("studio: quarter scopes for %s unavailable: %s", table, exc)
+        return {}
+    scopes = [[*row[:-1], label] for row in rows
+              if (label := quarter_label(row[-1], native=has_quarter))]
+    return {"scope_columns": scope, "scopes": scopes}
+
+
+def quarters_in_scope(where: Mapping[str, Any], flow: str = "gpr") -> Optional[List[str]]:
+    """The quarter labels the warehouse holds under ``where`` (``{column: value(s)}``).
+
+    ``None`` until the period profile has been read (the form then offers every quarter).
+    """
+    from studio.quarter_scope import quarters_in
+
+    profile = period_profile(flow, wait=False) or {}
+    if "scopes" not in profile:
+        return None
+    return quarters_in(profile["scopes"], profile.get("scope_columns") or [], where)
 
 
 _PROFILE_THREADS: Dict[str, Any] = {}

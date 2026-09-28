@@ -70,12 +70,19 @@ def test_cube_cascade_matches_the_sql_cascade(selected):
 
 
 @pytest.mark.parametrize("selected", SELECTIONS, ids=lambda s: ",".join(s) or "unfiltered")
-def test_the_quarter_is_offered_whole_whatever_else_is_selected(selected):
-    """The quarter is the calendar's, not the book's. It never narrows and is never
-    narrowed — which is what keeps the month column out of the cube."""
+def test_the_quarter_follows_the_market_and_year_selected(selected):
+    """The quarter offers only the quarters holding data for the selected region, country,
+    carrier and year — read from the period profile's quarter scopes, never the cube."""
     from studio.compute import quarter_options
+    from studio.data import period_profile
+    from studio.quarter_scope import quarters_in
 
-    assert cascade_filter_options(selected, None)["quarter"] == quarter_options()
+    profile = period_profile("gpr")
+    where = {FILTER_COLUMN[c]: v for c, v in selected.items() if c in FILTER_COLUMN}
+    expected = quarters_in(profile["scopes"], profile["scope_columns"], where)
+
+    offered = cascade_filter_options(selected, None)["quarter"]
+    assert offered == (quarter_options(expected) if expected else [])
 
 
 def test_a_columns_own_selection_does_not_collapse_its_own_list():

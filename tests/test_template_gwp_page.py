@@ -25,18 +25,21 @@ COUNTRY_TEMPLATE = "template/country_template.pptx"
 
 
 @pytest.mark.parametrize("token,value,expected", [
-    ("€106.5m", 105_400_000, "€105.4m"),          # currency symbol + scale + decimals kept
+    # The author's symbol is replaced by the REPORTING currency's (money.yaml) — "{cur}".
+    ("€106.5m", 105_400_000, "{cur}105.4m"),      # symbol → reporting, scale + decimals kept
     ("-1.0%", -2.34, "-2.3%"),                    # percentage, sign from the data
     ("-1.0%", 9.87, "9.9%"),                      # a negative example may render positive
     ("+6.1%▲", 6.14, "+6.1%▲"),                   # forced sign kept, arrow follows the sign
     ("+6.1%▲", -6.14, "-6.1%▼"),                  # …and re-points when the data declines
     ("+0.3 pp\xa0", 1.26, "+1.3 pp\xa0"),         # a separated unit keeps its spacing
     ("+3", -2, "-2"),                             # bare integer
-    ("$1,234M", 2_293_000_000, "$2,293M"),        # thousands grouping kept
+    ("$1,234M", 2_293_000_000, "{cur}2,293M"),    # thousands grouping kept
     ("$xxx.xm", 5.0, "5.0"),                      # not an example figure → value as-is
 ])
 def test_render_example_follows_the_authored_style(token, value, expected):
-    assert render_example(token, value) == expected
+    from studio.template_fill.render import currency
+
+    assert render_example(token, value) == expected.format(cur=currency())
 
 
 def test_render_example_passes_through_non_numbers():

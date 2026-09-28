@@ -81,6 +81,42 @@ def to_lines(value: Any) -> Tuple[str, ...]:
     )
 
 
+def assign_lines(
+    paragraphs: Sequence[str], lines: Sequence[str],
+) -> Tuple[List[Tuple[int, List[str]]], List[str]]:
+    """Deal the edited ``lines`` back out to the paragraphs they came from.
+
+    The edit field shows one line per WORDED paragraph — blank spacer paragraphs are the
+    template's (:func:`to_lines`) — so line *i* belongs to the *i*-th worded paragraph,
+    not to paragraph *i*. Each worded paragraph takes back as many lines as it held (a
+    soft line break makes two). Returns ``([(paragraph index, its new lines)], extra
+    lines)``; a paragraph whose lines were deleted comes back with ``[]``, and lines
+    past the last paragraph are new paragraphs.
+    """
+    out: List[Tuple[int, List[str]]] = []
+    at = 0
+    for index, text in enumerate(paragraphs):
+        held = to_lines(text)
+        if not held:
+            continue
+        taken = [str(line) for line in lines[at:at + len(held)]]
+        at += len(taken)
+        out.append((index, taken))
+    return out, [str(line) for line in lines[at:]]
+
+
+def line_paragraphs(paragraphs: Sequence[str], lines: Sequence[str]) -> List[Tuple[int, bool]]:
+    """``(paragraph index, starts a paragraph)`` for each shown line — whose look it takes.
+
+    A new line past the end is written as a copy of the last worded paragraph
+    (:func:`studio.template_fill.fill.apply_text_overrides`), so it looks like that one.
+    """
+    assigned, extra = assign_lines(paragraphs, lines)
+    out = [(index, n == 0) for index, taken in assigned for n in range(len(taken))]
+    last = assigned[-1][0] if assigned else 0
+    return out + [(last, True)] * len(extra)
+
+
 def editable_text(
     shape: Any, slide_idx: int, edits: Mapping[str, Sequence[str]],
     cell: Optional[Tuple[int, int]] = None,

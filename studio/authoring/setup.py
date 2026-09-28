@@ -162,16 +162,17 @@ def cascade_filter_options(selected: dict, record) -> dict:
     cached pass over the filter cube answers all ten columns
     (:func:`studio.data.cascade_options`).
 
-    The QUARTER is the exception, and answers the calendar rather than the cube. It is not
-    a column of the book (:data:`studio.compute.QUARTER_MONTHS`), and a quarter has no
-    business narrowing the carrier list — so it is offered whole and left out of the pass.
+    The QUARTER is the exception: it is not in the cube, and a quarter has no business
+    narrowing the carrier list — so it is left out of the pass. It is narrowed the other
+    way round, though: it offers only the quarters holding data for the selected region,
+    country, carrier and year (:mod:`studio.quarter_scope`).
     """
     where = {FILTER_COLUMN[c]: v for c, v in (selected or {}).items() if c in FILTER_COLUMN}
     by_column = _cascade(record, _FILTER_COLUMNS, where)
     options = {fid: by_column[col] for fid, col in FILTER_COLUMN.items() if col in by_column}
     from studio.authoring.generate import quarter_choices
 
-    return {**options, "quarter": quarter_choices(record)}
+    return {**options, "quarter": quarter_choices(record, selected)}
 
 
 # ── the peer group, market by market ─────────────────────────────────────────

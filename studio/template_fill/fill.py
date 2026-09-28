@@ -24,10 +24,11 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from logger import get_logger
 from studio.steps import Pipeline, PipelineBuilder
+from studio.template_fill import year_labels
 from studio.template_fill.model import materialize_fields
 
 logger = get_logger(__name__)
@@ -524,31 +525,38 @@ def _label_subs(values: Dict[str, Any]) -> List[Any]:
 
         subs.append((re.compile(r"\bCarriers?(?:['’]s)?\b"), _carrier))
 
-    ty, py = values.get("template_year"), values.get("period_year")
-    labels = {str(k): str(v) for k, v in (values.get("period_labels") or {}).items()}
-    if labels and ty and py:
-        # An R12M / date-range run: the reporting year and the one before it are PERIODS,
-        # so "FY 2025" / "Marsh GWP 2025" become "TTM Aug 2026" / "Marsh GWP TTM Aug 2026".
-        # Any other year ("Opportunities for 2026") still just moves with the deck.
-        delta = int(py) - int(ty)
+    # Amounts are printed in the reporting currency, whatever symbol the author typed in a
+    # caption or example ("GWP Performance YoY (€M)" on a dollar book).
+    from studio.template_fill.render import CURRENCY_MARK, currency
 
-        # "Opportunities for 2026" looks FORWARD: on a rolling-twelve-month deck it means the
-        # next twelve months, not the period just reported. Runs before the period rule.
-        def _ahead(m, _d=delta, _p=int(py)):
-            return ("for the next twelve months" if int(m.group(1)) + _d >= _p
-                    else m.group(0))
-
-        subs.append((re.compile(r"\bfor\s+(20\d{2})\b"), _ahead))
-
-        def _period(m, _d=delta, _labels=labels):
-            year = str(int(m.group("year")) + _d)
-            return _labels.get(year, (m.group("fy") or "") + year)
-
-        subs.append((re.compile(r"(?P<fy>\bFY\s*)?\b(?P<year>20\d{2})\b"), _period))
-    elif ty and py and int(ty) != int(py):
-        delta = int(py) - int(ty)
-        subs.append((re.compile(r"\b(20\d{2})\b"), lambda m: str(int(m.group(1)) + delta)))
+    subs.append((CURRENCY_MARK, lambda _m: currency()))
+    # Years last: reporting years follow the selection (or its period labels), forward
+    # years name the year planned for, and the cover date is the build date.
+    subs.extend(year_labels.basis_subs(values))
+    subs.extend(year_labels.year_subs(values))
     return subs
+
+
+def _chart_text_frames(chart) -> List[Any]:
+    """A chart's own authored words — its title and axis titles ("GWP LoB (€M)").
+
+    Only titles that already carry text are returned; asking python-pptx for the text
+    frame of an automatic title would create one.
+    """
+    frames: List[Any] = []
+    try:
+        if chart.has_title and chart.chart_title.has_text_frame:
+            frames.append(chart.chart_title.text_frame)
+    except Exception:  # noqa: BLE001 — an odd chart keeps its words
+        pass
+    for name in ("category_axis", "value_axis"):
+        try:
+            axis = getattr(chart, name)
+            if axis.has_title and axis.axis_title.has_text_frame:
+                frames.append(axis.axis_title.text_frame)
+        except Exception:  # noqa: BLE001 — e.g. a pie has no axes
+            continue
+    return frames
 
 
 def _apply_subs(slide, subs: List[Any]) -> None:
@@ -568,6 +576,8 @@ def _apply_subs(slide, subs: List[Any]) -> None:
             frames.append(sh.text_frame)
         elif sh.has_table:
             frames.extend(cell.text_frame for row in sh.table.rows for cell in row.cells)
+        elif getattr(sh, "has_chart", False) and sh.has_chart:
+            frames.extend(_chart_text_frames(sh.chart))
         for tf in frames:
             for para in tf.paragraphs:
                 original = para.text
@@ -1279,22 +1289,91 @@ def _fill_ranking_panels(slide, sidx: int, panels: Dict[str, Any]) -> set:
 def _write_bar_chart(chart, series: Dict[str, Any]) -> None:
     """Write a CY-vs-PY category chart (``{categories, cy, py}``) into a clustered bar.
 
-    The series NAMES come from the template's own authored series (``CY``/``PY``) so the
-    legend, colours and ordering the author chose are preserved. The values arrive already
-    scaled to the unit the page's caption declares ("GWP LoB (€M)"), so the labels state
+    The series keep the author's ORDER (current, then prior) and so their colours, but are
+    NAMED for the periods they are — "FY2024" / "FY2023", or "TTM Aug 2026" — from the
+    payload's ``names``, rather than the template's ``CY``/``PY``. The values arrive already
+    scaled to the unit the page's caption declares ("GWP LoB ($M)"), so the labels state
     that unit's own plain format rather than the raw-currency scaling code the author's
     example data carried.
     """
     from pptx.chart.data import CategoryChartData
 
     authored = [str(s.name or "") for s in chart.series][:2]
-    names = (authored + ["CY", "PY"])[:2]
+    names = [str(n) for n in (series.get("names") or ())][:2]
+    names = names if len(names) == 2 and all(names) else (authored + ["CY", "PY"])[:2]
     data = CategoryChartData(number_format=_MILLIONS_FORMAT)
     data.categories = [str(c) for c in series["categories"]]
     for name, key in zip(names, ("cy", "py")):
         data.add_series(name, [float(v) for v in series[key]])
     _replace_chart_data(chart, data)
     _pin_value_axis_format(chart, _MILLIONS_FORMAT)
+
+
+def _plot_band(chart, frame_top: int, frame_height: int) -> Tuple[float, float]:
+    """``(top, height)`` of a chart's inner plot area, in the frame's own EMU."""
+    from pptx.oxml.ns import qn
+
+    layout = chart._chartSpace.find(".//" + qn("c:plotArea") + "/" + qn("c:layout")
+                                    + "/" + qn("c:manualLayout"))
+
+    def frac(tag: str, default: float) -> float:
+        node = layout.find(qn(tag)) if layout is not None else None
+        try:
+            return float(node.get("val")) if node is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    return frame_top + frac("c:y", 0.0) * frame_height, frac("c:h", 1.0) * frame_height
+
+
+def _write_total_bars(slide, shape, spec: Dict[str, Any]) -> None:
+    """Refill the GWP panel's two-bar chart with the real totals, and re-seat its labels.
+
+    A think-cell chart: its bars are the cached values of the first series, its value axis
+    is pinned to the taller example bar, and the money boxes above it were placed by hand
+    on the example bars' tops. The cache is written in place (no ``replace_data``, which
+    would rebuild the think-cell styling), the axis max follows the new taller bar, and
+    each money box keeps the gap the author left above ITS bar.
+    """
+    from pptx.oxml.ns import qn
+
+    chart = shape.chart
+    new = [float(v) for v in spec["values"]]
+    ser = chart._chartSpace.find(".//" + qn("c:ser"))
+    cache = ser.find(".//" + qn("c:val") + "//" + qn("c:numCache")) if ser is not None else None
+    if cache is None or not new or max(new) <= 0:
+        return
+    old = [float(pt.find(qn("c:v")).text) for pt in cache.findall(qn("c:pt"))]
+    axis_max = chart._chartSpace.find(".//" + qn("c:valAx") + "/" + qn("c:scaling")
+                                      + "/" + qn("c:max"))
+    old_max = float(axis_max.get("val")) if axis_max is not None else max(old or [1.0])
+    _detach_external_data(chart)
+    for pt in cache.findall(qn("c:pt")):
+        idx = int(pt.get("idx"))
+        if idx < len(new):
+            pt.find(qn("c:v")).text = repr(new[idx])
+    if axis_max is not None:
+        axis_max.set("val", repr(max(new)))
+    _reseat_total_labels(slide, shape, spec.get("labels") or [], old, old_max, new, max(new))
+
+
+def _reseat_total_labels(slide, shape, label_ids: Sequence[Any], old: Sequence[float],
+                         old_max: float, new: Sequence[float], new_max: float) -> None:
+    """Move each bar's money box so it sits the author's gap above the bar's new top."""
+    top, height = _plot_band(shape.chart, int(shape.top), int(shape.height))
+    parent = shape._element.getparent()
+    boxes = {int(sh.shape_id): sh for sh in _iter_leaves(slide.shapes)
+             if sh._element.getparent() is parent}      # same group = same coordinates
+
+    def bar_top(value: float, peak: float) -> float:
+        return top + height * (1.0 - min(max(value / peak, 0.0), 1.0))
+
+    for i, label_id in enumerate(label_ids):
+        box = boxes.get(int(label_id)) if label_id is not None else None
+        if box is None or i >= len(old) or i >= len(new) or old_max <= 0:
+            continue
+        gap = bar_top(old[i], old_max) - (int(box.top) + int(box.height))
+        box.top = int(bar_top(new[i], new_max) - gap - int(box.height))
 
 
 def _fill_charts(prs, values: Dict[str, Any]) -> None:
@@ -1312,7 +1391,9 @@ def _fill_charts(prs, values: Dict[str, Any]) -> None:
         LC-ranking panel;
       * **clustered bars** — the GWP-performance page's CY-vs-PY breakdowns, addressed by
         ``slide:shape`` from the ``gwp_bars`` payload
-        (:mod:`studio.template_fill.gwp_page` decides which chart is which dimension).
+        (:mod:`studio.template_fill.gwp_page` decides which chart is which dimension);
+      * **the two-bar totals** — that page's prior / current total columns, from the
+        ``gwp_totals`` payload (:func:`_write_total_bars`).
 
     Off-switch: ``STUDIO_FILL_CHARTS=off``. Any per-chart failure is swallowed so a
     chart never breaks the export.
@@ -1326,8 +1407,9 @@ def _fill_charts(prs, values: Dict[str, Any]) -> None:
     growth = values.get("growth_bubble")
     points = _bubble_points((growth or {}).get("points") or [])
     bars = values.get("gwp_bars") or {}
+    totals = values.get("gwp_totals") or {}
     ranking = values.get("lc_ranking") or {}
-    if growth is None and not bars and not ranking:
+    if growth is None and not bars and not ranking and not totals:
         return
     from pptx.chart.data import XyChartData
 
@@ -1341,8 +1423,11 @@ def _fill_charts(prs, values: Dict[str, Any]) -> None:
             chart = sh.chart
             ctype = str(chart.chart_type)
             series = bars.get(f"{sidx}:{int(sh.shape_id)}")
+            total = totals.get(f"{sidx}:{int(sh.shape_id)}")
             try:
-                if series:
+                if total:
+                    _write_total_bars(slide, sh, total)
+                elif series:
                     if not _detach_external_data(chart):
                         continue
                     _write_bar_chart(chart, series)
@@ -1847,17 +1932,19 @@ FILL_PIPELINE: Pipeline[FillContext] = (
 # ── retyped text on a delivered deck ─────────────────────────────────────────
 
 
-def _clone_paragraph(text_frame, source):
-    """Append a copy of ``source`` to ``text_frame`` — its formatting, no text.
+def _clone_paragraph_after(text_frame, source, anchor):
+    """Insert a copy of ``source`` right after ``anchor`` — its formatting, no text.
 
     An author who adds a bullet expects it to look like the ones around it, so a new
-    paragraph is the previous paragraph's XML rather than a bare, theme-default one.
+    paragraph is the previous paragraph's XML rather than a bare, theme-default one. It
+    goes after the last written paragraph, not at the very end, so trailing spacer
+    paragraphs stay where the template put them.
     """
     from copy import deepcopy
 
     new = deepcopy(source._p)
-    source._p.getparent().append(new)
-    return text_frame.paragraphs[-1]
+    anchor._p.addnext(new)
+    return next(p for p in text_frame.paragraphs if p._p is new)
 
 
 def _drop_paragraph(paragraph) -> None:
@@ -1865,21 +1952,43 @@ def _drop_paragraph(paragraph) -> None:
     element.getparent().remove(element)
 
 
-def _write_lines(text_frame, lines) -> None:
-    """Make ``text_frame`` say exactly ``lines``, one paragraph each.
+def _drop_soft_breaks(paragraph) -> None:
+    """Remove ``<a:br>`` so a once-two-line paragraph written as one line has no gap."""
+    from pptx.oxml.ns import qn
 
-    Existing paragraphs are rewritten in place so their run formatting survives;
-    extra lines clone the last paragraph, and paragraphs the author deleted are
-    removed from the end.
+    for br in paragraph._p.findall(qn("a:br")):
+        paragraph._p.remove(br)
+
+
+def _write_lines(text_frame, lines) -> None:
+    """Make ``text_frame`` say exactly ``lines``, keeping every paragraph's formatting.
+
+    Each line goes back into the paragraph it came from (:func:`TE.assign_lines` —
+    blank spacer paragraphs are skipped, as the edit field skips them), and a paragraph
+    whose words did not change is not touched at all, so a bold lead-in or a coloured
+    figure inside it survives. Lines past the end copy the last worded paragraph, and
+    paragraphs the author deleted are removed.
     """
+    from studio.template_fill import text_edits as TE
+
     paragraphs = list(text_frame.paragraphs)
-    for index, line in enumerate(lines):
-        if index < len(paragraphs):
-            _set_paragraph_text(paragraphs[index], line)
-        else:
-            _set_paragraph_text(_clone_paragraph(text_frame, paragraphs[-1]), line)
-    for paragraph in paragraphs[len(lines):]:
-        _drop_paragraph(paragraph)
+    assigned, extra = TE.assign_lines([p.text for p in paragraphs], lines)
+    if not assigned:                      # nothing worded to write into: use the first
+        _set_paragraph_text(paragraphs[0], _SOFT_BREAK.join(str(x) for x in lines))
+        return
+    for index, taken in assigned:
+        paragraph = paragraphs[index]
+        if not taken:
+            _drop_paragraph(paragraph)
+        elif tuple(taken) != TE.to_lines(paragraph.text):
+            if len(taken) == 1:
+                _drop_soft_breaks(paragraph)
+            _set_paragraph_text(paragraph, _SOFT_BREAK.join(taken))
+    source = anchor = paragraphs[assigned[-1][0]]
+    for line in extra:
+        anchor = _clone_paragraph_after(text_frame, source, anchor)
+        _drop_soft_breaks(anchor)
+        _set_paragraph_text(anchor, line)
 
 
 def _override_frame(shapes, target):

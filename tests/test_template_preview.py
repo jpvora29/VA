@@ -14,8 +14,27 @@ def test_template_preview_uses_cached_background_without_rendering(monkeypatch):
     monkeypatch.setattr(TP.registry, "derive_manifest", lambda path: (template, []))
     monkeypatch.setattr(TP, "materialize_fields", lambda doc: {})
     monkeypatch.setattr(TP, "cached_doc_backgrounds", lambda doc, slide_count: ["/assets/cached.png"])
+    monkeypatch.setattr(TP, "public_url_exists", lambda url: True)
 
-    body = TP.template_preview_body(
+    stage = _stage(_one_slide_body())
+    assert stage.style["backgroundImage"] == "url('/assets/pre-rendered.png')"
+
+
+def test_a_stored_render_whose_file_is_gone_falls_back_to_the_cache(monkeypatch):
+    """The render cache is pruned; a document still holding the old URL drew a blank slide."""
+    template = Template(path="assembled.pptx", width_emu=12192000, height_emu=6858000,
+                        slides=[Slide(index=0, layout="blank")])
+    monkeypatch.setattr(TP.registry, "derive_manifest", lambda path: (template, []))
+    monkeypatch.setattr(TP, "materialize_fields", lambda doc: {})
+    monkeypatch.setattr(TP, "cached_doc_backgrounds", lambda doc, slide_count: ["/assets/cached.png"])
+    monkeypatch.setattr(TP, "public_url_exists", lambda url: url != "/assets/pre-rendered.png")
+
+    stage = _stage(_one_slide_body())
+    assert stage.style["backgroundImage"] == "url('/assets/cached.png')"
+
+
+def _one_slide_body():
+    return TP.template_preview_body(
         {
             "template_path": "assembled.pptx",
             "values": {},
@@ -27,9 +46,10 @@ def test_template_preview_uses_cached_background_without_rendering(monkeypatch):
         {"idx": 0},
     )
 
+
+def _stage(body):
     stage_row = body.children[0]                      # [stage wrap, edit panel]
-    stage = stage_row.children[0].children[1].children   # wrap = [prev, stage, next]
-    assert stage.style["backgroundImage"] == "url('/assets/pre-rendered.png')"
+    return stage_row.children[0].children[1].children   # wrap = [prev, stage, next]
 
 
 # ── the survey table's band colours reach the on-screen preview ──────────────

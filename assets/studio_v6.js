@@ -178,10 +178,27 @@
             box.appendChild(live);
         }
         live.innerHTML = "";
-        typedLines(bar).forEach(function (line) {
-            var row = document.createElement("div");
-            row.className = "qs-tf-reflect-line";
-            row.textContent = line;
+        // Each typed line takes the look of the paragraph it will be written into: the
+        // server renders one styled, hidden line per paragraph (.qs-tf-protos); a line
+        // past the last one looks like the last, as the export writes it.
+        var protoBox = box.querySelector(":scope > .qs-tf-protos");
+        var protos = protoBox ? protoBox.querySelectorAll(":scope > .qs-tf-reflect-line") : [];
+        if (protos.length) {
+            live.classList.add("is-styled");
+            live.style.cssText = protoBox.style.cssText;
+        }
+        typedLines(bar).forEach(function (line, i) {
+            var row;
+            if (protos.length) {
+                row = protos[Math.min(i, protos.length - 1)].cloneNode(true);
+                if (i === 0) { row.style.marginTop = ""; }
+                var text = row.querySelector(".qs-tf-rtext");
+                (text || row).textContent = line;
+            } else {
+                row = document.createElement("div");
+                row.className = "qs-tf-reflect-line";
+                row.textContent = line;
+            }
             live.appendChild(row);
         });
         box.classList.add("is-previewing");

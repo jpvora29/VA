@@ -81,10 +81,8 @@ QUARTERS: Tuple[str, ...] = tuple(QUARTER_MONTHS)
 def quarter_options(values: Sequence[Any] = ()) -> List[Dict[str, str]]:
     """The Setup dropdown's choices — the book's own quarter labels, else Q1–Q4.
 
-    ``values`` is the distinct content of the book's ``Quarter`` column when it has one.
-    Never narrowed by the other filters: every quarter the book records is offered whether
-    or not the current scope wrote premium in it, because a quarter missing from the list
-    would read as "this carrier has no Q3" when it means "this combination has none".
+    ``values`` is the book's quarter labels — Setup passes the ones holding data for the
+    selected region, country, carrier and year (``studio.authoring.generate.quarter_choices``).
     """
     labels = [str(v) for v in values if str(v or "").strip()] or list(QUARTERS)
     return [{"label": q, "value": q} for q in sorted(dict.fromkeys(labels), key=_quarter_order)]

@@ -113,6 +113,18 @@
     background: transparent !important; box-shadow: none !important; border-left: none !important;
     border-radius: 0 !important; margin: 0 !important;
 }
+/* No hover lift on a queue row. The older .qs-map-row skins translate a hovered row
+   by 1px, and a transformed ancestor breaks the Dash 4 dropdown inside it: its menu is
+   a position:fixed popper rendered IN the row, so the transform becomes the menu's
+   containing block (the menu jumped every time the pointer crossed a row edge) and a
+   stacking context (the rows below painted over the menu, hiding options, and the
+   card's overflow clipped it). */
+.qs-root .qs8-row,
+.qs-root .qs8-row:hover {
+    transform: none !important; transition: none !important;
+}
+/* The row with the open menu sits above its neighbours. */
+.qs-root .qs8-row:has(.dash-dropdown[aria-expanded="true"]) { position: relative; z-index: 5; }
 .qs-root .qs8-headrow {
     padding-top: 10px; padding-bottom: 10px; background: var(--va-surface-1) !important;
 }

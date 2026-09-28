@@ -12,8 +12,17 @@ ASSETS = str(Path(__file__).resolve().parents[2] / "assets")
 BREAKDOWNS = ["Product_Line", "SIC_Major_Class"]
 BLANK = (None, "", [], "all", "All")
 
-# Sensible defaults so the Setup form is pre-filled and a deck is one click away.
+# Sensible defaults so the Setup form is pre-filled and a deck is one click away. The
+# year here is only the fallback: the form opens on the LATEST year the data holds
+# (:func:`default_filters`), so a new year's data is picked up without a code change.
 DEFAULT_FILTERS = {"carrier": "Zurich", "country": ["Singapore"], "year": 2025}
+
+
+def default_filters(options) -> dict:
+    """The form's opening selection, with the latest year among the ``year`` options."""
+    years = [int(str(o.get("value")).split(".")[0]) for o in (options or {}).get("year") or []
+             if str(o.get("value", "")).split(".")[0].isdigit()]
+    return {**DEFAULT_FILTERS, "year": max(years)} if years else dict(DEFAULT_FILTERS)
 
 # One engine, opened once and shared by every helper (cheap: runs no query).
 engine = get_engine()

@@ -41,6 +41,21 @@ def _tdoc(**extra):
     }
 
 
+@pytest.fixture(autouse=True)
+def _renders_exist(monkeypatch):
+    """The fake render URLs below stand for files on disk."""
+    monkeypatch.setattr(TP, "public_url_exists", lambda url: bool(url))
+
+
+def _reflected_lines(body):
+    """The words drawn over the render (not the hidden live-preview prototypes)."""
+    return [
+        text.children
+        for box in _walk(body) if "qs-tf-reflect" in str(getattr(box, "className", "")).split()
+        for text in _walk(box) if "qs-tf-rtext" in str(getattr(text, "className", ""))
+    ]
+
+
 def _rendered_tdoc(**extra):
     """The same document as the author sees it: every slide an exact PNG render."""
     return _tdoc(background_urls=[f"/assets/render-{i}.png" for i in range(6)], **extra)
@@ -81,6 +96,11 @@ def _prose_box(template):
             if block and len(block.lines) >= 2 and all(len(x) > 40 for x in block.lines[:2]):
                 return slide, shape, block
     pytest.skip("no multi-paragraph prose box in this template")
+
+
+def _worded(box):
+    """A box's worded paragraphs — blank spacer paragraphs are the template's and stay."""
+    return [p.text.strip() for p in box.text_frame.paragraphs if p.text.strip()]
 
 
 def _leaves(shapes):
@@ -229,12 +249,7 @@ def test_the_canvas_reflects_what_was_typed(template):
     )
 
     body = TP.template_preview_body(tdoc, {"idx": tdoc["order"].index(slide.index)})
-    shown = [
-        item.children for item in _walk(body)
-        if "qs-tf-reflect-line" in str(getattr(item, "className", ""))
-    ]
-
-    assert shown == ["Marine carried the quarter.", "Property needs a plan."]
+    assert _reflected_lines(body) == ["Marine carried the quarter.", "Property needs a plan."]
     assert "is-edited" in _classes(body)
     pills = [
         str(getattr(item, "children", ""))
@@ -437,7 +452,7 @@ def test_what_was_typed_reaches_the_downloaded_deck(tmp_path, template):
     box = next(s for s in _leaves(Presentation(out).slides[slide.index].shapes)
                if int(s.shape_id) == shape.shape_id)
 
-    assert [p.text for p in box.text_frame.paragraphs] == [
+    assert _worded(box) == [
         "Marine cross-sell carried the quarter.",
         "Property retention needs a plan.",
     ]
@@ -459,7 +474,7 @@ def test_a_line_added_in_the_edit_field_reaches_the_deck(tmp_path, template):
     box = next(s for s in _leaves(Presentation(out).slides[slide.index].shapes)
                if int(s.shape_id) == shape.shape_id)
 
-    assert [p.text for p in box.text_frame.paragraphs] == added
+    assert _worded(box) == added
 
 
 def test_a_line_deleted_in_the_edit_field_leaves_the_deck(tmp_path, template):
@@ -473,7 +488,7 @@ def test_a_line_deleted_in_the_edit_field_leaves_the_deck(tmp_path, template):
     box = next(s for s in _leaves(Presentation(out).slides[slide.index].shapes)
                if int(s.shape_id) == shape.shape_id)
 
-    assert [p.text for p in box.text_frame.paragraphs] == kept
+    assert _worded(box) == kept
 
 
 def test_an_edit_keeps_the_box_s_own_formatting(tmp_path, template):
@@ -541,7 +556,7 @@ def test_export_serves_a_copy_carrying_the_edits(template):
     assert out != str(TEMPLATE), "the build on disk is never the edited file"
     box = next(s for s in _leaves(Presentation(out).slides[block.address.slide_idx].shapes)
                if int(s.shape_id) == shape.shape_id)
-    assert [p.text for p in box.text_frame.paragraphs] == ["Rewritten for the board."]
+    assert _worded(box) == ["Rewritten for the board."]
 
 
 def test_resetting_every_edit_sends_the_build_again(template):

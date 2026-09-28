@@ -81,11 +81,15 @@ class TtmTable:
 
 @dataclass(frozen=True)
 class Panel:
-    """The New/Renewal waterfall panel: the CY / PY total boxes and its YoY box."""
+    """The New/Renewal waterfall panel: the CY / PY total boxes, its YoY box, the "CY" /
+    "PY" captions under the bars, and the two-bar chart the totals sit on."""
 
     current_id: Optional[int] = None
     prior_id: Optional[int] = None
     yoy_id: Optional[int] = None
+    current_label_id: Optional[int] = None
+    prior_label_id: Optional[int] = None
+    chart_id: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -168,8 +172,22 @@ def _panel(slide: Slide) -> Panel:
             return None
         return min(money, key=lambda s: abs(_cx(s) - _cx(label))).shape_id
 
-    return Panel(current_id=nearest(labels.get("CY")), prior_id=nearest(labels.get("PY")),
-                 yoy_id=(pcts[0].shape_id if pcts else None))
+    cy, py = labels.get("CY"), labels.get("PY")
+    return Panel(current_id=nearest(cy), prior_id=nearest(py),
+                 yoy_id=(pcts[0].shape_id if pcts else None),
+                 current_label_id=cy.shape_id if cy is not None else None,
+                 prior_label_id=py.shape_id if py is not None else None,
+                 chart_id=_totals_chart(slide))
+
+
+def _totals_chart(slide: Slide) -> Optional[int]:
+    """The panel's two-bar chart: a stacked column whose first series is exactly the two
+    totals (prior, current) the money boxes above it state."""
+    for sh in slide.shapes:
+        if (sh.kind == "chart" and "STACKED" in (sh.chart_type or "").upper()
+                and sh.chart_series and len(sh.chart_series[0][1]) == 2):
+            return sh.shape_id
+    return None
 
 
 def _title_id(slide: Slide) -> Optional[int]:
@@ -250,7 +268,8 @@ def _slots_of(page: Page) -> List[Tuple[int, List[Any], str]]:
         out.append((page.title_id, ["para", 0], _role(page.slide_idx, "title")))
     panel = page.panel
     for name, shape_id in (("cy", panel.current_id), ("py", panel.prior_id),
-                           ("yoy", panel.yoy_id)):
+                           ("yoy", panel.yoy_id), ("cy_label", panel.current_label_id),
+                           ("py_label", panel.prior_label_id)):
         if shape_id is not None:
             out.append((shape_id, ["para", 0], _role(page.slide_idx, "panel", name)))
     table = page.table
@@ -578,11 +597,12 @@ def _vocab(result) -> Dict[str, Sequence[str]]:
 
 
 def values(template: Template, result) -> Dict[str, Any]:
-    """``{gwp-role: text}`` for every GWP-performance page, plus the ``gwp_bars`` payload.
+    """``{gwp-role: text}`` for every GWP-performance page, plus the ``gwp_bars`` and
+    ``gwp_totals`` chart payloads.
 
     Numbers are rendered against the author's own example figures (see
-    :func:`studio.template_fill.render.render_example`) so a ``€106.5m`` box stays in euros
-    and millions and a ``+0.3 pp`` cell stays in percentage points.
+    :func:`studio.template_fill.render.render_example`) so a ``€106.5m`` box stays in
+    millions — in the REPORTING currency — and a ``+0.3 pp`` cell stays in percentage points.
     """
     if not _gwp_slides(template):
         return {}
@@ -594,14 +614,20 @@ def values(template: Template, result) -> Dict[str, Any]:
 
     by_index = {s.index: s for s in template.slides}
     moot = country_chart_is_moot(result)
+    names = period_names(result, readings.get("carrier_gwp", Reading()))
     out: Dict[str, Any] = {}
     bars: Dict[str, Any] = {}
+    totals: Dict[str, Any] = {}
     drop: List[str] = []
     boxes: Dict[str, Any] = {}
     for page in found:
         slide = by_index[page.slide_idx]
         out.update(_table_values(template, page, ttm))
         out.update(_panel_values(template, page, readings, scope))
+        out.update(_panel_captions(page, names))
+        spec = _totals_spec(template, page, readings.get("carrier_gwp", Reading()))
+        if spec:
+            totals[f"{page.slide_idx}:{page.panel.chart_id}"] = spec
         divisor = _chart_divisor(slide)
         for shape_id, column in page.charts:
             if moot and column == _COUNTRY_COL:
@@ -612,9 +638,11 @@ def values(template: Template, result) -> Dict[str, Any]:
                 continue
             series = _SERIES_BUILDERS[column](result, fy, divisor)
             if series:
-                bars[f"{page.slide_idx}:{shape_id}"] = series
+                bars[f"{page.slide_idx}:{shape_id}"] = {**series, "names": list(names)}
     if bars:
         out["gwp_bars"] = bars
+    if totals:
+        out["gwp_totals"] = totals
     if drop:
         out["drop_shapes"] = drop
         logger.info("gwp_page: one country in scope — dropped %d shape(s), widened %d",
@@ -695,6 +723,46 @@ def _panel_values(template: Template, page: Page, readings: Dict[str, Reading],
         if title:
             out[_role(page.slide_idx, "title")] = title
     return out
+
+
+def period_names(result, carrier: Reading) -> Tuple[str, str]:
+    """``(current, prior)`` as the deck names its periods — "FY2024" / "FY2023", or
+    "TTM Aug 2026" / "TTM Aug 2025" on a rolling run — instead of the template's CY / PY."""
+    from studio.period import display_period
+
+    window = getattr(result, "period", None)
+    year = carrier.current_year
+    return (display_period(window, year), display_period(window, year, prior=True))
+
+
+def _panel_captions(page: Page, names: Tuple[str, str]) -> Dict[str, Any]:
+    """The captions under the two bars, named for the periods they are."""
+    out: Dict[str, Any] = {}
+    for when, shape_id, name in (("cy_label", page.panel.current_label_id, names[0]),
+                                 ("py_label", page.panel.prior_label_id, names[1])):
+        if shape_id is not None and name:
+            out[_role(page.slide_idx, "panel", when)] = name
+    return out
+
+
+def _totals_spec(template: Template, page: Page, carrier: Reading) -> Optional[Dict[str, Any]]:
+    """The two-bar chart's data, in its own bar order, and the money boxes riding its tops.
+
+    The bars are the same prior / current totals the boxes state, so the chart can no
+    longer plot the template's example book beside the real figures. Bar order follows the
+    captions: whichever of PY / CY the author put on the left is the first bar.
+    """
+    panel = page.panel
+    if panel.chart_id is None or carrier.current is None or carrier.prior is None:
+        return None
+    prior_label = template.shape(page.slide_idx, panel.prior_label_id or -1)
+    current_label = template.shape(page.slide_idx, panel.current_label_id or -1)
+    prior_first = (prior_label is None or current_label is None
+                   or _cx(prior_label) <= _cx(current_label))
+    bars = [(float(carrier.prior), panel.prior_id), (float(carrier.current), panel.current_id)]
+    if not prior_first:
+        bars.reverse()
+    return {"values": [v for v, _ in bars], "labels": [sid for _, sid in bars]}
 
 
 def _retitle(token: str, scope: str, yoy: float) -> Optional[str]:

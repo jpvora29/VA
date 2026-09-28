@@ -31,8 +31,8 @@ GPR_FILTERS: List[Mapping[str, Any]] = [
     {"id": "year", "label": "Year", "ph": "Latest", "multi": True},
     # A QBR reports on a quarter, so the form asks for one. It is not a column of the
     # book — it resolves to the three month names it covers
-    # (``studio.compute.QUARTER_MONTHS``) — which is why it is the one filter whose
-    # options are a fixed vocabulary rather than a distinct scan.
+    # (``studio.compute.QUARTER_MONTHS``) — so its options come from the period profile's
+    # quarter scopes, not the filter cube (``studio.quarter_scope``).
     {"id": "quarter", "label": "Quarter", "ph": "Full year", "multi": True},
     {"id": "product_line", "label": "Product Line", "ph": "All", "multi": True},
     {"id": "business_line", "label": "Business Line", "ph": "All", "multi": True},

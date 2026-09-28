@@ -33,6 +33,11 @@ def reporting_currency() -> str:
     return str(settings.get("currency") or _DEFAULT_CURRENCY)
 
 
+def currency_symbol(currency: str = "") -> str:
+    """The symbol of ``currency`` (default: the reporting currency) — ``$``, ``£``, ``€``."""
+    return _SYMBOLS.get((currency or reporting_currency()).upper(), "")
+
+
 def format_money(value: Optional[float], currency: str = "") -> str:
     """A premium at board scale: ``£8.2m``, ``$412k``, ``€1.4bn``, ``—`` for nothing."""
     if value is None or value == "":

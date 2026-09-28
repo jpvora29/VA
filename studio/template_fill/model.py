@@ -50,15 +50,11 @@ def _hidden_blocks(template, result) -> List[int]:
 
 
 def _template_year(template) -> Optional[int]:
-    """The template's hard-coded reporting year = the most common 20xx in its text."""
-    from collections import Counter
+    """The template's hard-coded reporting year, read from its text boxes AND table cells
+    (:func:`studio.template_fill.year_labels.template_year`)."""
+    from studio.template_fill import year_labels
 
-    years: Counter = Counter()
-    for s in template.slides:
-        for sh in s.shapes:
-            for tok in re.findall(r"\b(20\d{2})\b", sh.text):
-                years[int(tok)] += 1
-    return years.most_common(1)[0][0] if years else None
+    return year_labels.template_year(year_labels.shape_texts(template))
 
 
 # ── seeding a TemplateDoc, one contributor at a time ─────────────────────────

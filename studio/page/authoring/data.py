@@ -386,7 +386,7 @@ def _queue_cards(record: DatasetRecord) -> List[Any]:
     cards.append(_queue_card(
         "Suggested mappings",
         "Mapped from the column names and values. Review and change anything that is wrong.",
-        suggested, tone="ok", fold_after=6))
+        suggested, tone="ok"))
     return cards
 
 

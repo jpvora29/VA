@@ -21,7 +21,7 @@ from studio.template_fill.fill import _label_subs
 from studio.template_fill import text_edits as TE
 from studio.page import template_editor as TED
 from studio.template_fill.model import materialize_fields
-from studio.template_fill.preview_assets import cached_doc_backgrounds
+from studio.template_fill.preview_assets import cached_doc_backgrounds, public_url_exists
 
 from logger import get_logger
 
@@ -133,12 +133,119 @@ def _pick_target(block: TE.EditableText, selected: bool) -> Any:
     )
 
 
-def _reflection(block: TE.EditableText) -> Any:
-    """The edited words, drawn over the render's stale ones."""
+_ALPHA = "abcdefghijklmnopqrstuvwxyz"
+
+
+def _number_label(scheme: str, n: int) -> str:
+    """``"3."`` / ``"c)"`` / ``"(3)"`` for PowerPoint's autonumber ``scheme``."""
+    base = str(n)
+    if scheme.startswith("alphaLc"):
+        base = _ALPHA[(n - 1) % 26]
+    elif scheme.startswith("alphaUc"):
+        base = _ALPHA[(n - 1) % 26].upper()
+    if scheme.endswith("ParenBoth"):
+        return f"({base})"
+    if scheme.endswith("ParenR"):
+        return f"{base})"
+    return f"{base}."
+
+
+def _line_css(ps, px_per_pt: float, starts: bool, first: bool, ends: bool) -> Dict[str, str]:
+    """The inline style that makes one retyped line look like its paragraph."""
+    css: Dict[str, str] = {}
+    if ps.size_pt:
+        css["fontSize"] = f"{ps.size_pt * px_per_pt:.2f}px"
+    if ps.color:
+        css["color"] = f"#{ps.color}"
+    if ps.font_face:
+        css["fontFamily"] = f"'{ps.font_face}', Arial, sans-serif"
+    css["fontWeight"] = "700" if ps.bold else "400"
+    css["fontStyle"] = "italic" if ps.italic else "normal"
+    if ps.align:
+        css["textAlign"] = ps.align
+    css["paddingLeft"] = f"{max(ps.margin_left_pt, 0.0) * px_per_pt:.2f}px"
+    if ps.line_spacing:
+        css["lineHeight"] = f"{1.2 * ps.line_spacing:.3f}"
+    if starts and not first and ps.space_before_pt:
+        css["marginTop"] = f"{ps.space_before_pt * px_per_pt:.2f}px"
+    if ends and ps.space_after_pt:
+        css["marginBottom"] = f"{ps.space_after_pt * px_per_pt:.2f}px"
+    return css
+
+
+def _styled_line(text: str, ps, px_per_pt: float, *, starts: bool, first: bool, ends: bool,
+                 marker: str) -> html.Div:
+    """One line in its paragraph's size, colour, weight and indent, bullet hanging left."""
+    css = _line_css(ps, px_per_pt, starts, first, ends)
+    children: List[Any] = []
+    if marker and starts:
+        # The bullet hangs at marL + indent (indent is negative for a hanging bullet).
+        at = max((ps.margin_left_pt + ps.indent_pt) * px_per_pt, 0.0)
+        children.append(html.Span(
+            marker, className="qs-tf-bullet",
+            style={"left": f"{at:.2f}px",
+                   **({"color": f"#{ps.bullet_color}"} if ps.bullet_color else {})}))
+    elif ps.indent_pt > 0 and starts:
+        css["textIndent"] = f"{ps.indent_pt * px_per_pt:.2f}px"
+    children.append(html.Span(text, className="qs-tf-rtext"))
+    return html.Div(children, className="qs-tf-reflect-line", style=css)
+
+
+def _styled_lines(lines: Sequence[str], paragraphs: Sequence[str], styles: Sequence[Any],
+                  px_per_pt: float) -> List[html.Div]:
+    """Every line drawn in the style of the paragraph it is written into.
+
+    Uses the same line → paragraph mapping the export writes with
+    (:func:`TE.line_paragraphs`), so the canvas shows what the .pptx will say.
+    """
+    from studio.template_fill.para_style import ParaStyle
+
+    out: List[html.Div] = []
+    counters: Dict[int, int] = {}
+    owners = TE.line_paragraphs(paragraphs, lines)
+    for i, (owner, starts) in enumerate(owners):
+        ends = i == len(owners) - 1 or owners[i + 1][1]
+        ps = styles[owner] if owner < len(styles) else ParaStyle()
+        marker = ps.bullet
+        if ps.numbered and starts:
+            counters[ps.level] = counters.get(ps.level, ps.number_start - 1) + 1
+            marker = _number_label(ps.numbered, counters[ps.level])
+        elif starts and not ps.numbered:
+            counters.pop(ps.level, None)
+        out.append(_styled_line(lines[i], ps, px_per_pt, starts=starts, first=i == 0,
+                                ends=ends, marker=marker))
+    return out
+
+
+def _body_css(body, px_per_pt: float) -> Dict[str, str]:
+    """The text box's own insets and vertical anchor."""
+    if body is None:
+        return {}
+    return {
+        "padding": " ".join(f"{v * px_per_pt:.2f}px" for v in (
+            body.inset_top_pt, body.inset_right_pt, body.inset_bottom_pt, body.inset_left_pt)),
+        "justifyContent": {"middle": "center", "bottom": "flex-end"}.get(body.anchor, "flex-start"),
+    }
+
+
+def _reflection(lines: Sequence[str], paragraphs: Sequence[str], styles: Sequence[Any],
+                body, px_per_pt: float) -> Any:
+    """The edited words, drawn over the render's stale ones — in the deck's own formatting."""
     return html.Div(
-        [html.Div(line, className="qs-tf-reflect-line") for line in block.lines],
-        className="qs-tf-reflect",
+        _styled_lines(lines, paragraphs, styles, px_per_pt),
+        className="qs-tf-reflect is-styled",
+        style=_body_css(body, px_per_pt),
     )
+
+
+def _line_protos(paragraphs: Sequence[str], styles: Sequence[Any], body,
+                 px_per_pt: float) -> Any:
+    """One empty, styled line per worded paragraph — what the live typing preview
+    (assets/studio_v6.js) clones, so words look right while they are being typed."""
+    original = TE.to_lines("\n".join(paragraphs))
+    return html.Div(_styled_lines(original, paragraphs, styles, px_per_pt),
+                    className="qs-tf-protos", style=_body_css(body, px_per_pt),
+                    **{"aria-hidden": "true"})
 
 
 def _text_shape(shape, fields_by_target, subs) -> Optional[html.Div]:
@@ -305,7 +412,8 @@ def _chart_svg(shape, values, w_px, h_px, slide_idx: int = 0) -> Any:
     return html.Div([html.I(className="bi bi-bar-chart"), " chart", *cue], className="qs-tf-stub")
 
 
-def _editable_box(shape, slide, slide_idx, edits, selected, style, font_px) -> Optional[html.Div]:
+def _editable_box(shape, slide, slide_idx, edits, selected, style, font_px,
+                  px_per_pt: float) -> Optional[html.Div]:
     """One text box on a rendered slide: a click target, plus its edits if any.
 
     Nothing is drawn unless the author has changed the words — the render already
@@ -330,8 +438,10 @@ def _editable_box(shape, slide, slide_idx, edits, selected, style, font_px) -> O
         style["fontStyle"] = "italic"
     if shape.align:
         style["textAlign"] = shape.align
+    paragraphs, styles = shape.paragraphs, shape.para_styles
+    children.append(_line_protos(paragraphs, styles, shape.body_style, px_per_pt))
     if block.edited:
-        children.append(_reflection(block))
+        children.append(_reflection(block.lines, paragraphs, styles, shape.body_style, px_per_pt))
         # Cover at least the words it replaces, and grow past them when the author
         # wrote more — clipping would hide their own text, and a box that outgrows
         # the template's is worth seeing before the export.
@@ -360,8 +470,17 @@ def _spans(sizes: Sequence[int], total_px: float) -> List[Tuple[float, float]]:
     return out
 
 
+def _cell_look(shape, r: int, c: int) -> Tuple[List[str], List[Any]]:
+    """``(paragraphs, their styles)`` of one table cell."""
+    table = shape.table or []
+    text = table[r][c] if r < len(table) and c < len(table[r]) else ""
+    styles = shape.cell_styles
+    cell = styles[r][c] if r < len(styles) and c < len(styles[r]) else []
+    return str(text).split("\n"), cell
+
+
 def _editable_cells(shape, slide, slide_idx, edits, selected_key, style, w_px, h_px,
-                    font_px) -> Optional[html.Div]:
+                    font_px, px_per_pt: float) -> Optional[html.Div]:
     """Every worded cell of a table as its own click target — KPIs and "Key Highlights".
 
     The table's own grid decides where each target sits (``Shape.table_widths/heights``),
@@ -387,8 +506,10 @@ def _editable_cells(shape, slide, slide_idx, edits, selected_key, style, w_px, h
         cell_style.update({"--qs-tf-paper": paper, "--qs-tf-ink": ink})
         if font_px:
             cell_style["fontSize"] = f"{font_px:.1f}px"
+        paragraphs, styles = _cell_look(shape, r, c)
+        children.append(_line_protos(paragraphs, styles, None, px_per_pt))
         if block.edited:
-            children.append(_reflection(block))
+            children.append(_reflection(block.lines, paragraphs, styles, None, px_per_pt))
             cell_style.update({"minHeight": cell_style["height"], "height": "auto"})
         cells.append(html.Div(
             children, style=cell_style,
@@ -420,6 +541,7 @@ def _render_shape(shape, fields_by_target, scale, slide_idx, values, subs, *,
         return _editable_box(
             shape, slide, slide_idx, edits, selected, style,
             _font_px(shape, scale, w_px, h_px, rendered_background=True),
+            12700.0 * scale,
         )
     if rendered_background and shape.kind == "table" and shape.table:
         # Tables carry words too — the KPI tiles and "Key Highlights" of the portfolio
@@ -427,6 +549,7 @@ def _render_shape(shape, fields_by_target, scale, slide_idx, values, subs, *,
         return _editable_cells(
             shape, slide, slide_idx, edits, selected_key, style, w_px, h_px,
             _font_px(shape, scale, w_px, h_px, rendered_background=True),
+            12700.0 * scale,
         )
     if rendered_background and shape.kind in ("table", "chart", "picture", "ole"):
         return None
@@ -738,7 +861,7 @@ def _filmstrip(template, order: Sequence[int], pos: int,
 def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> html.Div:
     template, _ = registry.derive_manifest(tdoc["template_path"])
     fields = materialize_fields(dict(tdoc))
-    stored_urls = list(tdoc.get("background_urls") or [])
+    stored_urls = [u if public_url_exists(u) else None for u in (tdoc.get("background_urls") or [])]
     cached_urls = cached_doc_backgrounds(dict(tdoc), len(template.slides))
     # Assembled decks cache their renders per FILE (not per doc-values) — consult that
     # store too, so a render that failed at generate time but succeeded later (e.g. the

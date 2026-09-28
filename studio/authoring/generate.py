@@ -60,12 +60,19 @@ def _friendly_options(dataset_store: Optional[Dict[str, Any]] = None) -> Dict[st
     return {**form_options(cached_filter_options("gpr")), "quarter": quarter_choices(None)}
 
 
-def quarter_choices(record) -> list:
-    """The Quarter dropdown: the book's own labels (dataset or warehouse), else Q1–Q4."""
+def quarter_choices(record, selected: Optional[Dict[str, Any]] = None) -> list:
+    """The Quarter dropdown: the quarters holding data for the selected region, country,
+    carrier and year (dataset or warehouse). Until the book's period profile is known it
+    falls back to the book's own labels, else Q1–Q4."""
     from studio.compute import quarter_options
-    from studio.data import quarter_labels
-    from studio.dataset.source import dataset_quarter_labels
+    from studio.data import quarter_labels, quarters_in_scope
+    from studio.dataset.source import dataset_quarter_labels, dataset_quarters_in_scope
 
+    where = {FILTER_COLUMN[c]: v for c, v in (selected or {}).items() if c in FILTER_COLUMN}
+    in_scope = (dataset_quarters_in_scope(record.dataset_id, where) if record is not None
+                else quarters_in_scope(where))
+    if in_scope is not None:
+        return quarter_options(in_scope) if in_scope else []
     labels = dataset_quarter_labels(record.dataset_id) if record is not None else quarter_labels()
     return quarter_options(labels)
 

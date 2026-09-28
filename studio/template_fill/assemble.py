@@ -27,7 +27,7 @@ from logger import get_logger
 from studio.compute import DATA_BASIS_PREMIUM, DATA_BASIS_WITH_SURVEY
 from studio.template_fill import (
     commentary, commentary_ledger, commentary_metrics, commentary_qa, feedback, grids,
-    gwp_page, kpi_band, lc_page, prune, rewrites,
+    gwp_page, kpi_band, lc_page, product_icon, prune, rewrites,
 )
 from studio.template_fill import roles as R
 from studio.template_fill.survey import facts as survey_facts
@@ -205,7 +205,8 @@ def _country_count(values: Dict[str, Any]) -> int:
 # the premium providers — its numbers come from a different book entirely — so giving it
 # its own list keeps it off five queries that could only ever return nothing.
 _PREMIUM_PROVIDERS = (grids.grid_values, gwp_page.values, lc_page.values,
-                      feedback.values, commentary.values, survey_kpi.values)
+                      feedback.values, commentary.values, survey_kpi.values,
+                      product_icon.values)
 _SURVEY_PROVIDERS = (survey_page.values,)
 
 
@@ -240,7 +241,7 @@ def _premium_providers(ledger, narratives=None):
 # country deck the reverse), so the clash is latent rather than live — but it is one
 # re-authored template away, and it would fail silently.
 _SHARED_PAYLOADS = ("drop_shapes", "resize_shapes", "cell_fills", "pictures",
-                    "picture_crops", "drop_table_lines", "gwp_bars")
+                    "picture_crops", "drop_table_lines", "gwp_bars", "gwp_totals")
 
 
 def _merge_values(base: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:

@@ -14,6 +14,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from logger import get_logger
 from studio import compute as C
+from studio.template_fill.year_labels import forward_year
 
 logger = get_logger(__name__)
 
@@ -49,6 +50,32 @@ def _latest_year_in_scope(result, base: Dict[str, Any]) -> Optional[int]:
     years = [int(f.dims.get(_YEAR_COL)) for f in facts
              if str(f.dims.get(_YEAR_COL) or "").strip().isdigit()]
     return max(years) if years else None
+
+
+def _latest_month_in_scope(result, filters: Dict[str, Any]) -> Optional[Tuple[int, int]]:
+    """``(year, month)`` of the last month the reporting year holds, ``None`` if unknown.
+
+    What tells a still-running year from a complete one — "Opportunities for …" on a
+    deck for YTD Aug 2026 means the rest of 2026, not 2027.
+    """
+    from core.analytics.library import compute_breakdown
+    from core.analytics.types import PrimitiveArgs
+    from studio.compute import QUARTER_MONTH_COLUMN, QUARTER_MONTHS
+
+    year = filters.get(_YEAR_COL)
+    if year is None:
+        return None
+    facts = _safe(
+        compute_breakdown,
+        PrimitiveArgs(flow=result.flow, metric="premium", group_by=(QUARTER_MONTH_COLUMN,),
+                      filters=filters),
+        engine=result.engine,
+    ) or []
+    order = [m.lower() for q in QUARTER_MONTHS.values() for m in q]
+    months = [order.index(str(f.dims.get(QUARTER_MONTH_COLUMN)).strip().lower()) + 1
+              for f in facts
+              if str(f.dims.get(QUARTER_MONTH_COLUMN) or "").strip().lower() in order]
+    return (int(year), max(months)) if months else None
 
 
 def reporting_filters(result, *, drop: Iterable[str] = ()) -> Dict[str, Any]:
@@ -198,6 +225,7 @@ def resolve_roles(result) -> Dict[str, Any]:
     if year is not None:
         out["period_year"] = int(year)
         out.update(period_labels(result, int(year)))
+        out["forward_year"] = forward_year(int(year), _latest_month_in_scope(result, fy))
 
     # Carrier (subject) total + YoY, and the whole Marsh book total + YoY (raw).
     carrier_tot = _safe(C.period_totals, result.flow, fy, result.engine)

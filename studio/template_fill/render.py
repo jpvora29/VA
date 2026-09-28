@@ -15,13 +15,29 @@ from typing import Any
 # The numeric placeholder inside a token (same grammar as slot detection).
 _NUM = re.compile(r"(?<![A-Za-z$])\$?[xX]+(?:[.,][xX]+)*(?:[MBKmbk])?%?(?![A-Za-z])")
 _ARROWS = "▲▼►"
+# A currency symbol an author typed beside an amount or a unit: "€106.5m", "$xx,xxxm", "(€M)".
+CURRENCY_MARK = re.compile(r"(?<![A-Za-z])[€£¥$](?=\s*(?:\d|[xX]|[KMBkmb](?![a-z])))")
+
+
+def currency() -> str:
+    """The reporting currency's symbol (``core/boardroom/money.yaml``) — what every amount
+    in a deck is printed in, whatever symbol the template's author typed."""
+    from core.boardroom.money import currency_symbol
+
+    return currency_symbol()
+
+
+def in_reporting_currency(text: str) -> str:
+    """``text`` with any authored currency symbol swapped for the reporting currency's."""
+    return CURRENCY_MARK.sub(lambda _m: currency(), text or "")
 
 
 def _money(raw: float, *, dollar: bool = True) -> str:
     """Compact money — billions for ≥1bn, else millions/thousands. Short by design so
-    long figures (``$2,293m``) stop overflowing their boxes; keeps the token's ``$``."""
+    long figures (``$2,293m``) stop overflowing their boxes; keeps the token's symbol, in
+    the reporting currency."""
     a = abs(float(raw))
-    pfx = "$" if dollar else ""
+    pfx = currency() if dollar else ""
     if a >= 1e9:
         return f"{pfx}{a / 1e9:.1f}B"
     if a >= 1e6:
@@ -45,7 +61,7 @@ def _format_number(raw: float, sub: str) -> str:
         val = val / 1e9 if scale == "b" else (val / 1e6 if scale == "m" else val)
     num = f"{val:,.{decimals}f}" if comma else f"{val:.{decimals}f}"
 
-    out = ("$" if dollar else "") + num
+    out = (currency() if dollar else "") + num
     if scale == "b":
         out += "B"
     elif scale == "m":
@@ -131,7 +147,11 @@ def render_example(token: str, value: Any) -> str:
     sign = "-" if val < 0 else ("+" if m.group("sign") == "+" else "")
     body = sign + digits + scale + ("%" if pct else "")
 
-    out = token[: m.start()] + body + token[m.end():]
+    # The example's symbol is the AUTHOR's ("€106.5m" in a euro-built template); the figure
+    # is in the reporting currency, so that is the symbol it wears.
+    pre = token[: m.start()]
+    pre = pre[:-1] + currency() if pre and pre[-1] in "€£¥$" else pre
+    out = pre + body + token[m.end():]
     if any(a in out for a in _ARROWS):
         arrow = "▲" if val > 0 else ("▼" if val < 0 else "►")
         out = re.sub(f"[{_ARROWS}]", arrow, out)

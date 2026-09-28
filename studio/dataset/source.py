@@ -163,6 +163,18 @@ def _plain(value: Any) -> Any:
     return value.item() if hasattr(value, "item") else value
 
 
+def dataset_quarters_in_scope(dataset_id: str, where: Mapping[str, Any]) -> Optional[List[str]]:
+    """The quarter labels an uploaded dataset holds under ``where`` — ``None`` when it
+    records no period finer than a year (the form then offers every quarter)."""
+    from studio.quarter_scope import frame_quarter_rows, quarters_in
+
+    frame = dataset_frame(dataset_id)
+    if frame is None:
+        return None
+    columns, rows = frame_quarter_rows(frame)
+    return quarters_in(rows, columns, where) if rows else None
+
+
 def dataset_quarter_labels(dataset_id: str) -> List[str]:
     """The uploaded dataset's own ``Quarter`` labels — ``[]`` when it has no such column."""
     frame = dataset_frame(dataset_id)

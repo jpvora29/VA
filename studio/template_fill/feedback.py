@@ -107,6 +107,48 @@ def _topic_columns(header_row: List[str], topics: Tuple[Tuple[str, str], ...]) -
     return out
 
 
+def _country_blocks(table: List[List[str]]) -> List[Tuple[int, int]]:
+    """``[(start_row, country_ord)]`` — a row whose col-0 carries "Country / Region (n)"
+    starts a block that also covers the following row (the Rank/SoW half of the callout)."""
+    blocks: List[Tuple[int, int]] = []
+    for r, row in enumerate(table):
+        m = _COUNTRY_TOKEN.search(row[0] or "") if row else None
+        if m:
+            blocks.append((r, int(m.group(1))))
+    return blocks
+
+
+def _block_rows(table: List[List[str]], blocks: List[Tuple[int, int]], index: int) -> List[int]:
+    """The rows block ``index`` spans: its own and the one after, up to the next block."""
+    start = blocks[index][0]
+    stop = blocks[index + 1][0] if index + 1 < len(blocks) else len(table)
+    return list(range(start, min(start + 2, stop)))
+
+
+def surplus_country_rows(template: Template, n_countries: int) -> Dict[str, Dict[str, List[int]]]:
+    """``{"slide:shape": {"rows": [...]}}`` — the feedback tables' country blocks this run
+    has no country for, to come OFF the table rather than ship as empty strips.
+
+    A one-country deck on a template drawn for two used to keep a blank second block (an
+    empty yellow label and eight dark KPI tiles). Nothing is trimmed when no country is in
+    scope at all: an empty table is not a smaller version of a full one.
+    """
+    if n_countries < 1:
+        return {}
+    out: Dict[str, Dict[str, List[int]]] = {}
+    for slide in template.slides:
+        for sh in slide.shapes:
+            if sh.kind != "table" or not _feedback_cells(sh):
+                continue
+            table = sh.table or []
+            blocks = _country_blocks(table)
+            rows = [r for i, (_start, ordn) in enumerate(blocks) if ordn > n_countries
+                    for r in _block_rows(table, blocks, i)]
+            if rows:
+                out[f"{slide.index}:{sh.shape_id}"] = {"rows": rows}
+    return out
+
+
 def _feedback_cells(sh: Shape) -> List[Tuple[int, int, str, Optional[int]]]:
     """``[(r, c, kind, country_ord)]`` for one feedback table (empty if not one).
 
@@ -119,13 +161,7 @@ def _feedback_cells(sh: Shape) -> List[Tuple[int, int, str, Optional[int]]]:
     topic_cols = _topic_columns(table[0], _FEEDBACK_TOPICS)
     if "working" not in topic_cols.values():
         return []
-    # Row blocks: a row whose col-0 carries "Country / Region (n)" starts a block that
-    # also covers the following row (the Rank/SoW half of the callout).
-    blocks: List[Tuple[int, int]] = []          # (start_row, country_ord)
-    for r, row in enumerate(table):
-        m = _COUNTRY_TOKEN.search(row[0] or "")
-        if m:
-            blocks.append((r, int(m.group(1))))
+    blocks = _country_blocks(table)
     cells: List[Tuple[int, int, str, Optional[int]]] = []
     for start, ord_n in blocks:
         for c, topic in topic_cols.items():
@@ -1248,6 +1284,9 @@ def values(template: Template, result, *, ledger=None, extras=None,
         # an empty commentary keeps the template's ellipsis as a visible fill-me cue.
         if text_cache[key] or t["kind"] not in _COMPOSERS:
             out[role] = text_cache[key]
+    trim = surplus_country_rows(template, len(countries)) if countries else {}
+    if trim:
+        out["drop_table_lines"] = trim
     logger.info("feedback: resolved %d table cell value(s)", len(out))
     # Every cell above holds either a finished KPI string or a PendingRewrite. The deck
     # writes them all together (``assemble``); a lone caller writes its own here.

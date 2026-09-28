@@ -11,7 +11,7 @@ from dash import ALL, Input, Output, State, ctx, no_update
 from studio.page import authoring as A
 from studio.page.sample import CUT_GROUPS
 
-from studio.authoring.config import DEFAULT_FILTERS
+from studio.authoring.config import default_filters
 from studio.authoring.generate import _deck, _friendly_options, usable_tdoc
 from ui.shell.busy import busy_running
 
@@ -57,7 +57,7 @@ def register_navigation(app):
         deck = _deck(doc)
         tdoc = usable_tdoc(tdoc)   # a persisted doc whose temp .pptx is gone must not crash the app
         opts = _friendly_options(dataset)
-        fvals = (selection or {}).get("filters") or DEFAULT_FILTERS
+        fvals = (selection or {}).get("filters") or default_filters(opts)
         return A.authoring_shell(
             deck,
             doc=doc,

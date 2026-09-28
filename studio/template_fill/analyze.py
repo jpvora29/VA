@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from logger import get_logger
+from studio.template_fill import para_style as PS
 from studio.template_fill import preview_assets
 
 logger = get_logger(__name__)
@@ -52,6 +53,11 @@ class Shape:
     italic: bool = False
     align: Optional[str] = None                                   # left|center|right
     image_url: Optional[str] = None                               # Dash-served asset URL
+    # The resolved look of every paragraph (aligned with ``paragraphs``) and of every
+    # table cell's paragraphs, so retyped words can be drawn the way the deck draws them.
+    body_style: Optional[PS.BodyStyle] = None
+    para_styles: List[PS.ParaStyle] = field(default_factory=list)
+    cell_styles: List[List[List[PS.ParaStyle]]] = field(default_factory=list)
 
     @property
     def text(self) -> str:
@@ -232,7 +238,33 @@ def _theme_palette(prs) -> dict:
     return out
 
 
+def _fill_alpha(shape) -> float:
+    """The opacity of a shape's solid fill (``a:alpha``), 1.0 when it has none."""
+    from pptx.oxml.ns import qn
+
+    try:
+        props = shape._element.find(qn("p:spPr"))
+        fill = props.find(qn("a:solidFill")) if props is not None else None
+        alpha = fill[0].find(qn("a:alpha")) if fill is not None and len(fill) else None
+        return int(alpha.get("val")) / 100000 if alpha is not None else 1.0
+    except Exception:  # noqa: BLE001 — a background or odd element: treat as opaque
+        return 1.0
+
+
+def _on_white(hexv: str, alpha: float) -> str:
+    """``hexv`` at ``alpha`` opacity over white — the colour a translucent panel shows."""
+    channels = (int(hexv[i:i + 2], 16) for i in (0, 2, 4))
+    return "".join(f"{round(c * alpha + 255 * (1 - alpha)):02X}" for c in channels)
+
+
 def _solid_fill(shape, palette: Optional[dict] = None) -> Optional[str]:
+    """The solid fill's hex, a translucent one as it shows on a white slide."""
+    hexv = _opaque_fill(shape, palette)
+    alpha = _fill_alpha(shape) if hexv else 1.0
+    return _on_white(hexv, alpha) if hexv and len(hexv) == 6 and alpha < 1.0 else hexv
+
+
+def _opaque_fill(shape, palette: Optional[dict] = None) -> Optional[str]:
     try:
         from pptx.enum.dml import MSO_FILL
 
@@ -290,7 +322,32 @@ def _first_run_style(shape):
     return color, face, size_pt, bold, italic, align
 
 
-def _extract(shape, box, template_path: str, slide_idx: int, palette: Optional[dict] = None) -> Shape:
+def _text_styles(shape, slide, theme: Optional[PS.ThemeContext]):
+    """``(body, per-paragraph styles)`` for a text shape; ``(None, [])`` if unreadable."""
+    if theme is None:
+        return None, []
+    try:
+        return PS.frame_styles(shape.text_frame._txBody, PS.shape_chain(shape, slide, theme), theme)
+    except Exception as exc:  # noqa: BLE001 — styling is a nicety, never worth the shape
+        logger.debug("analyze: paragraph styles unresolved for %r: %s", shape.name, exc)
+        return None, []
+
+
+def _cell_styles(shape, theme: Optional[PS.ThemeContext]) -> List[List[List[PS.ParaStyle]]]:
+    """Per-paragraph styles of every table cell, ``[row][col][paragraph]``."""
+    if theme is None:
+        return []
+    try:
+        chain = PS.cell_chain(theme)
+        return [[PS.frame_styles(cell.text_frame._txBody, chain, theme)[1] for cell in row.cells]
+                for row in shape.table.rows]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("analyze: cell styles unresolved for %r: %s", shape.name, exc)
+        return []
+
+
+def _extract(shape, box, template_path: str, slide_idx: int, palette: Optional[dict] = None,
+             *, slide=None, theme: Optional[PS.ThemeContext] = None) -> Shape:
     x, y, w, h = box
     kind = _kind(shape)
     rec = Shape(shape_id=int(shape.shape_id), name=str(shape.name), kind=kind,
@@ -302,6 +359,7 @@ def _extract(shape, box, template_path: str, slide_idx: int, palette: Optional[d
         # the "Key Highlights" cell are words the author may need to change).
         rec.table_widths = [int(c.width or 0) for c in shape.table.columns]
         rec.table_heights = [int(r.height or 0) for r in shape.table.rows]
+        rec.cell_styles = _cell_styles(shape, theme)
     elif kind == "chart":
         rec.chart_type, rec.chart_categories, rec.chart_series, rec.chart_external = _read_chart(shape)
     elif kind == "picture":
@@ -320,6 +378,7 @@ def _extract(shape, box, template_path: str, slide_idx: int, palette: Optional[d
     elif shape.has_text_frame:
         rec.paragraphs = [p.text for p in shape.text_frame.paragraphs]
         rec.font_color, rec.font_face, rec.font_size_pt, rec.bold, rec.italic, rec.align = _first_run_style(shape)
+        rec.body_style, rec.para_styles = _text_styles(shape, slide, theme)
     return rec
 
 
@@ -335,11 +394,16 @@ def analyze(template_path: str) -> Template:
     palette = _theme_palette(prs)
     backgrounds = preview_assets.ensure_slide_backgrounds(str(p), len(prs.slides))
     slides: List[Slide] = []
+    themes: dict = {}                     # one theme read per slide master
     for i, s in enumerate(prs.slides):
+        master = s.slide_layout.slide_master
+        theme = themes.get(master.part.partname)
+        if theme is None:
+            theme = themes[master.part.partname] = PS.theme_context(prs, master)
         recs: List[Shape] = []
         for shape, box in _walk(s.shapes, _identity):
             try:
-                recs.append(_extract(shape, box, str(p), i, palette))
+                recs.append(_extract(shape, box, str(p), i, palette, slide=s, theme=theme))
             except Exception as exc:  # noqa: BLE001 — skip an unreadable shape, keep going
                 logger.warning("analyze: slide %d shape %r unreadable: %s", i, getattr(shape, "name", "?"), exc)
         bg = backgrounds[i] if i < len(backgrounds) else None
