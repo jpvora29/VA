@@ -130,10 +130,6 @@ _RANK_MOVE = re.compile(r"from\s+(?:#)?(?P<before>\d+)(?:st|nd|rd|th)?\s+to\s+(?
                         r"(?:st|nd|rd|th)?\b")
 
 
-#: A point that leads with its subject in bold: "**Property** — $8.2M ▲ 14.2%".
-_LEAD_SUBJECT = re.compile(r"^\*\*([^*]+)\*\*")
-
-
 @dataclass(frozen=True)
 class Badge:
     """The chip beside a takeaway: its text and how it reads (up/down/warn)."""
@@ -152,8 +148,7 @@ def _change_badge(text: str) -> Optional[Badge]:
         subject = (first.group("subject") or "").strip()
     else:
         up = first.group("sign") in "+▲"
-        lead = _LEAD_SUBJECT.match(_POINT.sub("", text.strip(), count=1))
-        subject = lead.group(1).strip() if lead and len(lead.group(1)) <= 24 else ""
+        subject = ""
     arrow = "▲" if up else "▼"
     label = f"{subject} {arrow} {first.group('figure')}".strip()
     return Badge(label, UP if up else DOWN)
@@ -178,51 +173,7 @@ def badge_for(section: Section) -> Optional[Badge]:
     """
     if section.tone == RISK:
         return Badge("Watch-out", WARN)
-    # The chip belongs to the line the reader sees: the section's lead point.
-    points = split_points(section.body)
-    lead = points[0] if points else section.body
-    return _change_badge(lead) or _rank_badge(lead)
-
-
-_POINT = re.compile(r"^\s{0,3}(?:[-*+]|\d+[.)])\s+")
-#: "### By product", "### By market", "### By industry" — a per-line list the
-#: position table already holds, so it is detail, not a takeaway.
-_PER_LINE = re.compile(r"^by\s+\w+", re.I)
-
-
-def split_points(body: str) -> List[str]:
-    """A section body as its points, in order: list items, paragraphs, tables.
-
-    A list item keeps its continuation lines; a table stays one block. Markers
-    are stripped — the caller decides how the points are drawn.
-    """
-    blocks: List[List[str]] = []
-    kind = ""  # "point" | "para" | "table" — what the open block is
-    for line in (body or "").splitlines():
-        stripped = line.strip()
-        if not stripped:
-            kind = "" if kind != "point" else "point-gap"
-            continue
-        if _POINT.match(line):
-            blocks.append([_POINT.sub("", line, count=1)])
-            kind = "point"
-        elif stripped.startswith("|"):
-            if kind == "table":
-                blocks[-1].append(stripped)
-            else:
-                blocks.append([stripped])
-                kind = "table"
-        elif kind in ("point", "para"):
-            blocks[-1].append(stripped)
-        else:
-            blocks.append([stripped])
-            kind = "para"
-    return ["\n".join(b) if b[0].startswith("|") else " ".join(b) for b in blocks]
-
-
-def is_per_line(section: Section) -> bool:
-    """A "By product" / "By market" list: one point per line of the table."""
-    return bool(_PER_LINE.match(section.title))
+    return _change_badge(section.body) or _rank_badge(section.body)
 
 
 def takeaways_and_next_steps(sections: Sequence[Section]) -> Tuple[List[Section], List[Section]]:

@@ -30,7 +30,6 @@ from typing import Any, Callable, List, Optional, Sequence, Tuple
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
-from ui.components.context_meter import context_meter
 from ui.components.run_meta import run_meta
 
 from core.memory.feedback_reasons import FREE_TEXT_REASON, REASONS
@@ -328,8 +327,6 @@ def answer_footer(ctx: AnswerContext, *, content: str, run: Optional[dict] = Non
             ),
             html.Div(
                 [
-                    # How full the context window got, split by what filled it.
-                    context_meter(run),
                     # How long this answer took and what it cost in tokens.
                     run_meta(run, usage),
                     dcc.Clipboard(

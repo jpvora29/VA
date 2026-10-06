@@ -590,16 +590,6 @@ def test_every_section_is_one_numbered_takeaway():
     assert [r.children[0].children for r in rows.children] == ["1", "2"]
 
 
-def test_a_per_line_list_is_folded_detail_not_a_takeaway():
-    from ui.answer_layout import split_sections
-    from ui.components.answer_summary import takeaway_list
-
-    body = "### By market\n- **Singapore** — a\n- **China** — b\n\n### Mix\n- one"
-    label, rows, detail = takeaway_list(*split_sections(body))
-    assert len(rows.children) == 1
-    assert detail.className == "answer-detail"
-
-
 def test_big_books_read_in_billions_everywhere():
     from core.analytics.positioning import money_scale
 

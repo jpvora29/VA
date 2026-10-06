@@ -351,6 +351,7 @@
             var stand = heroCache.cloneNode(true);
             box.classList.add("va-instant-new");
             box.appendChild(stand);
+            showNewChatLoader(viewport);
             return;
         }
         var overlay = viewport.querySelector(".va-switch");
@@ -366,6 +367,18 @@
         viewport.classList.add("is-switching");
     }
 
+    // New chat: the welcome stand-in shows at once, but its starters only act
+    // once the real screen has landed. Until then a small loader says the chat
+    // is still being set up, so the stand-in never reads as a frozen screen.
+    function showNewChatLoader(viewport) {
+        if (viewport.querySelector(".va-new-loader")) { return; }
+        var pill = document.createElement("div");
+        pill.className = "va-new-loader va-switch-label";
+        pill.setAttribute("role", "status");
+        pill.innerHTML = '<span class="va-spinner"></span>Starting a new chat…';
+        viewport.appendChild(pill);
+    }
+
     function endSwitch(silent) {
         var viewport = $("chat-viewport");
         var box = $("chat-box");
@@ -377,6 +390,7 @@
             box.querySelectorAll(".va-hero-clone").forEach(function (el) { el.remove(); });
         }
         if (!viewport) { return; }
+        viewport.querySelectorAll(".va-new-loader").forEach(function (el) { el.remove(); });
         var overlaid = viewport.classList.contains("is-switching");
         viewport.classList.remove("is-switching");
         if (!was || silent) { queuedRef = null; return; }

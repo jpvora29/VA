@@ -1,49 +1,50 @@
-"""The answer's context chip: how full the context window got, and with what.
+"""The conversation's context indicator: one small ring beside the send button.
 
-Closed, it is a small ring and a percentage in the answer footer — the share of
-the model's context window taken by this turn's FULLEST prompt. Hovered or
-focused, it splits that prompt by what it was made of (instructions, rules, tool
-definitions, schema, earlier results, data, tool calls, the question) beside the
-free space left, and then splits everything the turn sent across all its model
-calls — which is where a large token total actually comes from.
+Like Claude Code's context gauge, it fills — and changes colour — as the
+conversation's context fills. The ring shows the context the assistant held on
+its LATEST answer: that answer's largest prompt, against the model's context
+window. Hovered or focused, it splits that context by what filled it
+(instructions, rules, tool definitions, schema, earlier results, data, tool
+calls, the question) beside the free space left.
 
-Pure presentation: the `context` block of a trace in
-(:func:`core.context_meter.context_summary`), components out. Opening it costs no
-callback; the panel is CSS-revealed. An answer without a measured context shows
-no chip.
+Pure presentation: the transcript's messages in, components out. Each answer's
+trace carries its measured context (:func:`core.context_meter.context_summary`);
+a chat with no measured answer yet shows an empty ring.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Sequence
 
 from dash import html
 
 from core.context_meter import CATEGORIES
 from core.run_trace import format_tokens
 
-#: Graph node -> how a reader would name the step that sent the prompt.
-_NODE_LABELS = {
-    "model": "Analysis step",
-    "writer_node": "Answer writer",
-    "context_filler": "Reading the question",
-    "intent_classifier": "Classifying the question",
-    "clarify_decide": "Checking for ambiguity",
-    "rephraser_agent": "Rephrasing the question",
-    "followup_node": "Follow-up suggestions",
-    "planner_node": "Planning the analysis",
-    "schema_identifier_node": "Finding the columns",
-}
-
-#: At or above this fill the ring turns amber and the label says so.
-_NEAR_LIMIT = 0.8
+#: Fill at which the ring turns amber, then red (Claude Code's warning bands).
+_WARN_AT = 0.5
+_FULL_AT = 0.8
 
 
-def node_label(node: str) -> str:
-    """A step name a reader recognises; unknown nodes are de-snaked."""
-    if node in _NODE_LABELS:
-        return _NODE_LABELS[node]
-    words = (node or "model call").removesuffix("_node").replace("_", " ").strip()
-    return words[:1].upper() + words[1:]
+def latest_context(messages: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """The newest answer's measured context ({"used", "window", "split"}), or {}."""
+    for message in reversed(list(messages or [])):
+        run = message.get("run") if isinstance(message, dict) else None
+        peak = ((run or {}).get("context") or {}).get("peak") if isinstance(run, dict) else None
+        if peak and peak.get("window"):
+            return peak
+    return {}
+
+
+def chat_input_tokens(messages: Sequence[Dict[str, Any]]) -> Dict[str, int]:
+    """Input tokens sent over the whole chat, and how many answers sent them."""
+    answers = tokens = 0
+    for message in messages or []:
+        run = message.get("run") if isinstance(message, dict) else None
+        turn = (((run or {}).get("context") or {}).get("turn") or {}) if isinstance(run, dict) else {}
+        if turn.get("input_tokens"):
+            answers += 1
+            tokens += int(turn["input_tokens"])
+    return {"answers": answers, "tokens": tokens}
 
 
 def format_share(part: float, whole: float) -> str:
@@ -56,128 +57,97 @@ def format_share(part: float, whole: float) -> str:
     return f"{share:.1f}%" if share < 10 else f"{share:.0f}%"
 
 
-def _bar(split: List[Dict[str, Any]], whole: int) -> Any:
-    """A stacked bar: one segment per category, widths as shares of `whole`."""
+def fill_level(fill: float) -> str:
+    """The ring's colour band: "low", "warn" (from 50%) or "full" (from 80%)."""
+    if fill >= _FULL_AT:
+        return "full"
+    if fill >= _WARN_AT:
+        return "warn"
+    return "low"
+
+
+def _bar(split: List[Dict[str, Any]], window: int) -> Any:
+    """The window as one bar: each category's share, then the free space."""
+    used = sum(int(row["tokens"]) for row in split)
+    segments = [
+        html.Span(className=f"ctx-seg ctx-k-{row['key']}",
+                  style={"width": f"{row['tokens'] / window * 100:.3f}%"})
+        for row in split
+    ]
+    segments.append(html.Span(className="ctx-seg ctx-k-free",
+                              style={"width": f"{max(0, window - used) / window * 100:.3f}%"}))
+    return html.Div(segments, className="ctx-bar")
+
+
+def _row(key: str, label: str, tokens: int, window: int) -> Any:
     return html.Div(
         [
-            html.Span(
-                className=f"ctx-seg ctx-k-{row['key']}",
-                style={"width": f"{row['tokens'] / whole * 100:.3f}%"},
-            )
-            for row in split
+            html.Span(className=f"ctx-dot ctx-k-{key}"),
+            html.Span(label, className="ctx-row-label"),
+            html.Span(format_tokens(tokens), className="ctx-row-tokens"),
+            html.Span(format_share(tokens, window), className="ctx-row-share"),
         ],
-        className="ctx-bar",
-    )
-
-
-def _caption(label: str, detail: str) -> Any:
-    return html.Div([html.Span(label, className="ctx-caption-label"),
-                     html.Span(detail, className="ctx-caption-detail")],
-                    className="ctx-caption")
-
-
-def _cell(tokens: Optional[int], share: str = "") -> Any:
-    """One figure in the table: tokens, then their share in muted ink."""
-    if tokens is None:
-        return html.Span("—", className="ctx-cell is-empty")
-    parts = [html.Span(format_tokens(tokens), className="ctx-cell-tokens")]
-    if share:
-        parts.append(html.Span(share, className="ctx-cell-share"))
-    return html.Span(parts, className="ctx-cell")
-
-
-def _table_row(key: str, label: str, peak_cell: Any, turn_cell: Any) -> Any:
-    return html.Div(
-        [html.Span(className=f"ctx-dot ctx-k-{key}"),
-         html.Span(label, className="ctx-row-label"), peak_cell, turn_cell],
         className="ctx-row",
     )
 
 
-def _breakdown(peak: Dict[str, Any], turn: Dict[str, Any]) -> Any:
-    """One table, one row per category: the fullest prompt beside the whole turn.
-
-    Side by side because they answer different questions — the first is how
-    close a single call came to its window, the second is where the turn's
-    token total came from — and the reader is usually comparing the two.
-    """
-    used, window = int(peak["used"]), int(peak["window"])
-    turn_total = int(turn.get("input_tokens") or 0)
-    in_peak = {row["key"]: row["tokens"] for row in peak.get("split") or []}
-    in_turn = {row["key"]: row["tokens"] for row in turn.get("split") or []}
-    rows = [
-        _table_row(key, label,
-                   _cell(in_peak.get(key), format_share(in_peak.get(key, 0), used))
-                   if key in in_peak else _cell(None),
-                   _cell(in_turn.get(key), format_share(in_turn.get(key, 0), turn_total))
-                   if key in in_turn else _cell(None))
-        for key, label in CATEGORIES
-        if key in in_peak or key in in_turn
-    ]
-    rows.append(_table_row("free", "Free space", _cell(max(0, window - used)), _cell(None)))
-    head = html.Div([html.Span(), html.Span(),
-                     html.Span("Fullest prompt", className="ctx-col-head"),
-                     html.Span("Whole turn", className="ctx-col-head")],
-                    className="ctx-row ctx-row-head")
-    return html.Div([head, *rows], className="ctx-rows")
-
-
-def _panel(peak: Dict[str, Any], turn: Dict[str, Any]) -> List[Any]:
-    used, window = int(peak["used"]), int(peak["window"])
-    source = node_label(peak.get("node") or "")
-    if peak.get("model"):
-        source = f"{source} · {peak['model']}"
-    turn_total = int(turn.get("input_tokens") or 0)
-    calls = int(turn.get("calls") or 0)
-    cached = int(turn.get("cached_tokens") or 0)
-    turn_detail = f"{format_tokens(turn_total)} over {calls} model call{'s' if calls != 1 else ''}"
-    if cached:
-        turn_detail += f" · {format_share(cached, turn_total)} served from cache"
+def _panel(peak: Dict[str, Any], totals: Dict[str, int]) -> List[Any]:
+    used, window = int(peak.get("used") or 0), int(peak["window"])
+    split = peak.get("split") or []
+    labels = dict(CATEGORIES)
+    rows = [_row(row["key"], labels.get(row["key"], row["key"]), int(row["tokens"]), window)
+            for row in split]
+    rows.append(_row("free", "Free space", max(0, window - used), window))
     parts: List[Any] = [
-        html.Div("Context window", className="run-meta-heading"),
+        html.Div("Context window", className="ctx-heading"),
         html.Div(
             [html.Strong(f"{format_tokens(used)} / {format_tokens(window)}"),
-             html.Span(f" tokens · {format_share(used, window)} full")],
+             html.Span(f" tokens · {format_share(used, window)} used")],
             className="ctx-headline",
         ),
-        html.Div(f"Fullest prompt this turn: {source}", className="ctx-source"),
-        _caption("Fullest prompt", format_tokens(used)),
-        _bar(peak.get("split") or [], used),
+        html.Div(f"{peak.get('model') or 'Model'} · as of the last answer", className="ctx-source"),
+        _bar(split, window),
+        html.Div(rows, className="ctx-rows"),
     ]
-    if turn_total and turn.get("split"):
-        parts += [_caption("Whole turn", turn_detail), _bar(turn["split"], turn_total)]
-    parts.append(_breakdown(peak, turn))
+    if totals.get("answers"):
+        count = totals["answers"]
+        parts.append(html.Div(
+            f"This chat so far: {format_tokens(totals['tokens'])} tokens sent over "
+            f"{count} answer{'s' if count != 1 else ''}",
+            className="ctx-footnote",
+        ))
     return parts
 
 
-def context_meter(run: Optional[Dict[str, Any]]):
-    """The chip for one answer, or None when its context was not measured."""
-    context = (run or {}).get("context") if isinstance(run, dict) else None
-    peak = (context or {}).get("peak")
-    if not peak or not peak.get("window"):
-        return None
-    used, window = int(peak.get("used") or 0), int(peak["window"])
-    fill = used / window
-    near_limit = fill >= _NEAR_LIMIT
-    label = f"{format_share(used, window)} context" + (" · near limit" if near_limit else "")
-    return html.Div(
-        [
+def _empty_panel() -> List[Any]:
+    return [
+        html.Div("Context window", className="ctx-heading"),
+        html.Div("Nothing used yet. This fills as the conversation runs.",
+                 className="ctx-source"),
+    ]
+
+
+def context_indicator(messages: Sequence[Dict[str, Any]]) -> List[Any]:
+    """The ring and its hover panel, for the open conversation's transcript."""
+    peak = latest_context(messages)
+    window = int(peak.get("window") or 0)
+    used = int(peak.get("used") or 0)
+    fill = used / window if window else 0.0
+    level = fill_level(fill) if window else "empty"
+    label = (f"Context {format_share(used, window)} used" if window
+             else "Context: nothing used yet")
+    return [
+        html.Span(
             html.Span(
-                [
-                    html.Span(
-                        className="ctx-ring" + (" is-near-limit" if near_limit else ""),
-                        # At least a visible sliver: an empty ring reads as "not measured".
-                        style={"--ctx-fill": f"{max(fill, 0.02) * 360:.1f}deg"},
-                    ),
-                    html.Span(label, className="ctx-meter-label"),
-                ],
-                className="ctx-meter-chip",
-                tabIndex=0,
-                **{"aria-label": f"Context window {format_share(used, window)} full. "
-                                 "Hover or focus for the breakdown."},
+                className=f"ctx-ring is-{level}",
+                # Never a bare 0°: a hairline says "measured, and nearly empty".
+                style={"--ctx-fill": f"{max(fill, 0.015) * 360:.1f}deg" if window else "0deg"},
             ),
-            html.Div(_panel(peak, context.get("turn") or {}),
-                     className="ctx-meter-panel", role="tooltip"),
-        ],
-        className="ctx-meter",
-    )
+            className="ctx-indicator-btn",
+            tabIndex=0,
+            role="button",
+            **{"aria-label": f"{label}. Hover or focus for the breakdown."},
+        ),
+        html.Div(_panel(peak, chat_input_tokens(messages)) if window else _empty_panel(),
+                 className="ctx-panel", role="tooltip"),
+    ]

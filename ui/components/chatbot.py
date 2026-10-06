@@ -13,6 +13,7 @@ from ui.components.answer_actions import (
     next_questions,
 )
 from ui.components.answer_lead import Lead, split_lead
+from ui.components.context_meter import context_indicator
 from ui.components.contribution import contribution_panel
 from ui.answer_layout import scorecards, split_sections
 from ui.components.answer_summary import next_step_band, summary_band, takeaway_list
@@ -686,7 +687,8 @@ def command_menu():
 
 
 def composer_hints():
-    """Under the composer: the keys that make it fast, and the standing caveat."""
+    """Under the composer: the keys that make it fast, the standing caveat, and
+    the chat's context ring, which sits right under the send button."""
     def key(label: str, text: str):
         return html.Span([html.Kbd(label), text])
 
@@ -699,6 +701,9 @@ def composer_hints():
             ),
             html.Span("Virtual Analyst can make mistakes. Verify important figures.",
                       className="composer-hints-note"),
+            # How full the chat's context window is; kept current by
+            # ui.context_indicator.
+            html.Div(context_indicator([]), id="context-indicator", className="ctx-indicator"),
         ],
         className="composer-hints",
     )

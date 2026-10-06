@@ -145,6 +145,7 @@ from document_builder.models import ReportConfig
 from ui.jobs import Job, start_job, get_job, cancel_job, discard_job
 from ui.chat_turn import TurnRequest, finalize_turn, provisional_transcript
 from ui import chat_navigation  # noqa: F401  (registers scoped event reducers)
+from ui import context_indicator  # noqa: F401  (registers the composer's context ring)
 from core.streaming import TokenStreamHandler, JobCancelled
 
 #  ── Logger ────────────────────────────────────────────────────────────────────────────────────────

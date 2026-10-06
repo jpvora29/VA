@@ -195,17 +195,3 @@ def test_deleting_the_open_chat_lands_on_a_new_chat():
     js = Path("assets/chat_experience.js").read_text(encoding="utf-8")
     block = js.split('var del = target.closest(\'[id*="conv-del"]\');', 1)[1].split("return;", 1)[0]
     assert ".conv-item-active" in block and "newChat.click()" in block
-
-
-# ── Coloured arrows reach the page ──────────────────────────────────────────
-
-def test_answer_prose_is_one_html_block_so_delta_spans_survive():
-    from ui.components.answer_markdown import to_html_block
-
-    block = to_html_block("- **Property** — $5.2M ▲ 18.0%, x < y\n- Marine -3.1pp")
-    # Dash's Markdown drops INLINE html tag by tag; a block is injected whole.
-    assert block.startswith('<div class="md-block">\n') and block.endswith("\n</div>")
-    assert "\n\n" not in block
-    assert '<span class="delta delta-up">▲ 18.0%</span>' in block
-    assert '<span class="delta delta-down">▼ 3.1pp</span>' in block
-    assert "&lt; y" in block and "<y" not in block

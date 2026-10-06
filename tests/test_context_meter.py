@@ -1,7 +1,7 @@
-"""The context chip: what a prompt is made of, and how full its window got.
+"""The context ring: what a prompt is made of, and how full its window got.
 
 Covers the pure splitter (:mod:`core.context_meter`), its wiring into the turn's
-usage meter (:mod:`core.run_trace`), and the footer chip
+usage meter (:mod:`core.run_trace`), and the composer's context ring
 (:mod:`ui.components.context_meter`). No model is called.
 
 Run:  pytest tests/test_context_meter.py -q
@@ -23,7 +23,8 @@ from core.context_meter import (
     split_text,
 )
 from core.run_trace import ModelCall, RunRecorder, UsageCallbackHandler, build_trace
-from ui.components.context_meter import context_meter, format_share, node_label
+from ui.components.context_meter import (chat_input_tokens, context_indicator, fill_level,
+                                         format_share, latest_context)
 
 
 def _text(component) -> str:
@@ -175,44 +176,62 @@ def test_a_turn_with_no_measured_call_has_no_context_view():
     assert build_trace([], [ModelCall("w", "gpt", 1, 1, 2)], 100)["context"] == {}
 
 
-# ── the chip ─────────────────────────────────────────────────────────────────
+# ── the composer ring ────────────────────────────────────────────────────────
 
 
-def _run():
-    calls = [ModelCall("model", "gpt-4.1-mini", 14_000, 200, 14_200, 7_000, 900,
-                       {"instructions": 1_000, "rules": 3_000, "tools": 2_000,
-                        "working": 7_000, "question": 1_000})]
-    return build_trace([], calls, 4_000)
+def _ring_text(messages) -> str:
+    from dash import html
+
+    return _text(html.Div(context_indicator(messages)))
 
 
-def test_the_chip_says_how_full_the_window_is():
-    text = _text(context_meter(_run()))
-    assert "1.3% context" in text
+def _answer(used: int, model: str = "gpt-4.1-mini", split=None) -> dict:
+    split = split or {"instructions": used // 10, "rules": used // 2,
+                      "tools": used - used // 10 - used // 2}
+    calls = [ModelCall("model", model, used, 200, used + 200, used // 2, 900, split)]
+    return {"type": "AIMessage", "run": build_trace([], calls, 4_000)}
 
 
-def test_hovering_splits_the_fullest_prompt_and_the_whole_turn():
-    text = _text(context_meter(_run()))
-    for label in ("Context window", "Rules & skills", "Tool definitions",
-                  "Tool calls & results", "Free space", "Whole turn", "Fullest prompt",
-                  "Analysis step · gpt-4.1-mini", "served from cache"):
+def test_the_ring_reads_the_newest_answer_not_the_first():
+    messages = [_answer(5_000), {"type": "HumanMessage"}, _answer(14_000)]
+    assert latest_context(messages)["used"] == 14_000
+
+
+def test_hovering_splits_the_context_window_by_what_filled_it():
+    text = _ring_text([_answer(14_000)])
+    for label in ("Context window", "14.0k / 1.0M", "Rules & skills", "Tool definitions",
+                  "Instructions", "Free space", "This chat so far"):
         assert label in text, label
+    # One view of the window: no per-call or per-turn columns to decode.
+    assert "Fullest prompt" not in text and "Whole turn" not in text
 
 
-def test_a_full_window_is_called_out_in_words_not_colour_alone():
-    calls = [ModelCall("writer_node", "gpt-4o-mini", 120_000, 0, 120_000, 0, 1,
-                       {"data": 120_000})]
-    assert "near limit" in _text(context_meter(build_trace([], calls, 10)))
+def test_the_ring_turns_amber_then_red_as_the_window_fills():
+    assert fill_level(0.10) == "low"
+    assert fill_level(0.55) == "warn"
+    assert fill_level(0.85) == "full"
+    nearly_full = _answer(110_000, model="gpt-4o-mini", split={"data": 110_000})
+    assert "ctx-ring is-full" in _ring_text([nearly_full])
 
 
-def test_an_answer_without_a_context_view_has_no_chip():
-    assert context_meter(None) is None
-    assert context_meter({"elapsed_ms": 10}) is None
-    assert context_meter({"context": {}}) is None
+def test_a_new_chat_shows_an_empty_ring_that_says_so():
+    text = _ring_text([])
+    assert "ctx-ring is-empty" in text and "Nothing used yet" in text
+
+
+def test_the_chat_total_adds_every_answer():
+    totals = chat_input_tokens([_answer(5_000), {"type": "HumanMessage"}, _answer(14_000)])
+    assert totals == {"answers": 2, "tokens": 19_000}
+
+
+def test_answers_no_longer_carry_their_own_context_chip():
+    from ui.components.answer_actions import answer_footer
+
+    import inspect
+    assert "context_" not in inspect.getsource(answer_footer)
 
 
 def test_reader_formatting():
     assert format_share(14_000, 1_047_576) == "1.3%"
     assert format_share(50, 100) == "50%"
     assert format_share(1, 1_000_000) == "<0.1%"
-    assert node_label("model") == "Analysis step"
-    assert node_label("gimmi_insight") == "Gimmi insight"
