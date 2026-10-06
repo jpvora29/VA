@@ -15,7 +15,7 @@ from ui.components.answer_actions import (
 from ui.components.answer_lead import Lead, split_lead
 from ui.components.contribution import contribution_panel
 from ui.answer_layout import scorecards, split_sections
-from ui.components.answer_summary import section_cards, summary_band
+from ui.components.answer_summary import next_step_band, summary_band, takeaway_list
 from ui.components.evidence import evidence_panel
 from ui.components.scope_bar import scope_bar
 from ui.components.turn import assistant_header, user_footer
@@ -461,11 +461,12 @@ def _answer_body(content: str, idx: int, editing: bool, className: str = ""):
     would.
     """
     if not editing:
-        # Read mode: the analysis as section cards, every change a coloured ▲/▼
-        # (ui.answer_layout reads the sections; ui.components.answer_summary
-        # draws them).
+        # Read mode: the findings as numbered takeaways, every change a
+        # coloured ▲/▼ (ui.answer_layout reads the sections;
+        # ui.components.answer_summary draws them). The "what it means" part is
+        # drawn after the evidence by `next_step_band`.
         intro, sections = split_sections(content)
-        return html.Div(section_cards(intro, sections, className),
+        return html.Div(takeaway_list(intro, sections, className),
                         id={"type": "answer-body", "idx": idx}, className="answer-analysis")
     body = dcc.Markdown(content, className=className) if className else dcc.Markdown(content)
     return html.Div(
@@ -586,7 +587,8 @@ def ai_message(
     )
     pills = answer_scope(scope)
     panel_idx = idx if card_idx is None else card_idx
-    views = evidence_panel(evidence or [], panel_idx, pane_ids or []) if evidence else None
+    views = (evidence_panel(evidence or [], panel_idx, pane_ids or [], label="Supporting evidence")
+             if evidence else None)
     drivers = contribution_panel(contribution)
     # The "Source & calculation" drawer is no longer drawn. Business readers
     # read its figure-by-figure audit as doubt about the answer rather than as
@@ -599,11 +601,11 @@ def ai_message(
     # serialiser saves the body and silently drops the headline above it.
     lead = Lead(body=content) if editing else split_lead(content)
     # The reading order a business reader wants, top to bottom and full width:
-    #   EXECUTIVE SUMMARY  the answer, then its numbers (KPI tiles, or one card
+    #   SUMMARY            the answer, its three numbers beside it (or one card
     #                      per market), computed from the position tables below
-    #   THE ANALYSIS       each titled part as a card, two to a row; actions and
-    #                      watch-outs as full-width callouts
-    #   EVIDENCE           the tables and charts, full width
+    #   KEY TAKEAWAYS      each titled part as a numbered row with its chip
+    #   SUPPORTING EVIDENCE  charts, with the position table one switch away
+    #   RECOMMENDED NEXT STEP  what it means / what to do
     # A half-width prose column beside a half-width table left both cramped.
     summary = summary_band(lead.headline if lead.has_headline else "",
                            lead.standfirst or "", scorecards(evidence or []))
@@ -611,10 +613,8 @@ def ai_message(
     card_class = "message insight-card" if is_insight else "message gpt-message"
     body_class = "insight-card-body" if is_insight else ""
     prose = _answer_body(lead.body, idx, editing, className=body_class)
-    evidence_block = (
-        html.Div([_column_label("Evidence"), views], className="answer-evidence")
-        if views is not None else None
-    )
+    evidence_block = html.Div(views, className="answer-evidence") if views is not None else None
+    next_step = None if editing else next_step_band(split_sections(lead.body)[1], body_class)
     card = html.Div(
         [
             pills,
@@ -622,26 +622,17 @@ def ai_message(
             prose,
             evidence_block,
             drivers,
+            next_step,
             footer,
             next_questions(followups, idx),
             panel,
         ],
-        className=card_class + wide + " answer-v3",
+        className=card_class + wide + " answer-v3 answer-v4",
     )
     return html.Div(
         [assistant_header(source=source, ts=ts), card],
         className="turn turn-assistant",
     )
-
-
-def _column_label(text: str):
-    """A quiet heading over each column.
-
-    Two columns of the same weight read as one thing split in half, and the
-    reader has to work out which side is the argument and which is the support.
-    A small label over each says it in one word.
-    """
-    return html.Div(text, className="answer-column-label")
 
 
 def user_message(content: str, *, ts: str = "", initial: str = ""):

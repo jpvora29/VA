@@ -579,14 +579,14 @@ def test_the_kpis_come_from_the_product_table_and_name_the_largest_market():
     assert card.extras["top_market"] == "China"
 
 
-def test_a_long_section_takes_the_full_row():
+def test_every_section_is_one_numbered_takeaway():
     from ui.answer_layout import split_sections
-    from ui.components.answer_summary import section_cards
+    from ui.components.answer_summary import takeaway_list
 
     body = "### By market\n" + "\n".join(f"- point {i}" for i in range(7)) + "\n\n### Mix\n- one"
-    cards = section_cards(*split_sections(body))[0].children
-    assert [c.className for c in cards] == ["answer-section tone-default is-wide",
-                                            "answer-section tone-default is-wide"]
+    label, rows = takeaway_list(*split_sections(body))
+    assert label.children == "Key takeaways"
+    assert [r.children[0].children for r in rows.children] == ["1", "2"]
 
 
 def test_big_books_read_in_billions_everywhere():

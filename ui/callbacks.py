@@ -1718,6 +1718,7 @@ def _evidence_specs(state: dict[str, Any], table: str) -> list[dict[str, Any]]:
                 if chart.get("chart_data") else {},
                 "lens": chart.get("lens") or "",
                 "tab": chart.get("tab") or "",
+                "title": chart.get("title") or "",
                 "note": chart.get("note") or "",
                 # A result set that knows how its columns should read says so,
                 # and the panel formats and sorts them accordingly rather than

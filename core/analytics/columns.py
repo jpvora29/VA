@@ -52,8 +52,12 @@ RANK = "rank"
 #: A plain count, grouped ("1,200").
 COUNT = "count"
 
+#: A movement in whole places, printed with its sign ("+2", "-1"). Positive is
+#: an IMPROVEMENT, so a rank change reads the way a reader expects.
+SIGNED_COUNT = "signed_count"
+
 #: Every kind that carries a figure, so a renderer can right-align on membership
 #: rather than on a list of names it has to keep in step.
 FIGURE_KINDS: Tuple[str, ...] = (
-    MONEY, MONEY_MILLIONS, PERCENT, SIGNED_PERCENT, RANK, COUNT,
+    MONEY, MONEY_MILLIONS, PERCENT, SIGNED_PERCENT, RANK, COUNT, SIGNED_COUNT,
 )

@@ -46,6 +46,9 @@ CHART_HEIGHT_PX = 360
 # data" is how that goes wrong.
 LENS_LABELS = lenses.LABELS
 
+#: A declared column that marks a result set as a position table.
+POSITION_COLUMNS = ("Carrier premium", "Marsh premium")
+
 
 @dataclass(frozen=True)
 class EvidenceView:
@@ -64,10 +67,25 @@ class EvidenceView:
     #: The unit money columns are already divided by ("M", "k", ""), so the table
     #: can print it in the cell instead of only in a note above it.
     unit: str = ""
+    #: What the view shows, in words. Set in the panel's header rather than
+    #: inside the plot, so the title, its subtitle and the Chart/Table switch
+    #: read as one row (and a chart no longer spends its top margin on a title).
+    title: str = ""
 
     @property
     def has_chart(self) -> bool:
         return self.figure is not None
+
+    @property
+    def is_position_table(self) -> bool:
+        """A rows-only view laid out as a position table (premium columns).
+
+        These are the table every chart in the answer is read against, so the
+        panel puts them behind each chart's Table switch rather than in a tab of
+        their own.
+        """
+        kinds = self.column_kinds or {}
+        return not self.has_chart and any(c in kinds for c in POSITION_COLUMNS)
 
 
 def label_for(lens: str, index: int, spec: Optional[Dict[str, Any]] = None) -> str:
@@ -103,6 +121,7 @@ def _frame(rows: Any) -> pd.DataFrame:
 def build_view(
     rows: Sequence[Any], chart_data: Optional[Dict[str, Any]], *, label: str,
     note: str = "", column_kinds: Optional[Dict[str, str]] = None, unit: str = "",
+    title: str = "",
 ) -> Optional[EvidenceView]:
     """One view from one result set, or ``None`` when there is nothing to show.
 
@@ -123,6 +142,7 @@ def build_view(
                 # chart takes the card's fixed height.
                 height = figure.layout.height or CHART_HEIGHT_PX
                 figure.update_layout(height=max(CHART_HEIGHT_PX, height), autosize=True)
+                title = title or lift_title(figure)
         except Exception:  # noqa: BLE001 - a chart must never cost the answer
             logger.exception("evidence: chart generation failed for %r", label)
 
@@ -134,7 +154,28 @@ def build_view(
         note=(note or fallback_note or "").strip() if figure is None else "",
         column_kinds=dict(column_kinds or {}),
         unit=unit,
+        title=(title or "").strip(),
     )
+
+
+#: The top margin a figure keeps once its title moves to the panel header: room
+#: for a legend row, none for a title band.
+_UNTITLED_TOP = 16
+
+
+def lift_title(figure: Any) -> str:
+    """Take the title out of a figure and return it.
+
+    The panel header states it instead (with the Chart/Table switch beside it),
+    so the plot gives its title band back to the data. The legend keeps its
+    reserved rows: only the title's share of the margin is released.
+    """
+    text = str(getattr(getattr(figure.layout, "title", None), "text", "") or "").strip()
+    if not text:
+        return ""
+    top = figure.layout.margin.t if figure.layout.margin and figure.layout.margin.t else 56
+    figure.update_layout(title_text="", margin=dict(t=max(_UNTITLED_TOP, int(top) - 40)))
+    return text
 
 
 #: Rendered views by the JSON of their specs. The transcript is re-rendered on
@@ -193,6 +234,8 @@ def _build_views(specs: Sequence[Dict[str, Any]]) -> List[EvidenceView]:
             note=spec.get("note", ""),
             column_kinds=spec.get("column_kinds") or {},
             unit=spec.get("unit") or "",
+            # A table states its own title; a chart's is read off its figure.
+            title=str(spec.get("title") or "") if not chart_data.get("chart_type") else "",
         )
         if view is not None:
             views.append(view)

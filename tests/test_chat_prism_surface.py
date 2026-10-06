@@ -648,13 +648,15 @@ def test_the_answer_reads_summary_then_analysis_then_evidence():
     assert not any("answer-split" in c for c in _classes_in_order(_answer_with(_view(chart=False))))
 
 
-def test_titled_parts_become_cards_and_actions_become_wide_callouts():
+def test_titled_parts_become_numbered_takeaways_and_actions_the_next_step():
     content = ("Premium grew 12%.\n\n### Where the growth came from\n- Property\n\n"
                "### Against the peer set\n- Rank 2\n\n### What it means\n- Defend Property")
     classes = _classes_in_order(_answer_with(_view(chart=True), content))
-    cards = [c for c in classes if c.startswith("answer-section ")]
-    assert cards == ["answer-section tone-default", "answer-section tone-default",
-                     "answer-section tone-action is-wide"]
+    rows = [c for c in classes if c.startswith("takeaway tone-")]
+    assert rows == ["takeaway tone-default", "takeaway tone-default"]
+    # "What it means" is not a third takeaway: it is the recommended next step,
+    # drawn after the evidence.
+    assert classes.index("answer-next-step") > classes.index("answer-evidence")
 
 
 def test_the_summary_prose_keeps_a_readable_measure():

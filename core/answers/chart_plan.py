@@ -581,11 +581,13 @@ _CATALOGUE: Mapping[str, Callable[[ChartInputs], Optional[ChartSpec]]] = {
 #: The default is the performance order: it is the richest question, and an
 #: operation with no row here is one the patterns could not name — which is much
 #: more likely to be a performance question than a penetration one.
+#: Premium by line leads: it is the chart the position table sits behind (the
+#: panel's Table switch), so the first picture and the table show one thing.
 _DEFAULT_ORDER: Tuple[str, ...] = (
-    "quarterly", "position_map", "contribution", "mix", "premium", "wallet")
+    "premium", "contribution", "quarterly", "position_map", "mix", "wallet")
 
 _ORDER: Mapping[str, Tuple[str, ...]] = {
-    PERFORMANCE: ("quarterly", "position_map", "contribution", "mix", "premium", "wallet"),
+    PERFORMANCE: ("premium", "contribution", "quarterly", "position_map", "mix", "wallet"),
     # What moved leads; the quarters say when it moved; the sizes say off what base.
     MOVEMENT: ("contribution", "quarterly", "position_map", "premium"),
     # The reader asked where the carrier stands. Sizes first, standing beside them.

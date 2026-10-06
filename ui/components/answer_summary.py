@@ -1,13 +1,15 @@
-"""The top of an answer card: the executive summary band and the section cards.
+"""The reading bands of an answer card.
 
 Reading order for a business reader, and why:
 
-    EXECUTIVE SUMMARY   the answer in one or two sentences, and the four numbers
-                        a leader asks for first (premium, change, share of
-                        wallet, largest line) — per market when there are several
-    THE ANALYSIS        each titled part of the answer as its own card, two to a
-                        row; "What it means" and "Watch-outs" as full-width
-                        callouts, because they are what the reader acts on
+    SUMMARY             the answer in one or two sentences, with the three
+                        numbers a leader asks for first (premium, change, share
+                        of wallet) beside it — per market when there are several
+    KEY TAKEAWAYS       each titled part of the answer as ONE numbered row, its
+                        deciding figure as a chip on the right; a watch-out is a
+                        row with an amber chip, not a separate box
+    RECOMMENDED NEXT    "What it means" / "What to do", set after the evidence
+    STEP                because it is what the reader acts on last
 
 Pure presentation over `ui.answer_layout` (which does the reading) and
 `ui.components.deltas` (which colours direction).
@@ -18,7 +20,8 @@ from typing import Any, List, Optional, Sequence
 
 from dash import dcc, html
 
-from ui.answer_layout import ACTION, DEFAULT, RISK, Scorecard, Section
+from ui.answer_layout import (Badge, Scorecard, Section, badge_for,
+                               takeaways_and_next_steps)
 from ui.components.deltas import mark_deltas, mark_line
 
 
@@ -56,6 +59,45 @@ def _tile(label: str, value: Any, note: Any = None, *, icon: str = "") -> Any:
         ],
         className="kpi-tile",
     )
+
+
+def _stat(label: str, value: Any, note: Any = None, *, tone: str = "") -> Any:
+    return html.Div(
+        [
+            html.Div(label, className="sum-stat-label"),
+            html.Div(value, className="sum-stat-value" + (f" is-{tone}" if tone else "")),
+            html.Div(note, className="sum-stat-note") if note is not None else None,
+        ],
+        className="sum-stat",
+    )
+
+
+def _direction(value: Optional[float]) -> str:
+    return "" if value is None else "up" if value > 0 else "down" if value < 0 else "flat"
+
+
+def summary_stats(card: Scorecard) -> Any:
+    """The three numbers beside the summary: size, movement, standing."""
+    if card.is_market_view:
+        stats = [
+            _stat("Marsh book premium", _money(card.premium, card.unit)),
+            _stat("Largest line", card.top_line or "—",
+                  f"{_percent(card.top_share)} of the book" if card.top_line else None),
+        ]
+        return html.Div(stats, className="sum-stats")
+    tone = _direction(card.yoy)
+    arrow = {"up": "▲ ", "down": "▼ ", "flat": ""}.get(tone, "")
+    stats = [
+        _stat("Premium", _money(card.premium, card.unit)),
+        _stat("Change", f"{arrow}{abs(card.yoy):.1f}%" if card.yoy is not None else "—",
+              "vs prior year" if card.yoy is not None else "No prior year", tone=tone),
+    ]
+    if card.share_of_wallet is not None:
+        stats.append(_stat("Share of wallet", _percent(card.share_of_wallet), "of Marsh's book"))
+    elif card.top_line:
+        stats.append(_stat("Largest line", card.top_line,
+                           f"{_percent(card.top_share)} of premium"))
+    return html.Div(stats, className="sum-stats")
 
 
 def _single(card: Scorecard) -> Any:
@@ -115,53 +157,91 @@ def scorecard_block(cards: Sequence[Scorecard]) -> Optional[Any]:
 
 
 def summary_band(headline: str, standfirst: str, cards: Sequence[Scorecard]) -> Optional[Any]:
-    """The executive summary: the answer, then its numbers."""
-    tiles = scorecard_block(cards)
-    if not (headline or tiles is not None):
+    """The summary: the answer on the left, its numbers on the right.
+
+    One scope puts its three stats beside the text, so the band is read in one
+    sweep; several markets put one card per market under it instead.
+    """
+    if not (headline or cards):
         return None
-    return html.Div(
+    side = summary_stats(cards[0]) if len(cards) == 1 else None
+    below = scorecard_block(cards) if len(cards) > 1 else None
+    text = html.Div(
         [
-            html.Div([html.I(className="bi bi-stars"), "Executive summary"],
-                     className="answer-summary-label"),
+            html.Div("Summary", className="answer-summary-label"),
             html.Div(dcc.Markdown(mark_line(headline.replace("<", "&lt;")),
                                   dangerously_allow_html=True),
                      className="answer-headline") if headline else None,
             html.Div(dcc.Markdown(mark_line(standfirst.replace("<", "&lt;")),
                                   dangerously_allow_html=True),
                      className="answer-standfirst") if standfirst else None,
-            tiles,
         ],
+        className="answer-summary-text",
+    )
+    return html.Div(
+        [html.Div([text, side], className="answer-summary-row" + (" has-stats" if side else "")),
+         below],
         className="answer-summary",
     )
 
 
-#: More points than this and a section takes the full row.
-LONG_SECTION = 5
+def _band_label(text: str) -> Any:
+    return html.Div(text, className="answer-band-label")
 
 
-def section_cards(intro: str, sections: Sequence[Section], body_class: str = "") -> List[Any]:
-    """The analysis as cards: intro text, then each titled section."""
+def _single_point(body: str) -> str:
+    """A one-point section reads as a sentence, not as a one-item list."""
+    lines = [line for line in body.splitlines() if line.strip()]
+    if len(lines) == 1 and lines[0].lstrip()[:2] in ("- ", "* ", "+ "):
+        return lines[0].lstrip()[2:]
+    return body
+
+
+def _chip(badge: Optional[Badge]) -> Any:
+    if badge is None:
+        return None
+    icon = "bi bi-exclamation-triangle-fill" if badge.tone == "warn" else ""
+    return html.Div([html.I(className=icon) if icon else None, html.Span(badge.text)],
+                    className=f"takeaway-chip is-{badge.tone}")
+
+
+def _takeaway(number: int, section: Section, body_class: str) -> Any:
+    return html.Div(
+        [
+            html.Div(str(number), className="takeaway-num"),
+            html.Div(
+                [
+                    html.Div(section.title, className="takeaway-title"),
+                    _markdown(_single_point(section.body), body_class),
+                ],
+                className="takeaway-text",
+            ),
+            _chip(badge_for(section)),
+        ],
+        className=f"takeaway tone-{section.tone}",
+    )
+
+
+def takeaway_list(intro: str, sections: Sequence[Section], body_class: str = "") -> List[Any]:
+    """The findings as numbered rows: title, its points, its chip on the right."""
+    findings, _steps = takeaways_and_next_steps(sections)
     out: List[Any] = []
     if intro:
         out.append(html.Div(_markdown(intro, body_class), className="answer-intro"))
-    if not sections:
-        return out
-    #: A long list reads better across the card than down half of it.
-    long = {id(s) for s in sections if s.points > LONG_SECTION}
-    plain = [s for s in sections if s.tone == DEFAULT and not s.has_table and id(s) not in long]
-    # An odd card out stretches across the row rather than leaving a hole.
-    stretch = plain[-1] if len(plain) % 2 == 1 else None
-    cards = []
-    for section in sections:
-        wide = (section.tone in (ACTION, RISK) or section.has_table or section is stretch
-                or id(section) in long)
-        cards.append(html.Div(
-            [
-                html.Div([html.I(className=f"{section.icon} answer-section-icon"),
-                          html.Span(section.title)], className="answer-section-head"),
-                _markdown(section.body, body_class),
-            ],
-            className=f"answer-section tone-{section.tone}" + (" is-wide" if wide else ""),
-        ))
-    out.append(html.Div(cards, className="answer-sections"))
+    if findings:
+        out.append(_band_label("Key takeaways"))
+        out.append(html.Div([_takeaway(i, s, body_class) for i, s in enumerate(findings, 1)],
+                            className="takeaways"))
     return out
+
+
+def next_step_band(sections: Sequence[Section], body_class: str = "") -> Optional[Any]:
+    """"What it means" / "What to do", as the recommended next step."""
+    _findings, steps = takeaways_and_next_steps(sections)
+    if not steps:
+        return None
+    return html.Div(
+        [_band_label("Recommended next step")]
+        + [_markdown(_single_point(step.body), body_class) for step in steps],
+        className="answer-next-step",
+    )

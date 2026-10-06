@@ -129,8 +129,9 @@ def _row_meta(row: ChatRow, now: datetime) -> html.Span | None:
 def _row_menu(row: ChatRow) -> html.Div:
     """The "..." on a row: pin or unpin it, or delete it.
 
-    Opened by focus (``:focus-within`` in va_shell.css), so a click anywhere else
-    closes it without a script, and Tab reaches every item.
+    Opened by a click on "..." (``assets/chat_sidebar.js`` toggles ``is-open``;
+    Safari never focuses a clicked button, so a focus-driven menu never opened
+    there). A click anywhere else or Escape closes it.
     """
     return html.Div(
         [
@@ -312,7 +313,9 @@ def app_sidebar(conversations: list[dict[str, Any]] | None, username: str) -> ht
                         title="Chats",
                     ),
                     html.Button(
-                        [html.I(className="bi bi-pin-angle"), html.Span("Decision Board")],
+                        # Not a pin: that icon means a pinned CHAT in this rail,
+                        # and two meanings for one icon read as a broken pin.
+                        [html.I(className="bi bi-kanban"), html.Span("Decision Board")],
                         id="nav-decision-board",
                         n_clicks=0,
                         className="sidebar-nav-item",

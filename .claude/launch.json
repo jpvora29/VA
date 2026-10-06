@@ -44,6 +44,15 @@
         "set APP_DB_PATH=.tmp_app.db&& set PORT=8093&& .venv\\Scripts\\python.exe -m tests.e2e.chat_server"
       ],
       "port": 8093
+    },
+    {
+      "name": "chat-fixture-alt",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set APP_DB_PATH=.tmp_app_alt.db&& set PORT=8094&& .venv\\Scripts\\python.exe -m tests.e2e.chat_server"
+      ],
+      "port": 8094
     }
   ]
 }

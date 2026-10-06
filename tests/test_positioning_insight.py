@@ -116,7 +116,7 @@ def test_the_table_carries_every_column_the_reader_asked_for(pack):
     # every figure in the table stays a sortable number.
     assert list(row) == [
         pack.heading, P.MARSH_PREMIUM, P.CARRIER_PREMIUM, P.MOVEMENT_PERCENT,
-        P.SHARE_OF_WALLET, P.SHARE_OF_PORTFOLIO, P.RANK, P.RANK_FIELD,
+        P.SHARE_OF_WALLET, P.SHARE_OF_PORTFOLIO, P.RANK, P.RANK_CHANGE, P.RANK_FIELD,
     ]
 
 

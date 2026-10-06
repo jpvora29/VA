@@ -63,14 +63,51 @@
         setTimeout(function () { box.focus(); box.select(); }, 60);
     }, true);
 
-    // A row menu near the foot of the rail would open below the fold: flip it up.
-    document.addEventListener("focusin", function (event) {
-        var actions = event.target instanceof Element && event.target.closest(".app-sidebar .conv-item-actions");
-        var body = actions && actions.closest(".va-rail-body");
-        var menu = actions && actions.querySelector(".conv-menu");
-        if (!menu || !body) { return; }
-        var room = body.getBoundingClientRect().bottom - actions.getBoundingClientRect().bottom;
-        actions.classList.toggle("opens-up", room < 96);
+    // ── Row "..." menu ───────────────────────────────────────────────────────
+    // Opened by an explicit click, not by :focus-within. Safari (and Firefox on
+    // macOS) never focus a button that is clicked, so a focus-driven menu simply
+    // never opened there — Pin and Delete were unreachable.
+    function closeMenus(except) {
+        document.querySelectorAll(".app-sidebar .conv-item-actions.is-open").forEach(function (el) {
+            if (el !== except) { el.classList.remove("is-open"); }
+        });
+    }
+
+    function openMenu(actions) {
+        // A row near the foot of the rail would open below the fold: flip it up.
+        var body = actions.closest(".va-rail-body");
+        if (body) {
+            var room = body.getBoundingClientRect().bottom - actions.getBoundingClientRect().bottom;
+            actions.classList.toggle("opens-up", room < 96);
+        }
+        closeMenus(actions);
+        actions.classList.add("is-open");
+    }
+
+    document.addEventListener("click", function (event) {
+        var target = event.target instanceof Element ? event.target : null;
+        if (!target) { return; }
+        var more = target.closest(".app-sidebar .conv-item-more");
+        if (more) {
+            var actions = more.closest(".conv-item-actions");
+            if (actions.classList.contains("is-open")) {
+                actions.classList.remove("is-open");
+            } else {
+                openMenu(actions);
+            }
+            return;
+        }
+        // Choosing an item closes the menu once its own click has run; a
+        // click anywhere else closes it at once.
+        if (target.closest(".app-sidebar .conv-menu")) {
+            setTimeout(function () { closeMenus(); }, 0);
+            return;
+        }
+        closeMenus();
+    }, true);
+
+    document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") { closeMenus(); }
     });
 
     function railCollapsed() { return !!document.querySelector(".va-rails-collapsed .app-sidebar"); }

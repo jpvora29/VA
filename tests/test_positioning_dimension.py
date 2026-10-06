@@ -211,7 +211,7 @@ def test_the_evidence_band_is_labelled_so_the_reader_knows_where_to_start():
     message = ai_message("Premium grew.", True, idx=1, shape="analyst",
                          evidence=[view], card_idx=1, pane_ids=[1])
     assert "answer-evidence" in _classes(message)
-    assert "answer-column-label" in _classes(message)
+    assert "ev-panel-label" in _classes(message)
 
 
 def test_an_answer_with_no_evidence_has_no_evidence_band():

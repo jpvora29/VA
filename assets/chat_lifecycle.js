@@ -66,7 +66,11 @@
         }
         const cursor = {thread_id: threadId, selection_id: root.crypto.randomUUID(),
             loading, job_id: loading ? null : (chat || {})._job_id || null};
-        return [cursor, !loading, !threadId, loading ? true : (threadId ? n : false), threadId];
+        // is-thinking means "a question is being answered". Loading a saved
+        // conversation is not that: setting it here showed the stop button and
+        // the working card on every open. A conversation that IS still running
+        // says so when its load lands (publishLoad -> event.running).
+        return [cursor, !loading, !threadId, threadId && !loading ? n : false, threadId];
     }
 
     const api = {select, acceptJob, acceptLoad, acceptRender, publishJob, publishLoad, matches};

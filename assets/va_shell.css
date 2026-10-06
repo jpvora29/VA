@@ -690,9 +690,10 @@ body {
 }
 .va-rail.app-sidebar .conv-item:hover .conv-item-more,
 .va-rail.app-sidebar .conv-item-active .conv-item-more,
-.va-rail.app-sidebar .conv-item-actions:focus-within .conv-item-more { opacity: 1; }
+.va-rail.app-sidebar .conv-item-actions:focus-within .conv-item-more,
+.va-rail.app-sidebar .conv-item-actions.is-open .conv-item-more { opacity: 1; }
 .va-rail.app-sidebar .conv-item-more:hover,
-.va-rail.app-sidebar .conv-item-actions:focus-within .conv-item-more {
+.va-rail.app-sidebar .conv-item-actions.is-open .conv-item-more {
     background: rgba(10, 22, 54, 0.07);
     color: var(--va-navy);
 }
@@ -709,7 +710,9 @@ body {
     background: var(--va-surface-0);
     box-shadow: var(--va-shadow-md);
 }
-.va-rail.app-sidebar .conv-item-actions:focus-within .conv-menu { display: block; }
+/* Opened by a click (assets/chat_sidebar.js), which works in every browser;
+   :focus-within never fired in Safari, where a clicked button takes no focus. */
+.va-rail.app-sidebar .conv-item-actions.is-open .conv-menu { display: block; }
 .va-rail.app-sidebar .conv-item-actions.opens-up .conv-menu { top: auto; bottom: calc(100% + 4px); }
 .va-rail.app-sidebar .conv-menu-item {
     display: flex;

@@ -198,7 +198,7 @@
         var was = thinking();
         new MutationObserver(function () {
             var now = thinking();
-            if (now && !was) {
+            if (now && !was && !(switching && switching.kind === "open")) {
                 if (!pending) { showPending(""); }
                 pending.started = true;
             }
@@ -260,8 +260,21 @@
     }
 
     // ── Switching conversations ──────────────────────────────────────────────
+    // Two ways in, one rule: the old transcript is GONE the moment you click.
+    //   New chat   instant — a copy of the welcome screen (cached the last time
+    //              it was shown) stands in until the server's own arrives, so
+    //              the layout, composer included, switches on the click.
+    //   Open chat  a skeleton with ONE label, "Loading conversation…", until
+    //              the transcript lands. Nothing else: no working card (that is
+    //              for a question being answered, not a page being loaded).
     var switchTimer = null;
-    var switchFrom = null;
+    var switching = null;      // {kind, from} while a switch is in flight
+    var heroCache = null;      // detached copy of the last real welcome hero
+    var queuedRef = null;      // a click on the stand-in, replayed on the real one
+
+    function realHero() {
+        return document.querySelector("#chat-box .welcome-hero:not(.va-hero-clone)");
+    }
 
     // What the transcript IS, cheaply: how many turns, and whose first question.
     function signature() {
@@ -269,15 +282,29 @@
         if (!box) { return ""; }
         var first = box.querySelector(".user-message-text");
         return box.querySelectorAll(".turn").length + "|" +
-            (box.querySelector(".welcome-hero") ? "welcome" : "") + "|" +
+            (realHero() ? "welcome" : "") + "|" +
             (first ? first.textContent.slice(0, 60) : "");
     }
 
-    function skeleton(kind) {
-        if (kind === "new") {
-            return '<div class="va-skel va-skel-hero"><span class="w40"></span><span class="w70"></span>' +
-                '<div class="va-skel-grid"><span></span><span></span><span></span><span></span><span></span><span></span></div></div>';
+    // Keep a detached copy of the welcome screen, ids stripped (so the copy
+    // never answers a Dash callback) and each control tagged with its position
+    // (so a click on the copy can be replayed on the real control).
+    function cacheHero() {
+        var hero = realHero();
+        if (!hero || hero.classList.contains("is-leaving")) { return; }
+        var clone = hero.cloneNode(true);
+        var real = hero.querySelectorAll("[id]");
+        var copies = clone.querySelectorAll("[id]");
+        for (var i = 0; i < copies.length; i++) {
+            copies[i].removeAttribute("id");
+            copies[i].setAttribute("data-va-ref", String(i));
         }
+        clone.classList.add("va-hero-clone");
+        clone.setAttribute("aria-hidden", "true");
+        heroCache = real.length === copies.length ? clone : null;
+    }
+
+    function skeleton() {
         return '<div class="va-skel"><span class="va-skel-q"></span>' +
             '<div class="va-skel-card"><span class="w35"></span><span class="w90"></span><span class="w80"></span>' +
             '<span class="w60"></span><span class="w85"></span></div>' +
@@ -286,38 +313,61 @@
 
     function beginSwitch(kind) {
         var viewport = $("chat-viewport");
-        if (!viewport) { return; }
+        var box = $("chat-box");
+        if (!viewport || !box) { return; }
         clearPending(true);
+        endSwitch(true);
+        // Already on an empty chat: the server's render changes nothing.
+        if (kind === "new" && realHero() && !box.querySelector(".turn")) { return; }
+        switching = { kind: kind, from: signature() };
+        viewport.scrollTop = 0;
+        clearTimeout(switchTimer);
+        switchTimer = setTimeout(function () { endSwitch(); }, 10000);
+        if (kind === "new" && heroCache) {
+            var stand = heroCache.cloneNode(true);
+            box.classList.add("va-instant-new");
+            box.appendChild(stand);
+            return;
+        }
         var overlay = viewport.querySelector(".va-switch");
         if (!overlay) {
             overlay = document.createElement("div");
             overlay.className = "va-switch";
+            overlay.setAttribute("role", "status");
             viewport.appendChild(overlay);
         }
-        overlay.innerHTML = skeleton(kind) +
+        overlay.innerHTML = (kind === "new" ? "" : skeleton()) +
             '<div class="va-switch-label"><span class="va-spinner"></span>' +
-            (kind === "new" ? "Starting a new chat" : "Opening conversation") + "</div>";
+            (kind === "new" ? "Starting a new chat…" : "Loading conversation…") + "</div>";
         viewport.classList.add("is-switching");
-        switchFrom = signature();
-        viewport.scrollTop = 0;
-        clearTimeout(switchTimer);
-        // Already on an empty chat: the server's render will not change the
-        // DOM, so there is nothing to wait for beyond a beat of feedback.
-        var fresh = kind === "new" && document.querySelector("#chat-box .welcome-hero") &&
-            !document.querySelector("#chat-box .turn");
-        switchTimer = setTimeout(endSwitch, fresh ? 260 : 8000);
     }
 
-    function endSwitch() {
+    function endSwitch(silent) {
         var viewport = $("chat-viewport");
-        if (!viewport || !viewport.classList.contains("is-switching")) { return; }
-        viewport.classList.remove("is-switching");
-        clearTimeout(switchTimer);
         var box = $("chat-box");
-        if (box && !REDUCED) {
+        var was = switching;
+        switching = null;
+        clearTimeout(switchTimer);
+        if (box) {
+            box.classList.remove("va-instant-new");
+            box.querySelectorAll(".va-hero-clone").forEach(function (el) { el.remove(); });
+        }
+        if (!viewport) { return; }
+        var overlaid = viewport.classList.contains("is-switching");
+        viewport.classList.remove("is-switching");
+        if (!was || silent) { queuedRef = null; return; }
+        // The instant stand-in swaps for the real one with no fade: they look
+        // the same, and a fade would read as a flicker.
+        if (overlaid && box && !REDUCED) {
             box.classList.remove("va-fade-in");
             void box.offsetWidth;
             box.classList.add("va-fade-in");
+        }
+        if (queuedRef !== null) {
+            var hero = realHero();
+            var target = hero && hero.querySelectorAll("[id]")[queuedRef];
+            queuedRef = null;
+            if (target) { target.click(); }
         }
     }
 
@@ -342,21 +392,23 @@
         new MutationObserver(function () {
             if (queued) { return; }
             queued = true;
-            requestAnimationFrame(function () { queued = false; onTranscriptChange(); });
+            // A timer, not requestAnimationFrame: rAF is paused while the page
+            // is in a background tab or pane, which held the loader open.
+            setTimeout(function () { queued = false; onTranscriptChange(); }, 16);
         }).observe(box, { childList: true, subtree: true });
 
         function onTranscriptChange() {
             var all = box.querySelectorAll(".turn");
             var added = all.length - turns;
-            var viewport = $("chat-viewport");
-            if (viewport && viewport.classList.contains("is-switching")) {
-                if (signature() !== switchFrom) { endSwitch(); }
+            if (switching) {
+                if (signature() !== switching.from) { endSwitch(); }
             } else if (added > 0 && added <= 2 && !REDUCED) {
                 for (var i = all.length - added; i < all.length; i++) {
                     all[i].classList.add("va-enter");
                 }
             }
             turns = all.length;
+            if (!switching) { cacheHero(); }
             if (pending && pending.bubble && turnCount(".turn-user") > pending.users) {
                 pending.bubble.remove();
                 pending.bubble = null;
@@ -411,6 +463,12 @@
             // The tab's own clientside callback shows the pane; draw after it.
             setTimeout(function () { drawLazyCharts(panel); }, 30);
             setTimeout(function () { drawLazyCharts(panel); }, 160);
+        }
+
+        var stand = target.closest(".va-hero-clone [data-va-ref]");
+        if (stand) {
+            queuedRef = Number(stand.getAttribute("data-va-ref"));
+            return;
         }
 
         if (target.closest("#new-chat-btn")) { beginSwitch("new"); return; }
@@ -515,6 +573,7 @@
         watchStatus();
         watchThinking();
         watchTranscript();
+        if (!heroCache && !switching) { cacheHero(); }
     }
     new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });
     if (document.readyState === "loading") {

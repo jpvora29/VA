@@ -1,15 +1,13 @@
+/* Announced to screen readers only: the visible loader is the one drawn on
+   the click in assets/chat_experience.js. Two labels saying the same thing
+   at once was one too many. */
 .chat-loading {
     position: absolute;
-    z-index: 15;
-    top: 12px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 10px 18px;
-    border: 1px solid #cbd5e1;
-    border-radius: 12px;
-    background: #fff;
-    color: #253858;
-    box-shadow: 0 4px 16px #172b4d18;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
 }
 .chatbot-area { position: relative; }
 .chat-workspace .chat-column { flex: 1 1 100%; min-width: 0; }

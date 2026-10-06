@@ -110,7 +110,8 @@ def _is_number(value: Any) -> bool:
 #: producer that DECLARES a column money gets a currency mark.
 NUMBER = "number"
 
-_FORMATTED = (P.MONEY, P.MONEY_MILLIONS, P.PERCENT, P.SIGNED_PERCENT, P.RANK_KIND, P.COUNT)
+_FORMATTED = (P.MONEY, P.MONEY_MILLIONS, P.PERCENT, P.SIGNED_PERCENT, P.RANK_KIND, P.COUNT,
+              P.SIGNED_COUNT)
 
 
 def _kind_of(view: EvidenceView, column: str) -> str:
@@ -217,6 +218,9 @@ def _format_for(kind: str, unit: str) -> Optional[Format]:
                       symbol=Symbol.yes, symbol_prefix="#")
     if kind == P.COUNT:
         return Format(scheme=Scheme.fixed, precision=0, group=Group.yes)
+    if kind == P.SIGNED_COUNT:
+        # "+2" places gained, "-1" lost; a zero prints as "0" (held its place).
+        return Format(scheme=Scheme.fixed, precision=0, sign=Sign.positive)
     return None
 
 
@@ -258,7 +262,7 @@ def _direction_styles(view: EvidenceView) -> List[Dict[str, Any]]:
     styles: List[Dict[str, Any]] = []
     for column in view.columns:
         kind = _kind_of(view, column)
-        signed = kind == P.SIGNED_PERCENT or (
+        signed = kind in (P.SIGNED_PERCENT, P.SIGNED_COUNT) or (
             kind in (P.PERCENT, PERCENT_FRACTION) and re.search(r"yoy|growth|change", column, re.I))
         if not signed:
             continue
@@ -316,7 +320,7 @@ def _mode_switch(pane_idx: int) -> Any:
                 className="chart-view-btn active",
             ),
             html.Button(
-                [html.I(className="bi bi-table"), "Data"],
+                [html.I(className="bi bi-table"), "Table"],
                 id={"type": "chart-toggle-data", "idx": pane_idx},
                 n_clicks=0,
                 className="chart-view-btn",
@@ -343,32 +347,46 @@ def _lazy_chart(view: EvidenceView) -> Any:
     )
 
 
-def _view_body(view: EvidenceView, pane_idx: int, *, lazy: bool = False) -> List[Any]:
-    """A view's contents: chart + table behind a switch, or just the table."""
+def _graph(view: EvidenceView, *, lazy: bool) -> Any:
+    return _lazy_chart(view) if lazy else dcc.Graph(
+        figure=view.figure,
+        className="gpt-chart-display",
+        config={"displayModeBar": False, "responsive": True},
+    )
+
+
+def _view_head(title: str, subtitle: str = "", switch: Any = None) -> Optional[Any]:
+    """What a view shows, in words, with the Chart/Table switch on the right."""
+    if not (title or subtitle or switch is not None):
+        return None
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.Div(title, className="ev-view-title") if title else None,
+                    html.Div(subtitle, className="ev-view-sub") if subtitle else None,
+                ],
+                className="ev-view-text",
+            ),
+            switch,
+        ],
+        className="ev-view-head",
+    )
+
+
+def _view_body(view: EvidenceView, pane_idx: Any, *, lazy: bool = False) -> List[Any]:
+    """A view's contents: chart + its own rows behind a switch, or just the rows."""
     table = html.Div(data_table(view), className="ev-table")
     if not view.has_chart:
-        return [
-            html.Div(
-                [html.I(className="bi bi-table"), html.Span(view.note or "Underlying data")],
-                className="ev-note",
-            ),
-            table,
-        ]
+        return [_view_head(view.title or view.label, view.note), table]
     return [
-        _mode_switch(pane_idx),
-        html.Div(
-            _lazy_chart(view) if lazy else dcc.Graph(
-                figure=view.figure,
-                className="gpt-chart-display",
-                config={"displayModeBar": False, "responsive": True},
-            ),
-            id={"type": "chart-fig", "idx": pane_idx},
-        ),
+        _view_head(view.title, "", _mode_switch(pane_idx)),
+        html.Div(_graph(view, lazy=lazy), id={"type": "chart-fig", "idx": pane_idx}),
         html.Div(table, id={"type": "chart-table", "idx": pane_idx}, style={"display": "none"}),
     ]
 
 
-def _tabs(views: Sequence[EvidenceView], idx: int) -> Any:
+def _tabs(views: Sequence[EvidenceView], idx: Any) -> Any:
     """One tab per view. A single view needs no tabs — it is already the answer."""
     if len(views) < 2:
         return None
@@ -389,17 +407,96 @@ def _tabs(views: Sequence[EvidenceView], idx: int) -> Any:
     )
 
 
+def _panel_head(label: str, switch: Any = None) -> Optional[Any]:
+    """The panel's own heading ("Supporting evidence"), with the switch when it
+    governs the whole panel."""
+    if not (label or switch is not None):
+        return None
+    return html.Div(
+        [html.Div(label, className="ev-panel-label") if label else html.Span(), switch],
+        className="ev-panel-head",
+    )
+
+
+def _chart_pane(view: EvidenceView, idx: Any, i: int, *, lazy: bool) -> Any:
+    return html.Div(
+        [_view_head(view.title or view.label), _graph(view, lazy=lazy)],
+        id={"type": "ev-pane", "idx": idx, "view": i},
+        className="ev-pane",
+        style={} if i == 0 else {"display": "none"},
+    )
+
+
+def _table_block(view: EvidenceView, *, named: bool) -> Any:
+    """One table with what it is above it (its market's name when there are several)."""
+    heading = view.label if named and view.label not in ("", "Position") else ""
+    return html.Div(
+        [
+            _view_head(heading or view.title or "Position table", view.note),
+            html.Div(data_table(view), className="ev-table"),
+        ],
+        className="ev-table-block",
+    )
+
+
+def paired_panel(charts: Sequence[EvidenceView], tables: Sequence[EvidenceView],
+                 idx: Any, switch_idx: Any, *, label: str = "") -> Any:
+    """Charts and the position table as the two sides of ONE panel.
+
+    The reader picks a chart along the strip, and the Chart/Table switch in the
+    panel's header turns the whole panel to the position table — the same table
+    whichever chart was showing, because it is the table every chart (and every
+    sentence above them) was drawn from. Several markets stack their tables,
+    each under its market's name.
+
+    The switch reuses the per-chart toggle callback on ONE index: `chart-fig`
+    wraps the charts, `chart-table` the tables.
+    """
+    named = len(tables) > 1
+    return html.Div(
+        [
+            _panel_head(label, _mode_switch(switch_idx)),
+            html.Div(
+                [t for t in (_tabs(charts, idx),) if t is not None] + [
+                    _chart_pane(view, idx, i, lazy=i != 0)
+                    for i, view in enumerate(charts)
+                ],
+                id={"type": "chart-fig", "idx": switch_idx},
+            ),
+            html.Div(
+                [_table_block(view, named=named) for view in tables],
+                id={"type": "chart-table", "idx": switch_idx},
+                className="ev-tables",
+                style={"display": "none"},
+            ),
+        ],
+        className="message ev-panel is-paired",
+    )
+
+
 def evidence_panel(
-    views: Sequence[EvidenceView], idx: int, pane_ids: Sequence[Any] = ()
+    views: Sequence[EvidenceView], idx: Any, pane_ids: Sequence[Any] = (), *, label: str = "",
 ) -> Any:
     """The whole panel. ``pane_ids`` gives each view its own toggle id.
 
     ``idx`` scopes the tabs to this panel; ``pane_ids[i]`` scopes view i's
-    Chart/Data switch. They are separate because the switch reuses the existing
+    Chart/Table switch. They are separate because the switch reuses the existing
     per-chart callback, which keys on a flat index.
+
+    When the answer has charts AND a position table, the table is the Table side
+    of every chart (:func:`paired_panel`) rather than a tab of its own, so it is
+    one click from whatever the reader is looking at. Otherwise each view keeps
+    its own chart/rows switch.
     """
     if not views:
         return None
+    charts = [v for v in views if v.has_chart]
+    tables = [v for v in views if not v.has_chart]
+    if charts and any(v.is_position_table for v in tables):
+        # Every table rides on the Table side, position tables first.
+        ordered = sorted(tables, key=lambda v: not v.is_position_table)
+        switch_idx = pane_ids[0] if pane_ids else f"{idx}-0"
+        return paired_panel(charts, ordered, idx, switch_idx, label=label)
     # One chart per panel is drawn eagerly — the first one — which also makes
     # sure Plotly is loaded on the page; every other chart waits for its tab.
     eager = next((i for i, v in enumerate(views) if v.has_chart), None)
@@ -417,6 +514,6 @@ def evidence_panel(
         for i, view in enumerate(views)
     ]
     return html.Div(
-        [t for t in (_tabs(views, idx),) if t is not None] + panes,
+        [h for h in (_panel_head(label), _tabs(views, idx)) if h is not None] + panes,
         className="message ev-panel",
     )

@@ -18,6 +18,9 @@ dash_clientside.callback_context.triggered = [{prop_id:'{"id":"A","type":"conv-i
 const restored = api.select({}, [0], 0, 'A', {});
 assert.equal(restored[0].thread_id, 'A');
 assert.equal(restored[0].loading, true);
+// Loading a saved conversation is not a question being answered: no stop
+// button, no working card.
+assert.equal(restored[3], false);
 const published = [];
 dash_clientside.set_props = (id, props) => published.push([id, props]);
 api.publishLoad(stale, cursor);

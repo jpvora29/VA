@@ -4,8 +4,11 @@ Two pure readings of things the answer already contains — nothing here writes 
 sentence or computes a figure the evidence does not hold:
 
     split_sections   the Markdown answer as (intro, titled sections), each with
-                     a TONE, so the card can lay the analysis out as cards and
-                     set "what it means" / "watch-outs" apart as callouts
+                     a TONE, so the card can lay the analysis out as numbered
+                     takeaways and set "what it means" apart as the next step
+    badge_for        the one figure a takeaway turns on (a change, a rank
+                     move) or "Watch-out", for the chip beside it — read off
+                     the section's own words, never computed
     scorecards       the headline KPIs per market, read off the position tables
                      the answer was written from (sums and one ratio of their
                      own columns), so the summary band states the numbers a
@@ -105,6 +108,76 @@ def split_sections(markdown: str) -> Tuple[str, List[Section]]:
         if "\n".join(body).strip()
     ]
     return "\n".join(intro).strip(), out
+
+
+# ── Takeaway badges ─────────────────────────────────────────────────────────
+
+UP, DOWN, WARN = "up", "down", "warn"
+
+_PCT = r"\d[\d,]*(?:\.\d+)?%"
+_RISE_WORDS = "grew|grows|rose|rises|increased|increases|gained|gains|up"
+_FALL_WORDS = "fell|falls|dropped|drops|declined|declines|decreased|shrank|lost|down"
+#: The capitalised name just before a movement verb ("Property grew 60%").
+_SUBJECT = r"(?P<subject>[A-Z][\w&/-]*(?:\s[A-Z][\w&/-]*){0,2})\s+(?:premium\s+)?"
+_VERBED = re.compile(
+    rf"(?:{_SUBJECT})?\b(?P<verb>{_RISE_WORDS}|{_FALL_WORDS})\s+(?:by\s+)?(?P<figure>{_PCT})")
+#: "+14.2%", "▼ 3.1%" — a sign attached to a figure, never a range or a dash.
+_SIGNED = re.compile(rf"(?<![\w.$])(?P<sign>[+\-−▲▼])\s?(?P<figure>{_PCT})")
+_RANK_MOVE = re.compile(r"from\s+(?:#)?(?P<before>\d+)(?:st|nd|rd|th)?\s+to\s+(?:#)?(?P<after>\d+)"
+                        r"(?:st|nd|rd|th)?\b")
+
+
+@dataclass(frozen=True)
+class Badge:
+    """The chip beside a takeaway: its text and how it reads (up/down/warn)."""
+
+    text: str
+    tone: str
+
+
+def _change_badge(text: str) -> Optional[Badge]:
+    verbed, signed = _VERBED.search(text), _SIGNED.search(text)
+    first = min((m for m in (verbed, signed) if m), key=lambda m: m.start(), default=None)
+    if first is None:
+        return None
+    if first is verbed:
+        up = re.fullmatch(_RISE_WORDS, first.group("verb"), re.I) is not None
+        subject = (first.group("subject") or "").strip()
+    else:
+        up = first.group("sign") in "+▲"
+        subject = ""
+    arrow = "▲" if up else "▼"
+    label = f"{subject} {arrow} {first.group('figure')}".strip()
+    return Badge(label, UP if up else DOWN)
+
+
+def _rank_badge(text: str) -> Optional[Badge]:
+    match = _RANK_MOVE.search(text)
+    if not match or not re.search(r"\brank|\bplace|among|\d(?:st|nd|rd|th)\b", text, re.I):
+        return None
+    before, after = int(match.group("before")), int(match.group("after"))
+    if before == after:
+        return None
+    return Badge(f"Rank #{before} → #{after}", UP if after < before else DOWN)
+
+
+def badge_for(section: Section) -> Optional[Badge]:
+    """The chip for one takeaway, or None when its words carry no clear figure.
+
+    A watch-out says so; otherwise the FIRST movement the section states — a
+    percentage change, else a rank move. Only figures already in the text are
+    used, and a section with none gets no chip rather than an invented one.
+    """
+    if section.tone == RISK:
+        return Badge("Watch-out", WARN)
+    return _change_badge(section.body) or _rank_badge(section.body)
+
+
+def takeaways_and_next_steps(sections: Sequence[Section]) -> Tuple[List[Section], List[Section]]:
+    """(the findings, in order) and (the "what it means / what to do" parts)."""
+    findings = [s for s in sections if s.tone != ACTION]
+    steps = [s for s in sections if s.tone == ACTION]
+    return findings, steps
 
 
 # ── Scorecards ──────────────────────────────────────────────────────────────

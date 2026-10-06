@@ -92,7 +92,7 @@ RANK_FIELD = "Carriers"
 #: measures the claim layer names; this is the reader's table.
 DISPLAY_COLUMNS: Tuple[str, ...] = (
     SLICE, MARSH_PREMIUM, CARRIER_PREMIUM, MOVEMENT_PERCENT,
-    SHARE_OF_WALLET, SHARE_OF_PORTFOLIO, RANK, RANK_FIELD,
+    SHARE_OF_WALLET, SHARE_OF_PORTFOLIO, RANK, RANK_CHANGE, RANK_FIELD,
 )
 
 #: How each column is rendered and compared. The UI needs one fact about a column
@@ -109,10 +109,11 @@ MONEY_MILLIONS = columns.MONEY_MILLIONS
 PERCENT = columns.PERCENT
 SIGNED_PERCENT = columns.SIGNED_PERCENT
 COUNT = columns.COUNT
+SIGNED_COUNT = columns.SIGNED_COUNT
 
 #: Columns whose sign carries a direction, so the panel can colour them from the
 #: VALUE rather than by searching the cell for a glyph.
-DIRECTIONAL: Tuple[str, ...] = (MOVEMENT_PERCENT,)
+DIRECTIONAL: Tuple[str, ...] = (MOVEMENT_PERCENT, RANK_CHANGE)
 
 #: Money is shown at ONE scale across the whole table, named in the header.
 #: Per-row scaling ("$1.2M" above "$840k") makes a column impossible to compare
@@ -313,6 +314,7 @@ class PositioningPack:
             SHARE_OF_WALLET: PERCENT,
             SHARE_OF_PORTFOLIO: PERCENT,
             RANK: RANK_KIND,
+            RANK_CHANGE: SIGNED_COUNT,
             RANK_FIELD: COUNT,
         }
 
@@ -389,7 +391,9 @@ def _row(position: SlicePosition, dimension: str, *, scale: float = 1.0) -> Dict
     """
     # Column order is the reader's order (`DISPLAY_COLUMNS`): the Marsh book,
     # the carrier's share of it in money, how that moved, then its share of the
-    # wallet, the line's weight in the carrier's own book, and where it ranks.
+    # wallet, the line's weight in the carrier's own book, where it ranks, and
+    # how many places that rank moved (blank when no prior year was compared —
+    # "not compared" is not "did not move").
     return {
         slice_heading(dimension): position.slice,
         MARSH_PREMIUM: _scaled(position.marsh_premium, scale),
@@ -398,6 +402,7 @@ def _row(position: SlicePosition, dimension: str, *, scale: float = 1.0) -> Dict
         SHARE_OF_WALLET: _rounded(position.share_of_wallet),
         SHARE_OF_PORTFOLIO: _rounded(position.share_of_portfolio),
         RANK: position.rank,
+        RANK_CHANGE: position.rank_change,
         RANK_FIELD: position.rank_of,
     }
 
