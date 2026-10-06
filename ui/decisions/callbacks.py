@@ -121,6 +121,34 @@ def step_week(_prev, _next, _today, _view, offset):
 
 
 @callback(
+    Output("decision-day", "data"),
+    Input({"type": "decision-day", "day": ALL}, "n_clicks"),
+    Input("decision-week-prev", "n_clicks"),
+    Input("decision-week-next", "n_clicks"),
+    Input("decision-week-today", "n_clicks"),
+    Input("decision-view", "data"),
+    State("decision-day", "data"),
+    prevent_initial_call=True,
+)
+def pick_day(_days, _prev, _next, _today, _view, current):
+    """A ribbon day opens that day's decisions; the same day again closes it.
+
+    Paging the week or switching view drops the day — it belonged to the week that
+    was on screen. The day buttons are repainted with the ribbon, so a remount
+    (``n_clicks`` back to 0) must not count as a click.
+    """
+    trigger = ctx.triggered_id
+    if trigger == "decision-view" or trigger in (
+        "decision-week-prev", "decision-week-next", "decision-week-today"
+    ):
+        return None if current else no_update
+    if not isinstance(trigger, dict) or not _clicked():
+        return no_update
+    day = trigger.get("day") or None
+    return None if day == current else day
+
+
+@callback(
     Output("decision-scope", "data"),
     Input("decision-archive-toggle", "n_clicks"),
     State("decision-scope", "data"),
@@ -157,11 +185,12 @@ def toggle_archive(_n, scope):
     Input("decision-sort", "value"),
     Input("decisions-version", "data"),
     Input("decision-selected", "data"),
+    Input("decision-day", "data"),
     State("user-store", "data"),
 )
 def paint_board(
     pane, view, scope, week, search, owners, statuses, priorities, sort,
-    _version, selected, user_store,
+    _version, selected, day, user_store,
 ):
     """Repaint every region of the board from one resolved request."""
     uid = _uid(user_store)
@@ -178,6 +207,7 @@ def paint_board(
         priorities=priorities,
         owners=owners,
         sort=sort,
+        day=day,
     )
     painted = board.build_board_view(request)
     return (
@@ -440,10 +470,12 @@ def show_board_for_new_decision(_clicks):
 @callback(
     Output("decision-edit-modal", "is_open", allow_duplicate=True),
     Input("decision-edit-cancel", "n_clicks"),
+    Input("decision-edit-close", "n_clicks"),
     prevent_initial_call=True,
 )
-def cancel_editor(n):
-    return False if n else no_update
+def cancel_editor(_cancel, _close):
+    """Cancel in the footer and the × in the header both close without saving."""
+    return False if _clicked() else no_update
 
 
 @callback(

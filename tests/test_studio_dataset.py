@@ -417,3 +417,60 @@ def test_review_body_carries_export_download():
     rendered = json.dumps(review_body(deck, None), default=lambda o: getattr(o, "__dict__", str(o)))
     assert "qs-export" in rendered
     assert "Download .pptx" in rendered
+
+
+# ── the Data page reads only what it shows ───────────────────────────────────
+
+
+def test_the_data_page_reads_the_preview_not_the_whole_upload(tmp_path, monkeypatch):
+    """Every Studio render used to read the whole upload (up to 1M rows) to show 500 of
+    them and the column names, which is what made opening the Data tab slow."""
+    from dataclasses import replace
+
+    from studio.dataset import repository as R
+    from studio.dataset.materialize import working_preview
+    from studio.dataset.model import TransformOp
+    from studio.page.authoring import data as page
+
+    repo = DatasetRepository(tmp_path)
+    frame = pd.DataFrame({"Carrier": ["A", "B"] * 2000, "GWP": range(4000),
+                          "Billed": ["2024-03-01"] * 4000})
+    record = repo.save(frame, name="big", filename="big.csv")
+    record = replace(record, transforms=(TransformOp(kind="derive", name="Year",
+                                                     source="Billed", recipe="year"),))
+    repo.update_record(record)
+
+    head = working_preview(repo, record, 50)
+    assert len(head) == 50 and list(head["Year"].unique()) == [2024], "recipes replay on it"
+
+    monkeypatch.setattr(R, "get_repository", lambda: repo)
+    full_reads = []
+    monkeypatch.setattr(repo, "load_frame", lambda *a, **k: full_reads.append(a))
+    body = page.data_body({"active": record.dataset_id})
+    assert full_reads == [], "the page never reads the whole table"
+    assert "First 500 of 4,000 rows" in str(body)
+
+
+def test_a_full_read_is_cached_until_the_file_changes(tmp_path):
+    from studio.dataset import repository as R
+
+    repo = DatasetRepository(tmp_path)
+    record = repo.save(pd.DataFrame({"x": [1, 2, 3]}), name="t", filename="t.csv")
+    R._read_table.cache_clear()
+    first = repo.load_frame(record.dataset_id)
+    first["x"] = 0                                   # a caller reshaping its copy...
+    assert repo.load_frame(record.dataset_id)["x"].tolist() == [1, 2, 3]   # ...is not seen
+    assert R._read_table.cache_info().hits == 1
+
+    pd.DataFrame({"x": [9]}).to_sql("upload", repo.engine(record.dataset_id),
+                                    if_exists="replace", index=False)
+    assert repo.load_frame(record.dataset_id)["x"].tolist() == [9], "a write is a fresh read"
+
+
+def test_a_sign_in_lands_on_setup_and_keeps_the_authors_panel_preferences():
+    from studio.authoring.layout import landing_view
+
+    view = landing_view({"mode": "canvas", "idx": 7, "sel": "w1", "library_collapsed": True})
+    assert (view["mode"], view["idx"], view["sel"]) == ("setup", 0, None)
+    assert view["library_collapsed"] is True
+    assert landing_view(None)["mode"] == "setup"

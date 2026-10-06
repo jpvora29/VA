@@ -130,7 +130,10 @@ def test_values_commentary_carries_figures(_stub_compute):
     assert "52.5%" in vals["fbnote:0:2:1:1"] and "$48M" in vals["fbnote:0:2:1:1"]   # working well
     assert "$363M" in vals["fbnote:0:2:1:3"]                                        # headroom
     assert vals["fbnote:1:3:0:0"].startswith("Key Highlights:")
-    assert "ranked #2" in vals["fbnote:1:4:1:3"]                                    # key messages
+    # The rank is said once, where it is first said; Key Messages on the next page used to
+    # restate it with the growth and share already given (studio/template_fill/repeat_prune).
+    assert "#2" in vals["fbnote:0:2:1:1"]
+    assert "#2" not in vals["fbnote:1:4:1:3"] and vals["fbnote:1:4:1:3"].strip()
 
 
 def test_declines_flow_to_challenges():

@@ -556,3 +556,62 @@ def test_the_board_styles_from_tokens_rather_than_brand_hexes():
 def test_the_brief_folds_under_the_queue_rather_than_squeezing_it_on_narrow_screens():
     assert "@media (max-width: 1180px)" in DECISION_CSS
     assert "@media (max-width: 880px)" in DECISION_CSS
+
+
+# ── 10. a ribbon day opens that day's decisions ─────────────────────────────
+
+
+def test_every_ribbon_day_is_a_button_addressed_by_its_date():
+    week = ag.week_for(TODAY, 0, [])
+    cells = queue.week_days(week, picked=date(2026, 9, 10))
+    assert [c.id["day"] for c in cells][:3] == ["2026-09-07", "2026-09-08", "2026-09-09"]
+    picked = [c for c in cells if "decision-day-picked" in c.className]
+    assert [c.id["day"] for c in picked] == ["2026-09-10"]
+    assert picked[0].__dict__["aria-pressed"] == "true"
+
+
+def test_a_picked_day_narrows_the_agenda_to_what_is_due_that_day(scratch_board):
+    for title, due in (("Thu A", "2026-09-10"), ("Thu B", "2026-09-10"), ("Fri", "2026-09-11")):
+        store.create_decision(scratch_board, {"title": title, "due_date": due})
+
+    def painted(day, view="agenda", week_offset=0):
+        request = board.build_board_request(
+            user_id=scratch_board, view=view, scope="active", week_offset=week_offset,
+            selected=None, search="", statuses=None, priorities=None, owners=None,
+            sort="due", day=day, today=TODAY)
+        return board.build_board_view(request)
+
+    thursday = painted("2026-09-10")
+    assert "Due Thu 10 Sep" in _text(thursday.queue)
+    assert "Thu A" in _text(thursday.queue) and "Fri" not in _text(thursday.queue)
+    assert "Show the whole queue" in _text(thursday.queue)
+
+    assert "Nothing is due on Tue 8 Sep" in _text(painted("2026-09-08").queue)
+
+    # A day off the shown week, or outside the Agenda, is no day at all.
+    for view in (painted("2026-09-10", week_offset=1), painted("2026-09-10", view="list")):
+        assert "Fri" in _text(view.queue) and "Show the whole queue" not in _text(view.queue)
+
+
+def test_the_editor_keeps_every_field_the_save_reads():
+    """Restyled to the board's language; every id and value the save callback reads stays."""
+    ids = _ids(render.decision_modals())
+    for field in render.FORM_VALUE_ORDER:
+        assert f"decision-f-{field.replace('_', '-')}" in ids
+    for control in ("decision-edit-title", "decision-edit-save", "decision-edit-cancel",
+                    "decision-edit-close", "decision-form-evidence"):
+        assert control in ids
+    form = render.edit_form({"status": "approved", "priority": "high"})
+    seg = {c.id: c for c in _walk(form) if getattr(c, "id", None) in
+           ("decision-f-status", "decision-f-priority")}
+    assert seg["decision-f-status"].value == "approved"
+    assert [o["value"] for o in seg["decision-f-priority"].options] == ["high", "med", "low"]
+
+
+def _walk(node: Any):
+    if isinstance(node, Component):
+        yield node
+        yield from _walk(getattr(node, "children", None))
+    elif isinstance(node, (list, tuple)):
+        for n in node:
+            yield from _walk(n)

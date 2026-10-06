@@ -196,3 +196,55 @@ def test_the_canvas_draws_retyped_lines_in_their_paragraph_s_style(deck, monkeyp
     marks = [n.children for n in _walk(lines[1]) if getattr(n, "className", "") == "qs-tf-bullet"]
     assert marks == ["•"], "a bullet paragraph keeps its bullet on the canvas"
     assert float(bullet["paddingLeft"][:-2]) > 0, "and its indent"
+
+
+# ── a KPI tile: a navy table cell on a pale slide ────────────────────────────
+
+
+@pytest.fixture()
+def kpi_deck(tmp_path):
+    """One KPI table: a label row and a bold 18pt value row, each cell filled navy, with
+    a 0.2" right margin on the value — the Overall page's tiles."""
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    shape = slide.shapes.add_table(2, 2, Emu(457200), Emu(457200), Emu(2743200), Emu(731520))
+    for r, row in enumerate(shape.table.rows):
+        for c, cell in enumerate(row.cells):
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = RGBColor.from_string("0B1F44")
+            paragraph = cell.text_frame.paragraphs[0]
+            _run(paragraph, ("GWP 2025", "SoW 2025")[c] if r == 0 else ("208M", "9.1%")[c],
+                 size=9 if r == 0 else 18, bold=True, rgb="CEECFF")
+    value = shape.table.cell(1, 0)
+    value.margin_right = Emu(182880)
+    path = tmp_path / "kpi.pptx"
+    prs.save(path)
+    return path, int(shape.shape_id)
+
+
+def test_a_retyped_kpi_draws_on_its_own_tile_not_the_slide(kpi_deck, monkeypatch):
+    """Clicking a KPI and retyping it used to paint the whole cell in the SLIDE's paper,
+    so light tile text vanished on a pale box over the tile's icon, at the cell's edge."""
+    path, shape_id = kpi_deck
+    monkeypatch.setattr(TP, "public_url_exists", lambda url: True)
+    tdoc = {
+        "template_path": str(path), "values": {}, "manifest": [], "hidden": [], "order": [0],
+        "assembled": True, "background_urls": ["/assets/render-0.png"],
+        "text_edits": {f"0:{shape_id}:1:0": ["209M"]},
+    }
+
+    body = TP.template_preview_body(tdoc, {"idx": 0})
+    cell = next(n for n in _walk(body) if getattr(n, "className", "").startswith("qs-tf-cell")
+                and n.__dict__.get("data-at") == f"0:{shape_id}:1:0")
+    assert cell.style["--qs-tf-paper"].upper() == "#0B1F44", "the tile's own fill is the paper"
+
+    reflection = next(n for n in _walk(cell) if str(getattr(n, "className", "")) ==
+                      "qs-tf-reflect is-styled")
+    assert reflection.style["padding"].split()[1] != reflection.style["padding"].split()[3], \
+        "the cell's own margins place the words (0.2in right, default left)"
+    line = next(n for n in _walk(reflection) if "qs-tf-reflect-line" in str(n.className))
+    assert line.style["fontWeight"] == "700" and line.style["color"] == "#CEECFF"
+    paint = next(n for n in _walk(line) if getattr(n, "className", "") == "qs-tf-paint")
+    ghost, words = paint.children
+    assert (ghost.children, words.children) == ("208M", "209M"), \
+        "the paper is sized to the old words and the new, not the whole cell"

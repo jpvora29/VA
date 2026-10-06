@@ -37,6 +37,9 @@ class BoardRequest:
     priorities: tuple[str, ...] = ()
     owners: tuple[str, ...] = ()
     sort: str = "due"
+    # A ribbon day the reader clicked. Only meaningful inside the shown week of the
+    # Agenda, which is the only view that has a ribbon.
+    day: Optional[date] = None
 
     @property
     def showing_archive(self) -> bool:
@@ -70,6 +73,7 @@ def build_board_request(
     priorities: Any,
     owners: Any,
     sort: Any,
+    day: Any = None,
     today: Optional[date] = None,
 ) -> BoardRequest:
     """Turn the raw control values into a request nothing downstream re-reads.
@@ -90,6 +94,7 @@ def build_board_request(
         priorities=_as_tuple(priorities),
         owners=_as_tuple(owners),
         sort=sort or "due",
+        day=ag.parse_date(day),
     )
 
 
@@ -97,11 +102,12 @@ def build_board_view(request: BoardRequest) -> BoardView:
     """Read the records this request asks for, and paint every region from them."""
     decisions = _load(request)
     week = ag.week_for(request.today, request.week_offset, decisions)
+    day = _day_in(request, week)
     totals = store.count_by_scope(request.user_id)
     return BoardView(
-        queue=_queue(request, decisions, week),
+        queue=_queue(request, decisions, week, day),
         week_label=week.label,
-        week_days=queue.week_days(week),
+        week_days=queue.week_days(week, day),
         at_this_week=week.is_current,
         ribbon_class=render.ribbon_class(request.view),
         counts=render.counts_line(
@@ -125,7 +131,17 @@ def _load(request: BoardRequest) -> list[dict[str, Any]]:
     )
 
 
-def _queue(request: BoardRequest, decisions: list[dict[str, Any]], week: ag.Week) -> Any:
+def _day_in(request: BoardRequest, week: ag.Week) -> Optional[date]:
+    """The picked day, if it is on the ribbon being shown — else no day at all."""
+    if request.view != "agenda" or request.day is None:
+        return None
+    return request.day if week.start <= request.day <= week.end else None
+
+
+def _queue(
+    request: BoardRequest, decisions: list[dict[str, Any]], week: ag.Week,
+    day: Optional[date] = None,
+) -> Any:
     """The left pane, in whichever of the three readings is selected."""
     if request.view == "board":
         return render.board_columns(
@@ -134,6 +150,8 @@ def _queue(request: BoardRequest, decisions: list[dict[str, Any]], week: ag.Week
             request.selected,
             statuses=_columns_for(request.scope),
         )
+    if request.view == "agenda" and day is not None:
+        return queue.day_body(decisions, request.today, day, request.selected)
     if request.view == "agenda":
         return queue.agenda_body(decisions, request.today, week, request.selected)
     return queue.list_body(decisions, request.today, request.selected)

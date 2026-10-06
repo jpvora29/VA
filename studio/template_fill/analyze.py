@@ -58,6 +58,11 @@ class Shape:
     body_style: Optional[PS.BodyStyle] = None
     para_styles: List[PS.ParaStyle] = field(default_factory=list)
     cell_styles: List[List[List[PS.ParaStyle]]] = field(default_factory=list)
+    # Each cell's own paper (fill hex, no #) and text box (insets + vertical anchor). A KPI
+    # tile is a navy cell on a pale slide: retyped words drawn on the SHAPE's colours and
+    # insets landed light-on-light at the cell's top edge, over the tile's icon.
+    cell_fills: List[List[Optional[str]]] = field(default_factory=list)
+    cell_bodies: List[List[PS.BodyStyle]] = field(default_factory=list)
 
     @property
     def text(self) -> str:
@@ -346,6 +351,33 @@ def _cell_styles(shape, theme: Optional[PS.ThemeContext]) -> List[List[List[PS.P
         return []
 
 
+_CELL_ANCHOR = {1: "top", 3: "middle", 4: "bottom"}   # MSO_ANCHOR.TOP / MIDDLE / BOTTOM
+
+
+def _cell_body(cell) -> PS.BodyStyle:
+    """A table cell's text box: its margins and vertical anchor, in points."""
+    anchor = cell.vertical_anchor
+    return PS.BodyStyle(
+        inset_left_pt=int(cell.margin_left) / PS.EMU_PER_PT,
+        inset_top_pt=int(cell.margin_top) / PS.EMU_PER_PT,
+        inset_right_pt=int(cell.margin_right) / PS.EMU_PER_PT,
+        inset_bottom_pt=int(cell.margin_bottom) / PS.EMU_PER_PT,
+        anchor=_CELL_ANCHOR.get(int(anchor) if anchor is not None else 1, "top"),
+    )
+
+
+def _cell_boxes(shape, palette: Optional[dict]) -> Tuple[List[List[Optional[str]]],
+                                                        List[List[PS.BodyStyle]]]:
+    """``(fills, bodies)`` for every cell, ``[row][col]`` — empty if unreadable."""
+    try:
+        rows = list(shape.table.rows)
+        return ([[_solid_fill(cell, palette) for cell in row.cells] for row in rows],
+                [[_cell_body(cell) for cell in row.cells] for row in rows])
+    except Exception as exc:  # noqa: BLE001 — the look of a cell is never worth the shape
+        logger.debug("analyze: cell boxes unresolved for %r: %s", shape.name, exc)
+        return [], []
+
+
 def _extract(shape, box, template_path: str, slide_idx: int, palette: Optional[dict] = None,
              *, slide=None, theme: Optional[PS.ThemeContext] = None) -> Shape:
     x, y, w, h = box
@@ -360,6 +392,7 @@ def _extract(shape, box, template_path: str, slide_idx: int, palette: Optional[d
         rec.table_widths = [int(c.width or 0) for c in shape.table.columns]
         rec.table_heights = [int(r.height or 0) for r in shape.table.rows]
         rec.cell_styles = _cell_styles(shape, theme)
+        rec.cell_fills, rec.cell_bodies = _cell_boxes(shape, palette)
     elif kind == "chart":
         rec.chart_type, rec.chart_categories, rec.chart_series, rec.chart_external = _read_chart(shape)
     elif kind == "picture":

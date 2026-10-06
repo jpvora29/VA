@@ -637,13 +637,15 @@ def product_breakdown_rows(
       • ``sow``         — the carrier's share of wallet in that product line;
       • ``rank``        — the carrier's rank among carriers in that product line;
       • ``rank_change`` — rank improvement vs the prior year (+ = moved up);
-      • ``runway``      — own premium − the AVERAGE premium, in that product line, of the
-                          five largest carriers IN THE SCOPE (the country) — one fixed set
-                          of five for every row (negative = behind them);
+      • ``runway``      — own premium − the AVERAGE premium of THAT product line's five
+                          largest carriers in the scope (the country), ranked by their
+                          premium in that line — so each row has its own top 5
+                          (negative = behind them);
       • ``peer_gwp``    — that top-5 average itself (the confidential benchmark the
                           breakdown table's "Peer GWP" column shows beside the runway).
-    Never the author's selected peer group: the page's header says "Top 5", and a peer
-    group chosen for benchmarking is a different, smaller question (see ``peer_gap``).
+    Never the author's selected peer group, and never the country's overall leaders: the
+    header says "Runway to Top 5" of the line, and a carrier that leads the country can be
+    absent from a line another five dominate (see ``product_top_average``).
     Everything is premium-derived — no LLM, no random values.
     """
     if not subject:
@@ -676,13 +678,12 @@ def product_breakdown_rows(
     rank_cur = ranks(cur)
     rank_prev = ranks(cur - 1) if cur is not None else {}
 
-    # Runway: the scope's five largest carriers, averaged per product (two grouped queries).
-    leaders = top_carriers(flow, scoped(base, cur), engine)
+    # Runway: each product's own five largest carriers, averaged (one grouped query).
     per_carrier = premium_by_dim_and_carrier(flow, dim, scoped(base, cur), engine)
     runway: Dict[str, float] = {}
     peer_avg: Dict[str, float] = {}
     for p, by_carrier in per_carrier.items():
-        peer_avg[p] = avg = leaders_average(by_carrier, leaders)
+        peer_avg[p] = avg = product_top_average(by_carrier)
         runway[p] = (gwp.get(p, 0.0) or 0.0) - avg
 
     rows: List[Dict[str, Any]] = []
@@ -701,20 +702,6 @@ def product_breakdown_rows(
 _PEER_TOP_N = 5
 
 
-def top_carriers(flow, filters, engine, *, top: int = _PEER_TOP_N) -> Tuple[str, ...]:
-    """The ``top`` largest carriers by premium under ``filters`` — the subject eligible.
-
-    Ties are broken by name so the set is the same on every run.
-    """
-    facts = compute_breakdown(
-        PrimitiveArgs(flow=flow, metric="premium", group_by=(_CARRIER_COL,), filters=filters),
-        engine=engine,
-    )
-    ranked = sorted(((f.value or 0.0, str(f.dims.get(_CARRIER_COL))) for f in facts
-                     if f.dims.get(_CARRIER_COL) is not None), key=lambda r: (-r[0], r[1]))
-    return tuple(name for _value, name in ranked[:top])
-
-
 def premium_by_dim_and_carrier(flow, dim, filters, engine) -> Dict[str, Dict[str, float]]:
     """``{dim value: {carrier: premium}}`` in one grouped query."""
     out: Dict[str, Dict[str, float]] = {}
@@ -725,15 +712,13 @@ def premium_by_dim_and_carrier(flow, dim, filters, engine) -> Dict[str, Dict[str
     return out
 
 
-def leaders_average(by_carrier: Mapping[str, float], leaders: Sequence[str]) -> float:
-    """The leaders' average premium in one cut — a leader writing none of it counts as 0.
+def product_top_average(by_carrier: Mapping[str, float], *, top: int = _PEER_TOP_N) -> float:
+    """The average premium of the ``top`` largest carriers IN ONE CUT — the runway benchmark.
 
-    The set is fixed across the rows, so a product where two of the five write nothing has
-    a LOWER benchmark than one they all write — which is exactly the runway's point.
+    Ranked by their premium in this cut, so a product line's benchmark is its own leaders,
+    the subject eligible. Fewer than ``top`` carriers averages the ones there are.
     """
-    if not leaders:
-        return 0.0
-    return sum(by_carrier.get(name, 0.0) or 0.0 for name in leaders) / len(leaders)
+    return _top_average(list(by_carrier.values()), top=top)
 
 
 def _top_average(values: List[float], *, top: int = _PEER_TOP_N) -> float:

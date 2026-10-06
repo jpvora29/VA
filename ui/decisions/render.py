@@ -355,24 +355,57 @@ def decision_modals() -> html.Div:
         [
             dbc.Modal(
                 [
-                    dbc.ModalHeader(dbc.ModalTitle(id="decision-edit-title")),
+                    _editor_header(),
                     # Form fields are mounted statically (always in the DOM) so
                     # the save callback's State references never point at a
                     # non-existent object. Opening just pushes values into them.
                     dbc.ModalBody(edit_form(None), id="decision-edit-form"),
                     dbc.ModalFooter(
                         [
-                            dbc.Button("Cancel", id="decision-edit-cancel", className="decision-cancel-btn"),
-                            dbc.Button("Save decision", id="decision-edit-save", className="decision-save-btn"),
+                            html.Span(
+                                [html.I(className="bi bi-shield-check"),
+                                 "Evidence captured with a decision is kept as it was."],
+                                className="decision-editor-note",
+                            ),
+                            dbc.Button("Cancel", id="decision-edit-cancel",
+                                       className="decision-cancel-btn"),
+                            dbc.Button([html.I(className="bi bi-check2"), "Save decision"],
+                                       id="decision-edit-save", className="decision-save-btn"),
                         ]
                     ),
                 ],
                 id="decision-edit-modal",
                 is_open=False,
-                size="lg",
+                size="xl",
                 backdrop="static",
+                className="decision-editor",
             ),
         ]
+    )
+
+
+def _editor_header() -> html.Div:
+    """The board's own heading pattern: icon tile, title, one line of purpose.
+
+    The close button is ``decision-edit-cancel``'s twin: Cancel closes the editor,
+    and so does this (see ``ui.decisions.callbacks.cancel_editor``).
+    """
+    return html.Div(
+        [
+            html.Div(html.I(className="bi bi-clipboard-check"), className="decision-editor-icon"),
+            html.Div(
+                [
+                    html.Div("Decision Board", className="decision-editor-eyebrow"),
+                    html.H2(id="decision-edit-title", className="decision-editor-title"),
+                    html.Div("Say what was decided and why, then who owns it and when it is due.",
+                             className="decision-editor-sub"),
+                ],
+                className="decision-editor-heading",
+            ),
+            html.Button(html.I(className="bi bi-x-lg"), id="decision-edit-close",
+                        n_clicks=0, className="decision-editor-close", title="Close"),
+        ],
+        className="decision-editor-head",
     )
 
 
@@ -402,35 +435,76 @@ def form_values(d: dict[str, Any] | None) -> tuple[Any, ...]:
 
 
 def edit_form(d: dict[str, Any] | None) -> list[Any]:
-    """Form fields for the create/edit modal, prefilled from ``d`` when editing."""
+    """The editor: the decision on the left, ownership and timing in a panel beside it.
+
+    The same split the board reads in — the row says what and why, the brief says who
+    and when — so a decision is written the way it will be read.
+    """
     d = d or {}
+    decision = html.Div(
+        [
+            _section_label("1", "The decision"),
+            html.Div(
+                [html.Label("Title", className="decision-form-label", htmlFor="decision-f-title"),
+                 dbc.Input(id="decision-f-title", value=d.get("title", "") or "",
+                           placeholder="Name the decision in a few words",
+                           className="decision-title-input", maxLength=120)],
+                className="decision-form-field",
+            ),
+            _textarea("What was decided", "decision-f-statement", d.get("statement", ""),
+                      "One or two sentences someone could act on."),
+            _textarea("Why", "decision-f-rationale", d.get("rationale", ""),
+                      "The business reason: the figure or finding that drove it."),
+            _textarea("Discussion points", "decision-f-discussion", d.get("discussion", ""),
+                      "Open questions, risks, what was argued."),
+            html.Div(id="decision-form-evidence", className="decision-form-evidence"),
+        ],
+        className="decision-editor-main",
+    )
+    plan = html.Div(
+        [
+            _section_label("2", "Ownership & timing"),
+            _input("Owner", "decision-f-owner", d.get("owner", ""), placeholder="Who delivers it"),
+            _input("Stakeholders", "decision-f-stakeholders",
+                   ", ".join(d.get("stakeholders") or []), placeholder="Comma-separated names"),
+            _segmented("Status", "decision-f-status", _status_choices(),
+                       d.get("status", "planned")),
+            _segmented("Priority", "decision-f-priority", _priority_choices(),
+                       d.get("priority", "med")),
+            html.Div(
+                [
+                    _input("Decided on", "decision-f-decision-date", d.get("decision_date", ""),
+                           type_="date"),
+                    _input("Due", "decision-f-due-date", d.get("due_date", ""), type_="date"),
+                ],
+                className="decision-form-row",
+            ),
+        ],
+        className="decision-editor-side",
+    )
+    return [html.Div([decision, plan], className="decision-editor-grid")]
+
+
+def _section_label(number: str, text: str) -> html.Div:
+    return html.Div([html.Span(number, className="decision-editor-step"), text],
+                    className="decision-editor-section")
+
+
+def _status_choices() -> list[dict[str, Any]]:
+    """Status pills, each with the sticky-note colour the board gives it."""
     return [
-        _input("Title", "decision-f-title", d.get("title", "")),
-        _textarea("Decision statement", "decision-f-statement", d.get("statement", "")),
-        _textarea("Business rationale", "decision-f-rationale", d.get("rationale", "")),
-        _textarea("Discussion points", "decision-f-discussion", d.get("discussion", "")),
-        html.Div(
-            [
-                _input("Owner", "decision-f-owner", d.get("owner", "")),
-                _input("Stakeholders (comma-separated)", "decision-f-stakeholders", ", ".join(d.get("stakeholders") or [])),
-            ],
-            className="decision-form-row",
-        ),
-        html.Div(
-            [
-                _select("Status", "decision-f-status", model.status_options(), d.get("status", "planned")),
-                _select("Priority", "decision-f-priority", model.priority_options(), d.get("priority", "med")),
-            ],
-            className="decision-form-row",
-        ),
-        html.Div(
-            [
-                _input("Decision date", "decision-f-decision-date", d.get("decision_date", ""), type_="date"),
-                _input("Due date", "decision-f-due-date", d.get("due_date", ""), type_="date"),
-            ],
-            className="decision-form-row",
-        ),
-        html.Div(id="decision-form-evidence", className="decision-form-evidence"),
+        {"label": html.Span([html.Span(className=f"decision-pill-dot is-{meta.color}"),
+                             meta.label]),
+         "value": key}
+        for key, meta in model.STATUS_META.items()
+    ]
+
+
+def _priority_choices() -> list[dict[str, Any]]:
+    return [
+        {"label": html.Span([html.Span(className=f"decision-pill-dot is-prio-{css}"), label]),
+         "value": key}
+        for key, (label, css) in model.PRIORITY_META.items()
     ]
 
 
@@ -452,25 +526,32 @@ def evidence_preview(items: list[Any]) -> list[Any]:
     ]
 
 
-def _input(label: str, _id: str, value: Any, type_: str = "text") -> html.Div:
+def _input(label: str, _id: str, value: Any, type_: str = "text", *,
+           placeholder: str | None = None) -> html.Div:
     return html.Div(
-        [html.Label(label, className="decision-form-label"), dbc.Input(id=_id, value=value or "", type=type_)],
+        [html.Label(label, className="decision-form-label", htmlFor=_id),
+         dbc.Input(id=_id, value=value or "", type=type_, placeholder=placeholder)],
         className="decision-form-field",
     )
 
 
-def _textarea(label: str, _id: str, value: Any) -> html.Div:
+def _textarea(label: str, _id: str, value: Any, hint: str | None = None) -> html.Div:
     return html.Div(
-        [html.Label(label, className="decision-form-label"), dbc.Textarea(id=_id, value=value or "", rows=3)],
+        [html.Label(label, className="decision-form-label", htmlFor=_id),
+         dbc.Textarea(id=_id, value=value or "", rows=3, placeholder=hint)],
         className="decision-form-field",
     )
 
 
-def _select(label: str, _id: str, options: list[dict[str, str]], value: Any) -> html.Div:
+def _segmented(label: str, _id: str, options: list[dict[str, Any]], value: Any) -> html.Div:
+    """A pill row in the board's segmented style. Same ``value`` contract as a select."""
     return html.Div(
         [
             html.Label(label, className="decision-form-label"),
-            dbc.Select(id=_id, options=options, value=value),
+            dbc.RadioItems(id=_id, options=options, value=value, inline=True,
+                           className="decision-seg", inputClassName="decision-seg-input",
+                           labelClassName="decision-seg-label",
+                           labelCheckedClassName="is-on"),
         ],
         className="decision-form-field",
     )

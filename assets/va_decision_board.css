@@ -263,6 +263,49 @@
     box-shadow: inset 0 -2px 0 var(--va-blue);
 }
 .decision-day-now .decision-day-number { color: var(--va-blue); }
+/* Days are buttons: a click opens that day's decisions. */
+button.decision-day {
+    border: 0;
+    border-left: 1px solid var(--va-border-soft);
+    background: transparent;
+    font: inherit;
+    cursor: pointer;
+}
+button.decision-day.decision-day-now { background: var(--va-blue-soft); }
+button.decision-day:hover { background: var(--va-surface-2, #f1f4fa); }
+button.decision-day:focus-visible { outline: 2px solid var(--va-blue); outline-offset: -2px; }
+button.decision-day.decision-day-picked {
+    background: var(--va-navy);
+    box-shadow: none;
+}
+.decision-day-picked .decision-day-name,
+.decision-day-picked .decision-day-number,
+.decision-day-picked .decision-day-today,
+.decision-day-picked .decision-day-dot { color: #fff; }
+.decision-band-day { color: var(--va-navy); }
+.decision-day-clear {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: 999px;
+    background: var(--va-surface-0, #fff);
+    color: var(--va-ink-600, #42506b);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.decision-day-clear:hover { border-color: var(--va-blue); color: var(--va-blue); }
+.decision-day-empty {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 22px 16px;
+    color: var(--va-ink-500, #5b6782);
+    font-size: 13px;
+}
 
 /* ── Workspace: queue + brief ───────────────────────────────────────────── */
 .decision-workspace {
@@ -846,6 +889,163 @@
     border: 1px solid var(--va-border-mid) !important;
     border-radius: 11px !important;
     font-weight: 600;
+}
+
+/* ── The editor, in the board's own language ────────────────────────────
+   Heading like the board header (icon tile + navy title), the decision on the
+   left, ownership & timing in a tinted panel like the brief, status and priority
+   as the same segmented pills as the view switch. */
+.decision-editor .modal-dialog { max-width: 1040px; }
+.decision-editor-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 22px 26px 18px;
+    border-bottom: 1px solid var(--va-border-soft);
+    background: linear-gradient(180deg, var(--va-surface-1), var(--va-surface-0));
+}
+.decision-editor-icon {
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: var(--va-navy);
+    color: #fff;
+    font-size: 19px;
+}
+.decision-editor-heading { flex: 1 1 auto; min-width: 0; }
+.decision-editor-eyebrow {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--va-blue);
+}
+.decision-editor-title {
+    margin: 2px 0 2px;
+    font-size: 24px;
+    line-height: 1.15;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--va-navy);
+}
+.decision-editor-sub { font-size: 13px; color: var(--va-ink-500); }
+.decision-editor-close {
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--va-ink-500);
+    font-size: 15px;
+}
+.decision-editor-close:hover { background: var(--va-surface-2); color: var(--va-ink-900); }
+.decision-editor-close:focus-visible { outline: none; box-shadow: var(--va-focus-ring); }
+#decision-edit-modal .modal-body { padding: 0; }
+.decision-editor-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 360px;
+    min-height: 440px;
+}
+.decision-editor-main { padding: 22px 26px 10px; }
+.decision-editor-side {
+    padding: 22px 22px 10px;
+    background: var(--va-surface-1);
+    border-left: 1px solid var(--va-border-soft);
+}
+.decision-editor-section {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--va-ink-700);
+}
+.decision-editor-step {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--va-blue-soft);
+    color: var(--va-blue);
+    font-size: 11px;
+    letter-spacing: 0;
+}
+.decision-editor .decision-title-input {
+    font-size: 18px !important;
+    font-weight: 700;
+    color: var(--va-navy);
+    padding: 10px 12px;
+}
+.decision-editor textarea.form-control { resize: vertical; min-height: 74px; line-height: 1.45; }
+.decision-editor .form-control::placeholder { color: var(--va-ink-300, #9aa3b5); }
+.decision-editor-side .form-control { background: var(--va-surface-0); }
+
+/* Segmented status / priority — the view switch's pill row. */
+.decision-seg {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    padding: 3px;
+    background: var(--va-surface-0);
+    border: 1px solid var(--va-border-soft);
+    border-radius: 14px;          /* not a pill: four statuses wrap in the side panel */
+}
+.decision-seg .form-check { margin: 0; padding: 0; flex: 1 1 auto; }
+.decision-seg .decision-seg-input { position: absolute; opacity: 0; pointer-events: none; }
+.decision-seg .decision-seg-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 10px;
+    border-radius: var(--va-radius-pill);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--va-ink-600);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.decision-seg .decision-seg-label > span { display: inline-flex; align-items: center; gap: 6px; }
+.decision-seg .decision-seg-label:hover { color: var(--va-ink-900); background: var(--va-surface-1); }
+.decision-seg .decision-seg-label.is-on {
+    background: var(--va-navy);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(11, 31, 68, 0.22);
+}
+.decision-seg .decision-seg-input:focus-visible + .decision-seg-label { box-shadow: var(--va-focus-ring); }
+.decision-pill-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.decision-pill-dot.is-blue { background: var(--va-blue); }
+.decision-pill-dot.is-yellow { background: var(--va-warn); }
+.decision-pill-dot.is-green { background: var(--va-good); }
+.decision-pill-dot.is-grey { background: var(--va-ink-400); }
+.decision-pill-dot.is-prio-high { background: #b32b28; }
+.decision-pill-dot.is-prio-med { background: #c99400; }
+.decision-pill-dot.is-prio-low { background: #14509a; }
+.decision-seg-label.is-on .decision-pill-dot { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85); }
+
+#decision-edit-modal .modal-footer { gap: 10px; background: var(--va-surface-0); }
+.decision-editor-note {
+    margin-right: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--va-ink-500);
+}
+.decision-editor .decision-save-btn { display: inline-flex; align-items: center; gap: 6px; background: var(--va-navy) !important; }
+.decision-editor .decision-save-btn:hover { background: var(--va-blue) !important; }
+
+@media (max-width: 900px) {
+    .decision-editor-grid { grid-template-columns: minmax(0, 1fr); }
+    .decision-editor-side { border-left: none; border-top: 1px solid var(--va-border-soft); }
+    .decision-editor-note { display: none; }
 }
 
 /* ── Narrow layouts ─────────────────────────────────────────────────────── */

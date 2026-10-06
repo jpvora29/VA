@@ -972,7 +972,7 @@ def write_deck(value_sets: Sequence[Mapping[str, Any]]) -> List[Dict[str, str]]:
         # the cache reads a file per column, and both are pure waste on a run that was never
         # going to call a model. ``ai_required`` still refuses here rather than shipping.
         refuse("no model client is available to write commentary", retryable=True)
-        return _all_drafts(value_sets)
+        return _without_repeats(_all_drafts(value_sets))
 
     sections = group_sections(value_sets)
     if not sections:
@@ -993,7 +993,19 @@ def write_deck(value_sets: Sequence[Mapping[str, Any]]) -> List[Dict[str, str]]:
     for texts in written:
         for target, text in texts.items():
             out[target.value_set][target.role] = text
-    return out
+    return _without_repeats(out)
+
+
+def _without_repeats(value_sets: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Each sub-deck's commentary with lines that only restate earlier figures removed.
+
+    The last pass, after the editorial gate, and on the draft path too: the gate can only
+    stop claims it can identify, and the drafts never pass through it at all. See
+    :mod:`studio.template_fill.repeat_prune`.
+    """
+    from studio.template_fill.repeat_prune import prune_repeats
+
+    return [prune_repeats(texts, label=f"sub-deck {i}") for i, texts in enumerate(value_sets)]
 
 
 def _log_plan(plan, sections: Sequence[Section]) -> None:

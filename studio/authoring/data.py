@@ -27,7 +27,7 @@ from studio.dataset.model import (
     undescribed_unmapped,
 )
 from studio.dataset.repository import get_repository
-from studio.page.authoring.busy import BUSY_DATA
+from studio.page.authoring.busy import BUSY_DATA, BUSY_DATA_USE
 from ui.shell.busy import busy_running
 
 # ``running=busy_running(BUSY_DATA)`` goes on the handlers that do real work for a
@@ -564,7 +564,7 @@ def register_data(app):
         State("qs-dataset", "data"),
         State("qs-view", "data"),
         prevent_initial_call=True,
-        running=busy_running(BUSY_DATA),
+        running=busy_running(BUSY_DATA_USE),
     )
     def use_for_deck_cb(n, store, view):
         """Materialize + submit, flip the source to custom, return to Setup."""

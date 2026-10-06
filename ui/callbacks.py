@@ -67,7 +67,8 @@ from ui.decisions import callbacks as decision_callbacks  # noqa: F401  (registe
 # The analysis panel: which answer it holds, whether it is open, and which column
 # is on screen when the two do not fit side by side.
 from ui.shell.layout import app_shell
-from ui.shell.tabs import resolve_tab
+from studio.authoring.layout import landing_view
+from ui.shell.tabs import DEFAULT_TAB, resolve_tab
 from core.auth import session as auth_session
 from core.auth.settings import LOGOUT_PATH, sso_enabled
 from ui.components.sidebar import login_screen, conversation_list_children
@@ -1423,18 +1424,32 @@ def render_app_root(
     )
 
 
+def _landing(view: dict[str, Any] | None) -> tuple[str, dict[str, Any]]:
+    """Where a sign-in opens: the Studio tab, on Setup — never what was left open.
+
+    Written by the two sign-in callbacks themselves, in the same response as the user,
+    so the gate below renders the shell from them. It cannot be a callback on
+    ``user-store``: a store rehydrating from browser storage on page load counts as a
+    change, so that would send every refresh back to Setup too.
+    """
+    return DEFAULT_TAB, landing_view(view)
+
+
 @callback(
     Output("user-store", "data"),
     Output("active-conversation", "data", allow_duplicate=True),
     Output("login-error", "children"),
+    Output("active-tab", "data", allow_duplicate=True),
+    Output("qs-view", "data", allow_duplicate=True),
     Input("login-submit", "n_clicks"),
     Input("login-username", "n_submit"),
     State("login-username", "value"),
+    State("qs-view", "data"),
     prevent_initial_call=True,
 )
 def handle_login(
-    n_clicks: int, n_submit: int, username: str | None
-) -> tuple[Any, Any, Any]:
+    n_clicks: int, n_submit: int, username: str | None, view: dict[str, Any] | None
+) -> tuple[Any, ...]:
     """Create-or-fetch the user, seed semantic profile, and sign them in."""
     # `prevent_initial_call` does not cover a component that ARRIVES with a
     # callback's output: the login card is rendered into the shell, so Dash fires
@@ -1442,10 +1457,10 @@ def handle_login(
     # The first thing a new user read was "Please enter a username." before they
     # had a chance to. An error belongs after an attempt, so require one.
     if not (n_clicks or n_submit):
-        return no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update, no_update
     username = (username or "").strip()
     if not username:
-        return no_update, no_update, "Please enter a username."
+        return no_update, no_update, "Please enter a username.", no_update, no_update
     user = get_or_create_user(username)
     # Seed semantic memory so the welcome hero can greet by name.
     semantic.set_fact(user["id"], "username", user["username"])
@@ -1453,16 +1468,21 @@ def handle_login(
     # Record it server-side too, so this path and the SSO one leave the app in the same
     # state. A no-op where there is no server session to write (see core.auth.session).
     auth_session.sign_in(user)
-    return {"id": user["id"], "username": user["username"]}, None, ""
+    return ({"id": user["id"], "username": user["username"]}, None, "", *_landing(view))
 
 
 @callback(
     Output("user-store", "data", allow_duplicate=True),
+    Output("active-tab", "data", allow_duplicate=True),
+    Output("qs-view", "data", allow_duplicate=True),
     Input("va-url", "pathname"),
     State("user-store", "data"),
+    State("qs-view", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def adopt_server_session(_pathname: str, store: dict[str, Any] | None) -> Any:
+def adopt_server_session(
+    _pathname: str, store: dict[str, Any] | None, view: dict[str, Any] | None
+) -> Any:
     """Sign the page in from the server's session, when there is one.
 
     This is how a completed SSO round trip becomes a signed-in app: ``/auth/callback``
@@ -1474,9 +1494,11 @@ def adopt_server_session(_pathname: str, store: dict[str, Any] | None) -> Any:
     cookie is not — the server session is the authority, the store is its copy.
     """
     if _current_user(store)[0] is not None:
-        return no_update
+        return no_update, no_update, no_update
     user = auth_session.current_user()
-    return {"id": user["id"], "username": user["username"]} if user else no_update
+    if not user:
+        return no_update, no_update, no_update
+    return ({"id": user["id"], "username": user["username"]}, *_landing(view))
 
 
 @callback(

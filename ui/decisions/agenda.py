@@ -266,6 +266,17 @@ def _bucket(
     return LATER
 
 
+def day_group(decisions: Sequence[dict[str, Any]], day: date) -> AgendaGroup:
+    """The decisions due on one ribbon day — what clicking that day opens.
+
+    Archived records are already out of an active-scope queue; whatever scope the
+    board is showing, this is that scope's records for the day.
+    """
+    items = tuple(d for d in decisions if due_of(d) == day)
+    return AgendaGroup(key="day", label=f"Due {day.strftime('%a')} {format_day(day)}",
+                       tone=LATER, items=items)
+
+
 def overdue_count(decisions: Iterable[dict[str, Any]], today: date) -> int:
     """How many of these decisions are past their due date."""
     return sum(1 for d in decisions if (due_of(d) or today) < today)

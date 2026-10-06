@@ -69,19 +69,18 @@ def week_ribbon_shell() -> html.Div:
     )
 
 
-def week_days(week: ag.Week) -> list[html.Div]:
+def week_days(week: ag.Week, picked: date | None = None) -> list[html.Button]:
     """Seven day cells, each marking how many decisions fall on it.
 
-    Context, not a filter: the ribbon says which week the bands below are named
-    for, and marks the days something falls on. Clicking a day is deliberately
-    not a selection — a one-day view of a decision queue is a calendar, and this
-    board is not one.
+    Each day is a button: clicking it narrows the queue below to the decisions due
+    that day, and clicking it again (or "Show the whole queue") puts the bands back.
     """
-    return [_day_cell(day) for day in week.days]
+    return [_day_cell(day, picked == day.day) for day in week.days]
 
 
-def _day_cell(day: ag.Day) -> html.Div:
-    return html.Div(
+def _day_cell(day: ag.Day, picked: bool) -> html.Button:
+    due = f"{day.due_count} due" if day.due_count else "Nothing due"
+    return html.Button(
         [
             html.Span(day.weekday, className="decision-day-name"),
             html.Span(str(day.number), className="decision-day-number"),
@@ -89,10 +88,15 @@ def _day_cell(day: ag.Day) -> html.Div:
             html.Span(
                 "" if not day.due_count else "•",
                 className="decision-day-dot",
-                title=f"{day.due_count} due" if day.due_count else None,
             ),
         ],
-        className="decision-day" + (" decision-day-now" if day.is_today else ""),
+        id={"type": "decision-day", "day": day.day.isoformat()},
+        n_clicks=0,
+        title=f"{day.weekday} {ag.format_day(day.day)} · {due}"
+              + (" · click to show the whole queue" if picked else ""),
+        className="decision-day" + (" decision-day-now" if day.is_today else "")
+        + (" decision-day-picked" if picked else ""),
+        **{"aria-pressed": "true" if picked else "false"},
     )
 
 
@@ -118,6 +122,44 @@ def agenda_body(
             decision_row(d, today, selected) for d in ag.sort_by_due(group.items)
         )
     return html.Div(children, className="decision-queue")
+
+
+def day_body(
+    decisions: Sequence[dict[str, Any]], today: date, day: date, selected: str | None
+) -> html.Div:
+    """The queue narrowed to one ribbon day, with the way back to every band."""
+    group = ag.day_group(decisions, day)
+    # Header first, band second: both are sticky, and the bands stick below the header.
+    children: list[Any] = [column_header(), _day_band(group)]
+    if group.items:
+        children.extend(decision_row(d, today, selected) for d in ag.sort_by_due(group.items))
+    else:
+        children.append(html.Div(
+            [html.I(className="bi bi-calendar2-check"),
+             html.Span(f"Nothing is due on {group.label[len('Due '):]}.")],
+            className="decision-day-empty",
+        ))
+    return html.Div(children, className="decision-queue")
+
+
+def _day_band(group: ag.AgendaGroup) -> html.Div:
+    """The day's heading, carrying the control that clears the day."""
+    return html.Div(
+        [
+            html.I(className="bi bi-calendar-event"),
+            html.Span(group.label, className="decision-band-label"),
+            html.Span("·", className="decision-band-sep"),
+            html.Span(str(group.count), className="decision-band-count"),
+            # An empty day id is "no day": the same callback that picks a day clears it.
+            html.Button(
+                [html.I(className="bi bi-x-lg"), "Show the whole queue"],
+                id={"type": "decision-day", "day": ""},
+                n_clicks=0,
+                className="decision-day-clear",
+            ),
+        ],
+        className="decision-band decision-band-day",
+    )
 
 
 def list_body(

@@ -361,6 +361,67 @@
         target.scrollIntoView({block: "start", behavior: reduceMotion ? "auto" : "smooth"});
     }, true);
 
+    /* ── an upload says so the moment a file is chosen ──────────────────────
+     * dcc.Upload reads the whole file in the browser BEFORE Dash sends anything, and a
+     * large spreadsheet takes seconds to read and to send — so the busy overlay (raised
+     * by the server callback) arrived late and the drop zone simply sat there. The zone
+     * goes into an "uploading" state at once and leaves it when the server's data step
+     * (the qs-busy-data flag) has been up and come down again. */
+
+    var upload = {file: null, sawBusy: false, since: 0};
+
+    function sizeLabel(bytes) {
+        if (bytes >= 1048576) { return (bytes / 1048576).toFixed(1) + " MB"; }
+        return Math.max(1, Math.round(bytes / 1024)) + " KB";
+    }
+
+    function uploadZone() { return document.getElementById("qs-data-upload"); }
+
+    function paintUpload() {
+        var zone = uploadZone();
+        if (zone && upload.file) {
+            zone.setAttribute("data-uploading", "Uploading " + upload.file.name + " · " +
+                              sizeLabel(upload.file.size || 0) + "…");
+        }
+    }
+
+    function startUpload(file) {
+        if (!file) { return; }
+        upload = {file: file, sawBusy: false, since: Date.now()};
+        paintUpload();
+    }
+
+    function endUpload() {
+        var zone = uploadZone();
+        if (zone) { zone.removeAttribute("data-uploading"); }
+        upload = {file: null, sawBusy: false, since: 0};
+    }
+
+    document.addEventListener("change", function (event) {
+        var input = event.target;
+        if (input && input.matches && input.matches("#qs-data-upload input[type=file]") &&
+            input.files && input.files[0]) {
+            startUpload(input.files[0]);
+        }
+    }, true);
+    document.addEventListener("drop", function (event) {
+        var zone = event.target.closest && event.target.closest("#qs-data-upload");
+        var files = event.dataTransfer && event.dataTransfer.files;
+        if (zone && files && files[0]) { startUpload(files[0]); }
+    }, true);
+
+    window.setInterval(function () {
+        if (!upload.file) { return; }
+        var flag = document.getElementById("qs-busy-data");
+        var busy = !!(flag && flag.className.indexOf("is-busy") !== -1);
+        if (busy) { upload.sawBusy = true; }
+        // Done once the server step has run, or after ten minutes whatever happened.
+        if ((upload.sawBusy && !busy) || Date.now() - upload.since > 600000) { endUpload(); }
+        else if (uploadZone() && !uploadZone().hasAttribute("data-uploading")) {
+            paintUpload();              // the page re-rendered under us; say it again
+        }
+    }, 200);
+
     /* ── the build card's timer ticks every second, not once per poll ──────── */
 
     function clock(seconds) {

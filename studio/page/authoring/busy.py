@@ -29,6 +29,10 @@ BUSY_RENDER = "qs-busy-render"
 # dataset to the one the deck is built from.
 BUSY_DATA = "qs-busy-data"
 
+# "Use this data for the deck": writing the mapped table and indexing it for Setup's
+# filters — on a large upload the longest wait on the Data page, so it says what it is.
+BUSY_DATA_USE = "qs-busy-data-use"
+
 # Review: re-running validation and applying the auto-fixes.
 BUSY_REVIEW = "qs-busy-review"
 
@@ -44,6 +48,7 @@ STUDIO_BUSY = BusyScope(
         # component library's search box as well as by a mode switch, so it has to
         # tolerate a whole fast render, not just a mounted callback answering no_update.
         BusyFlag(BUSY_RENDER, "Opening…", grace_ms=220),
+        BusyFlag(BUSY_DATA_USE, "Indexing your data for the deck…"),
         BusyFlag(BUSY_DATA, "Reading your data…"),
         BusyFlag(BUSY_EXPORT, "Building your PowerPoint…"),
         BusyFlag(BUSY_REVIEW, "Re-checking the deck…"),
@@ -55,5 +60,5 @@ STUDIO_BUSY = BusyScope(
 
 __all__ = [
     "STUDIO_BUSY", "BUSY_FORM", "BUSY_PREVIEW", "BUSY_SECTIONS",
-    "BUSY_RENDER", "BUSY_DATA", "BUSY_REVIEW", "BUSY_EXPORT",
+    "BUSY_RENDER", "BUSY_DATA", "BUSY_DATA_USE", "BUSY_REVIEW", "BUSY_EXPORT",
 ]

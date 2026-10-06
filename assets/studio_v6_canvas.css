@@ -140,6 +140,20 @@
     position: relative; line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .qs-root .qs-tf-reflect.is-styled .qs-tf-bullet { position: absolute; top: 0; line-height: inherit; }
+
+/* Table cells (KPI tiles, Key Highlights): the cell's own paper goes behind the WORDS,
+   not across the whole cell. A tile is a navy cell with an icon and rules drawn on it;
+   painting the cell box hid the icon and, on the slide's pale paper, made light text
+   vanish. .qs-tf-paint stacks the render's old words (hidden) under the new ones, so
+   the patch is as wide as whichever is wider and no stale pixel shows past it. */
+.qs-root .qs-tf-cell.is-edited { background: transparent; }
+.qs-root .qs-tf-cell > .qs7-live { background: transparent; padding: 0; }
+.qs-root .qs-tf-paint {
+    display: inline-grid; vertical-align: top; max-width: 100%;
+    background: var(--qs-tf-paper, #fff);
+}
+.qs-root .qs-tf-paint > span { grid-area: 1 / 1; }
+.qs-root .qs-tf-paint > .qs-tf-ghost { visibility: hidden; }
 .qs7-toast {
     position: fixed; left: 50%; bottom: 36px; z-index: 900; transform: translate(-50%, 12px);
     display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px;

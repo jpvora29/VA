@@ -31,6 +31,18 @@ def working_frame(repo: DatasetRepository, record: DatasetRecord) -> pd.DataFram
     return apply_transforms(frame, record.transforms)
 
 
+def working_preview(repo: DatasetRepository, record: DatasetRecord, rows: int) -> pd.DataFrame:
+    """The first ``rows`` rows of the working frame — what the Data page shows.
+
+    Every recipe is row-wise, so replaying it on the head gives the head of the full
+    replay, without reading or reshaping the rest of a large upload.
+    """
+    frame = repo.load_preview(record.dataset_id, rows)
+    if frame is None:
+        raise ValueError("The dataset's data file is missing — re-upload it.")
+    return apply_transforms(frame, record.transforms)
+
+
 def _measure_series(frame: pd.DataFrame, measure: CustomMeasure) -> pd.Series:
     if measure.formula:
         return safe_eval(frame, measure.formula)

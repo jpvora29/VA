@@ -826,8 +826,9 @@ def _grid(frame, *, grid_id: str = "qs-data-grid", height: int = 480) -> Any:
 
 def _data_view(record: DatasetRecord, frame) -> html.Div:
     """See the data: the working rows (with any created columns), sortable and filterable."""
-    n_rows = len(frame) if frame is not None else record.n_rows
-    n_preview = min(n_rows, _PREVIEW_ROWS)
+    # The frame here is the preview, so the row count comes from the record.
+    n_rows = record.n_rows
+    n_preview = min(n_rows, len(frame) if frame is not None else _PREVIEW_ROWS)
     return html.Div(
         _section(
             "bi-grid-3x2", "Your data",
@@ -908,7 +909,7 @@ def _head(record: Optional[DatasetRecord]) -> html.Div:
 def data_body(dataset_state: Optional[Mapping[str, Any]]) -> html.Div:
     """The Data mode body. ``dataset_state`` is the ``qs-dataset`` browser store
     (only the active dataset id lives there — data stays server-side)."""
-    from studio.dataset.materialize import working_frame
+    from studio.dataset.materialize import working_frame, working_preview
     from studio.dataset.repository import get_repository
 
     repo = get_repository()
@@ -917,10 +918,14 @@ def data_body(dataset_state: Optional[Mapping[str, Any]]) -> html.Div:
     record = repo.get(active_id) if active_id else None
     frame = None
     if record is not None:
+        # The page shows the preview rows and the column names, nothing more — so it
+        # reads the preview, not the whole upload. The parked pivot is the one section
+        # that aggregates every row.
         try:
-            frame = working_frame(repo, record)
+            frame = (working_frame(repo, record) if PIVOT_ENABLED
+                     else working_preview(repo, record, _PREVIEW_ROWS))
         except ValueError:
-            frame = repo.load_frame(active_id)
+            frame = repo.load_preview(active_id, _PREVIEW_ROWS)
 
     library = html.Div([_upload_zone(), _dataset_list(records, active_id)],
                        className="qs8-library")

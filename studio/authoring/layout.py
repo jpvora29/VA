@@ -18,6 +18,28 @@ from studio.authoring.config import ASSETS
 # deck feel late.
 GEN_POLL_MS = 1500
 
+# What Studio shows before anyone has navigated: Setup, first page, panels open.
+DEFAULT_VIEW = {
+    "mode": "setup",
+    "idx": 0,
+    "tab": "setup",
+    "lib_category": "all",
+    "lib_tab": "all",
+    "lib_view": "grid",
+    "lib_search": "",
+    "inspector_collapsed": False,
+    "library_collapsed": False,
+}
+
+
+def landing_view(view: dict | None) -> dict:
+    """The view a fresh sign-in opens on: Setup, whatever mode was left open last time.
+
+    Only the place in the flow resets. Panel and library preferences are the author's
+    and survive, and the deck itself lives in its own stores, so Canvas is one click away.
+    """
+    return {**DEFAULT_VIEW, **dict(view or {}), "mode": "setup", "idx": 0, "sel": None}
+
 
 def create_app() -> dash.Dash:
     """A Studio-only Dash app — assets, theme, and callback-exception tolerance.
@@ -40,24 +62,10 @@ def create_app() -> dash.Dash:
 def studio_stores() -> list:
     """Every store, download and hidden input the Studio callbacks read or write."""
     return [
-        # The view (mode/slide/tab) ALSO persists locally now — otherwise a browser
-        # refresh (or Generate's post-callback reload) drops you back to Setup even
-        # though the deck is still saved, which looked like "Generate did nothing".
-        dcc.Store(
-            id="qs-view",
-            storage_type="local",
-            data={
-                "mode": "setup",
-                "idx": 0,
-                "tab": "setup",
-                "lib_category": "all",
-                "lib_tab": "all",
-                "lib_view": "grid",
-                "lib_search": "",
-                "inspector_collapsed": False,
-                "library_collapsed": False,
-            },
-        ),
+        # The view (mode/slide/tab) persists locally so a refresh keeps your place. A
+        # SIGN-IN is different: it always opens on Setup (``landing_view``, written by
+        # the sign-in callbacks in ``ui.callbacks``).
+        dcc.Store(id="qs-view", storage_type="local", data=dict(DEFAULT_VIEW)),
         # The form selection (for Setup repopulate + regenerate) and the editable
         # document both persist locally so a refresh keeps your work.
         dcc.Store(id="qs-selection", data=None, storage_type="local"),

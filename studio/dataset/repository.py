@@ -134,13 +134,50 @@ class DatasetRepository:
         return sorted(records, key=lambda r: r.created, reverse=True)
 
     def load_frame(self, dataset_id: str, *, table: str = RAW_TABLE) -> Optional[pd.DataFrame]:
-        if not _ID_RE.match(dataset_id or "") or not self.db_path(dataset_id).exists():
+        """The whole table, read once per version of the file.
+
+        Setup reads the materialized table several times per render (filter options,
+        quarter labels, the scope panels) and a dataset can hold a million rows, so an
+        uncached read made every Studio screen wait on SQLite. The cache key carries the
+        file's mtime and size, so any write (upload, materialize) is a fresh read. A copy
+        is returned: callers reshape what they get.
+        """
+        path = self.db_path(dataset_id)
+        if not _ID_RE.match(dataset_id or "") or not path.exists():
             return None
         try:
-            return pd.read_sql_table(table, self.engine(dataset_id))
+            stat = path.stat()
+            frame = _read_table(str(path), table, stat.st_mtime_ns, stat.st_size)
         except (ValueError, OSError) as exc:
             logger.warning("dataset frame load failed for %s: %s", dataset_id, exc)
             return None
+        return frame.copy()
+
+    def load_preview(
+        self, dataset_id: str, rows: int, *, table: str = RAW_TABLE
+    ) -> Optional[pd.DataFrame]:
+        """The first ``rows`` rows only — what the Data page shows, without the rest.
+
+        Read through ``read_sql_table`` in one chunk so the column types match a full
+        read; SQLite streams the cursor, so the rows after the first chunk are never read.
+        """
+        if not _ID_RE.match(dataset_id or "") or not self.db_path(dataset_id).exists():
+            return None
+        try:
+            # The connection is closed on exit: an open handle makes Windows refuse
+            # to delete the dataset's file later.
+            with self.engine(dataset_id).connect() as conn:
+                chunks = pd.read_sql_table(table, conn, chunksize=max(1, int(rows)))
+                return next(iter(chunks), None)
+        except (ValueError, OSError) as exc:
+            logger.warning("dataset preview load failed for %s: %s", dataset_id, exc)
+            return None
+
+
+@lru_cache(maxsize=4)
+def _read_table(path: str, table: str, _mtime_ns: int, _size: int) -> pd.DataFrame:
+    """One SQLite table as a frame. The unused arguments are the cache's version key."""
+    return pd.read_sql_table(table, create_engine(f"sqlite:///{path}", poolclass=NullPool))
 
 
 @lru_cache(maxsize=1)

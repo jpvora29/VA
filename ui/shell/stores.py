@@ -79,6 +79,8 @@ def chat_stores() -> List[Any]:
         dcc.Store(id="decision-scope", data="active"),
         # Weeks from the current one; the agenda ribbon steps it.
         dcc.Store(id="decision-week", data=0),
+        # The ribbon day the reader clicked (ISO date), narrowing the Agenda to it.
+        dcc.Store(id="decision-day", data=None),
         dcc.Store(id="decision-selected", data=None),
         dcc.Store(id="decision-edit-target", data=None),
         # The evidence snapshot a draft arrived with, held while the editor is

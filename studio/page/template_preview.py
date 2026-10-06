@@ -174,8 +174,13 @@ def _line_css(ps, px_per_pt: float, starts: bool, first: bool, ends: bool) -> Di
 
 
 def _styled_line(text: str, ps, px_per_pt: float, *, starts: bool, first: bool, ends: bool,
-                 marker: str) -> html.Div:
-    """One line in its paragraph's size, colour, weight and indent, bullet hanging left."""
+                 marker: str, ghost: Optional[str] = None) -> html.Div:
+    """One line in its paragraph's size, colour, weight and indent, bullet hanging left.
+
+    ``ghost`` (table cells) is the words the render shows here. The cell's paper is then
+    painted behind the words alone, sized to the wider of the old and the new: enough to
+    hide the stale pixels without covering the tile's icon and rules around them.
+    """
     css = _line_css(ps, px_per_pt, starts, first, ends)
     children: List[Any] = []
     if marker and starts:
@@ -187,12 +192,16 @@ def _styled_line(text: str, ps, px_per_pt: float, *, starts: bool, first: bool, 
                    **({"color": f"#{ps.bullet_color}"} if ps.bullet_color else {})}))
     elif ps.indent_pt > 0 and starts:
         css["textIndent"] = f"{ps.indent_pt * px_per_pt:.2f}px"
-    children.append(html.Span(text, className="qs-tf-rtext"))
+    words = html.Span(text, className="qs-tf-rtext")
+    if ghost is not None:
+        words = html.Span([html.Span(ghost, className="qs-tf-ghost", **{"aria-hidden": "true"}),
+                           words], className="qs-tf-paint")
+    children.append(words)
     return html.Div(children, className="qs-tf-reflect-line", style=css)
 
 
 def _styled_lines(lines: Sequence[str], paragraphs: Sequence[str], styles: Sequence[Any],
-                  px_per_pt: float) -> List[html.Div]:
+                  px_per_pt: float, *, ghosts: bool = False) -> List[html.Div]:
     """Every line drawn in the style of the paragraph it is written into.
 
     Uses the same line → paragraph mapping the export writes with
@@ -212,8 +221,11 @@ def _styled_lines(lines: Sequence[str], paragraphs: Sequence[str], styles: Seque
             marker = _number_label(ps.numbered, counters[ps.level])
         elif starts and not ps.numbered:
             counters.pop(ps.level, None)
+        ghost = None
+        if ghosts:
+            ghost = str(paragraphs[owner]) if starts and owner < len(paragraphs) else ""
         out.append(_styled_line(lines[i], ps, px_per_pt, starts=starts, first=i == 0,
-                                ends=ends, marker=marker))
+                                ends=ends, marker=marker, ghost=ghost))
     return out
 
 
@@ -229,21 +241,21 @@ def _body_css(body, px_per_pt: float) -> Dict[str, str]:
 
 
 def _reflection(lines: Sequence[str], paragraphs: Sequence[str], styles: Sequence[Any],
-                body, px_per_pt: float) -> Any:
+                body, px_per_pt: float, *, ghosts: bool = False) -> Any:
     """The edited words, drawn over the render's stale ones — in the deck's own formatting."""
     return html.Div(
-        _styled_lines(lines, paragraphs, styles, px_per_pt),
+        _styled_lines(lines, paragraphs, styles, px_per_pt, ghosts=ghosts),
         className="qs-tf-reflect is-styled",
         style=_body_css(body, px_per_pt),
     )
 
 
 def _line_protos(paragraphs: Sequence[str], styles: Sequence[Any], body,
-                 px_per_pt: float) -> Any:
+                 px_per_pt: float, *, ghosts: bool = False) -> Any:
     """One empty, styled line per worded paragraph — what the live typing preview
     (assets/studio_v6.js) clones, so words look right while they are being typed."""
     original = TE.to_lines("\n".join(paragraphs))
-    return html.Div(_styled_lines(original, paragraphs, styles, px_per_pt),
+    return html.Div(_styled_lines(original, paragraphs, styles, px_per_pt, ghosts=ghosts),
                     className="qs-tf-protos", style=_body_css(body, px_per_pt),
                     **{"aria-hidden": "true"})
 
@@ -479,6 +491,19 @@ def _cell_look(shape, r: int, c: int) -> Tuple[List[str], List[Any]]:
     return str(text).split("\n"), cell
 
 
+def _at(grid: Sequence[Sequence[Any]], r: int, c: int) -> Any:
+    """``grid[r][c]``, or ``None`` past its edge (older analyses carry no cell grids)."""
+    return grid[r][c] if r < len(grid) and c < len(grid[r]) else None
+
+
+def _cell_ink(shape, slide, r: int, c: int) -> Tuple[str, str]:
+    """``(paper, ink)`` for one cell: its own fill first, the shape's colours after."""
+    fill = _at(getattr(shape, "cell_fills", None) or [], r, c)
+    if fill:
+        return f"#{fill}", "#ffffff" if _is_dark(fill) else "#0b1f44"
+    return _ink(shape, slide)
+
+
 def _editable_cells(shape, slide, slide_idx, edits, selected_key, style, w_px, h_px,
                     font_px, px_per_pt: float) -> Optional[html.Div]:
     """Every worded cell of a table as its own click target — KPIs and "Key Highlights".
@@ -493,7 +518,6 @@ def _editable_cells(shape, slide, slide_idx, edits, selected_key, style, w_px, h
     table = shape.table or []
     cols = _spans(shape.table_widths or [1] * max(len(r) for r in table), w_px)
     rows = _spans(shape.table_heights or [1] * len(table), h_px)
-    paper, ink = _ink(shape, slide)
     cells: List[Any] = []
     for block in blocks:
         r, c = block.address.row, block.address.col
@@ -503,13 +527,16 @@ def _editable_cells(shape, slide, slide_idx, edits, selected_key, style, w_px, h
         cell_style = {"left": f"{cols[c][0]:.0f}px", "top": f"{rows[r][0]:.0f}px",
                       "width": f"{cols[c][1]:.0f}px", "height": f"{rows[r][1]:.0f}px"}
         children: List[Any] = [_pick_target(block, selected)]
+        paper, ink = _cell_ink(shape, slide, r, c)
         cell_style.update({"--qs-tf-paper": paper, "--qs-tf-ink": ink})
         if font_px:
             cell_style["fontSize"] = f"{font_px:.1f}px"
         paragraphs, styles = _cell_look(shape, r, c)
-        children.append(_line_protos(paragraphs, styles, None, px_per_pt))
+        body = _at(getattr(shape, "cell_bodies", None) or [], r, c)
+        children.append(_line_protos(paragraphs, styles, body, px_per_pt, ghosts=True))
         if block.edited:
-            children.append(_reflection(block.lines, paragraphs, styles, None, px_per_pt))
+            children.append(_reflection(block.lines, paragraphs, styles, body, px_per_pt,
+                                        ghosts=True))
             cell_style.update({"minHeight": cell_style["height"], "height": "auto"})
         cells.append(html.Div(
             children, style=cell_style,

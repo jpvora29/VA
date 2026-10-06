@@ -1119,8 +1119,10 @@ def test_the_fastest_data_handlers_raise_nothing():
         before = src[: src.index(handler)]
         decorator = before[before.rindex("@app.callback"):]
         assert "busy_running" not in decorator, handler
-    # …while the deliberate ones still do.
-    assert src.count("running=busy_running(BUSY_DATA)") == 5
+    # …while the deliberate ones still do. "Use for the deck" says what it is doing:
+    # it writes and indexes the mapped table, the longest wait on the page.
+    assert src.count("running=busy_running(BUSY_DATA)") == 4
+    assert src.count("running=busy_running(BUSY_DATA_USE)") == 1
 
 
 def test_every_flag_says_what_it_is_waiting_for():
