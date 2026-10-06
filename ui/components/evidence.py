@@ -160,9 +160,8 @@ def inferred_kind(column: str, values: List[Any]) -> str:
         # A share stored as 0.195 prints as 19.5%, one stored as 19.5 as 19.5%.
         return PERCENT_FRACTION if largest <= 1.0 else P.PERCENT
     if _MONEY_NAME.search(column):
-        if largest >= 1_000_000_000:
-            return MONEY_BILLIONS
-        return P.MONEY_MILLIONS if largest >= 1_000_000 else MONEY_WHOLE
+        # Millions, or billions from $1B — never raw dollars.
+        return MONEY_BILLIONS if largest >= 1_000_000_000 else P.MONEY_MILLIONS
     if _COUNT_NAME.search(column) or all(float(v).is_integer() for v in values):
         return P.COUNT
     return DECIMAL

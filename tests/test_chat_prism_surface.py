@@ -165,7 +165,7 @@ def test_a_decimal_point_does_not_end_a_sentence():
 
 def test_the_key_figures_come_from_the_same_totals_as_the_bars():
     figures = key_figures(CONTRIBUTION)
-    assert [f.value for f in figures] == ["$112.0m", "+12%"]
+    assert [f.value for f in figures] == ["$112.0M", "+12%"]
     assert figures[0].label == "Premium (Q2 2026)"
     assert figures[1].label == "Change vs Q2 2025"
 

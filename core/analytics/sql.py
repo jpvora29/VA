@@ -96,6 +96,14 @@ def where_clause(
     """
     clauses: List[str] = []
     for i, (column, value) in enumerate(filters.items()):
+        # A "periods through" cut (core.analytics.periods.PeriodsThrough) is
+        # recognised by its value: it is a calendar expression, not a column.
+        through = getattr(value, "sql", None)
+        if callable(through) and hasattr(value, "last"):
+            clause = through(spec)
+            if clause:
+                clauses.append(clause)
+            continue
         col = safe_column(spec, column)
         # Multi-value filter → IN (...). Empty collection = no constraint.
         if isinstance(value, (list, tuple, set)):

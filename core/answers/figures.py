@@ -145,6 +145,12 @@ def _forms_of_cell(cell: Any) -> Set[str]:
     # the time, and requiring >= 1,000,000 to offer an "m" form flagged that as
     # unsupported. The floor is instead the point below which the reading stops
     # being meaningful — 0.1 of the unit, so 5 never becomes "0.0m".
+    # Money is written in millions down to "$0.04M" (core.analytics.money_units),
+    # so a small amount also offers its two-decimal millions reading.
+    fine = round(number / 1_000_000, 2)
+    if 0.01 <= abs(fine) < 0.1:
+        forms.add(f"{_plain(fine)}m")
+        forms.add(_plain(fine))
     for suffix, scale in (("k", 1_000), ("m", 1_000_000), ("bn", 1_000_000_000)):
         scaled = round(number / scale, 1)
         if abs(scaled) < 0.1:

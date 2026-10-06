@@ -443,8 +443,9 @@ def _millions_engine():
 def test_money_uses_one_scale_across_the_whole_table():
     """Per-row units ("$1.2M" above "$840k") make a column impossible to compare."""
     assert P.money_scale([1_770_000.0, 900_000.0]) == (1e6, "M")
-    assert P.money_scale([1_770.0, 900.0]) == (1e3, "K")
-    assert P.money_scale([12.0, 4.0]) == (1.0, "")
+    # Millions however small the column — never thousands, never raw units.
+    assert P.money_scale([1_770.0, 900.0]) == (1e6, "M")
+    assert P.money_scale([2.5e9, 900.0e6]) == (1e9, "B")
 
 
 def test_an_absent_figure_does_not_drag_the_scale_down():

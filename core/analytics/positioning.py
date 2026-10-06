@@ -26,15 +26,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from core.analytics import columns
+from core.analytics import columns, money_units
 from core.analytics.library import (
     compute_breakdown,
     compute_market_presence,
     compute_rank,
     compute_share_of_portfolio,
     compute_share_of_wallet,
+    get_latest_quarter,
 )
 from core.analytics.movement import compute_contribution
+from core.analytics.periods import THROUGH_KEY, PeriodsThrough, to_date_grain
 from core.analytics.types import AnalyticsFact, PrimitiveArgs
 
 #: Column labels the table and the claims both read. Named once so a rename
@@ -129,12 +131,9 @@ SCALES: Tuple[Tuple[float, str], ...] = ((1e9, "B"), (1e6, "M"), (1e3, "K"))
 
 
 def money_scale(values: Sequence[Optional[float]]) -> Tuple[float, str]:
-    """The divisor and suffix for a column of money, from its largest value."""
-    largest = max((abs(v) for v in values if v is not None), default=0.0)
-    for size, suffix in SCALES:
-        if largest >= size:
-            return size, suffix
-    return 1.0, ""
+    """The divisor and suffix for a column of money: millions, or billions once
+    its largest amount reaches $1B (`core.analytics.money_units`)."""
+    return money_units.money_scale(values)
 
 
 @dataclass(frozen=True)
@@ -646,12 +645,38 @@ def build_positioning_comparison(
     year_column, current_year = _year_filter(flow, scope)
     if not current or year_column is None or current_year is None:
         return current
+    prior_scope = {**scope, year_column: current_year - 1}
+    # Like for like: when this year stops part-way (data through Q2), last
+    # year's share of wallet and rank are taken over the same span, not over
+    # all twelve months.
+    through = _partial_year_cut(flow, metric, scope, current_year, engine)
+    if through is not None:
+        prior_scope[THROUGH_KEY] = through
     prior = build_positioning(
-        flow=flow, dimension=dimension,
-        filters={**scope, year_column: current_year - 1},
+        flow=flow, dimension=dimension, filters=prior_scope,
         subject=subject, metric=metric, engine=engine,
     )
     return attach_comparison(current, prior) if prior else current
+
+
+def _partial_year_cut(flow: str, metric: str, scope: Mapping[str, Any],
+                      current_year: int, engine: Any) -> Optional[PeriodsThrough]:
+    """The span `current_year` reaches when it is the latest, partial year."""
+    from core.registry import get_flow_registry
+
+    spec = get_flow_registry().get(flow)
+    grain = to_date_grain(spec) if spec else ""
+    if not grain:
+        return None
+    try:
+        facts = get_latest_quarter(PrimitiveArgs(flow=flow, metric=metric, filters=dict(scope)),
+                                   grain=grain, engine=engine)
+    except Exception:  # noqa: BLE001 - no cut is the safe fallback
+        return None
+    fact = facts[0] if facts else None
+    if fact is None or int(fact.dims.get("year", 0)) != int(current_year) or fact.dims.get("complete"):
+        return None
+    return PeriodsThrough(grain, int(fact.dims.get(grain)))
 
 
 def _year_filter(flow: str, filters: Mapping[str, Any]) -> Tuple[Optional[str], Optional[int]]:

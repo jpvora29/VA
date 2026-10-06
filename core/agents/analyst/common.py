@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence
 
 from langchain.agents import create_agent
@@ -54,6 +56,11 @@ logger = get_logger(__name__)
 # Rows returned to the model per tool call (keeps context bounded); the full
 # rows are still captured as evidence for the UI table.
 _TOOL_ROW_PREVIEW = 50
+
+# Rows of each earlier record handed to a dependent step. The digest sits in
+# the dependent solver's SYSTEM prompt, so it is resent on every model call of
+# that step; 50 rows per record made it the largest block in the prompt.
+_PRIOR_DIGEST_ROWS = 15
 
 # How many times run_sql auto-repairs + re-runs a failing query before giving up.
 # Mirrors the deterministic subgraphs' 3-attempt SQL-fixer loop.
@@ -292,9 +299,9 @@ def build_tools(
 
     @tool
     def consult_skill(name: str) -> str:
-        """Load the full rules of a skill listed in 'ADDITIONAL RULES AVAILABLE ON
-        DEMAND'. Pass the exact skill name. Returns the rule text, or a not-found
-        note if the name is unknown."""
+        """Load the full rules of a skill listed under 'MATCHED RULES' or
+        'ADDITIONAL RULES AVAILABLE ON DEMAND'. Pass the exact skill name.
+        Returns the rule text, or a not-found note if the name is unknown."""
         body = get_skill_loader().body(name)
         log_event(
             logger,
@@ -339,6 +346,71 @@ def build_tools(
     return [run_sql, *computed, resolve_value, consult_skill, list_values, show_valid_values]
 
 
+_RULE_SCOPES = {"planner": "planning rules", "sql": "SQL construction rules"}
+
+#: Worked examples teach the PLANNER its output shape. A solver gathering
+#: evidence gains nothing from one, so in on-demand mode they are offered by
+#: name rather than inlined.
+_EXAMPLE_SUFFIX = "-example"
+
+
+@dataclass(frozen=True)
+class RuleGroup:
+    """The rule skills one flow+scope contributes to a solver prompt.
+
+    `matched` is False when no skill matched at all — the legacy bundle stands
+    in. It stays True when every matched skill was already printed by an earlier
+    group, which is the case that must NOT fall back to the legacy text.
+    """
+
+    flow: str
+    scope: str
+    skills: tuple
+    matched: bool
+
+
+def rule_groups(route: str, primary_flow: str, trigger_text: str) -> List[RuleGroup]:
+    """Matched rule skills per flow+scope, each skill kept where it FIRST appears.
+
+    The timeframe and peer-average skills declare both scopes, so loading the
+    planner rules and then the SQL rules printed them twice: about 1.3k tokens
+    of duplicate text on every solver model call.
+    """
+    loader = get_skill_loader()
+    flows = ["gpr", "survey"] if route == "both" else [primary_flow]
+    groups: List[RuleGroup] = []
+    seen: set[str] = set()
+    for flow in flows:
+        if flow not in _LEGACY_RULES:  # gimmi handles its own rules elsewhere
+            continue
+        for scope in _RULE_SCOPES:
+            matched = loader.matching(flow, scope, trigger_text)
+            fresh = tuple(s for s in matched if s.name not in seen)
+            seen.update(s.name for s in fresh)
+            groups.append(RuleGroup(flow, scope, fresh, bool(matched)))
+    return groups
+
+
+def _render_skills(skills: Sequence[Any]) -> str:
+    return "\n\n".join(f"## {s.name}\n\n{s.body}" for s in skills)
+
+
+def _group_text(group: RuleGroup) -> str:
+    if not group.matched:
+        legacy_planner, legacy_sql = _LEGACY_RULES[group.flow]
+        return legacy_planner if group.scope == "planner" else legacy_sql
+    return _render_skills(group.skills)
+
+
+def full_rules_text(groups: Sequence[RuleGroup]) -> str:
+    """Every matched rule body, grouped by flow and scope."""
+    return "\n\n".join(
+        f"### {g.flow.upper()} — {_RULE_SCOPES[g.scope]}\n{_group_text(g)}"
+        for g in groups
+        if g.skills or not g.matched
+    )
+
+
 def domain_rules(route: str, primary_flow: str, trigger_text: str) -> str:
     """Domain planning + SQL-construction rules, from the SAME source the rails use.
 
@@ -347,20 +419,69 @@ def domain_rules(route: str, primary_flow: str, trigger_text: str) -> str:
     nodes. For a "both" route we load both flows. `trigger_text` is the question
     plus the sub-question(s), so a skill triggered by any step is included.
     """
-    loader = get_skill_loader()
-    flows = ["gpr", "survey"] if route == "both" else [primary_flow]
-    blocks: List[str] = []
-    for flow in flows:
-        if flow not in _LEGACY_RULES:  # gimmi handles its own rules elsewhere
-            continue
-        legacy_planner, legacy_sql = _LEGACY_RULES[flow]
-        planner_rules = loader.planner(flow, trigger_text) or legacy_planner
-        sql_rules = loader.sql(flow, trigger_text) or legacy_sql
+    return full_rules_text(rule_groups(route, primary_flow, trigger_text))
+
+
+def solver_rules_mode() -> str:
+    """`SOLVER_RULES`: "on_demand" (default) or "full" (every matched body inline)."""
+    value = os.environ.get("SOLVER_RULES", "on_demand").strip().lower()
+    return "full" if value == "full" else "on_demand"
+
+
+def _inline_on_demand(skill: Any) -> bool:
+    return bool(skill.always) and not skill.name.endswith(_EXAMPLE_SUFFIX)
+
+
+_FULL_RULES_HEADER = """[DOMAIN RULES — the same business + SQL-construction rules the deterministic
+path uses: Carrier_Group handling, peer averages via the Peers table,
+Share-of-Wallet / appetite math, Marsh premium, rolling-12M, ranking, etc.
+These describe how to BUILD such a query by hand. When a named calculation
+covers the step, it already encodes these rules — call it instead.]"""
+
+
+def on_demand_rules_text(groups: Sequence[RuleGroup]) -> str:
+    """The always-on rules inline; every other matched rule offered by name.
+
+    Every lens already says "compute it, do not query it", and a named
+    calculation encodes the peer, wallet and timeframe rules itself, so the full
+    SQL rules matter only on the run_sql fallback. They were nonetheless resent
+    on every model call of every solver. The always-on rules stay inline: they
+    are short and they shape the filters a calculation is given.
+    """
+    skills = [s for g in groups for s in g.skills]
+    inline = [s for s in skills if _inline_on_demand(s)]
+    offered = [s for s in skills if not _inline_on_demand(s)]
+    blocks = [
+        "[DOMAIN RULES — always apply. The named calculations above already "
+        "encode the peer-set, Share-of-Wallet, timeframe and ranking rules.]\n"
+        + _render_skills(inline)
+    ]
+    if offered:
         blocks.append(
-            f"### {flow.upper()} — planning rules\n{planner_rules}\n\n"
-            f"### {flow.upper()} — SQL construction rules\n{sql_rules}"
+            "[MATCHED RULES — read before writing SQL. These matched this question. "
+            "If you fall back to run_sql, FIRST call consult_skill(name) for every "
+            "rule below that your query touches.]\n"
+            + "\n".join(f"- {s.name}: {s.description}" for s in offered)
         )
     return "\n\n".join(blocks)
+
+
+def solver_rules(route: str, primary_flow: str, trigger_text: str) -> str:
+    """The rules block a solver is given, headed and ready to place in its prompt.
+
+    Full text when `SOLVER_RULES=full`, when the analytics library is off (the
+    solver can only write SQL), or when a flow matched no skill (the legacy
+    bundle has no name to consult). On-demand otherwise.
+    """
+    groups = rule_groups(route, primary_flow, trigger_text)
+    wants_full = (
+        solver_rules_mode() == "full"
+        or not analytics_tools_enabled()
+        or not all(g.matched for g in groups)
+    )
+    if wants_full:
+        return f"{_FULL_RULES_HEADER}\n{full_rules_text(groups)}"
+    return on_demand_rules_text(groups)
 
 
 def skill_catalog(route: str, primary_flow: str, trigger_text: str) -> str:
@@ -400,38 +521,37 @@ _CONFIDENTIALITY = """[CONFIDENTIALITY — non-negotiable]
   market proxy (no carrier filter); it is fine to name Marsh."""
 
 
-def _solver_prompt(
+def _schema_text(flow: str, *, use_outline: bool) -> str:
+    """One flow's schema as JSON: the name-only outline, or the full metadata."""
+    raw = get_schema(flow)
+    return json.dumps(schema_outline(raw) if use_outline else raw, default=str)
+
+
+def solver_prompt_head(
     *,
-    role: str,
-    question: str,
-    sub_question: str,
-    lens: str,
     flow: str,
     route: str,
     schema_slice: SchemaSlice,
-    prior_digest: str,
     custom_peers: Dict | None = None,
     custom_peers_active: bool = False,
 ) -> str:
-    library = get_lens_library()
-    lens_body = library.body(lens) or "(no specific lens — answer the sub-question directly)"
-    trigger_text = f"{question} {sub_question}"
-    rules = domain_rules(route, flow, trigger_text)
-    catalog = skill_catalog(route, flow, trigger_text)
+    """The part of a solver prompt every solver in the turn shares.
 
-    # ContextEngine solver view (step 5): the grounded `schema_slice` above is the
+    Nothing here depends on the step — no role, lens, sub-question or earlier
+    results — so every solver of one turn sends the same opening, and the
+    provider's prompt cache serves it after the first call. The step-specific
+    part (:func:`solver_prompt_tail`) comes after it for exactly that reason:
+    a cache matches an identical PREFIX, so one varying line near the top
+    (the sub-question used to be the third block) made every solver's prompt
+    unique from that point on.
+    """
+    # ContextEngine solver view (step 5): the grounded `schema_slice` is the
     # primary schema signal; the FULL per-column metadata dump that historically
     # followed it was redundant and the single biggest line in this prompt. When
     # the engine is on, replace it with the compact name-only outline (columns
     # the slice didn't surface stay discoverable, without the metadata bulk).
-    # Default off -> the legacy full dump, byte-identical.
     use_outline = engine_enabled()
-
-    def _schema_repr(target_flow: str) -> str:
-        raw = get_schema(target_flow)
-        return json.dumps(schema_outline(raw) if use_outline else raw, default=str)
-
-    schema = _schema_repr(flow)
+    schema = _schema_text(flow, use_outline=use_outline)
 
     # For a "both" route the perception lens may need the survey tables too, so
     # surface that schema as a secondary source (the GPR/premium flow stays primary).
@@ -440,7 +560,7 @@ def _solver_prompt(
         secondary_block = (
             '\n[SECONDARY SCHEMA for flow="survey" — query this flow only for a '
             "perception/score sub-question]\n"
-            f"{_schema_repr('survey')}\n"
+            f"{_schema_text('survey', use_outline=use_outline)}\n"
         )
 
     # The named calculations, rendered where the solver picks its approach.
@@ -448,34 +568,20 @@ def _solver_prompt(
     directive = compute_first_directive(flow, route)
     compute_block = f"{directive}\n\n" if directive else ""
 
-    prior_block = (
-        f"\n[RESULTS FROM EARLIER STEPS — build on these]\n{prior_digest}\n"
-        if prior_digest
-        else ""
-    )
-
     # Session-pinned custom peers (from the UI) override the Peers-table resolution.
     peer_override = custom_peer_directive(
         custom_peers, flow, active=custom_peers_active
     )
     custom_peers_block = f"\n{peer_override}\n" if peer_override else ""
 
-    return f"""{role}
+    return f"""You are one evidence-gathering step of a multi-step analysis.
 
 You do NOT write the final answer. Your ONLY job is to gather the evidence that
-answers the one sub-question below by calling tools, then stop. Keep your final
-message to a one-line note of what you found — the insight-writer turns the
-gathered rows into prose later.
+answers the one sub-question at the END of this prompt by calling tools, then
+stop. Keep your final message to a one-line note of what you found — the
+insight-writer turns the gathered rows into prose later.
 
-[SUB-QUESTION — answer only this]
-{sub_question}
-
-{compute_block}[LENS TO APPLY — follow this shape and interpretation. Where a named
-calculation above covers a step, call it; the lens's SQL shape is the
-fallback for the parts no calculation covers.]
-{lens_body}
-
-[PRIMARY FLOW] {flow}  (route="{route}"). Query this flow. The GPR
+{compute_block}[PRIMARY FLOW] {flow}  (route="{route}"). Query this flow. The GPR
 table IS Marsh's book of business (the market proxy).
 
 [GROUNDED SCHEMA SLICE — the schema-identifier already resolved this for you]
@@ -483,16 +589,7 @@ table IS Marsh's book of business (the market proxy).
 
 [SCHEMA for flow="{flow}" — columns available beyond the grounded slice]
 {schema}
-{secondary_block}
-[DOMAIN RULES — the same business + SQL-construction rules the deterministic
-path uses: Carrier_Group handling, peer averages via the Peers table,
-Share-of-Wallet / appetite math, Marsh premium, rolling-12M, ranking, etc.
-These describe how to BUILD such a query by hand. When a named calculation
-covers the step, it already encodes these rules — call it instead.]
-{rules}
-
-{catalog}
-{custom_peers_block}{prior_block}
+{secondary_block}{custom_peers_block}
 [RULES]
 - Get every number from a tool; never invent one you did not retrieve.
 - Reach for compute_metric FIRST: if a calculation in [CALCULATIONS AVAILABLE
@@ -510,6 +607,82 @@ covers the step, it already encodes these rules — call it instead.]
 - Stay tightly focused on the sub-question; do not wander into other analyses.
 
 {_CONFIDENTIALITY}"""
+
+
+def solver_prompt_tail(
+    *,
+    role: str,
+    question: str,
+    sub_question: str,
+    lens: str,
+    flow: str,
+    route: str,
+    prior_digest: str,
+) -> str:
+    """The step-specific part of a solver prompt: who it is, what it asks.
+
+    The rules block depends on the sub-question (it picks the skills the step
+    triggers), so it lives here rather than in the shared head.
+    """
+    lens_body = (
+        get_lens_library().body(lens)
+        or "(no specific lens — answer the sub-question directly)"
+    )
+    trigger_text = f"{question} {sub_question}"
+    rules = solver_rules(route, flow, trigger_text)
+    catalog = skill_catalog(route, flow, trigger_text)
+    prior_block = (
+        f"[RESULTS FROM EARLIER STEPS — build on these]\n{prior_digest}\n\n"
+        if prior_digest
+        else ""
+    )
+    return f"""[YOUR ROLE FOR THIS STEP]
+{role}
+
+{rules}
+
+{catalog}
+
+[LENS TO APPLY — follow this shape and interpretation. Where a named
+calculation above covers a step, call it; the lens's SQL shape is the
+fallback for the parts no calculation covers.]
+{lens_body}
+
+{prior_block}[SUB-QUESTION — answer only this]
+{sub_question}"""
+
+
+def _solver_prompt(
+    *,
+    role: str,
+    question: str,
+    sub_question: str,
+    lens: str,
+    flow: str,
+    route: str,
+    schema_slice: SchemaSlice,
+    prior_digest: str,
+    custom_peers: Dict | None = None,
+    custom_peers_active: bool = False,
+) -> str:
+    """The solver's system prompt: the turn-shared head, then this step's tail."""
+    head = solver_prompt_head(
+        flow=flow,
+        route=route,
+        schema_slice=schema_slice,
+        custom_peers=custom_peers,
+        custom_peers_active=custom_peers_active,
+    )
+    tail = solver_prompt_tail(
+        role=role,
+        question=question,
+        sub_question=sub_question,
+        lens=lens,
+        flow=flow,
+        route=route,
+        prior_digest=prior_digest,
+    )
+    return f"{head}\n\n{tail}"
 
 
 def stamp_redactions(
@@ -617,13 +790,15 @@ def run_solver(
     return stamp_redactions(evidence, redactor)
 
 
-def digest_evidence(evidence: List[Evidence], *, limit: int = _TOOL_ROW_PREVIEW) -> str:
+def digest_evidence(evidence: List[Evidence], *, limit: int = _PRIOR_DIGEST_ROWS) -> str:
     """Compact JSON digest of gathered evidence for a dependent step or the writer.
 
     Carries each record's `evidence_id` so a dependent step can cite the exact
     evidence it built on and a repair can name the record it is replacing. The
     rows stay truncated: the digest is a summary to reason over, and anything
     needing the full set fetches it by id rather than being handed it again.
+    `row_count` says how many rows the record really holds, so a truncated
+    record is never read as the whole result.
 
     Records that found nothing are kept, with their status and no rows. Dropping
     them would let a dependent step read "no evidence about Marine" as "Marine
@@ -638,6 +813,7 @@ def digest_evidence(evidence: List[Evidence], *, limit: int = _TOOL_ROW_PREVIEW)
                 "flow": e["flow"],
                 "status": e.get("status", ""),
                 "sql": e["sql"],
+                "row_count": len(e["rows"]),
                 "rows": e["rows"][:limit],
             }
             for e in evidence

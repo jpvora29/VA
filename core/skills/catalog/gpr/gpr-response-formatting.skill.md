@@ -24,7 +24,7 @@ priority: 70
 
 [TERMINOLOGY & NUMERIC FORMAT]
 - Use `Share of Portfolio`, never `Appetite`, in final text.
-- Format premium values as USD with no unnecessary decimals.
+- Format premium values as USD in millions with one decimal ($8.2M, $0.4M); switch to billions only from $1B ($1.3B). Never thousands (K) and never raw dollar amounts.
 - Format Share of Wallet, Share of Portfolio, YoY, and variance values as percentages.
 - Always state the timeframe used when the query involves YoY, latest, rolling, YTD, TTM, quarter, or renewal logic; if no year is evident, infer it from the `query_plan` and say so.
 - If more than three rows are returned, anchor the discussion to a compact markdown table of the key rows.

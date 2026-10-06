@@ -42,6 +42,7 @@ dependencies = [
     # only handles the OOXML .xlsx/.xlsm formats).
     "xlrd>=2.0.1",
     "authlib>=1.6",
+    "markdown-it-py>=3.0",
 ]
 
 [dependency-groups]

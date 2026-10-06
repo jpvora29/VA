@@ -124,6 +124,14 @@ def _apply_filters(spec, frame: pd.DataFrame, filters: Dict[str, Any]) -> pd.Dat
     # where narrowing step by step made each later filter a fresh, uncached frame.
     mask = None
     for column, value in (filters or {}).items():
+        if hasattr(value, "last") and hasattr(value, "grain"):
+            # PeriodsThrough: keep the periods of the year up to `last`.
+            positions = _position_series(frame, spec, value.grain)
+            if positions is None:
+                continue
+            step = (positions <= int(value.last)).fillna(False).astype(bool)
+            mask = step if mask is None else (mask & step)
+            continue
         col = safe_column(spec, column)
         if not _has(frame, col):
             # An AND constraint that cannot be evaluated cannot be satisfied.
@@ -802,12 +810,18 @@ def compute_contribution(
 ) -> List[AnalyticsFact]:
     """Each slice's contribution to the headline year-on-year change."""
     from core.analytics.movement import assemble_contribution
+    from core.analytics.periods import to_date_grain
 
-    rows, cuts, column = _movement_rows(source, args)
+    grain = to_date_grain(flow_spec(args.flow))
+    rows, cuts, column = _movement_rows(source, args, grain=grain)
+    if rows is None and grain:
+        # No usable period positions: a whole-year comparison is all there is.
+        grain = ""
+        rows, cuts, column = _movement_rows(source, args)
     if rows is None:
         return []
     return assemble_contribution(
-        rows, cuts=cuts, column=column,
+        rows, cuts=cuts, column=column, grain=grain,
         current_year=current_year, prior_year=prior_year,
     )
 

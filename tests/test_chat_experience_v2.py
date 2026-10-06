@@ -515,7 +515,8 @@ def test_untyped_columns_are_formatted_by_what_they_hold():
     from ui.components import evidence as ev
 
     assert ev.inferred_kind("Premium", [12_345_678.9]) == ev.P.MONEY_MILLIONS
-    assert ev.inferred_kind("Premium", [940_000.0]) == ev.MONEY_WHOLE
+    # Millions even below a million: never raw dollars (core.analytics.money_units).
+    assert ev.inferred_kind("Premium", [940_000.0]) == ev.P.MONEY_MILLIONS
     assert ev.inferred_kind("Share_of_Wallet", [0.195]) == ev.PERCENT_FRACTION
     assert ev.inferred_kind("YoY_%", [12.34]) == ev.P.PERCENT
     assert ev.inferred_kind("Year", [2024.0]) == ev.NUMBER
@@ -583,10 +584,20 @@ def test_every_section_is_one_numbered_takeaway():
     from ui.answer_layout import split_sections
     from ui.components.answer_summary import takeaway_list
 
-    body = "### By market\n" + "\n".join(f"- point {i}" for i in range(7)) + "\n\n### Mix\n- one"
+    body = "### Growth\n" + "\n".join(f"- point {i}" for i in range(7)) + "\n\n### Mix\n- one"
     label, rows = takeaway_list(*split_sections(body))
     assert label.children == "Key takeaways"
     assert [r.children[0].children for r in rows.children] == ["1", "2"]
+
+
+def test_a_per_line_list_is_folded_detail_not_a_takeaway():
+    from ui.answer_layout import split_sections
+    from ui.components.answer_summary import takeaway_list
+
+    body = "### By market\n- **Singapore** — a\n- **China** — b\n\n### Mix\n- one"
+    label, rows, detail = takeaway_list(*split_sections(body))
+    assert len(rows.children) == 1
+    assert detail.className == "answer-detail"
 
 
 def test_big_books_read_in_billions_everywhere():

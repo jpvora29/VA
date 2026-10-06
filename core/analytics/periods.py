@@ -16,7 +16,8 @@ that is how Q1 2025 ends up compared with Q4 2024.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
 from core.analytics.sql import safe_column
 
@@ -109,3 +110,71 @@ def without_period_filters(spec, filters: Mapping[str, Any]) -> Dict[str, Any]:
     """
     period = period_columns(spec)
     return {key: value for key, value in (filters or {}).items() if key not in period}
+
+
+# ── Like-for-like years ─────────────────────────────────────────────────────
+#
+# The latest year is often loaded part-way. Comparing its months against the
+# WHOLE prior year reads a flat book through May as -58%. Every year-on-year
+# comparison therefore cuts the prior year to the span the compared year
+# reaches: January-May against January-May, Q1-Q2 against Q1-Q2.
+
+def to_date_grain(spec) -> str:
+    """The finest within-year grain the flow can align on: month from a date
+    column, else quarter from a quarter column, else "" (year-only)."""
+    columns = spec.date_columns or {}
+    if columns.get("date"):
+        return MONTH
+    if columns.get(QUARTER):
+        return QUARTER
+    return ""
+
+
+def like_for_like_cutoff(rows: Iterable[Mapping[str, Any]], current_year: int,
+                         grain: str) -> Optional[int]:
+    """The last period the compared year reaches, or None when it is complete
+    (or carries no period positions, so there is nothing to align on)."""
+    reached = [int(row["pin"]) for row in rows
+               if row.get("pin") is not None and row.get("yr") is not None
+               and int(row["yr"]) == int(current_year)]
+    if not reached or not grain:
+        return None
+    cutoff = max(reached)
+    return None if cutoff >= PERIODS_PER_YEAR.get(grain, 0) else cutoff
+
+
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def span_label(grain: str, cutoff: Optional[int]) -> str:
+    """"Jan-May" / "Q1-Q2" for a cut year; "" for a whole one."""
+    if not cutoff:
+        return ""
+    if grain == MONTH:
+        return "Jan" if cutoff == 1 else f"Jan-{_MONTHS[cutoff - 1]}"
+    return "Q1" if cutoff == 1 else f"Q1-Q{cutoff}"
+
+
+#: The filter key a `PeriodsThrough` travels under. Not a column: `where_clause`
+#: and the pandas twin recognise the VALUE, so no schema check applies to it.
+THROUGH_KEY = "__periods_through"
+
+
+@dataclass(frozen=True)
+class PeriodsThrough:
+    """A filter keeping only the periods of a year up to ``last`` (inclusive).
+
+    Applied to the PRIOR year of a comparison, so it covers the same span the
+    current year reaches.
+    """
+
+    grain: str
+    last: int
+
+    def __str__(self) -> str:
+        return span_label(self.grain, self.last)
+
+    def sql(self, spec) -> Optional[str]:
+        expr = period_in_year_expr(spec, self.grain)
+        return None if expr is None else f"{expr} <= {int(self.last)}"

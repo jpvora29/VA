@@ -144,3 +144,68 @@ def test_decision_board_does_not_wear_the_pinned_chat_icon():
     source = Path("ui/components/sidebar.py").read_text(encoding="utf-8")
     board = source.split('html.Span("Decision Board")', 1)[0].rsplit("html.I(", 1)[1]
     assert "pin" not in board
+
+
+# ── Money: millions, billions from $1B, never K or raw ──────────────────────
+
+def test_money_reads_in_millions_and_billions_only():
+    from core.analytics.money_units import money_text
+
+    assert money_text(8_237_000) == "$8.2M"
+    assert money_text(412_345) == "$0.4M"
+    assert money_text(40_000) == "$0.04M"
+    assert money_text(1_310_000_000) == "$1.3B"
+    assert money_text(-3_400_000, signed=True) == "-$3.4M"
+
+
+def test_every_surface_uses_the_same_rule():
+    from core.answers.facts import format_value as commentary
+    from core.boardroom.money import format_money
+    from ui.chart_functions import format_value as chart
+
+    assert commentary(412_345, "currency") == chart(412_345, "money") == format_money(412_345) == "$0.4M"
+
+
+def test_a_money_axis_states_one_unit():
+    from ui.chart_functions import money_ticks
+
+    _, labels = money_ticks([2.4e9, 0.8e9])
+    assert all(label.endswith("B") for label in labels)
+    _, labels = money_ticks([160e6, 40e6])
+    assert all(label.endswith("M") for label in labels)
+
+
+# ── Sending from the welcome screen, and deleting the open chat ─────────────
+
+def test_the_welcome_screen_is_hidden_through_the_viewport():
+    js = Path("assets/chat_experience.js").read_text(encoding="utf-8")
+    css = Path("assets/va_shell_chat_v2.css").read_text(encoding="utf-8")
+    # The hero is a Dash component whose class a re-render resets; the viewport is not.
+    assert 'viewport.classList.add("va-sending")' in js
+    assert ".chat-viewport.va-sending #chat-box .welcome-hero" in css
+
+
+def test_the_working_card_waits_for_the_answer_not_the_run():
+    js = Path("assets/chat_experience.js").read_text(encoding="utf-8")
+    assert "if (!now && was) { finishPending(); }" in js
+    assert 'turnCount(".turn-assistant") > pending.answers) { clearPending(); }' in js
+
+
+def test_deleting_the_open_chat_lands_on_a_new_chat():
+    js = Path("assets/chat_experience.js").read_text(encoding="utf-8")
+    block = js.split('var del = target.closest(\'[id*="conv-del"]\');', 1)[1].split("return;", 1)[0]
+    assert ".conv-item-active" in block and "newChat.click()" in block
+
+
+# ── Coloured arrows reach the page ──────────────────────────────────────────
+
+def test_answer_prose_is_one_html_block_so_delta_spans_survive():
+    from ui.components.answer_markdown import to_html_block
+
+    block = to_html_block("- **Property** — $5.2M ▲ 18.0%, x < y\n- Marine -3.1pp")
+    # Dash's Markdown drops INLINE html tag by tag; a block is injected whole.
+    assert block.startswith('<div class="md-block">\n') and block.endswith("\n</div>")
+    assert "\n\n" not in block
+    assert '<span class="delta delta-up">▲ 18.0%</span>' in block
+    assert '<span class="delta delta-down">▼ 3.1pp</span>' in block
+    assert "&lt; y" in block and "<y" not in block

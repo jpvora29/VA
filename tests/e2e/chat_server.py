@@ -182,6 +182,101 @@ def markets_turn(engine, query):
     }
 
 
+#: An answer written the way the live writer is contracted to write one
+#: (core/agents/common/answer_shape.py): executive insight, finding-headed ###
+#: groups led by their takeaway, a per-line "By product" list, what it means and
+#: watch-outs. Lets the card be checked against a real answer's SHAPE without a
+#: model. Figures are illustrative; the evidence beside it is the real path's.
+CONTRACT_ANSWER = """GENERALI's Singapore premium grew **18.0%** to **$11.8M**, and the growth is concentrated in Property.
+
+### Property is the growth engine
+- **Property** — $5.2M ▲ 18.0%, adding $0.8M of the $1.8M increase, so one line now carries 44% of the book.
+- Casualty added $0.5M (▲ 18.0%), the second engine, growing in step with Property.
+- Cyber is small at $1.2M but grew at the same rate, so the mix is not shifting toward it.
+
+### The book is more concentrated
+- Property and Casualty now make up 72.6% of premium, up from 70.1%, so the carrier's result follows two lines.
+- Marine is 13.6% of the book and Cyber 10.2%.
+
+### By product
+- **Property** — $5.2M ▲ 18.0% · rank #1 of 3 · 44.1% of the book · 38.5% share of wallet
+- **Casualty** — $3.4M ▲ 18.0% · rank #2 of 3 · 28.8% of the book · 33.2% share of wallet
+- **Marine** — $1.6M ▲ 18.0% · rank #2 of 3 · 13.6% of the book · 30.1% share of wallet
+- **Cyber** — $1.2M ▲ 18.0% · rank #2 of 3 · 10.2% of the book · 31.0% share of wallet
+
+### Share of wallet is held, not gained
+- Share of wallet is 34.6%, ▼ 0.4pp on the year: the Marsh book grew slightly faster than GENERALI.
+- GENERALI ranks #1 in Property and #2 elsewhere among 3 carriers.
+
+### What it means
+- **Defend** Property: it carries the growth and the #1 rank, so renewal terms there matter most.
+- **Investigate** why share of wallet slipped while premium grew 18.0%.
+
+### Watch-outs
+- 2025 is compared with 2024 on the same quarters; a late-year renewal could still move the totals.
+"""
+
+
+#: The fixture's stand-in for the shared head of a real solver prompt: the
+#: real head needs the warehouse schema, which this offline host does not have.
+_FIXTURE_HEAD = """You are one evidence-gathering step of a multi-step analysis.
+
+[PRIMARY FLOW] gpr  (route="premium"). Query this flow.
+
+[SCHEMA for flow="gpr" — columns available beyond the grounded slice]
+{"GPR": ["Carrier_Group", "Country", "Product_Line", "Year", "Premium", "Billing_Date"],
+ "Peers": ["Carrier_Group", "Overall_Peer_Group", "Country"]}
+"""
+
+
+def metered_model_calls(callbacks, query):
+    """Feed the turn's usage meter the model calls a live analyst turn makes.
+
+    No model runs here, so the calls are fixtures — but their PROMPTS are the
+    real ones: the real solver tail (rules, lens, sub-question) and the real
+    tool schemas, so the context chip shows a true split. Usage is reported as
+    four characters per token, the way a provider would report it.
+    """
+    from uuid import uuid4
+
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+    from langchain_core.outputs import ChatGeneration, LLMResult
+    from langchain_core.utils.function_calling import convert_to_openai_tool
+
+    from core.agents.analyst.common import build_tools, solver_prompt_tail
+    from core.agents.analyst.generic_solver import _ROLE
+
+    tools = [convert_to_openai_tool(t) for t in build_tools([], query, "temporal_trend", flow="gpr")]
+    system = _FIXTURE_HEAD + "\n" + solver_prompt_tail(
+        role=_ROLE, question=query, sub_question=query, lens="temporal_trend",
+        flow="gpr", route="premium", prior_digest="")
+    call = AIMessage(content="", tool_calls=[{"id": "c1", "name": "compute_metric",
+                     "args": {"flow": "gpr", "name": "compute_yoy_to_date"}}])
+    rows = ToolMessage(content=json.dumps([{"Product_Line": p, "YoY_%": 4.2} for p in
+                                           ("Property", "Casualty", "Marine", "Cyber")] * 6),
+                       tool_call_id="c1")
+    prompts = [
+        ("context_filler", [SystemMessage(content="Decide the route and inherited filters."),
+                            HumanMessage(content=f"[CURRENT_USER_QUERY]\n{query}\n\n"
+                                         "[CONVERSATION_HISTORY]\n[]")], None),
+        ("model", [SystemMessage(content=system), HumanMessage(content=query)], tools),
+        ("model", [SystemMessage(content=system), HumanMessage(content=query), call, rows], tools),
+    ]
+    meters = [cb for cb in callbacks or [] if hasattr(cb, "on_chat_model_start")]
+    for node, messages, tool_defs in prompts:
+        chars = sum(len(str(m.content)) for m in messages) + len(json.dumps(tool_defs or []))
+        usage = {"input_tokens": chars // 4, "output_tokens": 60,
+                 "total_tokens": chars // 4 + 60}
+        for meter in meters:
+            run_id = uuid4()
+            meter.on_chat_model_start({"kwargs": {"deployment_name": "gpt-4.1-mini"}}, [messages],
+                                      run_id=run_id, metadata={"langgraph_node": node},
+                                      invocation_params={"tools": tool_defs} if tool_defs else {})
+            message = AIMessage(content="", usage_metadata=usage)
+            meter.on_llm_end(LLMResult(generations=[[ChatGeneration(message=message)]]),
+                             run_id=run_id)
+
+
 class FixtureWorkflow:
     def __init__(self):
         self.engine = fixture_engine()
@@ -201,6 +296,16 @@ class FixtureWorkflow:
         if "slow" in query.lower():
             cancel.wait(8)
         if cancel.is_set():
+            return
+        metered_model_calls(callbacks, query)
+        if "review" in query.lower():
+            # The live writer's shape over the real evidence path.
+            state = markets_turn(self.engine, "generali in singapore")
+            state["gpr_response"] = CONTRACT_ANSWER
+            state.pop("gpr_response_record", None)
+            self.states[thread_id] = state
+            yield {"node": "gpr_insight"}
+            yield from self._tail(query, thread_id, cancel)
             return
         if "generali" in query.lower():
             self.states[thread_id] = markets_turn(self.engine, query)

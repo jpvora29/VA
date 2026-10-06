@@ -18,16 +18,17 @@ from __future__ import annotations
 
 from typing import Any, List, Optional, Sequence
 
-from dash import dcc, html
+from dash import html
 
-from ui.answer_layout import (Badge, Scorecard, Section, badge_for,
-                               takeaways_and_next_steps)
-from ui.components.deltas import mark_deltas, mark_line
+from ui.answer_layout import (Badge, Scorecard, Section, badge_for, is_per_line,
+                               split_points, takeaways_and_next_steps)
+from ui.components.answer_markdown import answer_markdown
 
 
 def _markdown(text: str, class_name: str = "") -> Any:
-    return dcc.Markdown(mark_deltas(text), className=class_name or None,
-                        dangerously_allow_html=True)
+    # One HTML block, so the coloured ▲/▼ spans reach the page
+    # (see ui.components.answer_markdown).
+    return answer_markdown(text, class_name)
 
 
 def _money(value: Optional[float], unit: str) -> str:
@@ -169,11 +170,9 @@ def summary_band(headline: str, standfirst: str, cards: Sequence[Scorecard]) -> 
     text = html.Div(
         [
             html.Div("Summary", className="answer-summary-label"),
-            html.Div(dcc.Markdown(mark_line(headline.replace("<", "&lt;")),
-                                  dangerously_allow_html=True),
+            html.Div(answer_markdown(headline, inline=True),
                      className="answer-headline") if headline else None,
-            html.Div(dcc.Markdown(mark_line(standfirst.replace("<", "&lt;")),
-                                  dangerously_allow_html=True),
+            html.Div(answer_markdown(standfirst, inline=True),
                      className="answer-standfirst") if standfirst else None,
         ],
         className="answer-summary-text",
@@ -205,14 +204,36 @@ def _chip(badge: Optional[Badge]) -> Any:
                     className=f"takeaway-chip is-{badge.tone}")
 
 
+def _as_list(points: Sequence[str]) -> str:
+    """Points back to Markdown: list items, with a table left as a table."""
+    return "\n\n".join(p if p.startswith("|") else f"- {p}" for p in points)
+
+
+def _more(points: Sequence[str], body_class: str) -> Any:
+    """The rest of a takeaway's points, one click away."""
+    if not points:
+        return None
+    label = f"{len(points)} more point" + ("" if len(points) == 1 else "s")
+    return html.Details(
+        [html.Summary([html.Span(label), html.I(className="bi bi-chevron-down")],
+                      className="takeaway-more-toggle"),
+         _markdown(_as_list(points), body_class)],
+        className="takeaway-more",
+    )
+
+
 def _takeaway(number: int, section: Section, body_class: str) -> Any:
+    """One finding: its title, its lead sentence, its chip — the rest folded."""
+    points = split_points(section.body)
+    lead, rest = (points[0], points[1:]) if points else (section.body, [])
     return html.Div(
         [
             html.Div(str(number), className="takeaway-num"),
             html.Div(
                 [
                     html.Div(section.title, className="takeaway-title"),
-                    _markdown(_single_point(section.body), body_class),
+                    _markdown(lead, body_class + " takeaway-lead"),
+                    _more(rest, body_class),
                 ],
                 className="takeaway-text",
             ),
@@ -222,16 +243,34 @@ def _takeaway(number: int, section: Section, body_class: str) -> Any:
     )
 
 
+def _detail(section: Section, body_class: str) -> Any:
+    """A per-line list ("By product") — the position table holds the same rows,
+    so it is offered closed, under the takeaways."""
+    count = len(split_points(section.body))
+    return html.Details(
+        [html.Summary([html.I(className="bi bi-list-ul"), html.Span(section.title),
+                       html.Span(f"{count} lines", className="answer-detail-count"),
+                       html.I(className="bi bi-chevron-down")],
+                      className="answer-detail-toggle"),
+         _markdown(section.body, body_class)],
+        className="answer-detail",
+    )
+
+
 def takeaway_list(intro: str, sections: Sequence[Section], body_class: str = "") -> List[Any]:
-    """The findings as numbered rows: title, its points, its chip on the right."""
+    """The findings as numbered rows (title, lead sentence, chip; the rest
+    folded), then any per-line detail lists, closed."""
     findings, _steps = takeaways_and_next_steps(sections)
+    rows = [s for s in findings if not is_per_line(s)]
+    details = [s for s in findings if is_per_line(s)]
     out: List[Any] = []
     if intro:
         out.append(html.Div(_markdown(intro, body_class), className="answer-intro"))
-    if findings:
+    if rows:
         out.append(_band_label("Key takeaways"))
-        out.append(html.Div([_takeaway(i, s, body_class) for i, s in enumerate(findings, 1)],
+        out.append(html.Div([_takeaway(i, s, body_class) for i, s in enumerate(rows, 1)],
                             className="takeaways"))
+    out.extend(_detail(s, body_class) for s in details)
     return out
 
 

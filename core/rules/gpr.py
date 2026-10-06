@@ -471,7 +471,7 @@ class GPRRules:
     - Refer to peers only in aggregate (`Peer Group` / `Peer Average`); never name or value an individual peer.
 
     3. NUMERIC FORMAT & TIMEFRAME
-    - Premium values are in USD: always show the $ sign and no decimal places.
+    - Premium values are in USD: state them in millions with one decimal ($8.2M, $0.4M); switch to billions only from $1B ($1.3B). Never thousands (K) and never raw dollar amounts.
     - Show YoY / Share of Wallet / Share of Portfolio / variance as % (YoY rounded to 2 decimals).
     - For any timeframe query (TTM, MoM, YoY) ALWAYS state the period/years considered. Infer from the valid_year_quarter input (unique year+quarter values); e.g. last 12 months -> from 2024 to latest 2025.
     - If years are absent from the output and query, infer the timeframe from the `query_plan`; if none, state that all years are considered.

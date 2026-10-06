@@ -36,8 +36,11 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from core.analytics import pandas_library as P
 from core.analytics.frames import on_frames
 from core.analytics.periods import (
+    like_for_like_cutoff,
     period_in_year_expr,
     period_label,
+    span_label,
+    to_date_grain,
     without_period_filters,
     year_expr,
 )
@@ -318,9 +321,10 @@ def compute_contribution(
         return []
 
     cuts = _cuts(spec, args.group_by)
-    rows = _year_rows(spec, eng, args, cuts, year_sql, column, agg)
+    grain = to_date_grain(spec)
+    rows = _year_rows(spec, eng, args, cuts, year_sql, column, agg, grain=grain)
     return assemble_contribution(
-        rows, cuts=cuts, column=column,
+        rows, cuts=cuts, column=column, grain=grain,
         current_year=current_year, prior_year=prior_year,
     )
 
@@ -332,10 +336,17 @@ def assemble_contribution(
     column: str,
     current_year: Optional[int] = None,
     prior_year: Optional[int] = None,
+    grain: str = "",
 ) -> List[AnalyticsFact]:
-    """Build the headline and contribution facts from ``{yr, *cuts, measure}`` rows.
+    """Build the headline and contribution facts from ``{yr, [pin], *cuts, measure}`` rows.
 
     Shared by both executors, for the reason given on `assemble_aligned`.
+
+    Like for like: when the compared year is partial (its data stops at May, or
+    at Q2), the prior year is cut to the same span — January-May against
+    January-May — so a part-loaded year does not read as a collapse. Rows carry
+    their within-year position as ``pin`` for that; without it the years are
+    compared whole.
     """
     rows = [row for row in rows if row.get("yr") is not None]
     if not rows:
@@ -343,6 +354,12 @@ def assemble_contribution(
     current, prior = resolve_year_pair(rows, current_year, prior_year)
     if current is None or prior is None:
         return []
+    cutoff = like_for_like_cutoff(rows, current, grain)
+    if cutoff is not None:
+        rows = [row for row in rows
+                if int(row["yr"]) == current
+                or (row.get("pin") is not None and int(row["pin"]) <= cutoff)]
+    through = span_label(grain, cutoff)
 
     measures = _index(rows, cuts, key=lambda row: int(row["yr"]))
     prior_total = sum(
@@ -366,7 +383,13 @@ def assemble_contribution(
         for cut_values in _cut_combinations(rows, cuts)
     ]
     slices.sort(key=lambda fact: abs(fact.value), reverse=True)
-    return [headline_fact(column, current, prior, current_total, prior_total)] + slices
+    facts = [headline_fact(column, current, prior, current_total, prior_total)] + slices
+    if through:
+        # Say which span both years were cut to, so the writer and the reader
+        # know "+18%" is January-May against January-May.
+        for fact in facts:
+            fact.dims["through"] = through
+    return facts
 
 
 def headline_fact(
@@ -456,14 +479,18 @@ def _period_rows(spec, engine, args, cuts, year_sql, pin_sql, column, agg):
     return [row for row in run_rows(engine, sql, params) if row.get("pin") is not None]
 
 
-def _year_rows(spec, engine, args, cuts, year_sql, column, agg):
+def _year_rows(spec, engine, args, cuts, year_sql, column, agg, *, grain: str = ""):
     params: Dict[str, Any] = {}
     where = where_clause(spec, without_period_filters(spec, args.filters), params)
     cut_tail = ", " + ", ".join(f'"{c}"' for c in cuts) if cuts else ""
+    # The within-year position rides along so the comparison can be cut to the
+    # span the compared year reaches (`assemble_contribution`).
+    pin_sql = period_in_year_expr(spec, grain) if grain else None
+    pin_sel, pin_group = (f", {pin_sql} AS pin", ", pin") if pin_sql else ("", "")
     sql = f"""
-        SELECT {year_sql} AS yr{cut_tail}, {agg}("{column}") AS measure
+        SELECT {year_sql} AS yr{pin_sel}{cut_tail}, {agg}("{column}") AS measure
         FROM "{spec.primary_table}"{where}
-        GROUP BY yr{cut_tail}
+        GROUP BY yr{pin_group}{cut_tail}
         ORDER BY yr
     """
     return [row for row in run_rows(engine, sql, params) if row.get("yr") is not None]

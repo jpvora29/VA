@@ -19,14 +19,17 @@ Design goals
 """
 from __future__ import annotations
 
+import math
 import re
 
 from dataclasses import dataclass, field
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 import plotly.graph_objects as go
+
+from core.analytics.money_units import money_scale, money_text
 
 from ui.color_pallet import ColorPalette
 from core.charts.critic import ChartSpecCritic, is_year_values as _is_year_axis
@@ -668,8 +671,86 @@ def format_value(v: Any, unit: str = "", *, signed: bool = False) -> str:
     size = abs(number)
     if unit == "pct":
         return f"{sign}{size:.1f}%"
-    body = _format_number(size)
-    return f"{sign}${body}" if unit == "money" else f"{sign}{body}"
+    if unit == "money":
+        # Millions, or billions from $1B — never K or raw dollars
+        # (core.analytics.money_units is the one rule).
+        return sign + money_text(size)
+    return f"{sign}{_format_number(size)}"
+
+
+# ── Money axes ────────────────────────────────────────────────────────────────
+#
+# Plotly's "B" exponent format picks a unit per TICK: one axis read "500k",
+# "800M" and "1.5B". A money axis states one unit, the same one as the labels:
+# explicit ticks at round steps, printed in millions (billions from $1B).
+
+def _nice_step(raw: float) -> float:
+    """A round step (1, 2, 2.5, 5 x 10^n) at or above ``raw``."""
+    if raw <= 0:
+        return 1.0
+    power = 10 ** math.floor(math.log10(raw))
+    for factor in (1, 2, 2.5, 5, 10):
+        if raw <= factor * power:
+            return factor * power
+    return 10 * power
+
+
+def _axis_values(fig: go.Figure, axis: str) -> List[float]:
+    """Every value the axis must cover: bar/line points, waterfall running
+    totals, and per-category sums when bars are stacked."""
+    out: List[float] = []
+    stacked: Dict[Any, List[float]] = {}
+    stack = (fig.layout.barmode or "") in ("stack", "relative")
+    for trace in fig.data:
+        raw = getattr(trace, axis, None)
+        values = [] if raw is None else [_number_or(v, math.nan) for v in list(raw)]
+        values = [v for v in values if not math.isnan(v)]
+        if trace.type == "waterfall":
+            running = 0.0
+            for v in values:
+                running += v
+                out.append(running)
+            continue
+        out.extend(values)
+        if stack and trace.type == "bar":
+            # A trace value is a numpy array: test for None, never truthiness.
+            raw_cats = getattr(trace, "x" if axis == "y" else "y")
+            cats = [] if raw_cats is None else list(raw_cats)
+            for cat, v in zip(cats, values):
+                stacked.setdefault(cat, [0.0, 0.0])[0 if v >= 0 else 1] += v
+    for pos, neg in stacked.values():
+        out.extend([pos, neg])
+    return out
+
+
+def money_ticks(values: Sequence[float]) -> Optional[Tuple[List[float], List[str]]]:
+    """(tick values, tick labels) for a money axis, in ONE unit. Pure."""
+    nums = [float(v) for v in values if v is not None and not math.isnan(float(v))]
+    if not nums:
+        return None
+    low, high = min(0.0, min(nums)), max(0.0, max(nums))
+    if high == low:
+        return None
+    step = _nice_step((high - low) / 5)
+    divisor, suffix = money_scale([max(abs(low), abs(high))])
+    places = 0 if step / divisor >= 1 else (1 if step / divisor >= 0.1 else 2)
+    ticks: List[float] = []
+    tick = math.floor(low / step) * step
+    while tick <= high + step and len(ticks) < 14:
+        ticks.append(round(tick, 6))
+        tick += step
+    labels = [("-" if t < 0 else "") + f"${abs(t) / divisor:,.{places}f}{suffix}" for t in ticks]
+    return ticks, labels
+
+
+def _money_axis(fig: go.Figure, axis: str) -> None:
+    """Give a money axis explicit ticks in one unit (see `money_ticks`)."""
+    ticks = money_ticks(_axis_values(fig, axis))
+    update = fig.update_yaxes if axis == "y" else fig.update_xaxes
+    if ticks is None:
+        update(tickprefix="$")
+        return
+    update(tickmode="array", tickvals=ticks[0], ticktext=ticks[1])
 
 
 # ── Colour meaning ────────────────────────────────────────────────────────────
@@ -848,13 +929,13 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
             )
         except ValueError:
             max_y = 0
-        if max_y and max_y >= 10_000:
-            # "B" not "G": Plotly's business exponent format (K, M, B).
-            fig.update_yaxes(exponentformat="B", separatethousands=True)
         unit = measure_unit(spec)
         if unit == "money":
-            fig.update_yaxes(tickprefix="$")
-        elif unit == "pct":
+            _money_axis(fig, "y")
+        elif max_y and max_y >= 10_000:
+            # A large count: "B" not "G" (Plotly's business exponent format).
+            fig.update_yaxes(exponentformat="B", separatethousands=True)
+        if unit == "pct":
             fig.update_yaxes(ticksuffix="%")
         if spec.chart_type in ("bar", "line", "combo"):
             _unit_hover(fig, unit)
@@ -937,9 +1018,10 @@ def _style_horizontal(fig: go.Figure, spec: "_Spec", df: pd.DataFrame) -> None:
                                 font=dict(size=12, color="#5A6B82")),
                      showgrid=True, gridcolor=_GRID, griddash="dot", zeroline=False,
                      tickfont=dict(size=11, color=_TICK_INK), automargin=True,
-                     tickprefix="$" if unit == "money" else "",
                      ticksuffix="%" if unit == "pct" else "",
                      exponentformat="B")
+    if unit == "money":
+        _money_axis(fig, "x")
 
 
 def _number_or(value, default: float) -> float:

@@ -26,6 +26,7 @@ from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
 
+from core.context_meter import context_summary, measure_prompt, scale_to_tokens
 from core.observability import extract_token_usage
 
 #: Nodes whose names say nothing to a reader of the timeline. They still count
@@ -54,6 +55,8 @@ class ModelCall:
     total_tokens: int = 0
     cached_tokens: int = 0
     duration_ms: int = 0
+    #: Input tokens by prompt category (see :mod:`core.context_meter`).
+    context: Dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -120,6 +123,7 @@ def build_trace(steps: List[StepTiming], calls: List[ModelCall],
         "models": sorted({c.model for c in calls if c.model}),
         "by_node": by_node,
         "steps": [asdict(step) for step in merge_steps(steps)],
+        "context": context_summary(calls),
     }
 
 
@@ -172,6 +176,21 @@ def _model_of(serialized: Any, metadata: Dict[str, Any]) -> str:
                or kwargs.get("model") or "")
 
 
+def _prompt_chars(messages: Any, invocation_params: Optional[Dict[str, Any]]) -> Dict[str, int]:
+    """What one chat prompt is made of, in characters. Never raises.
+
+    `messages` is LangChain's batch shape (a list of message lists); the tool
+    schemas travel in `invocation_params`, and are as much a part of the prompt
+    as the messages are.
+    """
+    try:
+        flat = [message for batch in messages or [] for message in batch or []]
+        params = invocation_params or {}
+        return measure_prompt(flat, params.get("tools") or params.get("functions"))
+    except Exception:  # pragma: no cover - a meter must not fail the turn
+        return {}
+
+
 class UsageCallbackHandler(BaseCallbackHandler):
     """Records every model call in a turn into a :class:`RunRecorder`.
 
@@ -188,23 +207,28 @@ class UsageCallbackHandler(BaseCallbackHandler):
         self._open: Dict[UUID, tuple] = {}
         self._lock = threading.Lock()
 
-    def _start(self, run_id: UUID, serialized: Any, metadata: Optional[Dict[str, Any]]) -> None:
+    def _start(self, run_id: UUID, serialized: Any, metadata: Optional[Dict[str, Any]],
+               chars: Dict[str, int]) -> None:
         node = str((metadata or {}).get("langgraph_node") or "")
         with self._lock:
             self._open[run_id] = (node, _model_of(serialized, metadata or {}),
-                                  time.perf_counter())
+                                  time.perf_counter(), chars)
 
     def on_chat_model_start(self, serialized: Any, messages: Any, *, run_id: UUID,
                             metadata: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
-        self._start(run_id, serialized, metadata)
+        self._start(run_id, serialized, metadata,
+                    _prompt_chars(messages, kwargs.get("invocation_params")))
 
     def on_llm_start(self, serialized: Any, prompts: Any, *, run_id: UUID,
                      metadata: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
-        self._start(run_id, serialized, metadata)
+        text_chars = sum(len(str(prompt)) for prompt in prompts or [])
+        self._start(run_id, serialized, metadata,
+                    {"question": text_chars} if text_chars else {})
 
     def on_llm_end(self, response: Any, *, run_id: UUID, **kwargs: Any) -> None:
         with self._lock:
-            node, model, began = self._open.pop(run_id, ("", "", time.perf_counter()))
+            node, model, began, chars = self._open.pop(
+                run_id, ("", "", time.perf_counter(), {}))
         usage = _usage_of(response)
         self._recorder.add_call(ModelCall(
             node=node, model=model,
@@ -213,6 +237,7 @@ class UsageCallbackHandler(BaseCallbackHandler):
             total_tokens=usage.get("total_tokens", 0),
             cached_tokens=usage.get("cached_tokens", 0),
             duration_ms=int((time.perf_counter() - began) * 1000),
+            context=scale_to_tokens(chars, usage.get("input_tokens", 0)),
         ))
 
     def on_llm_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:

@@ -303,4 +303,4 @@ def test_premium_is_printed_in_the_reporting_currency():
 
 def test_a_movement_carries_its_sign_outside_the_symbol():
     shown = text_of(contribution_panel(analyse(SINGLE)))
-    assert "-$3.1m" in shown and "$-3.1m" not in shown
+    assert "-$3.1M" in shown and "$-3.1M" not in shown

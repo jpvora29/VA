@@ -115,8 +115,11 @@ def split_sections(markdown: str) -> Tuple[str, List[Section]]:
 UP, DOWN, WARN = "up", "down", "warn"
 
 _PCT = r"\d[\d,]*(?:\.\d+)?%"
-_RISE_WORDS = "grew|grows|rose|rises|increased|increases|gained|gains|up"
-_FALL_WORDS = "fell|falls|dropped|drops|declined|declines|decreased|shrank|lost|down"
+#: "up"/"down" count only as "up by 4%": "make up 72.6% of premium" is a share,
+#: not a rise.
+_RISE_WORDS = r"grew|grows|rose|rises|increased|increases|gained|gains|up(?=\s+by\b)"
+_FALL_WORDS = r"fell|falls|dropped|drops|declined|declines|decreased|shrank|lost|down(?=\s+by\b)"
+_FALLS = frozenset("fell falls dropped drops declined declines decreased shrank lost down".split())
 #: The capitalised name just before a movement verb ("Property grew 60%").
 _SUBJECT = r"(?P<subject>[A-Z][\w&/-]*(?:\s[A-Z][\w&/-]*){0,2})\s+(?:premium\s+)?"
 _VERBED = re.compile(
@@ -125,6 +128,10 @@ _VERBED = re.compile(
 _SIGNED = re.compile(rf"(?<![\w.$])(?P<sign>[+\-−▲▼])\s?(?P<figure>{_PCT})")
 _RANK_MOVE = re.compile(r"from\s+(?:#)?(?P<before>\d+)(?:st|nd|rd|th)?\s+to\s+(?:#)?(?P<after>\d+)"
                         r"(?:st|nd|rd|th)?\b")
+
+
+#: A point that leads with its subject in bold: "**Property** — $8.2M ▲ 14.2%".
+_LEAD_SUBJECT = re.compile(r"^\*\*([^*]+)\*\*")
 
 
 @dataclass(frozen=True)
@@ -141,11 +148,12 @@ def _change_badge(text: str) -> Optional[Badge]:
     if first is None:
         return None
     if first is verbed:
-        up = re.fullmatch(_RISE_WORDS, first.group("verb"), re.I) is not None
+        up = first.group("verb").lower() not in _FALLS
         subject = (first.group("subject") or "").strip()
     else:
         up = first.group("sign") in "+▲"
-        subject = ""
+        lead = _LEAD_SUBJECT.match(_POINT.sub("", text.strip(), count=1))
+        subject = lead.group(1).strip() if lead and len(lead.group(1)) <= 24 else ""
     arrow = "▲" if up else "▼"
     label = f"{subject} {arrow} {first.group('figure')}".strip()
     return Badge(label, UP if up else DOWN)
@@ -170,7 +178,51 @@ def badge_for(section: Section) -> Optional[Badge]:
     """
     if section.tone == RISK:
         return Badge("Watch-out", WARN)
-    return _change_badge(section.body) or _rank_badge(section.body)
+    # The chip belongs to the line the reader sees: the section's lead point.
+    points = split_points(section.body)
+    lead = points[0] if points else section.body
+    return _change_badge(lead) or _rank_badge(lead)
+
+
+_POINT = re.compile(r"^\s{0,3}(?:[-*+]|\d+[.)])\s+")
+#: "### By product", "### By market", "### By industry" — a per-line list the
+#: position table already holds, so it is detail, not a takeaway.
+_PER_LINE = re.compile(r"^by\s+\w+", re.I)
+
+
+def split_points(body: str) -> List[str]:
+    """A section body as its points, in order: list items, paragraphs, tables.
+
+    A list item keeps its continuation lines; a table stays one block. Markers
+    are stripped — the caller decides how the points are drawn.
+    """
+    blocks: List[List[str]] = []
+    kind = ""  # "point" | "para" | "table" — what the open block is
+    for line in (body or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            kind = "" if kind != "point" else "point-gap"
+            continue
+        if _POINT.match(line):
+            blocks.append([_POINT.sub("", line, count=1)])
+            kind = "point"
+        elif stripped.startswith("|"):
+            if kind == "table":
+                blocks[-1].append(stripped)
+            else:
+                blocks.append([stripped])
+                kind = "table"
+        elif kind in ("point", "para"):
+            blocks[-1].append(stripped)
+        else:
+            blocks.append([stripped])
+            kind = "para"
+    return ["\n".join(b) if b[0].startswith("|") else " ".join(b) for b in blocks]
+
+
+def is_per_line(section: Section) -> bool:
+    """A "By product" / "By market" list: one point per line of the table."""
+    return bool(_PER_LINE.match(section.title))
 
 
 def takeaways_and_next_steps(sections: Sequence[Section]) -> Tuple[List[Section], List[Section]]:

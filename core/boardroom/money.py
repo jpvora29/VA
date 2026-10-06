@@ -13,6 +13,8 @@ from typing import Optional
 
 import yaml
 
+from core.analytics.money_units import money_text
+
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -47,7 +49,6 @@ def format_money(value: Optional[float], currency: str = "") -> str:
     except (TypeError, ValueError):
         return "—"
     symbol = _SYMBOLS.get((currency or reporting_currency()).upper(), "")
-    for unit, scale in (("bn", 1e9), ("m", 1e6), ("k", 1e3)):
-        if abs(amount) >= scale:
-            return f"{symbol}{amount / scale:.1f}{unit}"
-    return f"{symbol}{amount:,.0f}"
+    # Millions, or billions from 1bn — never thousands or raw units, so the
+    # board, the slide and the chat state one amount the same way.
+    return money_text(amount, symbol=symbol)

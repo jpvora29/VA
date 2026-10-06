@@ -162,6 +162,11 @@ def format_value(value: float, unit: str) -> str:
     # v5 is replayed with the lower-case units it was stored with.
     scales = ((1e9, "B"), (1e6, "M"), (1e3, "K")) if places == 1 else \
         ((1e9, "bn"), (1e6, "m"), (1e3, "k"))
+    if unit == "currency" and places == 1:
+        # Millions, or billions from $1B — the one rule every surface shares.
+        from core.analytics.money_units import money_text
+
+        return money_text(value)
     if unit == "currency":
         for scale, suffix in scales:
             if abs(value) >= scale:

@@ -82,6 +82,9 @@
 }
 .chatbot-area .welcome-hero::before { display: none; }
 .chatbot-area .welcome-hero.is-leaving { opacity: 0; transform: translateY(-6px); }
+/* A question was sent from the welcome screen: the starters go at once, so the
+   question and the working card sit at the top (assets/chat_experience.js). */
+.chat-viewport.va-sending #chat-box .welcome-hero:not(.va-hero-clone) { display: none !important; }
 
 .welcome-eyebrow {
     display: inline-flex;
@@ -635,6 +638,156 @@
 .run-meta-models { margin-top: 8px; color: var(--va-ink-400); font-size: 11px; }
 .run-meta-empty { color: var(--va-ink-500); font-size: 12px; }
 .run-meta-conversation { color: var(--va-ink-600); font-size: 12px; line-height: 1.5; }
+
+/* ── 5b. The context chip: window fill + what filled it (hover / focus) ───── */
+
+.ctx-meter {
+    position: relative;
+    display: inline-flex;
+    /* Category colours: the validated categorical order, fixed per category so
+       "Rules & skills" is the same orange on every answer. */
+    --ctx-instructions: #2a78d6;
+    --ctx-rules: #eb6834;
+    --ctx-tools: #1baf7a;
+    --ctx-schema: #eda100;
+    --ctx-history: #e87ba4;
+    --ctx-data: #008300;
+    --ctx-working: #4a3aa7;
+    --ctx-question: #e34948;
+    --ctx-free: var(--va-surface-2);
+}
+.ctx-meter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 10px 0 8px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: var(--va-radius-pill);
+    background: var(--va-surface-1);
+    color: var(--va-ink-500);
+    font-size: 11.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    cursor: default;
+    outline: none;
+    transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+.ctx-meter:hover .ctx-meter-chip,
+.ctx-meter-chip:focus-visible {
+    border-color: rgba(11, 75, 255, 0.28);
+    background: var(--va-blue-soft);
+    color: var(--va-blue);
+}
+.ctx-meter-chip:focus-visible { box-shadow: var(--va-focus-ring); }
+.ctx-ring {
+    position: relative;
+    width: 14px;
+    height: 14px;
+    flex: none;
+    border-radius: 50%;
+    background: conic-gradient(var(--va-blue) 0 var(--ctx-fill, 0deg), var(--va-surface-2) 0);
+}
+.ctx-ring::after {
+    /* Punch the centre out so the fill reads as a ring, not a pie. */
+    content: "";
+    position: absolute;
+    inset: 3px;
+    border-radius: 50%;
+    background: var(--va-surface-1);
+}
+.ctx-meter:hover .ctx-ring::after,
+.ctx-meter-chip:focus-visible .ctx-ring::after { background: var(--va-blue-soft); }
+.ctx-ring.is-near-limit {
+    background: conic-gradient(var(--va-warn) 0 var(--ctx-fill, 0deg), var(--va-surface-2) 0);
+}
+.ctx-meter-panel {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 8px);
+    z-index: 30;
+    display: none;
+    width: 400px;
+    padding: 14px 16px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: 14px;
+    background: var(--va-surface-0);
+    box-shadow: var(--va-shadow-lg);
+    /* No entrance motion: a hover panel that fades in reads as lag. */
+}
+.ctx-meter-panel::after {
+    /* Bridges the 8px gap so the pointer can travel from chip to panel. */
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -10px;
+    height: 10px;
+}
+.ctx-meter:hover .ctx-meter-panel,
+.ctx-meter:focus-within .ctx-meter-panel { display: block; }
+.ctx-headline { color: var(--va-ink-700); font-size: 13px; font-variant-numeric: tabular-nums; }
+.ctx-headline strong { color: var(--va-navy); font-size: 15px; font-weight: 800; }
+.ctx-source { margin: 2px 0 12px; color: var(--va-ink-500); font-size: 11.5px; line-height: 1.45; }
+.ctx-caption {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+    font-size: 11px;
+}
+.ctx-caption-label { color: var(--va-ink-700); font-weight: 700; }
+.ctx-caption-detail { color: var(--va-ink-500); font-variant-numeric: tabular-nums; }
+.ctx-bar {
+    display: flex;
+    gap: 2px;
+    height: 8px;
+    margin-bottom: 10px;
+    border-radius: 4px;
+    overflow: hidden;
+}
+.ctx-seg { display: block; min-width: 2px; height: 100%; background: var(--ctx-c); }
+.ctx-rows { display: grid; gap: 4px; margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--va-border-soft); }
+.ctx-row {
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) 84px 84px;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+}
+.ctx-row-head { margin-bottom: 2px; }
+.ctx-col-head {
+    color: var(--va-ink-400);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-align: right;
+    text-transform: uppercase;
+}
+.ctx-dot { width: 8px; height: 8px; border-radius: 2px; background: var(--ctx-c); }
+.ctx-row-label { overflow: hidden; color: var(--va-ink-700); text-overflow: ellipsis; white-space: nowrap; }
+.ctx-cell {
+    display: inline-flex;
+    justify-content: flex-end;
+    gap: 6px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+.ctx-cell-tokens { color: var(--va-ink-700); font-weight: 600; }
+.ctx-cell-share { min-width: 34px; color: var(--va-ink-500); }
+.ctx-cell.is-empty { color: var(--va-ink-300); }
+.ctx-k-instructions { --ctx-c: var(--ctx-instructions); }
+.ctx-k-rules { --ctx-c: var(--ctx-rules); }
+.ctx-k-tools { --ctx-c: var(--ctx-tools); }
+.ctx-k-schema { --ctx-c: var(--ctx-schema); }
+.ctx-k-history { --ctx-c: var(--ctx-history); }
+.ctx-k-data { --ctx-c: var(--ctx-data); }
+.ctx-k-working { --ctx-c: var(--ctx-working); }
+.ctx-k-question { --ctx-c: var(--ctx-question); }
+.ctx-k-free { --ctx-c: var(--ctx-free); box-shadow: inset 0 0 0 1px var(--va-border-mid); }
+@media (max-width: 520px) {
+    .ctx-meter-panel { position: fixed; left: 16px; right: 16px; bottom: 88px; width: auto; }
+}
 
 /* ── Toast ───────────────────────────────────────────────────────────────── */
 
@@ -1264,3 +1417,60 @@
     line-height: 1.55;
 }
 .chatbot-area .answer-next-step ul { margin: 0; padding-left: 18px; }
+
+/* A takeaway's further points and the per-line detail lists: one click away. */
+.takeaway-more { margin-top: 4px; }
+.takeaway-more-toggle,
+.answer-detail-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--va-blue);
+    font-size: 12.5px;
+    font-weight: 650;
+    list-style: none;
+    cursor: pointer;
+}
+.takeaway-more-toggle::-webkit-details-marker,
+.answer-detail-toggle::-webkit-details-marker { display: none; }
+.takeaway-more-toggle .bi,
+.answer-detail-toggle .bi-chevron-down { font-size: 11px; transition: transform 120ms ease; }
+.takeaway-more[open] .takeaway-more-toggle .bi,
+.answer-detail[open] .answer-detail-toggle .bi-chevron-down { transform: rotate(180deg); }
+.chatbot-area .takeaway-more ul { margin-top: 4px; }
+.answer-detail {
+    margin-top: 8px;
+    padding: 10px 14px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: 12px;
+    background: #fbfcfe;
+}
+.answer-detail-toggle { color: var(--va-navy); }
+.answer-detail-toggle .bi-list-ul { color: var(--va-blue); }
+.answer-detail-count { color: var(--va-ink-500); font-weight: 500; }
+.answer-detail-toggle .bi-chevron-down { margin-left: auto; color: var(--va-ink-500); }
+.answer-detail[open] .answer-detail-toggle { margin-bottom: 6px; }
+.chatbot-area .answer-detail ul { margin: 0; padding-left: 18px; }
+.chatbot-area .answer-detail li { padding: 3px 0; font-size: 13px; line-height: 1.5; color: var(--va-ink-700); }
+
+/* Bold is emphasis, not a highlighter: the old red under-band on every bold
+   word read as a link or an error inside the v4 card. */
+.chatbot-area .answer-v4 strong { background: none; padding: 0; color: var(--va-navy); }
+
+/* The summary stacks by ITS width, not the window's: with the rail open the
+   card is narrow on a wide screen, and three stats beside the text squeezed
+   the sentence to a word per line. */
+.chatbot-area .answer-v4 .answer-summary { container-type: inline-size; }
+@container (max-width: 720px) {
+    .answer-summary-row.has-stats { grid-template-columns: 1fr; gap: 14px; }
+    .sum-stats { flex-wrap: wrap; row-gap: 10px; }
+    .sum-stat:first-child { padding-left: 0; border-left: none; }
+    .sum-stat { min-width: 0; padding: 0 18px; }
+}
+
+/* Answer prose arrives as one HTML block (ui/components/answer_markdown.py):
+   a loose list wraps each item in <p>, which must not add paragraph spacing. */
+.chatbot-area .md-block li > p { margin: 0; }
+.chatbot-area .md-block > :last-child { margin-bottom: 0; }
+.chatbot-area .answer-next-step .md-block > ul { margin: 2px 0 0; }
+.chatbot-area .answer-next-step li { padding: 3px 0; }

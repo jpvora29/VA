@@ -78,10 +78,15 @@ _SCANNABLE = """[WRITE FOR AN ICG LEADER — READ IN 30 SECONDS, STUDIED IN 3 MI
 - Open with the EXECUTIVE INSIGHT: one or two sentences on their own, no heading
   above them, that give the answer, its headline number and what it means for
   the business. Bold the key number. A reader who stops here has been answered.
-- Then group the analysis under short labelled headings (###) that name what the
-  group SHOWS: "Where the growth came from", "What held it back", "Against the
-  Marsh book and the peer set". Never a generic label — no "Analysis", "Key
-  insights", "Overview", "Details", "Summary".
+- Then group the analysis under short ### headings that STATE THE FINDING in a
+  few words, the way a reader would say it: "Property is the growth engine",
+  "The book is more concentrated", "Marine needs a separate review". No figures
+  in a heading, and never a generic label — no "Analysis", "Key insights",
+  "Overview", "Details", "Summary". Each heading is shown as one numbered key
+  takeaway.
+- The FIRST point under each heading is that takeaway in one sentence, with its
+  headline number ("$6.0M of the $9.0M increase came from Property"). The points
+  after it are supporting detail, which the reader opens on demand.
 - Inside a group write POINTS, not paragraphs. One idea per point, leading with
   the thing it is about and its number, and ENDING WITH WHAT IT MEANS:
   "**Property** — $8.2M, up 14%, the only line growing faster than the Marsh
@@ -137,7 +142,9 @@ _BY_LINE = """[BY PRODUCT — whenever the brief holds per-line positions]
 
 [NUMBERS]
 - Every percentage, and every money figure in millions, with ONE decimal:
-  "$8.2M", "41.5%", "▲ 3.0pp". Copy the brief's figure, rounded to one decimal."""
+  "$8.2M", "$0.4M", "41.5%", "▲ 3.0pp". Billions only from $1B ("$1.3B");
+  never thousands ("K") and never a raw dollar amount. Copy the brief's
+  figure, rounded to one decimal."""
 
 
 @dataclass(frozen=True)

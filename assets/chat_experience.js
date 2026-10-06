@@ -168,6 +168,9 @@
         pending = null;
         clearInterval(gone.timer);
         clearTimeout(gone.guard);
+        // A send that never became a turn (empty box, server refused): the
+        // welcome screen comes back rather than leaving a blank page.
+        if (realHero() && !document.querySelector("#chat-box .turn")) { showWelcomeAgain(); }
         if (immediate || REDUCED) {
             gone.el.remove();
             return;
@@ -176,9 +179,30 @@
         setTimeout(function () { gone.el.remove(); }, 180);
     }
 
+    // The welcome screen goes the moment a question is sent. Marked on the
+    // VIEWPORT, not on the hero: the hero is a Dash component, and the
+    // re-render that follows a send reset its class, so the starters stayed on
+    // screen above the question until the answer replaced them.
     function hideWelcomeInstantly() {
-        var hero = document.querySelector("#chat-box .welcome-hero");
-        if (hero) { hero.classList.add("is-leaving"); }
+        var viewport = $("chat-viewport");
+        if (viewport && realHero()) { viewport.classList.add("va-sending"); }
+    }
+
+    function showWelcomeAgain() {
+        var viewport = $("chat-viewport");
+        if (viewport) { viewport.classList.remove("va-sending"); }
+    }
+
+    // The run is over but its answer is still being drawn (charts, tables):
+    // the card stays, saying so, until the answer is on the page. Removing it
+    // when the run ended left the reader looking at their own question for
+    // as long as the render took.
+    function finishPending() {
+        if (!pending) { return; }
+        pushStep("Preparing your answer");
+        pending.finishing = true;
+        clearTimeout(pending.guard);
+        pending.guard = setTimeout(function () { clearPending(); }, 15000);
     }
 
     // The server's status line is the only source of step names.
@@ -202,7 +226,7 @@
                 if (!pending) { showPending(""); }
                 pending.started = true;
             }
-            if (!now && was) { clearPending(); }
+            if (!now && was) { finishPending(); }
             was = now;
         }).observe(stop, { attributes: true, attributeFilter: ["style", "class"] });
     }
@@ -419,9 +443,11 @@
                 pending.el.classList.add("is-finishing");
                 if (pending.bubble) { pending.bubble.remove(); pending.bubble = null; }
             }
-            // The server rendered the answer (or a clarify card): the working
-            // card has done its job even if the stop button has not flipped yet.
-            if (pending && pending.started && !thinking()) { clearPending(); }
+            if (!realHero()) { showWelcomeAgain(); }
+            // The answer (or a clarify card, or an error — all assistant turns)
+            // is on the page: the working card has done its job.
+            if (pending && pending.started && !thinking() &&
+                    turnCount(".turn-assistant") > pending.answers) { clearPending(); }
         }
     }
 
@@ -471,10 +497,21 @@
             return;
         }
 
+        if (target.closest("#stop-btn")) { clearPending(); return; }
+
         if (target.closest("#new-chat-btn")) { beginSwitch("new"); return; }
 
         var del = target.closest('[id*="conv-del"]');
-        if (del) { return; }
+        if (del) {
+            // Deleting the chat you are reading lands you on a new chat at
+            // once (the same instant welcome screen as New chat), rather than
+            // leaving the deleted transcript on the page.
+            var newChat = $("new-chat-btn");
+            if (del.closest(".conv-item-active") && newChat) {
+                setTimeout(function () { newChat.click(); }, 0);
+            }
+            return;
+        }
         var conv = target.closest('[id*="conv-item"]');
         if (conv && !conv.closest(".conv-item-active")) {
             markActive(conv);
