@@ -496,7 +496,9 @@
         }
         var box = $("user-input");
         if (!box || !isVisible(box)) { return; }
-        if ((event.ctrlKey || event.metaKey) && (event.key === "k" || event.key === "K")) {
+        // Shift+Esc focuses the composer (Ctrl+K searches the chat list —
+        // assets/chat_sidebar.js).
+        if (event.key === "Escape" && event.shiftKey) {
             event.preventDefault();
             box.focus();
             return;

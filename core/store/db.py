@@ -74,6 +74,8 @@ conversations = Table(
     Column("user_id", Integer, ForeignKey("users.id"), nullable=False, index=True),
     Column("title", String, nullable=False, default=""),
     Column("data", Text, nullable=False, default="{}"),  # JSON chat-store blob
+    # 0/1: kept at the top of the sidebar, out of the date groups.
+    Column("pinned", Integer, nullable=False, server_default="0"),
     Column("created_at", DateTime, server_default=func.now()),
     Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
 )
@@ -185,32 +187,37 @@ turn_traces = Table(
 )
 
 
-#: Columns added to `users` after the table shipped. ``create_all`` only creates
-#: missing TABLES, so a database written before SSO existed keeps the old three
-#: columns and every query naming a new one fails — on an app whose whole state
+#: Columns added to existing tables after they shipped. ``create_all`` only creates
+#: missing TABLES, so a database written before a column existed keeps the old
+#: shape and every query naming the new one fails — on an app whose whole state
 #: lives in one long-lived SQLite file, that is a crash on upgrade rather than a
 #: theoretical one. SQLite's ADD COLUMN is cheap and idempotent here.
-_USER_COLUMNS_ADDED = (("display_name", "TEXT"), ("subject", "TEXT"))
+_COLUMNS_ADDED = {
+    "users": (("display_name", "TEXT"), ("subject", "TEXT")),
+    "conversations": (("pinned", "INTEGER NOT NULL DEFAULT 0"),),
+}
 
 
-def _add_missing_user_columns() -> None:
-    """Bring an existing ``users`` table up to the current schema."""
+def _add_missing_columns() -> None:
+    """Bring existing tables up to the current schema."""
     from sqlalchemy import inspect, text
 
     inspector = inspect(app_engine)
-    if "users" not in inspector.get_table_names():
-        return
-    present = {c["name"] for c in inspector.get_columns("users")}
+    tables = set(inspector.get_table_names())
     with app_engine.begin() as conn:
-        for name, sql_type in _USER_COLUMNS_ADDED:
-            if name not in present:
-                conn.execute(text(f"ALTER TABLE users ADD COLUMN {name} {sql_type}"))
+        for table, columns in _COLUMNS_ADDED.items():
+            if table not in tables:
+                continue
+            present = {c["name"] for c in inspector.get_columns(table)}
+            for name, sql_type in columns:
+                if name not in present:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
 
 
 def init_db() -> None:
     """Create all app-state tables if they don't yet exist (idempotent)."""
     metadata.create_all(app_engine)
-    _add_missing_user_columns()
+    _add_missing_columns()
 
 
 # Create tables eagerly on import so any first caller finds a ready schema.

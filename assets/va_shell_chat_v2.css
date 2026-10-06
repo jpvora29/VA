@@ -56,10 +56,12 @@
     min-height: 0;
     justify-content: flex-start;
 }
+/* The composer sits under the starters, not against them: a clear gap that
+   grows with the window, so the last row of cards never reads as part of it. */
 .chatbot-area .chat-column:has(#chat-box .welcome-hero) .input-area {
     background: transparent;
     border-top: none;
-    padding-top: 6px;
+    padding-top: clamp(32px, 6vh, 64px);
     padding-bottom: 28px;
 }
 .chatbot-area .chat-column:has(#chat-box .welcome-hero) .type-area,

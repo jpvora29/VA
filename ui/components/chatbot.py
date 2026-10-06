@@ -703,7 +703,7 @@ def composer_hints():
         [
             html.Span(
                 [key("Enter", "send"), key("Shift + Enter", "new line"),
-                 key("/", "commands"), key("Ctrl + K", "focus")],
+                 key("/", "commands"), key("Ctrl + K", "search chats")],
                 className="composer-hints-keys",
             ),
             html.Span("Virtual Analyst can make mistakes. Verify important figures.",

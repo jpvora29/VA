@@ -85,6 +85,7 @@ from core.store.conversations import (
     load_conversation,
     delete_conversation,
     save_chat_edit,
+    toggle_conversation_pin,
 )
 from core.memory.episodic import episodic_store
 from core.memory import semantic
@@ -1545,14 +1546,14 @@ def refresh_sidebar(
     if user_id is None:
         return no_update
     conversations = list_conversations(user_id)
-    signature = (active_id, tuple((c["id"], c["title"]) for c in conversations))
+    signature = (active_id, tuple((c["id"], c["title"], c["pinned"]) for c in conversations))
     if _SIDEBAR_SIGNATURE.get(user_id) == signature and ctx.triggered_id == "chat-store":
         return no_update
     _SIDEBAR_SIGNATURE[user_id] = signature
     return conversation_list_children(conversations, active_id)
 
 
-#: The last sidebar each user was sent: (active id, (id, title) pairs).
+#: The last sidebar each user was sent: (active id, (id, title, pinned) rows).
 _SIDEBAR_SIGNATURE: dict = {}
 
 
@@ -1634,6 +1635,30 @@ def delete_conversation_cb(
     if conv_id == active_id:
         return items, {}, None, no_update
     return items, no_update, no_update, no_update
+
+
+@callback(
+    Output("conversation-list", "children", allow_duplicate=True),
+    Input({"type": "conv-pin", "id": ALL}, "n_clicks"),
+    State("user-store", "data"),
+    State("active-conversation", "data"),
+    prevent_initial_call=True,
+)
+def toggle_pin_cb(
+    n_clicks_list: list[int | None],
+    user_store: dict[str, Any],
+    active_id: str | None,
+) -> Any:
+    """Pin or unpin a chat from its row menu, then redraw the grouped list."""
+    triggered = ctx.triggered_id
+    triggered_value = ctx.triggered[0]["value"] if ctx.triggered else None
+    if not isinstance(triggered, dict) or not triggered_value:
+        return no_update
+    user_id, _ = _current_user(user_store)
+    conv_id = triggered.get("id")
+    if user_id is None or not conv_id or not toggle_conversation_pin(user_id, conv_id):
+        return no_update
+    return conversation_list_children(list_conversations(user_id), active_id)
 
 
 # Rail collapse used to live here, chat-only and clientside. It is app-wide now —

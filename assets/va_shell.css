@@ -503,10 +503,315 @@ body {
     padding: 0 8px 8px;
 }
 
+/* The rail BODY scrolls, not the list: a list that scrolled itself would clip
+   the row menus that drop below the last rows. */
 .va-rail.app-sidebar .conversation-list {
-    flex: 1 1 auto;
-    min-height: 0;
+    flex: 0 0 auto;
+    padding: 0 8px 8px;
+    overflow: visible;
 }
+
+/* New chat is the rail's one primary action: the brand blue, not navy. */
+.va-rail.app-sidebar .new-chat-btn {
+    gap: 10px;
+    padding: 10px 14px !important;
+    border-radius: 12px !important;
+    background: var(--va-blue) !important;
+    box-shadow: 0 6px 16px rgba(11, 75, 255, 0.24) !important;
+    font-size: 14px;
+    font-weight: 700;
+}
+.va-rail.app-sidebar .new-chat-btn:hover {
+    background: #0940d9 !important;
+    box-shadow: 0 10px 22px rgba(11, 75, 255, 0.30) !important;
+}
+
+/* Search: a field with the shortcut that reaches it written inside it. */
+.va-rail.app-sidebar .conv-search {
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin: 0 8px 10px;
+}
+.va-rail.app-sidebar .conv-search-icon {
+    position: absolute;
+    left: 12px;
+    z-index: 2;  /* above Dash 3's input, which sets z-index: 1 */
+    color: var(--va-ink-400);
+    font-size: 13.5px;
+    pointer-events: none;
+}
+/* Dash 3 wraps the field: the wrapper carries the class, the input the look. */
+/* Dash 3 gives the wrapper a fixed 34px height and overflow: hidden, which
+   clipped the 38px field's bottom border. */
+.va-rail.app-sidebar .conv-search > .conv-search-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    box-shadow: none;
+    overflow: visible;
+}
+.va-rail.app-sidebar .conv-search input {
+    width: 100%;
+    height: 38px;
+    padding: 0 58px 0 34px;
+    border: 1px solid var(--va-border-mid);
+    border-radius: 10px;
+    background: var(--va-surface-0);
+    color: var(--va-ink-800);
+    font-size: 13px;
+    outline: none;
+    transition: border-color var(--va-transition-fast), box-shadow var(--va-transition-fast);
+}
+.va-rail.app-sidebar .conv-search input::placeholder { color: var(--va-ink-400); }
+.va-rail.app-sidebar .conv-search input::-webkit-search-cancel-button { display: none; }
+.va-rail.app-sidebar .conv-search input:focus {
+    border-color: rgba(11, 75, 255, 0.45);
+    box-shadow: var(--va-focus-ring);
+}
+.va-rail.app-sidebar .conv-search-kbd {
+    position: absolute;
+    right: 8px;
+    z-index: 2;
+    padding: 2px 6px;
+    border: 1px solid var(--va-border-mid);
+    border-radius: 6px;
+    background: var(--va-surface-1);
+    color: var(--va-ink-500);
+    font: 600 10.5px/1.4 var(--va-font);
+    pointer-events: none;
+}
+.va-rail.app-sidebar .conv-search:focus-within .conv-search-kbd { opacity: 0; }
+.va-rail.app-sidebar .conv-search-empty {
+    display: none;
+    padding: 4px 18px 12px;
+    color: var(--va-ink-400);
+    font-size: 12.5px;
+}
+.va-rail.app-sidebar.is-search-empty .conv-search-empty { display: block; }
+
+/* Groups: PINNED, then TODAY · OCT 6, 2026 and on back, a hairline between. */
+.va-rail.app-sidebar .va-rail-section { border-bottom: 1px solid var(--va-border-soft); }
+.va-rail.app-sidebar .conv-group { padding-top: 10px; }
+.va-rail.app-sidebar .conv-group + .conv-group { border-top: 1px solid var(--va-border-soft); }
+.va-rail.app-sidebar .conv-group[hidden] { display: none; }
+.va-rail.app-sidebar .conv-group-label {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 4px 10px 6px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.va-rail.app-sidebar .conv-group-name { color: var(--va-ink-500); }
+.va-rail.app-sidebar .conv-group-date { color: var(--va-ink-400); font-weight: 600; }
+
+/* A row: icon, title over "2:14 PM · Just now", and a "..." that appears on
+   hover, on focus, and always on the open chat. */
+.va-rail.app-sidebar .conv-item {
+    position: relative;
+    margin-bottom: 2px;
+    border-radius: 10px;
+}
+.va-rail.app-sidebar .conv-item[hidden] { display: none; }
+.va-rail.app-sidebar .conv-item:hover { background: var(--va-surface-1); }
+.va-rail.app-sidebar .conv-item-active,
+.va-rail.app-sidebar .conv-item-active:hover { background: var(--va-blue-soft); }
+.va-rail.app-sidebar .conv-item-active::before {
+    content: "";
+    position: absolute;
+    left: -8px;
+    top: 6px;
+    bottom: 6px;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: var(--va-blue);
+}
+.va-rail.app-sidebar .conv-item-open {
+    align-items: flex-start;
+    gap: 11px;
+    padding: 9px 4px 9px 10px;
+    color: var(--va-ink-700);
+}
+.va-rail.app-sidebar .conv-item-icon {
+    margin-top: 1px;
+    color: var(--va-ink-400);
+    font-size: 15px;
+}
+.va-rail.app-sidebar .conv-item-title {
+    display: block;
+    color: var(--va-ink-800);
+    font-size: 13.5px;
+    font-weight: 500;
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.va-rail.app-sidebar .conv-item-active .conv-item-title { color: var(--va-navy); font-weight: 700; }
+.va-rail.app-sidebar .conv-item-active .conv-item-icon { color: var(--va-blue); }
+.va-rail.app-sidebar .conv-item-when {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+    color: var(--va-ink-400);
+    font-size: 11.5px;
+    font-weight: 500;
+}
+.va-rail.app-sidebar .conv-item-pinned .conv-item-open { align-items: center; }
+
+.va-rail.app-sidebar .conv-item-actions {
+    position: relative;
+    flex: 0 0 auto;
+    align-self: center;
+    outline: none;
+}
+.va-rail.app-sidebar .conv-item-more {
+    width: 28px;
+    height: 28px;
+    margin-right: 6px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--va-ink-500);
+    font-size: 15px;
+    line-height: 1;
+    opacity: 0;
+    cursor: pointer;
+    transition: opacity var(--va-transition-fast), background var(--va-transition-fast);
+}
+.va-rail.app-sidebar .conv-item:hover .conv-item-more,
+.va-rail.app-sidebar .conv-item-active .conv-item-more,
+.va-rail.app-sidebar .conv-item-actions:focus-within .conv-item-more { opacity: 1; }
+.va-rail.app-sidebar .conv-item-more:hover,
+.va-rail.app-sidebar .conv-item-actions:focus-within .conv-item-more {
+    background: rgba(10, 22, 54, 0.07);
+    color: var(--va-navy);
+}
+.va-rail.app-sidebar .conv-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 6px;
+    z-index: 30;
+    display: none;
+    min-width: 148px;
+    padding: 5px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: 12px;
+    background: var(--va-surface-0);
+    box-shadow: var(--va-shadow-md);
+}
+.va-rail.app-sidebar .conv-item-actions:focus-within .conv-menu { display: block; }
+.va-rail.app-sidebar .conv-item-actions.opens-up .conv-menu { top: auto; bottom: calc(100% + 4px); }
+.va-rail.app-sidebar .conv-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 7px 10px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--va-ink-700);
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+}
+.va-rail.app-sidebar .conv-menu-item:hover { background: var(--va-surface-1); color: var(--va-navy); }
+.va-rail.app-sidebar .conv-menu-item .bi { font-size: 14px; color: var(--va-ink-400); }
+.va-rail.app-sidebar .conv-menu-danger:hover { background: rgba(214, 48, 49, 0.08); color: var(--va-danger); }
+.va-rail.app-sidebar .conv-menu-danger:hover .bi { color: var(--va-danger); }
+
+/* Help & shortcuts: the rail's foot, opening a card upward. */
+.va-rail.app-sidebar .va-rail-foot { padding: 8px; }
+.va-rail.app-sidebar .sidebar-help { position: relative; outline: none; }
+.va-rail.app-sidebar .help-toggle {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    width: 100%;
+    padding: 9px 10px;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--va-ink-700);
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.va-rail.app-sidebar .help-toggle .bi { font-size: 16px; color: var(--va-ink-400); }
+.va-rail.app-sidebar .help-label { flex: 1 1 auto; text-align: left; white-space: nowrap; }
+.va-rail.app-sidebar .help-chevron { font-size: 12px !important; transition: transform var(--va-transition-fast); }
+.va-rail.app-sidebar .help-toggle:hover,
+.va-rail.app-sidebar .sidebar-help:focus-within .help-toggle { background: var(--va-surface-1); color: var(--va-navy); }
+.va-rail.app-sidebar .sidebar-help:focus-within .help-chevron { transform: rotate(-90deg); }
+.va-rail.app-sidebar .help-card {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(100% + 6px);
+    z-index: 30;
+    display: none;
+    padding: 10px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: 12px;
+    background: var(--va-surface-0);
+    box-shadow: var(--va-shadow-md);
+}
+.va-rail.app-sidebar .sidebar-help:focus-within .help-card { display: block; }
+.va-rail.app-sidebar .help-card-title {
+    margin: 0 2px 6px;
+    color: var(--va-ink-500);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.va-rail.app-sidebar .help-shortcut {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 5px 2px;
+    color: var(--va-ink-700);
+    font-size: 12.5px;
+}
+.va-rail.app-sidebar .help-shortcut kbd {
+    padding: 1px 6px;
+    border: 1px solid var(--va-border-mid);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    background: var(--va-surface-1);
+    color: var(--va-ink-600);
+    font: 600 10.5px/1.4 var(--va-font);
+    white-space: nowrap;
+}
+.va-rail.app-sidebar .help-tour {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--va-border-mid);
+    border-radius: 9px;
+    background: var(--va-surface-0);
+    color: var(--va-blue);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.va-rail.app-sidebar .help-tour:hover { background: var(--va-blue-soft); }
 
 /* ── the collapsed rail — the app's default state ──────────────────────────
    ONE class on the pane container narrows every workspace's rail at once, which
@@ -612,6 +917,27 @@ body {
 .va-rails-collapsed .conv-item-del,
 .va-rails-collapsed .sidebar-empty {
     display: none;
+}
+
+/* Collapsed, the Chatbot rail keeps its icons only: no search field (Ctrl K
+   opens the rail and lands in it), and the help foot is its glyph. */
+.va-rails-collapsed .app-sidebar .conv-search,
+.va-rails-collapsed .app-sidebar .conv-search-empty,
+.va-rails-collapsed .app-sidebar .help-label,
+.va-rails-collapsed .app-sidebar .help-chevron {
+    display: none !important;
+}
+.va-rails-collapsed .app-sidebar .va-rail-foot { padding: 8px 6px; }
+.va-rails-collapsed .app-sidebar .help-toggle {
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    margin: 0 auto;
+    padding: 0;
+}
+.va-rails-collapsed .app-sidebar .help-toggle .bi { font-size: 18px; }
+.va-rails-collapsed .app-sidebar .help-card {
+    display: none !important;
 }
 
 /* One active row, one look. The Chatbot's rail used a grey pill plus a navy

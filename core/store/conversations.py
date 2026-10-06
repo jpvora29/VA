@@ -34,7 +34,11 @@ def _derive_title(chat_history: dict[str, Any]) -> str:
 
 
 def list_conversations(user_id: int | str) -> list[dict[str, Any]]:
-    """Conversations for a user, newest-updated first: ``[{id, title, updated_at}]``."""
+    """Conversations for a user, newest-updated first.
+
+    ``[{id, title, updated_at, pinned}]`` — ``updated_at`` is SQLite's
+    ``CURRENT_TIMESTAMP``, i.e. UTC with no offset written on it.
+    """
     try:
         uid = int(user_id)
     except (TypeError, ValueError):
@@ -45,14 +49,37 @@ def list_conversations(user_id: int | str) -> list[dict[str, Any]]:
                 conversations.c.id,
                 conversations.c.title,
                 conversations.c.updated_at,
+                conversations.c.pinned,
             )
             .where(conversations.c.user_id == uid)
             .order_by(conversations.c.updated_at.desc())
         ).all()
     return [
-        {"id": r.id, "title": r.title or "New chat", "updated_at": str(r.updated_at)}
+        {"id": r.id, "title": r.title or "New chat", "updated_at": str(r.updated_at),
+         "pinned": bool(r.pinned)}
         for r in rows
     ]
+
+
+def toggle_conversation_pin(user_id: int | str, conv_id: str) -> bool:
+    """Flip a conversation's pin. Returns True when a row owned by the user changed.
+
+    ``updated_at`` is written back to itself: pinning is not activity, and
+    letting the column's ``onupdate`` fire would move the chat to "Today".
+    """
+    from sqlalchemy import update
+
+    try:
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        return False
+    stmt = (
+        update(conversations)
+        .where((conversations.c.id == conv_id) & (conversations.c.user_id == uid))
+        .values(pinned=1 - conversations.c.pinned, updated_at=conversations.c.updated_at)
+    )
+    with app_engine.begin() as conn:
+        return conn.execute(stmt).rowcount == 1
 
 
 def save_conversation(
