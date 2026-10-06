@@ -18,6 +18,7 @@ import os
 import shutil
 import stat
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Set
 
@@ -30,6 +31,13 @@ DOC_RENDER_VERSION = "ppt-rendered-background-v3-billions"
 
 
 def _sha1_file(path: str) -> str:
+    """The file's content hash — read once per version of the file, not per lookup."""
+    st = Path(path).stat()
+    return _sha1_content(str(path), st.st_mtime_ns, st.st_size)
+
+
+@lru_cache(maxsize=64)
+def _sha1_content(path: str, _mtime_ns: int, _size: int) -> str:
     h = hashlib.sha1()
     with Path(path).open("rb") as fh:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
@@ -163,7 +171,10 @@ def _render_with_powerpoint(pptx_path: str, out_dir: Path, slide_count: int, wid
         except Exception:
             pass
         try:
-            if app is not None:
+            # PowerPoint is single-instance: this may be the author's own PowerPoint (or
+            # the edit renderer's, studio/template_fill/ppt_renderer.py). Quit only an
+            # invisible instance with nothing left open.
+            if app is not None and not app.Visible and int(app.Presentations.Count) == 0:
                 app.Quit()
         except Exception:
             pass
@@ -418,7 +429,13 @@ def _remove(path: Path) -> bool:
         return False
 
 
-def _prune_doc_renders(template_dir: Path, keep: int = 1) -> int:
+#: Edited-slide renders kept per deck (studio/template_fill/edited_render.py) — one per
+#: wording of a page, so an author's undo/redo stays instant without growing forever.
+KEEP_EDITED_RENDERS = 40
+
+
+def _prune_doc_renders(template_dir: Path, keep: int = 1, *,
+                       subdir: str = "doc-backgrounds") -> int:
     """Drop all but the ``keep`` newest filled-document renders under one template.
 
     The source templates' own directories survive :func:`prune_cache` — they are six
@@ -426,7 +443,7 @@ def _prune_doc_renders(template_dir: Path, keep: int = 1) -> int:
     another full render inside one of them, keyed by the values it was rendered from. So
     the kept directory is trimmed from the inside as well.
     """
-    parent = template_dir / "doc-backgrounds"
+    parent = template_dir / subdir
     if not parent.is_dir():
         return 0
     renders = sorted((d for d in parent.iterdir() if d.is_dir()),
@@ -449,6 +466,7 @@ def prune_cache(keep_paths: Iterable[str] = ()) -> int:
             continue
         if child.name in keep:
             removed += _prune_doc_renders(child)
+            removed += _prune_doc_renders(child, KEEP_EDITED_RENDERS, subdir="edited")
             continue
         removed += int(_remove(child))
     if removed:

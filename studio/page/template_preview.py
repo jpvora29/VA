@@ -19,6 +19,7 @@ from studio.template_fill import registry
 from studio.template_fill import validate as TV
 from studio.template_fill.fill import _label_subs
 from studio.template_fill import text_edits as TE
+from studio.template_fill.edited_render import edited_slide_url, slide_edits as edits_on_page
 from studio.page import template_editor as TED
 from studio.template_fill.model import materialize_fields
 from studio.template_fill.preview_assets import cached_doc_backgrounds, public_url_exists
@@ -150,6 +151,41 @@ def _number_label(scheme: str, n: int) -> str:
     return f"{base}."
 
 
+# Office names a font's weight in its face: "Georgia Pro Light", "Segoe UI Semibold". A
+# browser knows the FAMILY ("Georgia Pro") and a numeric weight, not that name — asked for
+# "Georgia Pro Light" it fell back to bold Arial, which is the heavy sans-serif KPI the
+# author saw while typing over a light serif one.
+_FACE_WEIGHTS = (("extralight", 200), ("ultralight", 200), ("semilight", 350),
+                 ("light", 300), ("semibold", 600), ("demibold", 600), ("extrabold", 800),
+                 ("black", 900), ("heavy", 900), ("medium", 500), ("thin", 100))
+_SERIF_WORDS = ("georgia", "times", "garamond", "cambria", "serif", "book antiqua",
+                "palatino", "baskerville", "caslon", "didot", "bodoni", "century")
+
+
+def font_css(face: Optional[str], bold: bool) -> Dict[str, str]:
+    """``fontFamily`` + ``fontWeight`` for an Office face name and its bold flag.
+
+    A weighted face keeps its own weight and bold steps it up by one notch, the way
+    Office emboldens a light face (it does not jump to the family's black).
+    """
+    css = {"fontWeight": "700" if bold else "400"}
+    if not face:
+        return css
+    family, weight = face, None
+    lowered = face.lower()
+    for word, value in _FACE_WEIGHTS:
+        if lowered.endswith(" " + word):
+            family, weight = face[: -len(word) - 1].strip(), value
+            break
+    if weight is not None:
+        css["fontWeight"] = str(min(weight + 200, 900) if bold else weight)
+    generic = "serif" if any(w in lowered for w in _SERIF_WORDS) else "sans-serif"
+    fallback = "Georgia" if generic == "serif" else "Arial"
+    names = [f"'{face}'"] + ([f"'{family}'"] if family != face else []) + [fallback, generic]
+    css["fontFamily"] = ", ".join(names)
+    return css
+
+
 def _line_css(ps, px_per_pt: float, starts: bool, first: bool, ends: bool) -> Dict[str, str]:
     """The inline style that makes one retyped line look like its paragraph."""
     css: Dict[str, str] = {}
@@ -157,9 +193,7 @@ def _line_css(ps, px_per_pt: float, starts: bool, first: bool, ends: bool) -> Di
         css["fontSize"] = f"{ps.size_pt * px_per_pt:.2f}px"
     if ps.color:
         css["color"] = f"#{ps.color}"
-    if ps.font_face:
-        css["fontFamily"] = f"'{ps.font_face}', Arial, sans-serif"
-    css["fontWeight"] = "700" if ps.bold else "400"
+    css.update(font_css(ps.font_face, bool(ps.bold)))
     css["fontStyle"] = "italic" if ps.italic else "normal"
     if ps.align:
         css["textAlign"] = ps.align
@@ -442,10 +476,7 @@ def _editable_box(shape, slide, slide_idx, edits, selected, style, font_px,
     style["--qs-tf-paper"], style["--qs-tf-ink"] = paper, ink
     if font_px:
         style["fontSize"] = f"{font_px:.1f}px"
-    if shape.font_face:
-        style["fontFamily"] = f"{shape.font_face}, Arial, sans-serif"
-    if shape.bold:
-        style["fontWeight"] = "700"
+    style.update(font_css(shape.font_face, bool(shape.bold)))
     if shape.italic:
         style["fontStyle"] = "italic"
     if shape.align:
@@ -604,10 +635,7 @@ def _render_shape(shape, fields_by_target, scale, slide_idx, values, subs, *,
         font_px = _font_px(shape, scale, w_px, h_px, rendered_background=rendered_background)
         if font_px:
             style["fontSize"] = f"{font_px:.1f}px"
-        if shape.font_face:
-            style["fontFamily"] = f"{shape.font_face}, Arial, sans-serif"
-        if shape.bold:
-            style["fontWeight"] = "700"
+        style.update(font_css(shape.font_face, bool(shape.bold)))
         if shape.italic:
             style["fontStyle"] = "italic"
         if shape.align:
@@ -885,6 +913,26 @@ def _filmstrip(template, order: Sequence[int], pos: int,
     return html.Div(thumbs, className="qs-tf-strip", **{"aria-label": "Slides"})
 
 
+def _with_edited_renders(tdoc: Mapping[str, Any], edits: Mapping[str, Any], idx: int,
+                         urls: Sequence[Optional[str]]) -> Tuple[List[Optional[str]], bool]:
+    """``urls`` with every edited page swapped for its render WITH the edits.
+
+    The page on screen is rendered if it has to be (about a second and a half of
+    PowerPoint, once per wording); the filmstrip only takes renders already cached.
+    Returns the urls and whether page ``idx`` now shows its edits exactly.
+    """
+    out = list(urls)
+    path, count = tdoc["template_path"], len(urls)
+    pages = {a.slide_idx for key in edits if (a := TE.parse_address(key))}
+    for page in sorted(pages):
+        if 0 <= page < count:
+            url = edited_slide_url(path, edits, page, count, render=page == idx)
+            out[page] = url or out[page]
+            if page == idx and url is None:
+                return out, False
+    return out, idx in pages
+
+
 def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> html.Div:
     template, _ = registry.derive_manifest(tdoc["template_path"])
     fields = materialize_fields(dict(tdoc))
@@ -914,6 +962,16 @@ def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> h
     if tdoc.get("assembled") and not rendered_urls[idx]:
         rendered_urls = _render_on_demand(tdoc, idx, len(template.slides), rendered_urls)
 
+    # Committed edits are shown as PowerPoint draws them, not as HTML laid over the
+    # unedited render (studio/template_fill/edited_render.py). Boxes whose edits are in
+    # the picture are then drawn as plain click targets.
+    edits = TE.text_edits(tdoc)
+    drawn_edits = edits
+    if tdoc.get("assembled") and edits and rendered_urls[idx]:
+        rendered_urls, exact = _with_edited_renders(tdoc, edits, idx, rendered_urls)
+        if exact:
+            drawn_edits = {k: v for k, v in edits.items() if k not in edits_on_page(edits, idx)}
+
     scale = PREVIEW_W / float(template.width_emu or 12192000)
     height = template.height_emu * scale
     values = dict(tdoc.get("values", {}))
@@ -923,12 +981,11 @@ def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> h
 
     background_url = rendered_urls[idx] if idx < len(rendered_urls) else getattr(slide, "background_url", None)
     rendered_background = bool(background_url)
-    edits = TE.text_edits(tdoc)
     selected_key = str(view.get("tf_sel") or "") or None
     shapes = [
         s for s in (
             _render_shape(sh, by_target, scale, idx, values, subs,
-                          rendered_background=rendered_background, edits=edits,
+                          rendered_background=rendered_background, edits=drawn_edits,
                           slide=slide, selected_key=selected_key)
             for sh in slide.shapes
         )

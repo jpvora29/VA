@@ -241,7 +241,10 @@ def test_an_unedited_slide_draws_nothing_over_the_render(template):
     assert "is-edited" not in _classes(body)
 
 
-def test_the_canvas_reflects_what_was_typed(template):
+def test_the_canvas_reflects_what_was_typed(template, monkeypatch):
+    """Without a renderer the canvas draws the edit itself; with one, PowerPoint draws it
+    (tests/test_studio_retype_formatting.py)."""
+    monkeypatch.setattr(TP, "edited_slide_url", lambda *a, **k: None)
     slide, _shape, block = _prose_box(template)
     tdoc = TE.set_text_edit(
         _rendered_tdoc(), block.address.key,

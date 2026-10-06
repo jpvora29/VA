@@ -177,6 +177,8 @@ def _walk(node):
 def test_the_canvas_draws_retyped_lines_in_their_paragraph_s_style(deck, monkeypatch):
     path, shape_id = deck
     monkeypatch.setattr(TP, "public_url_exists", lambda url: True)
+    # No renderer: the canvas draws the edit itself (the exact render is tested below).
+    monkeypatch.setattr(TP, "edited_slide_url", lambda *a, **k: None)
     tdoc = {
         "template_path": str(path), "values": {}, "manifest": [], "hidden": [], "order": [0],
         "assembled": True, "background_urls": ["/assets/render-0.png"],
@@ -227,6 +229,7 @@ def test_a_retyped_kpi_draws_on_its_own_tile_not_the_slide(kpi_deck, monkeypatch
     so light tile text vanished on a pale box over the tile's icon, at the cell's edge."""
     path, shape_id = kpi_deck
     monkeypatch.setattr(TP, "public_url_exists", lambda url: True)
+    monkeypatch.setattr(TP, "edited_slide_url", lambda *a, **k: None)   # no renderer
     tdoc = {
         "template_path": str(path), "values": {}, "manifest": [], "hidden": [], "order": [0],
         "assembled": True, "background_urls": ["/assets/render-0.png"],
@@ -248,3 +251,126 @@ def test_a_retyped_kpi_draws_on_its_own_tile_not_the_slide(kpi_deck, monkeypatch
     ghost, words = paint.children
     assert (ghost.children, words.children) == ("208M", "209M"), \
         "the paper is sized to the old words and the new, not the whole cell"
+
+
+# ── a retyped line keeps each run's look ─────────────────────────────────────
+
+
+def test_an_edited_figure_stays_in_its_own_run():
+    from studio.template_fill.fill import spread_over_runs
+
+    assert spread_over_runs(["PY ", "(+28.6%)"], "PY (+30.1%)") == ["PY ", "(+30.1%)"]
+    assert spread_over_runs(["Growth: ", "premium rose 12%."], "Growth: premium rose 15%.") \
+        == ["Growth: ", "premium rose 15%."]
+    # A line written afresh takes the body's look, never a few letters of the lead-in's.
+    assert spread_over_runs(["Growth: ", "premium rose 12%."], "Margins held across the book.") \
+        == ["", "Margins held across the book."]
+
+
+def test_retyping_one_figure_does_not_make_the_whole_line_bold(deck, tmp_path):
+    """The bold lead-in used to spread over the line: all the text went into run 0."""
+    path, shape_id = deck
+    out = tmp_path / "edited.pptx"
+    apply_text_overrides(str(path), {f"0:{shape_id}": ["Highlights", "Growth: premium rose 15%.",
+                                                       "Share held at 9%."]}, str(out))
+    runs = _paragraphs(out, shape_id)[2].runs
+    assert [(r.text, bool(r.font.bold)) for r in runs if r.text] == [
+        ("Growth: ", True), ("premium rose 15%.", False)]
+
+
+def test_an_edited_page_is_rendered_once_per_wording(kpi_deck, monkeypatch, tmp_path):
+    """The canvas shows committed edits as PowerPoint draws them, cached per page + edits."""
+    from studio.template_fill import edited_render as ER
+    from studio.template_fill import preview_assets as PA
+
+    path, shape_id = kpi_deck
+    monkeypatch.setattr(PA, "cache_root", lambda: tmp_path / "cache")
+    monkeypatch.setattr(PA, "_public_url", lambda p: f"/assets/{p.name}")
+    calls = []
+
+    def fake_render(pptx, out_dir, count, width, wanted):
+        calls.append(sorted(wanted))
+        for i in wanted:
+            (out_dir / f"slide-{i:03d}.png").write_bytes(b"png")
+
+    monkeypatch.setattr(PA, "_render_with_aspose", lambda *a, **k: False)
+    monkeypatch.setattr(ER.ppt_renderer, "render",
+                        lambda pptx, out_dir, pages, width_px: fake_render(
+                            pptx, out_dir, 1, width_px, set(pages)))
+    edits = {f"0:{shape_id}:1:0": ["209M"], f"3:{shape_id}": ["elsewhere"]}
+
+    assert ER.edited_slide_url(str(path), edits, 0, 1, render=False) is None   # cache only
+    assert ER.edited_slide_url(str(path), edits, 0, 1) == "/assets/slide-000.png"
+    assert ER.edited_slide_url(str(path), edits, 0, 1) == "/assets/slide-000.png"
+    assert calls == [[0]], "rendered once, and only the page that was edited"
+    assert ER.edited_slide_url(str(path), {}, 0, 1) is None
+
+
+def test_with_a_renderer_the_canvas_shows_powerpoint_s_own_drawing_of_the_edit(
+        kpi_deck, monkeypatch):
+    """No HTML is laid over an edit PowerPoint has already drawn into the picture."""
+    path, shape_id = kpi_deck
+    monkeypatch.setattr(TP, "public_url_exists", lambda url: True)
+    monkeypatch.setattr(TP, "edited_slide_url",
+                        lambda p, e, page, n, render=True: "/assets/edited-0.png")
+    tdoc = {
+        "template_path": str(path), "values": {}, "manifest": [], "hidden": [], "order": [0],
+        "assembled": True, "background_urls": ["/assets/render-0.png"],
+        "text_edits": {f"0:{shape_id}:1:0": ["209M"]},
+    }
+    body = TP.template_preview_body(tdoc, {"idx": 0})
+    surface = next(n for n in _walk(body) if "qs-tf-surface" in str(getattr(n, "className", "")))
+    assert "edited-0.png" in surface.style["backgroundImage"]
+    reflections = [n for n in _walk(surface) if str(getattr(n, "className", "")) ==
+                   "qs-tf-reflect is-styled"]
+    assert reflections == []
+    cell = next(n for n in _walk(surface) if isinstance(n, Component)
+                and n.__dict__.get("data-at") == f"0:{shape_id}:1:0")
+    assert "is-editable" in cell.className, "the box is still a click target"
+
+
+def test_a_weighted_office_face_becomes_a_family_and_a_weight():
+    """"Georgia Pro Light" is not a family a browser knows; asked for it, it fell back to
+    bold Arial — the heavy sans-serif the author saw while typing over a light serif KPI."""
+    css = TP.font_css("Georgia Pro Light", True)
+    assert css["fontFamily"].startswith("'Georgia Pro Light', 'Georgia Pro'")
+    assert css["fontFamily"].endswith("serif") and "Arial" not in css["fontFamily"]
+    assert css["fontWeight"] == "500", "bold steps a light face up one notch, not to 700"
+    assert TP.font_css("Georgia Pro Light", False)["fontWeight"] == "300"
+    assert TP.font_css("Arial", True) == {"fontWeight": "700",
+                                          "fontFamily": "'Arial', Arial, sans-serif"}
+
+
+def test_the_edit_render_copy_is_one_page_with_the_edit_in_it(kpi_deck, tmp_path):
+    """PowerPoint opens a fresh one-slide copy in ~0.4 s and a whole deck in ~6 s."""
+    from studio.template_fill import edited_render as ER
+
+    path, shape_id = kpi_deck
+    prs = Presentation(path)
+    prs.slides.add_slide(prs.slide_layouts[6])
+    prs.save(path)
+
+    out = tmp_path / "page.pptx"
+    ER._single_slide_copy(str(path), {f"0:{shape_id}:1:0": ["209M"]}, 0, out)
+    copy = Presentation(out)
+    assert len(copy.slides) == 1
+    table = next(s for s in copy.slides[0].shapes if s.has_table).table
+    run = table.cell(1, 0).text_frame.paragraphs[0].runs[0]
+    assert run.text == "209M" and run.font.bold and run.font.size == Pt(18)
+
+
+def test_the_renderer_never_quits_a_powerpoint_someone_is_using():
+    """PowerPoint is single-instance: DispatchEx can hand back the author's own window."""
+    from studio.template_fill import ppt_renderer as R
+
+    class App:
+        def __init__(self, visible, open_count):
+            self.Visible, self.quit = visible, False
+            self.Presentations = type("P", (), {"Count": open_count})()
+
+        def Quit(self):
+            self.quit = True
+
+    for visible, count, quits in ((False, 0, True), (True, 0, False), (False, 2, False)):
+        app = App(visible, count)
+        assert R._quit(app) is None and app.quit is quits

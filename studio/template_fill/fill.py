@@ -1960,6 +1960,62 @@ def _drop_soft_breaks(paragraph) -> None:
         paragraph._p.remove(br)
 
 
+#: Below this similarity a retyped line counts as rewritten rather than edited
+#: ("Growth: premium rose 12%." → "Momentum: premium held flat." is 0.57, an edit;
+#: → "Margins held across the book." is 0.33, a rewrite).
+_RETYPE_SIMILAR = 0.5
+
+
+def spread_over_runs(old_runs: Sequence[str], new_text: str) -> List[str]:
+    """``new_text`` cut into the same runs as ``old_runs``, character by character.
+
+    A paragraph is a row of runs, each with its own look: a bold "Growth:" lead-in, a
+    green "(+28.6%▲)" after a navy "PY ". Putting the whole retyped line into the first
+    run (what the fill engine does with a placeholder) made every edit restyle the line —
+    the lead-in's bold spread over the sentence, the arrow lost its green. Instead the old
+    and new text are aligned, and every new character takes the run of the old character
+    it lines up with; an inserted one takes the run of the character before it (or after
+    it, at the very start). So "208M" → "209M" stays in its run, and words the author did
+    not touch keep exactly the look they had.
+    """
+    from difflib import SequenceMatcher
+
+    owners = [i for i, text in enumerate(old_runs) for _ in text]
+    if not owners:
+        return [new_text] + [""] * (len(old_runs) - 1) if old_runs else []
+    out = [""] * len(old_runs)
+    matcher = SequenceMatcher(None, "".join(old_runs), new_text, autojunk=False)
+    if matcher.ratio() < _RETYPE_SIMILAR:
+        # A line written afresh shares only stray letters with the old one; aligning on
+        # those would cut it at random. It takes the look of the run that carried most
+        # of the old line — the body text, not a lead-in.
+        out[max(dict.fromkeys(owners), key=owners.count)] = new_text
+        return out
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for k, char in enumerate(new_text[j1:j2]):
+                out[owners[i1 + k]] += char
+        elif tag == "replace":
+            # Rewritten words take the look of the run that held most of what they
+            # replace — split by position, a rewritten sentence would come out with its
+            # first few letters in the old lead-in's bold.
+            span = owners[i1:i2]
+            out[max(dict.fromkeys(span), key=span.count)] += new_text[j1:j2]
+        elif tag == "insert":                       # join the character before it
+            out[owners[i1 - 1] if i1 > 0 else owners[0]] += new_text[j1:j2]
+    return out
+
+
+def _retype_paragraph(paragraph, text: str) -> None:
+    """Write one retyped line into ``paragraph``, each character in its old run's look."""
+    runs = list(paragraph.runs)
+    if len(runs) < 2 or _SOFT_BREAK in text:
+        _set_paragraph_text(paragraph, text)
+        return
+    for run, part in zip(runs, spread_over_runs([r.text for r in runs], text)):
+        run.text = part
+
+
 def _write_lines(text_frame, lines) -> None:
     """Make ``text_frame`` say exactly ``lines``, keeping every paragraph's formatting.
 
@@ -1983,7 +2039,7 @@ def _write_lines(text_frame, lines) -> None:
         elif tuple(taken) != TE.to_lines(paragraph.text):
             if len(taken) == 1:
                 _drop_soft_breaks(paragraph)
-            _set_paragraph_text(paragraph, _SOFT_BREAK.join(taken))
+            _retype_paragraph(paragraph, _SOFT_BREAK.join(taken))
     source = anchor = paragraphs[assigned[-1][0]]
     for line in extra:
         anchor = _clone_paragraph_after(text_frame, source, anchor)
@@ -2018,9 +2074,18 @@ def apply_text_overrides(src_path: str, edits: Dict[str, Any], out_path: str) ->
     """
     from pptx import Presentation
 
+    prs = Presentation(src_path)
+    written = write_text_overrides(prs, edits)
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    prs.save(out_path)
+    logger.info("template_fill: applied %d retyped text box(es) -> %s", written, out_path)
+    return out_path
+
+
+def write_text_overrides(prs, edits: Dict[str, Any]) -> int:
+    """Write the canvas edits into an open presentation. Returns how many boxes changed."""
     from studio.template_fill import text_edits as TE
 
-    prs = Presentation(src_path)
     slides = list(prs.slides)
     written = 0
     for slide_idx, by_shape in TE.grouped(edits).items():
@@ -2033,10 +2098,7 @@ def apply_text_overrides(src_path: str, edits: Dict[str, Any], out_path: str) ->
                 continue
             _write_lines(frame, lines)
             written += 1
-    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    prs.save(out_path)
-    logger.info("template_fill: applied %d retyped text box(es) -> %s", written, out_path)
-    return out_path
+    return written
 
 
 # ── entry point ──────────────────────────────────────────────────────────────

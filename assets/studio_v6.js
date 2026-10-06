@@ -167,10 +167,63 @@
         area.style.height = Math.min(area.scrollHeight + 2, 220) + "px";
     }
 
+    /* The paper behind a box is whatever the slide render shows there — often a panel
+     * drawn by ANOTHER shape (the amber "Marsh trading highlights" block behind its KPIs),
+     * which the box's own fill cannot know. So it is read off the render itself: the
+     * most common colour along the box's edges. Same-origin /assets PNG, so readable. */
+    var renders = {};                 // url -> {ctx, w, h} once loaded, or [callbacks]
+
+    function renderOf(surface, done) {
+        var match = /url\(["']?([^"')]+)["']?\)/.exec(getComputedStyle(surface).backgroundImage);
+        if (!match) { return; }
+        var url = match[1], entry = renders[url];
+        if (entry && entry.ctx) { done(entry); return; }
+        if (entry) { entry.push(done); return; }
+        renders[url] = [done];
+        var img = new Image();
+        img.onload = function () {
+            var canvas = document.createElement("canvas");
+            canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+            var ctx = canvas.getContext("2d", {willReadFrequently: true});
+            ctx.drawImage(img, 0, 0);
+            var waiting = renders[url];
+            renders[url] = {ctx: ctx, w: canvas.width, h: canvas.height};
+            waiting.forEach(function (cb) { cb(renders[url]); });
+        };
+        img.onerror = function () { delete renders[url]; };
+        img.src = url;
+    }
+
+    function samplePaper(box) {
+        var surface = box.closest(".qs-tf-surface.has-rendered-bg");
+        if (!surface || box.hasAttribute("data-paper")) { return; }
+        box.setAttribute("data-paper", "pending");
+        renderOf(surface, function (render) {
+            var s = surface.getBoundingClientRect(), b = box.getBoundingClientRect();
+            if (!s.width || !b.width) { box.removeAttribute("data-paper"); return; }
+            var kx = render.w / s.width, ky = render.h / s.height, votes = {}, best = null;
+            [[0.04, 0.08], [0.5, 0.06], [0.96, 0.08], [0.04, 0.92], [0.5, 0.95],
+             [0.96, 0.92], [0.02, 0.5], [0.98, 0.5]].forEach(function (f) {
+                var x = Math.round((b.left - s.left + f[0] * b.width) * kx);
+                var y = Math.round((b.top - s.top + f[1] * b.height) * ky);
+                if (x < 0 || y < 0 || x >= render.w || y >= render.h) { return; }
+                var d = render.ctx.getImageData(x, y, 1, 1).data;
+                var key = [d[0] >> 3, d[1] >> 3, d[2] >> 3].join(",");
+                votes[key] = (votes[key] || {n: 0, rgb: [d[0], d[1], d[2]]});
+                votes[key].n += 1;
+                if (!best || votes[key].n > best.n) { best = votes[key]; }
+            });
+            if (!best) { return; }
+            box.style.setProperty("--qs-tf-paper", "rgb(" + best.rgb.join(",") + ")");
+            box.setAttribute("data-paper", "1");
+        });
+    }
+
     // The words the author is typing, drawn over the box on the slide right away.
     function preview(bar) {
         var box = boxFor(bar.getAttribute("data-at"));
         if (!box) { return; }
+        samplePaper(box);
         var live = box.querySelector(":scope > .qs7-live");
         if (!live) {
             live = document.createElement("div");
@@ -326,6 +379,11 @@
     // and play the retype for whatever was just applied.
     function adoptCanvas() {
         applyDock();
+        // Edits drawn in HTML (no renderer available) sit on the render's own paper too;
+        // the selected box is sampled ahead of typing so the first keystroke is right.
+        document.querySelectorAll(".qs-tf-surface.has-rendered-bg .is-edited:not([data-paper])," +
+                                  ".qs-tf-surface.has-rendered-bg .is-selected:not([data-paper])")
+            .forEach(samplePaper);
         document.querySelectorAll(".qs7-ln-input:not([data-qs7])").forEach(function (area) {
             area.setAttribute("data-qs7", "1");
             autoGrow(area);
