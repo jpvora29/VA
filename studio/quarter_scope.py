@@ -52,12 +52,33 @@ def quarters_in(rows: Iterable[Sequence[Any]], columns: Sequence[str],
     ``columns`` names the leading values of every row; a filter on a column the rows do
     not carry cannot narrow them and is ignored.
     """
+    return quarters_in_keyed(keyed_rows(rows), columns, where)
+
+
+def keyed_rows(rows: Iterable[Sequence[Any]]) -> List[Tuple[Any, ...]]:
+    """``rows`` with every leading value already in the form a filter is compared in.
+
+    Normalising is most of what :func:`quarters_in` costs, and the rows do not change between
+    filter changes — so a caller holding them for a while keys them once.
+    """
+    return [tuple(_norm(v).lower() for v in row[:-1]) + (row[-1],) for row in rows]
+
+
+def quarters_in_keyed(rows: Iterable[Sequence[Any]], columns: Sequence[str],
+                      where: Mapping[str, Any]) -> List[str]:
+    """:func:`quarters_in` over rows that have been through :func:`keyed_rows`."""
     tests = [(i, wanted) for i, column in enumerate(columns)
              if (wanted := _wanted(where.get(column))) is not None]
     found = {str(row[-1]) for row in rows
              if row[-1] not in (None, "")
-             and all(_norm(row[i]).lower() in wanted for i, wanted in tests)}
+             and all(row[i] in wanted for i, wanted in tests)}
     return sorted(found)
+
+
+def _per_value(series, label):
+    """``series.map(label)``, evaluated once per DISTINCT value rather than once per row —
+    a million-row upload holds a handful of month names. Blank rows stay blank."""
+    return series.map({value: label(value) for value in series.dropna().unique()})
 
 
 def frame_quarter_rows(frame) -> Tuple[Tuple[str, ...], List[Tuple[Any, ...]]]:
@@ -72,13 +93,14 @@ def frame_quarter_rows(frame) -> Tuple[Tuple[str, ...], List[Tuple[Any, ...]]]:
 
     columns = tuple(c for c in SCOPE_COLUMNS if c in frame.columns)
     if "Quarter" in frame.columns:
-        quarter = frame["Quarter"].map(lambda v: quarter_label(v, native=True))
+        quarter = _per_value(frame["Quarter"], lambda v: quarter_label(v, native=True))
     elif "Month_Name" in frame.columns:
         by_month = {m.lower(): q for q, months in QUARTER_MONTHS.items() for m in months}
-        quarter = frame["Month_Name"].map(lambda v: by_month.get(str(v).strip().lower()))
+        quarter = _per_value(frame["Month_Name"],
+                             lambda v: by_month.get(str(v).strip().lower()))
     elif "Billing_Date" in frame.columns:
         dates = pd.to_datetime(frame["Billing_Date"], errors="coerce")
-        quarter = dates.dt.quarter.map(lambda v: quarter_label(v, native=False))
+        quarter = _per_value(dates.dt.quarter, lambda v: quarter_label(v, native=False))
     else:
         return columns, []
     table = frame[list(columns)].copy()

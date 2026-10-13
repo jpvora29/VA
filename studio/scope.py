@@ -42,12 +42,13 @@ def _rollup_for(flow: str, engine, dataset_id: Optional[str]):
     if not columns:
         return None, measure
     if dataset_id:
-        from studio.dataset.source import dataset_frame
+        from studio.dataset.source import dataset_frame, dataset_version
 
         frame = dataset_frame(dataset_id)
         if frame is None:
             return None, measure
-        return scope_cube.frame_rollup(dataset_id, frame, columns, measure), measure
+        return scope_cube.frame_rollup(dataset_id, frame, columns, measure,
+                                       version=dataset_version(dataset_id)), measure
     return scope_cube.sql_rollup(engine, spec.primary_table, columns, measure), measure
 
 

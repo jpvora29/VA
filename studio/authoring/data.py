@@ -256,7 +256,7 @@ def use_for_deck(repo, active_id) -> Optional[str]:
 
     Returns an error message, or None on success."""
     from studio.dataset.materialize import materialize
-    from studio.dataset.source import dataset_source
+    from studio.dataset.source import dataset_source, warm_dataset
 
     record = repo.get(active_id) if active_id else None
     if record is None:
@@ -267,6 +267,7 @@ def use_for_deck(repo, active_id) -> Optional[str]:
         return str(exc)
     repo.update_record(replace(record, status="submitted"))
     dataset_source.cache_clear()   # the analytics frames must reflect what was just written
+    warm_dataset(record.dataset_id)   # Setup is next: have its cube ready when it opens
     return None
 
 

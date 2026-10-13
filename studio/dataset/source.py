@@ -8,6 +8,8 @@ options derive from it. Everything resolves lazily from the browser store's
 """
 from __future__ import annotations
 
+import threading
+import time
 from functools import lru_cache
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
@@ -76,8 +78,26 @@ def dataset_source(dataset_id: str):
 
 
 def dataset_frame(dataset_id: str) -> Optional[pd.DataFrame]:
-    """The dataset's materialized table — what every Setup panel reads it from."""
-    return get_repository().load_frame(dataset_id, table=MAPPED_TABLE)
+    """The dataset's materialized table — what every Setup panel reads it from.
+
+    The repository's SHARED frame, not a copy: nothing on the Setup path reshapes it, and a
+    copy of a million-row upload on every call was most of a filter change.
+    """
+    return get_repository().read_frame(dataset_id, table=MAPPED_TABLE)
+
+
+def dataset_version(dataset_id: str):
+    """The dataset file's version — what every cache derived from its frame is keyed on."""
+    return get_repository().version(dataset_id)
+
+
+def dataset_measure(frame: Optional[pd.DataFrame]) -> Optional[str]:
+    """The measure the dataset's cube carries — the one the Setup preview rolls up — or None
+    when the frame does not hold it (the cascade then builds a cube without one)."""
+    from studio.data import cube_measure
+
+    measure = cube_measure("gpr")
+    return measure if frame is not None and measure in frame.columns else None
 
 
 def dataset_filter_options(
@@ -87,18 +107,13 @@ def dataset_filter_options(
 
     Same shape as ``studio.authoring.generate._friendly_options`` — friendly
     form id → ``[{label, value}]`` — but distincts come from the user's data,
-    so every dropdown reflects exactly what they uploaded."""
-    frame = dataset_frame(dataset_id)
-    if frame is None:
+    so every dropdown reflects exactly what they uploaded. Read off the same cube
+    the cascade uses (an unfiltered cascade), not a ``unique()`` per column per render.
+    """
+    if dataset_frame(dataset_id) is None:
         return {}
-    options: Dict[str, List[Dict[str, Any]]] = {}
-    for fid, column in friendly_columns.items():
-        if column not in frame.columns:
-            options[fid] = []
-            continue
-        values = sorted(frame[column].dropna().unique(), key=str)
-        options[fid] = [{"label": str(v), "value": _plain(v)} for v in values]
-    return options
+    cascaded = dataset_cascade_options(dataset_id, tuple(friendly_columns.values()))
+    return {fid: cascaded.get(column, []) for fid, column in friendly_columns.items()}
 
 
 def dataset_cascade_options(
@@ -118,7 +133,9 @@ def dataset_cascade_options(
     if frame is None:
         return {}
     spanned = tuple(c for c in cube_columns("gpr") if c in frame.columns)
-    cube = filter_cube.frame_cube(dataset_id, frame, spanned)
+    cube = filter_cube.frame_cube(dataset_id, frame, spanned,
+                                  version=dataset_version(dataset_id),
+                                  measure=dataset_measure(frame))
     if cube is not None and not cube.can_answer(selected or {}):
         # A constraint the cube does not span would be dropped, widening every list. Fall
         # back to the per-column frame scan, which honours it (the SQL twin does the same).
@@ -133,7 +150,9 @@ def dataset_cascade_options(
             where = {c: v for c, v in selected.items() if c != column}
             out[column] = dataset_dependent_options(dataset_id, column, where)
         else:
-            out[column] = [{"label": str(v), "value": _plain(v)} for v in values]
+            # Blank cells are not an option (the per-column path drops them too).
+            out[column] = [{"label": str(v), "value": _plain(v)} for v in values
+                           if not pd.isna(v)]
     return out
 
 
@@ -166,18 +185,82 @@ def _plain(value: Any) -> Any:
 def dataset_quarters_in_scope(dataset_id: str, where: Mapping[str, Any]) -> Optional[List[str]]:
     """The quarter labels an uploaded dataset holds under ``where`` — ``None`` when it
     records no period finer than a year (the form then offers every quarter)."""
-    from studio.quarter_scope import frame_quarter_rows, quarters_in
+    from studio.quarter_scope import quarters_in_keyed
+
+    columns, rows = _quarter_rows(dataset_id, dataset_version(dataset_id))
+    return quarters_in_keyed(rows, columns, where) if rows else None
+
+
+@lru_cache(maxsize=8)
+def _quarter_rows(dataset_id: str, _version) -> tuple:
+    """The dataset's distinct ``(scope columns…, quarter)`` rows, derived once per version
+    and already keyed for comparison (:func:`studio.quarter_scope.keyed_rows`).
+
+    They do not depend on the selection, yet were re-derived — one Python call per frame row
+    — on every filter change: over a second of each change on a million-row upload.
+    """
+    from studio.quarter_scope import frame_quarter_rows, keyed_rows
 
     frame = dataset_frame(dataset_id)
     if frame is None:
-        return None
+        return (), []
     columns, rows = frame_quarter_rows(frame)
-    return quarters_in(rows, columns, where) if rows else None
+    return columns, keyed_rows(rows)
 
 
 def dataset_quarter_labels(dataset_id: str) -> List[str]:
     """The uploaded dataset's own ``Quarter`` labels — ``[]`` when it has no such column."""
+    return list(_quarter_labels(dataset_id, dataset_version(dataset_id)))
+
+
+@lru_cache(maxsize=8)
+def _quarter_labels(dataset_id: str, _version) -> tuple:
     frame = dataset_frame(dataset_id)
     if frame is None or "Quarter" not in frame.columns:
-        return []
-    return sorted({str(v) for v in frame["Quarter"].dropna() if str(v).strip()})
+        return ()
+    return tuple(sorted({str(v) for v in frame["Quarter"].dropna() if str(v).strip()}))
+
+
+def dataset_latest_month(dataset_id: str) -> Optional[tuple]:
+    """``(year, month)`` of the dataset's latest billing, or None — read once per version.
+
+    The Setup period sentence asks for it on every filter change, and reading it means
+    parsing every row's date.
+    """
+    return _latest_month(dataset_id, dataset_version(dataset_id))
+
+
+@lru_cache(maxsize=8)
+def _latest_month(dataset_id: str, _version) -> Optional[tuple]:
+    from studio.book import _frame_latest
+
+    return _frame_latest(dataset_frame(dataset_id))
+
+
+# ── warming (so the first Setup visit after Use-for-deck does not pay) ───────
+
+
+def warm_dataset(dataset_id: str) -> threading.Thread:
+    """Prepare everything Setup reads from a dataset, on a background thread.
+
+    Called the moment a dataset is submitted for the deck: the author is on their way to
+    Setup, and the frame read, the cube and the period facts are each seconds on a large
+    upload. Every one of them is cached and lock-guarded, so a Setup callback that arrives
+    mid-warm waits for the same work instead of starting its own.
+    """
+    thread = threading.Thread(target=_warm, args=(dataset_id,), daemon=True,
+                              name=f"warm-dataset-{dataset_id}")
+    thread.start()
+    return thread
+
+
+def _warm(dataset_id: str) -> None:
+    started = time.time()
+    try:
+        dataset_cascade_options(dataset_id, ())     # the frame, then the one shared cube
+        _quarter_rows(dataset_id, dataset_version(dataset_id))
+        dataset_latest_month(dataset_id)
+    except Exception as exc:  # noqa: BLE001 - warming is an optimisation; Setup still works
+        logger.warning("dataset %s warm-up failed: %s", dataset_id, exc)
+        return
+    logger.info("dataset %s ready for Setup in %.1fs", dataset_id, time.time() - started)

@@ -723,11 +723,10 @@ def latest_month(dataset_id: Optional[str]):
     has read it, the sentence names the rule rather than the month.
     """
     if dataset_id:
-        from studio.book import _frame_latest
-        from studio.dataset.source import dataset_source
+        from studio.dataset.source import dataset_latest_month
 
         try:
-            return _frame_latest(dataset_source(dataset_id).table("GPR"))
+            return dataset_latest_month(dataset_id)
         except Exception:  # noqa: BLE001 - the sentence degrades, the form does not
             return None
     from studio.data import period_profile

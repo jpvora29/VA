@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from logger import get_logger
 from studio import cube_core, cube_store
@@ -124,15 +124,20 @@ def build_sql_cube(engine, table: str, columns: Sequence[str],
     return None if data is None else FilterCube(data)
 
 
-def build_frame_cube(frame, columns: Sequence[str]) -> Optional[FilterCube]:
+def build_frame_cube(frame, columns: Sequence[str],
+                     measure: Optional[str] = None) -> Optional[FilterCube]:
     """The same cube for an uploaded dataset's in-memory frame."""
-    data = cube_store.build_frame(frame, columns, cap=_MAX_ROWS)
+    data = cube_store.build_frame(frame, columns, measure=measure, cap=_MAX_ROWS)
     return None if data is None else FilterCube(data)
 
 
 # ── caching (per source, invalidated when the source changes) ────────────────
 
 _cache: Dict[Any, Optional[FilterCube]] = {}
+
+# Uploaded datasets: ONE generation per (dataset, columns), tagged with the version it was
+# built from — a re-mapped dataset replaces its cube rather than accumulating beside it.
+_frame_cache: Dict[Any, Tuple[Any, Optional[FilterCube]]] = {}
 
 # ``None`` defers to ``STUDIO_CACHE_DIR`` (see :func:`studio.cube_store.cache_dir`), read at
 # call time. Tests set it to a temporary directory to get a cold disk tier.
@@ -166,12 +171,28 @@ def sql_cube(engine, table: str, columns: Sequence[str],
     return cube
 
 
-def frame_cube(dataset_id: str, frame, columns: Sequence[str]) -> Optional[FilterCube]:
-    """The cached cube for an uploaded dataset (keyed by its id)."""
+def frame_cube(dataset_id: str, frame, columns: Sequence[str], *, version: Any = None,
+               measure: Optional[str] = None) -> Optional[FilterCube]:
+    """The cached cube for one ``version`` of an uploaded dataset.
+
+    ``measure`` is not used by the cascade. As with :func:`sql_cube`, it makes this the SAME
+    cube the preview's rollup reads (:func:`studio.cube_store.load_or_build_frame`), so a fresh
+    dataset is encoded once rather than once per callback.
+    """
     key = ("frame", dataset_id, tuple(columns))
-    if key not in _cache:
-        _cache[key] = build_frame_cube(frame, columns)
-    return _cache[key]
+    tag = (version, measure)
+    held = _frame_cache.get(key)
+    if held is not None and held[0] == tag:
+        return held[1]
+    data = cube_store.load_or_build_frame(dataset_id, version, frame, columns,
+                                          measure=measure, cap=_MAX_ROWS)
+    cube = None if data is None else FilterCube(data)
+    if held is not None:
+        # A superseded cube's memoized cascades are keyed by its id(), which a new cube
+        # can reuse once the old one is collected.
+        _cascade_cache.clear()
+    _frame_cache[key] = (tag, cube)
+    return cube
 
 
 def clear() -> None:
@@ -181,6 +202,7 @@ def clear() -> None:
     clearing only this module's wrappers would hand back the same arrays.
     """
     _cache.clear()
+    _frame_cache.clear()
     _cascade_cache.clear()
     cube_store.clear()
 

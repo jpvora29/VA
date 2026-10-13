@@ -121,6 +121,9 @@ def build_frame_rollup(frame, columns: Sequence[str], measure: str) -> Optional[
 
 _cache: Dict[Any, Optional[ScopeCube]] = {}
 
+# Uploaded datasets: one generation per (dataset, columns, measure), tagged with its version.
+_frame_cache: Dict[Any, Tuple[Any, Optional[ScopeCube]]] = {}
+
 # ``None`` defers to ``STUDIO_CACHE_DIR`` — see :func:`studio.filter_cube.disk_dir`.
 _DISK_DIR: Optional[Path] = None
 
@@ -150,16 +153,23 @@ def sql_rollup(engine, table: str, columns: Sequence[str],
     return cube
 
 
-def frame_rollup(dataset_id: str, frame, columns: Sequence[str],
-                 measure: str) -> Optional[ScopeCube]:
-    """The cached rollup for an uploaded dataset (keyed by its id)."""
+def frame_rollup(dataset_id: str, frame, columns: Sequence[str], measure: str, *,
+                 version: Any = None) -> Optional[ScopeCube]:
+    """The cached rollup for one ``version`` of an uploaded dataset — the same cube the
+    filter cascade reads (:func:`studio.cube_store.load_or_build_frame`)."""
     key = ("frame", dataset_id, tuple(columns), measure)
-    if key not in _cache:
-        _cache[key] = build_frame_rollup(frame, columns, measure)
-    return _cache[key]
+    held = _frame_cache.get(key)
+    if held is not None and held[0] == version:
+        return held[1]
+    data = cube_store.load_or_build_frame(dataset_id, version, frame, columns,
+                                          measure=measure, cap=_MAX_ROWS)
+    cube = None if data is None else ScopeCube(data)
+    _frame_cache[key] = (version, cube)
+    return cube
 
 
 def clear() -> None:
     """Drop every cached rollup, including the shared store's copy of it."""
     _cache.clear()
+    _frame_cache.clear()
     cube_store.clear()

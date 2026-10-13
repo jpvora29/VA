@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+import pandas as pd
 from sqlalchemy import text
 
 from logger import get_logger
@@ -156,27 +157,64 @@ def build_sql(engine, table: str, columns: Sequence[str], *, measure: Optional[s
     return CubeData(columns=tuple(columns), index=index, measures=measures)
 
 
+# The rolled-up measure's column while a frame cube is grouped (never a real column name).
+_MEASURE = "__measure"
+
+
 def build_frame(frame, columns: Sequence[str], *, measure: Optional[str] = None,
                 cap: Optional[int] = None) -> Optional[CubeData]:
-    """The same cube for an uploaded dataset's in-memory frame."""
+    """The same cube for an uploaded dataset's in-memory frame.
+
+    Encoded column-wise: each column is factorized once over the whole frame and the
+    combinations are found on the resulting integer codes. Folding the rolled-up rows
+    through :class:`CubeEncoder` instead walked every combination value by value in Python,
+    which on a million-row upload was seconds per build — and the build used to happen twice,
+    once per cube.
+    """
     cap = max_rows() if cap is None else cap
     present = [c for c in columns if c in getattr(frame, "columns", ())]
     if not present:
         return None
+    if measure and measure not in getattr(frame, "columns", ()):
+        return None
+    encoded = {column: _encode_frame_column(frame[column]) for column in present}
+    codes = pd.DataFrame({column: encoded[column][0] for column in present})
     if measure:
-        if measure not in getattr(frame, "columns", ()):
-            return None
-        rolled = frame.groupby(present, dropna=False)[measure].sum().reset_index()
+        codes[_MEASURE] = pd.to_numeric(frame[measure], errors="coerce").to_numpy()
+        rolled = codes.groupby(present, sort=False)[_MEASURE].sum().reset_index()
     else:
-        rolled = frame[present].drop_duplicates()
+        rolled = codes.drop_duplicates()
     if len(rolled) > cap:
         logger.warning("cube_store: dataset has >%d filter combinations — using the frame scan",
                        cap)
         return None
-    encoder = CubeEncoder(present, with_measure=bool(measure), max_rows=cap)
-    encoder.add(list(rolled.itertuples(index=False, name=None)))
-    index, measures = encoder.finish()
+    index = CubeIndex(present, {
+        column: Column(codes=rolled[column].to_numpy(dtype=np.int32),
+                       keys=encoded[column][1], values=encoded[column][2])
+        for column in present})
+    measures = rolled[_MEASURE].to_numpy(dtype=np.float64) if measure else None
     return CubeData(columns=tuple(present), index=index, measures=measures)
+
+
+
+def _encode_frame_column(series) -> Tuple[np.ndarray, Tuple[str, ...], Tuple[Any, ...]]:
+    """``(codes, keys, values)`` for one frame column, encoded as :class:`CubeEncoder` would.
+
+    Codes follow KEY-sorted order and each key keeps the first value seen with it, so a year
+    stays an ``int`` and ``2025`` and ``"2025"`` in one column are the same option.
+    """
+    raw_codes, uniques = pd.factorize(series, use_na_sentinel=False)
+    first: Dict[str, Any] = {}
+    keys: List[str] = []
+    for value in uniques:
+        value = value.item() if hasattr(value, "item") else value
+        key = cube_core.key_of(value)
+        keys.append(key)
+        first.setdefault(key, value)
+    ordered = sorted(first)
+    rank = {key: code for code, key in enumerate(ordered)}
+    remap = np.fromiter((rank[key] for key in keys), dtype=np.int32, count=len(keys))
+    return remap[raw_codes], tuple(ordered), tuple(first[key] for key in ordered)
 
 
 def from_rows(columns: Sequence[str], rows, *, measure: bool = False) -> CubeData:
@@ -315,6 +353,36 @@ def _drop_earlier_generations(key: Any) -> None:
     if stale:
         logger.info("cube_store: released %d superseded cube(s) for %s",
                     len(stale), ", ".join(key[1]))
+
+
+def load_or_build_frame(dataset_id: str, version: Any, frame, columns: Sequence[str], *,
+                        measure: Optional[str] = None,
+                        cap: Optional[int] = None) -> Optional[CubeData]:
+    """The cube for one version of an uploaded dataset — built once, shared by both cubes.
+
+    The same contract as :func:`load_or_build_sql` minus the disk tier: one copy per process,
+    one build at a time, and the cascade and the preview (concurrent callbacks) share it. The
+    key carries the dataset's file ``version``, so re-mapping a dataset is a new cube — keyed
+    on the id alone, Setup kept serving the previous mapping's options and totals.
+    """
+    # Keyed on the columns the frame HAS: the cascade asks for those, the preview for the
+    # whole filter vocabulary, and both must land on the same cube.
+    columns = tuple(c for c in columns if c in getattr(frame, "columns", ()))
+    key = (version, columns, measure, ("frame", dataset_id))
+    if key in _built:
+        return _built[key]
+
+    with _build_lock(key):
+        if key in _built:                      # built while this caller waited for the lock
+            return _built[key]
+        started = time.time()
+        cube = build_frame(frame, columns, measure=measure, cap=cap)
+        if cube is not None:
+            logger.info("cube_store: dataset %s cube built - %d combination(s) in %.1fs",
+                        dataset_id, cube.n_rows, time.time() - started)
+        _drop_earlier_generations(key)
+        _built[key] = cube
+        return cube
 
 
 def load_or_build_sql(engine, table: str, columns: Sequence[str], *,

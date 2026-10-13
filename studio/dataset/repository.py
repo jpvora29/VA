@@ -16,11 +16,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import pandas as pd
 from sqlalchemy import create_engine
@@ -133,25 +134,45 @@ class DatasetRepository:
                 records.append(record)
         return sorted(records, key=lambda r: r.created, reverse=True)
 
-    def load_frame(self, dataset_id: str, *, table: str = RAW_TABLE) -> Optional[pd.DataFrame]:
-        """The whole table, read once per version of the file.
+    def version(self, dataset_id: str) -> Optional[Tuple[int, int]]:
+        """The data file's ``(mtime_ns, size)``, or None when there is no such dataset.
 
-        Setup reads the materialized table several times per render (filter options,
-        quarter labels, the scope panels) and a dataset can hold a million rows, so an
-        uncached read made every Studio screen wait on SQLite. The cache key carries the
-        file's mtime and size, so any write (upload, materialize) is a fresh read. A copy
-        is returned: callers reshape what they get.
+        Every cache over a dataset is keyed on this, so any write to its file (upload,
+        re-materialize) is a new version and nothing derived from the old one is served.
         """
         path = self.db_path(dataset_id)
-        if not _ID_RE.match(dataset_id or "") or not path.exists():
+        if not _ID_RE.match(dataset_id or ""):
             return None
         try:
             stat = path.stat()
-            frame = _read_table(str(path), table, stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            return None
+        return stat.st_mtime_ns, stat.st_size
+
+    def read_frame(self, dataset_id: str, *, table: str = RAW_TABLE) -> Optional[pd.DataFrame]:
+        """The whole table, read once per version of the file — SHARED, so READ ONLY.
+
+        Setup reads the materialized table on every filter change (options, quarters, the
+        scope panels) and a dataset can hold a million rows: an uncached read made every
+        Studio screen wait on SQLite, and a defensive copy per call still cost ~90 ms each.
+        Callers that reshape the frame use :meth:`load_frame` instead.
+        """
+        version = self.version(dataset_id)
+        if version is None:
+            return None
+        try:
+            # One cold read at a time: the Setup callbacks fire concurrently, and each
+            # would otherwise start its own multi-second read of the same table.
+            with _read_lock:
+                return _read_table(str(self.db_path(dataset_id)), table, *version)
         except (ValueError, OSError) as exc:
             logger.warning("dataset frame load failed for %s: %s", dataset_id, exc)
             return None
-        return frame.copy()
+
+    def load_frame(self, dataset_id: str, *, table: str = RAW_TABLE) -> Optional[pd.DataFrame]:
+        """A private copy of the whole table — for callers that reshape what they get."""
+        frame = self.read_frame(dataset_id, table=table)
+        return None if frame is None else frame.copy()
 
     def load_preview(
         self, dataset_id: str, rows: int, *, table: str = RAW_TABLE
@@ -172,6 +193,9 @@ class DatasetRepository:
         except (ValueError, OSError) as exc:
             logger.warning("dataset preview load failed for %s: %s", dataset_id, exc)
             return None
+
+
+_read_lock = threading.Lock()
 
 
 @lru_cache(maxsize=4)
