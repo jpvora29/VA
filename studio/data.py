@@ -18,14 +18,21 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from sqlalchemy import create_engine, text
 
+from core.readonly_sqlite import readonly_sqlite_engine
 from core.registry import get_flow_registry
 from logger import get_logger
+from studio import cube_store
 
 logger = get_logger(__name__)
 
-# Persisted across launches so the expensive first-launch DISTINCT scans run once
-# per DB, not on every start. Auto-invalidates when the DB file changes.
-_CACHE_DIR = Path(__file__).resolve().parent / "_cache"
+
+def _cache_dir() -> Path:
+    """Where the option-list caches persist — the cube cache's folder, out of OneDrive.
+
+    Persisted across launches so the expensive first-launch DISTINCT scans run once
+    per DB, not on every start. Auto-invalidates when the DB file changes.
+    """
+    return cube_store.cache_dir()
 
 
 @lru_cache(maxsize=1)
@@ -36,25 +43,44 @@ def get_engine():
     built on first use. The seed path keeps dev/CI runnable without the production
     data while exercising the exact same primitives.
 
-    The analytics indexes are built here, once per database, because they are not
-    an optimisation a build can do without: unindexed, every one of the few
-    thousand reads a deck makes is a full table scan, which is the difference
-    between a build in minutes and a build in hours. Every later launch pays one
-    ``sqlite_master`` read to find nothing missing. ``STUDIO_AUTO_INDEX=off`` for a
-    warehouse we must not write to.
+    A configured warehouse is opened READ-ONLY. It is a shared file (a OneDrive
+    folder), and one user's app writing indexes into its synced copy is what forks
+    it into conflict copies. Its indexes are built once by whoever publishes it
+    (``python -m studio.index_warehouse <path>``); this only warns when they are
+    missing, because unindexed every one of the few thousand reads a deck makes is
+    a full table scan — a build in hours rather than minutes.
+
+    The seed DB is the app's own file, so its indexes are still built here.
     """
     path = os.getenv("STUDIO_DB_PATH") or os.getenv("DB_PATH")
     if path:
-        logger.info("studio: using DB at %s", path)
-        engine = create_engine(f"sqlite:///{path}")
-    else:
-        from studio.seed import ensure_seed_db
+        logger.info("studio: using DB at %s (read-only)", path)
+        engine = readonly_sqlite_engine(path)
+        _warn_on_missing_indexes(engine, path)
+        return engine
+    from studio.seed import ensure_seed_db
 
-        seed = ensure_seed_db()
-        logger.info("studio: no DB_PATH set; using seed DB at %s", seed)
-        engine = create_engine(f"sqlite:///{seed}")
+    seed = ensure_seed_db()
+    logger.info("studio: no DB_PATH set; using seed DB at %s", seed)
+    engine = create_engine(f"sqlite:///{seed}")
     _ensure_analytics_indexes(engine)
     return engine
+
+
+def _warn_on_missing_indexes(engine, path: str) -> None:
+    """Say, once at startup, that a read-only warehouse will build slowly."""
+    from studio.indexes import missing_index_names
+
+    try:
+        missing = missing_index_names(("gpr", "survey"), engine)
+    except Exception as exc:  # noqa: BLE001 - a check must never block startup
+        logger.warning("studio: could not check analytics indexes: %s", exc)
+        return
+    if missing:
+        logger.warning(
+            "studio: %d analytics index(es) missing on %s — deck builds will be much "
+            "slower. Build them once on the published file: "
+            "python -m studio.index_warehouse \"%s\"", len(missing), path, path)
 
 
 def _ensure_analytics_indexes(engine) -> None:
@@ -345,7 +371,7 @@ def _db_signature() -> str:
 
 def _cache_file(flow: str) -> Path:
     sig = hashlib.blake2s(f"{flow}|{_db_signature()}".encode("utf-8"), digest_size=8).hexdigest()
-    return _CACHE_DIR / f"filters_{flow}_{sig}.json"
+    return _cache_dir() / f"filters_{flow}_{sig}.json"
 
 
 def _read_disk_cache(path: Path):
@@ -358,7 +384,7 @@ def _read_disk_cache(path: Path):
 
 def _write_disk_cache(path: Path, data: Dict[str, Any]) -> None:
     try:
-        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _cache_dir().mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(data, fh)
@@ -401,7 +427,7 @@ def _period_file(flow: str) -> Path:
     # "v2": the profile carries the quarter scopes; an older cache file lacks them.
     sig = hashlib.blake2s(f"period-v2|{flow}|{_db_signature()}".encode("utf-8"),
                           digest_size=8).hexdigest()
-    return _CACHE_DIR / f"period_{flow}_{sig}.json"
+    return _cache_dir() / f"period_{flow}_{sig}.json"
 
 
 def _scan_period_profile(flow: str) -> Dict[str, Any]:
@@ -561,31 +587,3 @@ def warm_filter_cache(flow: str = "gpr") -> List[str]:
             f"option lists cached in {_cache_file(flow).name}",
             f"latest billing month {profile.get('latest')}, "
             f"{len(profile.get('quarters') or [])} quarter label(s)"]
-
-
-def ensure_filter_indexes(flow: str = "gpr") -> List[str]:
-    """Create a single-column index on each filter column (one-time).
-
-    OPT-IN: this WRITES to the DB and, on a huge table, can take minutes and grow
-    the file — so it is never run automatically.
-
-    It does NOT speed up building the cube: that is one ``GROUP BY`` over all ten filter
-    columns, which no single-column index serves. What it speeds up is the SQL FALLBACK —
-    the per-column cascade a source too wide to cube still runs — so it is worth having on a
-    warehouse the cube declines, and worth skipping on one it serves."""
-    spec = get_flow_registry().get(flow)
-    if spec is None:
-        return []
-    cols = [c.name for c in spec.columns.values() if c.role in {"entity", "temporal"}]
-    made: List[str] = []
-    with get_engine().begin() as conn:
-        for col in cols:
-            idx = f"ix_studio_{spec.primary_table}_{col}"
-            try:
-                conn.execute(
-                    text(f'CREATE INDEX IF NOT EXISTS "{idx}" ON "{spec.primary_table}" ("{col}")')
-                )
-                made.append(idx)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("studio: index %s failed: %s", idx, exc)
-    return made

@@ -1,6 +1,6 @@
 """SQLite app-state database: schema + engine.
 
-A dedicated SQLite file (``APP_DB_PATH``, default ``<project>/app_state.db``) that
+A dedicated SQLite file (``APP_DB_PATH``, default ``%LOCALAPPDATA%/VA/app_state.db``) that
 backs user accounts, saved conversations, episodic memory, and semantic profile
 facts. This is intentionally NOT the analytics warehouse engine in
 ``config.db_config`` — app bookkeeping must never mutate warehouse data.
@@ -29,15 +29,29 @@ from sqlalchemy import (
     func,
 )
 
+from core.local_paths import local_data_dir
+
 
 def app_db_path() -> str:
-    """Filesystem path to the app-state SQLite file."""
+    """Filesystem path to the app-state SQLite file.
+
+    The default is per machine and outside the project folder on purpose: the code
+    is shared through OneDrive, and a live SQLite file (plus its ``-wal``/``-shm``
+    companions) inside a synced folder gets conflict copies and corruption as soon
+    as two users' apps write to it.
+    """
     env = os.environ.get("APP_DB_PATH")
     if env:
         return env
-    # core/store/db.py -> project root is three levels up.
-    return str(Path(__file__).resolve().parents[2] / "app_state.db")
+    return str(local_data_dir() / "app_state.db")
 
+
+def _ensure_parent_dir(db_path: str) -> None:
+    """SQLite creates the file but not its folder."""
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+
+
+_ensure_parent_dir(app_db_path())
 
 app_engine = create_engine(
     f"sqlite:///{app_db_path()}",

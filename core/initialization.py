@@ -15,10 +15,10 @@ from typing import Any
 
 from dotenv import load_dotenv
 from langchain_openai import AzureChatOpenAI
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from core.llm.clients import make_client
+from core.readonly_sqlite import readonly_sqlite_engine
 from core.observability import extract_token_usage, record_token_usage
 from logger import get_logger
 
@@ -88,7 +88,8 @@ class Initialization:
     llm_fast: AzureChatOpenAI = _LazyClient("fast")
     llm_summary: AzureChatOpenAI = _LazyClient("summary")
 
-    engine = create_engine(f"sqlite:///{os.getenv('DB_PATH')}")
+    # Read-only: the warehouse is a shared file the app must never modify.
+    engine = readonly_sqlite_engine(os.getenv("DB_PATH"))
     Session = sessionmaker(bind=engine)
     @staticmethod
     def log_prompt_cache_usage(response: Any, label: str = "") -> None:

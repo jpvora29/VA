@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
 
+from core.local_paths import local_data_dir
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -94,7 +95,7 @@ def cache_dir() -> Path:
     configured = (os.getenv("STUDIO_COMMENTARY_CACHE", "") or "").strip()
     if configured and configured.lower() not in _DISABLED:
         return Path(configured)
-    return Path(__file__).resolve().parents[1] / "_cache" / "commentary"
+    return local_data_dir() / "cache" / "commentary"
 
 
 def _ttl_seconds() -> float:

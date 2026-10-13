@@ -34,7 +34,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, List, Optional, Sequence, Tuple
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 from core.registry import get_flow_registry
 from logger import get_logger
@@ -191,11 +191,57 @@ def missing_indexes(flow: str, engine: Any) -> Tuple[IndexSpec, ...]:
 def auto_index_enabled() -> bool:
     """``STUDIO_AUTO_INDEX=off`` opts out of building indexes on first use.
 
-    On by default. Indexing is the difference between a build in minutes and a
-    build in hours, so a read-only or externally-managed warehouse has to say so
-    rather than pay that silently.
+    On by default. It only reaches the app-built seed DB: a configured warehouse is
+    opened read-only and indexed once by whoever publishes it
+    (``python -m studio.index_warehouse``).
     """
     return os.getenv("STUDIO_AUTO_INDEX", "on").strip().lower() != "off"
+
+
+def filter_index_plan(flow: str = "gpr") -> Tuple[IndexSpec, ...]:
+    """One single-column index per filter column — OPT-IN, never part of `index_plan`.
+
+    On a huge table they take minutes and grow the file. They do NOT speed up building the
+    cube: that is one ``GROUP BY`` over all ten filter columns, which no single-column index
+    serves. What they speed up is the SQL FALLBACK — the per-column cascade a source too wide
+    to cube still runs — so they are worth having on a warehouse the cube declines, and worth
+    skipping on one it serves. Built only by ``studio.index_warehouse --filter-indexes``.
+    """
+    spec = get_flow_registry().get(flow)
+    if spec is None:
+        return ()
+    return tuple(
+        IndexSpec(name=f"{_PREFIX}_{spec.primary_table}_{column.name}",
+                  table=spec.primary_table, columns=(column.name,))
+        for column in spec.columns.values() if column.role in {"entity", "temporal"}
+    )
+
+
+def missing_filter_indexes(flow: str, engine: Any) -> Tuple[IndexSpec, ...]:
+    """The filter-column indexes this database does not have yet.
+
+    Only over columns the table really has: ``Quarter`` is declared for every GPR source
+    but a warehouse without one gets it derived later, so it is not "missing" an index.
+    """
+    plan = filter_index_plan(flow)
+    if not plan:
+        return ()
+    table = plan[0].table
+    columns = {c["name"] for c in inspect(engine).get_columns(table)}
+    present = existing_indexes(engine, table)
+    return tuple(spec for spec in plan
+                 if spec.columns[0] in columns and spec.name not in present)
+
+
+def missing_index_names(flows: Sequence[str], engine: Any) -> List[str]:
+    """Planned index names this database lacks, over the flows whose table it holds.
+
+    A flow whose table is absent is skipped, not reported: a warehouse without the
+    survey table is not missing survey indexes.
+    """
+    tables = set(inspect(engine).get_table_names())
+    return [spec.name for flow in flows for spec in missing_indexes(flow, engine)
+            if spec.table in tables]
 
 
 def ensure_indexes(flow: str = "gpr", engine: Any = None) -> List[str]:
@@ -209,13 +255,19 @@ def ensure_indexes(flow: str = "gpr", engine: Any = None) -> List[str]:
         from studio.data import get_engine
 
         engine = get_engine()
-    pending = missing_indexes(flow, engine)
-    if not pending:
-        return []
+    return create_indexes(missing_indexes(flow, engine), engine)
 
+
+def ensure_filter_indexes(flow: str, engine: Any) -> List[str]:
+    """Create any missing opt-in filter-column index (see `filter_index_plan`)."""
+    return create_indexes(missing_filter_indexes(flow, engine), engine)
+
+
+def create_indexes(specs: Sequence[IndexSpec], engine: Any) -> List[str]:
+    """Create each index in turn; returns the names created. A failure is logged, not raised."""
     made: List[str] = []
     started = time.time()
-    for spec in pending:
+    for spec in specs:
         try:
             with engine.begin() as conn:
                 conn.execute(text(spec.create_sql()))
@@ -224,7 +276,7 @@ def ensure_indexes(flow: str = "gpr", engine: Any = None) -> List[str]:
             logger.warning("studio: index %s failed: %s", spec.name, exc)
     if made:
         logger.info(
-            "studio: built %d analytics index(es) in %.1fs — one-time for this database",
+            "studio: built %d index(es) in %.1fs — one-time for this database",
             len(made),
             time.time() - started,
         )

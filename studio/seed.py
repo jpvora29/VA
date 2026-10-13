@@ -18,11 +18,14 @@ from typing import Dict, List
 
 from sqlalchemy import create_engine
 
+from core.local_paths import local_data_dir
 from logger import get_logger
 
 logger = get_logger(__name__)
 
-_SEED_PATH = Path(__file__).resolve().parent / "_seed" / "studio_seed.db"
+# Per user and out of OneDrive: every app rebuilds this file when its schema drifts,
+# so two users sharing one synced copy would each write it.
+_SEED_PATH = local_data_dir() / "seed" / "studio_seed.db"
 _RNG_SEED = 20260619
 
 CARRIERS = [

@@ -39,6 +39,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import text
 
+from core.local_paths import local_data_dir
 from logger import get_logger
 from studio import cube_core
 from studio.cube_index import Column, CubeEncoder, CubeIndex
@@ -69,14 +70,14 @@ def max_rows() -> int:
 
 
 def cache_dir() -> Path:
-    """Where cubes are persisted — ``STUDIO_CACHE_DIR``, else ``studio/_cache``.
+    """Where cubes are persisted — ``STUDIO_CACHE_DIR``, else ``%LOCALAPPDATA%\\VA\\cache``.
 
-    Worth overriding when the repo lives on a synced drive (OneDrive, Dropbox): a few hundred
-    megabytes of cube in a sync root is slow to write and can fail outright, and a cube that
-    cannot be persisted is one that gets rebuilt on every launch.
+    Never the project folder by default: it sits in OneDrive, where a few hundred megabytes
+    of cube is slow to write and can fail outright, and a cube that cannot be persisted is
+    one that gets rebuilt on every launch.
     """
     raw = os.getenv("STUDIO_CACHE_DIR", "").strip()
-    return Path(raw) if raw else Path(__file__).resolve().parent / "_cache"
+    return Path(raw) if raw else local_data_dir() / "cache"
 
 
 # MEASURED AND REJECTED: tuning the build connection's pragmas.

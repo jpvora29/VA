@@ -7,8 +7,10 @@ so run this once offline, and every subsequent app launch memory-maps the built
 cube instead of scanning for it.
 
     python -m studio.warm_cache             # warm the on-disk filter cache
-    python -m studio.warm_cache --indexes   # ALSO create filter-column indexes
-                                            #   (writes to the DB; speeds the scan)
+
+Read-only on the warehouse. Indexes (including the old ``--indexes`` filter-column ones)
+are built once on the published file: ``python -m studio.index_warehouse <path>
+--filter-indexes``.
 
 Reads the same ``.env`` the app does, so pointing the app at a database is enough. To
 override for one run:
@@ -22,7 +24,7 @@ import threading
 import time
 
 from logger import get_logger
-from studio.data import ensure_filter_indexes, warm_filter_cache
+from studio.data import warm_filter_cache
 
 logger = get_logger(__name__)
 
@@ -37,10 +39,9 @@ def main(argv: list[str]) -> None:
 
     load_dotenv()
     if "--indexes" in argv:
-        print("creating filter-column indexes (one-time; may take a while on a big DB)…")
-        t0 = time.time()
-        made = ensure_filter_indexes(FLOW)
-        print(f"  indexes ensured: {len(made)} in {time.time() - t0:.1f}s")
+        print("--indexes moved: the app opens the warehouse read-only. Build them once on the "
+              "file you publish:\n  python -m studio.index_warehouse <path> --filter-indexes")
+        sys.exit(2)
 
     print("building the filter cube (one-time for this database)…")
     t0 = time.time()

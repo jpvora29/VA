@@ -27,6 +27,7 @@ import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.pool import NullPool
 
+from core.local_paths import local_data_dir
 from logger import get_logger
 from studio.dataset.ingest import profile_frame
 from studio.dataset.model import DatasetRecord, record_from_json
@@ -40,8 +41,9 @@ _ID_RE = re.compile(r"^[0-9a-f]{12}$")
 
 
 def _store_dir() -> Path:
+    """``STUDIO_DATASET_DIR``, else ``%LOCALAPPDATA%\\VA\\datasets`` — per user, out of OneDrive."""
     override = os.getenv("STUDIO_DATASET_DIR")
-    return Path(override) if override else Path(__file__).resolve().parent / "_store"
+    return Path(override) if override else local_data_dir() / "datasets"
 
 
 def _new_id() -> str:
