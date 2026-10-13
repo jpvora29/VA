@@ -227,6 +227,25 @@ def test_one_scope_costs_two_queries_per_dimension(monkeypatch):
     assert calls["n"] == 0      # the same scope again costs nothing
 
 
+def test_a_frame_source_book_decomposes_like_the_warehouse():
+    """A working book on the R12M / date-range basis is a FrameSource, not an engine.
+
+    The breakdown cache keys on the engine, so an unhashable source dropped every
+    dimension with "unhashable type: 'dict'".
+    """
+    import pandas as pd
+
+    from core.analytics.frames import frame_source
+
+    book = frame_source({"GPR": pd.read_sql_table("GPR", ENG)}, label="seed")
+    S.reset_cache()
+    found = S.find_all(flow=GPR, filters=_LINE, engine=book, subject="Zurich", year=_YEAR)
+    assert set(found) == set(S.find_all(flow=GPR, filters=_LINE, engine=ENG,
+                                        subject="Zurich", year=_YEAR))
+    assert found["SIC_Major_Class"].rows
+    S.reset_cache()
+
+
 def test_an_empty_scope_yields_no_findings_rather_than_raising():
     found = S.find_segments(flow=GPR, filters={"Country": "Nowhere"}, engine=ENG,
                             subject="Zurich", dim="SIC_Major_Class", year=_YEAR)

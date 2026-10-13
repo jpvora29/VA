@@ -27,11 +27,16 @@ from typing import Any, Callable, Dict, Mapping, Optional
 import pandas as pd
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class FrameSource:
     """Named tables held as DataFrames — the in-memory twin of a SQLAlchemy engine.
 
     ``label`` identifies the source in logs and cache keys (a dataset id, say).
+
+    ``eq=False`` makes a source hash and compare by identity, as a SQLAlchemy engine does.
+    The generated field hash would hash the ``tables`` dict and raise, so every cache keyed
+    on ``engine`` (``studio.segments``) failed with "unhashable type: 'dict'" on a working
+    book — and field equality over DataFrames was never answerable anyway.
     """
 
     tables: Mapping[str, pd.DataFrame] = field(default_factory=dict)
