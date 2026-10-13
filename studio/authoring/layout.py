@@ -161,7 +161,14 @@ def studio_chrome() -> list:
     from studio.page.authoring.busy import STUDIO_BUSY
     from ui.shell.busy import busy_overlay
 
-    return [busy_overlay(STUDIO_BUSY), generating_loader(), generate_progress_host()]
+    return [busy_overlay(STUDIO_BUSY), generating_loader(), generate_progress_host(),
+            slideshow_host()]
+
+
+def slideshow_host() -> html.Div:
+    """Where Present lays the slideshow — beside the other overlays, so it outlives the
+    mode switch a re-render of the body would be."""
+    return html.Div(id="qs-present-host")
 
 
 def build_layout() -> html.Div:

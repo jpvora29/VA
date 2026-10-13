@@ -39,6 +39,9 @@ BUSY_REVIEW = "qs-busy-review"
 # Export: filling and assembling the .pptx to hand back.
 BUSY_EXPORT = "qs-busy-export"
 
+# Present: drawing any pages of the deck that have no render yet, before the show opens.
+BUSY_PRESENT = "qs-busy-present"
+
 # Order matters: the overlay shows the label of the FIRST flag that is up, so the flags
 # are declared in the order a user would name what they just did.
 STUDIO_BUSY = BusyScope(
@@ -51,6 +54,7 @@ STUDIO_BUSY = BusyScope(
         BusyFlag(BUSY_DATA_USE, "Indexing your data for the deck…"),
         BusyFlag(BUSY_DATA, "Reading your data…"),
         BusyFlag(BUSY_EXPORT, "Building your PowerPoint…"),
+        BusyFlag(BUSY_PRESENT, "Preparing the slideshow…"),
         BusyFlag(BUSY_REVIEW, "Re-checking the deck…"),
         BusyFlag(BUSY_FORM, "Updating your options…"),
         BusyFlag(BUSY_PREVIEW, "Recalculating the scope…"),

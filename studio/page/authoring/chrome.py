@@ -11,6 +11,7 @@ from ui.shell.rail import rail_frame, rail_section
 
 from studio.page.authoring.constants import MODES
 from studio.page.authoring.derive import deck_counts
+from studio.page.authoring.present import present_button
 
 
 def mode_rail(active: str, counts: Mapping[str, int]) -> html.Aside:
@@ -59,7 +60,8 @@ def mode_rail(active: str, counts: Mapping[str, int]) -> html.Aside:
     )
 
 
-def top_bar(deck: DeckSpec, doc: Optional[Mapping[str, Any]] = None) -> html.Header:
+def top_bar(deck: DeckSpec, doc: Optional[Mapping[str, Any]] = None, *,
+            presentable: bool = False) -> html.Header:
     meta = dict(deck.meta or {})
     carrier = meta.get("carrier") or "Carrier"
     country = meta.get("country") or "Market"
@@ -95,7 +97,7 @@ def top_bar(deck: DeckSpec, doc: Optional[Mapping[str, Any]] = None) -> html.Hea
                         ],
                         className="qs-ready-badge" + (" ok" if ready else " warn"),
                     ),
-                    html.Button([html.I(className="bi bi-easel"), "Present"], className="qs-btn-ghost"),
+                    present_button(presentable),
                     html.Button(
                         [html.I(className="bi bi-filetype-pptx"), "Export PPTX"],
                         id={"type": "qs-export", "loc": "top"},
@@ -122,7 +124,10 @@ def _placeholder_topbar(enabled: bool = False) -> html.Header:
                 className="qs-top-left",
             ),
             html.Div(
-                [html.Button([html.I(className="bi bi-filetype-pptx"), "Export PPTX"], id={"type": "qs-export", "loc": "top"}, className="qs-btn-primary", disabled=not enabled)],
+                [
+                    present_button(enabled),
+                    html.Button([html.I(className="bi bi-filetype-pptx"), "Export PPTX"], id={"type": "qs-export", "loc": "top"}, className="qs-btn-primary", disabled=not enabled),
+                ],
                 className="qs-top-right",
             ),
         ],

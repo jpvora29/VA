@@ -1,0 +1,107 @@
+/* Studio Present — the full-screen slideshow (studio/page/authoring/present.py).
+ *
+ * Black stage, one page at a time, sized to fit the screen without cropping. No
+ * transitions: a page turn is instant, as Studio's other surfaces are. Sits above every
+ * Studio layer except the busy overlay (z-index 5000), which only shows before the show
+ * exists anyway.
+ */
+
+.qs-present-open[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+.qs-present {
+    position: fixed;
+    inset: 0;
+    z-index: 4500;
+    background: #000;
+    color: #fff;
+}
+
+.qs-present-stage {
+    position: absolute;
+    inset: 0;
+    cursor: pointer;
+}
+
+.qs-present-slide {
+    display: none;
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    align-items: center;
+    justify-content: center;
+}
+.qs-present-slide.is-current { display: flex; }
+
+.qs-present-img {
+    display: block;
+    max-width: 100vw;
+    max-height: 100vh;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+/* A page with no render: its title on a slide-shaped card, never a blank screen. */
+.qs-present-missing {
+    width: min(100vw, calc(100vh * 16 / 9));
+    aspect-ratio: 16 / 9;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 32px;
+    background: #fff;
+    color: var(--va-ink-700, #1d2433);
+    text-align: center;
+}
+.qs-present-missing-title { font-size: clamp(22px, 3vw, 40px); font-weight: 700; }
+.qs-present-missing-sub { margin: 0; font-size: 15px; color: var(--va-ink-500, #5b6475); }
+
+.qs-present-caption {
+    position: absolute;
+    right: 18px;
+    bottom: 14px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    font-size: 12px;
+    pointer-events: none;
+}
+.qs-present-count,
+.qs-present-note {
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.55);
+    color: rgba(255, 255, 255, 0.8);
+    font-variant-numeric: tabular-nums;
+}
+
+.qs-present-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 16px;
+    cursor: pointer;
+}
+.qs-present-close:hover,
+.qs-present-close:focus-visible { border-color: #fff; }
+
+.qs-present-hint {
+    position: absolute;
+    left: 18px;
+    bottom: 14px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.45);
+    pointer-events: none;
+}

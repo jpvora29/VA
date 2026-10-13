@@ -72,6 +72,7 @@ from studio.authoring.data import register_data  # noqa: E402
 from studio.authoring.editing import register_editing  # noqa: E402
 from studio.authoring.export import register_export  # noqa: E402
 from studio.authoring.navigation import register_navigation  # noqa: E402
+from studio.authoring.present import register_present  # noqa: E402
 from studio.authoring.setup import register_setup  # noqa: E402
 
 register_router(app)       # move between the four workspaces
@@ -81,6 +82,7 @@ register_data(app)         # Studio: upload datasets, map columns, saved dataset
 register_setup(app)        # Studio: Generate the deck, live scope preview
 register_editing(app)      # Studio: edit fields, pages, widgets, colors on the canvas
 register_export(app)       # Studio: fill/assemble the template and download the .pptx
+register_present(app)      # Studio: the full-screen slideshow of the delivered deck
 register_recap(app)        # Recap: upload QBR decks, run the pipeline, download the .pptx
 register_mom(app)          # MoM: upload a note + deck, run the pipeline, download the .docx
 

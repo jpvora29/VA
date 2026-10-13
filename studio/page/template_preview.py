@@ -933,23 +933,34 @@ def _with_edited_renders(tdoc: Mapping[str, Any], edits: Mapping[str, Any], idx:
     return out, idx in pages
 
 
-def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> html.Div:
-    template, _ = registry.derive_manifest(tdoc["template_path"])
-    fields = materialize_fields(dict(tdoc))
+def stored_slide_urls(tdoc: Mapping[str, Any], slide_count: int) -> List[Optional[str]]:
+    """Each page's render that already exists on disk, or ``None`` — nothing is rendered."""
     stored_urls = [u if public_url_exists(u) else None for u in (tdoc.get("background_urls") or [])]
-    cached_urls = cached_doc_backgrounds(dict(tdoc), len(template.slides))
+    cached_urls = cached_doc_backgrounds(dict(tdoc), slide_count)
     # Assembled decks cache their renders per FILE (not per doc-values) — consult that
     # store too, so a render that failed at generate time but succeeded later (e.g. the
     # user's own PowerPoint stopped hogging COM) still replaces the geometry fallback.
     if not any(cached_urls) and tdoc.get("assembled"):
         from studio.template_fill.preview_assets import _cached_backgrounds
 
-        cached_urls = _cached_backgrounds(tdoc["template_path"], len(template.slides))
-    rendered_urls = [
+        cached_urls = _cached_backgrounds(tdoc["template_path"], slide_count)
+    return [
         (stored_urls[i] if i < len(stored_urls) and stored_urls[i] else cached_urls[i])
-        for i in range(len(template.slides))
+        for i in range(slide_count)
     ]
-    order = [i for i in tdoc.get("order", list(range(len(template.slides)))) if i not in tdoc.get("hidden", [])]
+
+
+def visible_order(tdoc: Mapping[str, Any], slide_count: int) -> List[int]:
+    """The deck's page indices in reading order, without the pages the author hid."""
+    hidden = tdoc.get("hidden", [])
+    return [i for i in tdoc.get("order", list(range(slide_count))) if i not in hidden]
+
+
+def template_preview_body(tdoc: Mapping[str, Any], view: Mapping[str, Any]) -> html.Div:
+    template, _ = registry.derive_manifest(tdoc["template_path"])
+    fields = materialize_fields(dict(tdoc))
+    rendered_urls = stored_slide_urls(tdoc, len(template.slides))
+    order = visible_order(tdoc, len(template.slides))
     pos = int(view.get("idx", 0))
     pos = pos if 0 <= pos < len(order) else 0
     idx, slide = _slide_at(template, tdoc, view)
