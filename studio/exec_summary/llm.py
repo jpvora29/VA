@@ -1,11 +1,9 @@
 """The model adapter and the stage cache — the only module that talks to an LLM.
 
-Model routing is configuration (design Section 22, "LLM selection and budgets"):
-
-    EXEC_SUMMARY_DEPLOYMENT   e.g. gpt-5.4-mini   (falls back to the balanced tier's)
-    EXEC_SUMMARY_EFFORT       e.g. low            (set it for a reasoning model: a
-                                                   reasoning model rejects a temperature)
-    EXEC_SUMMARY_VERBOSITY    optional            (low | medium | high)
+The model is the app's own: the shared ``balanced`` tier client from
+:mod:`core.llm.clients`, so it uses the same ``DEPLOYMENT`` / ``ENDPOINT`` / ``API_KEY`` /
+``VERSION`` (and any ``BALANCED_*`` override) as the rest of Studio. ``balanced`` because
+these calls are structured work that must not vary, like the commentary verifiers.
 
 Structured output uses OpenAI strict JSON-schema mode, so the endpoint itself refuses a
 response that does not match :class:`StageOutput`. The answer is cached on disk by
@@ -50,39 +48,28 @@ class NoModel:
         return None
 
 
-def exec_tier_config():
-    """The balanced tier, with the executive summary's own deployment/effort on top."""
-    from dataclasses import replace
-
-    from core.llm.clients import resolve_tier
-
-    base = resolve_tier("balanced")
-    deployment = (os.getenv("EXEC_SUMMARY_DEPLOYMENT") or "").strip() or base.deployment
-    effort = (os.getenv("EXEC_SUMMARY_EFFORT") or "").strip().lower()
-    verbosity = (os.getenv("EXEC_SUMMARY_VERBOSITY") or "").strip().lower() or None
-    if effort in _OFF:
-        return replace(base, deployment=deployment)
-    return replace(base, deployment=deployment, effort=effort, verbosity=verbosity,
-                   temperature=None)
+#: The shared tier every stage call uses (see the module note).
+STAGE_TIER = "balanced"
 
 
 @dataclass(frozen=True)
 class AzureStageModel:
-    """gpt-5.4-mini (or whatever the tier names) through LangChain, strict JSON schema."""
+    """The app's configured deployment through LangChain, strict JSON schema."""
 
-    config: object
+    tier: str = STAGE_TIER
     label: str = ""
 
     def complete(self, stage: str, system: str, user: str) -> Optional[StageOutput]:
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        from core.llm.clients import client_for
+        from core.llm.clients import make_client
         from studio import telemetry
+        from studio.ai.client import deployment_for
 
         started = time.perf_counter()
         status, failure, tokens = "ok", "", (0, 0)
         try:
-            runnable = client_for(self.config).with_structured_output(
+            runnable = make_client(self.tier).with_structured_output(
                 StageOutput, method="json_schema", strict=True, include_raw=True)
             out = runnable.invoke([SystemMessage(content=system), HumanMessage(content=user)])
             tokens = telemetry.token_counts(out.get("raw"))
@@ -96,21 +83,22 @@ class AzureStageModel:
             return None
         finally:
             telemetry.record(telemetry.ModelCall(
-                node=f"exec_summary.{stage}", phase="exec_summary", tier="exec_summary",
-                deployment=str(getattr(self.config, "deployment", "") or ""),
+                node=f"exec_summary.{stage}", phase="exec_summary", tier=self.tier,
+                deployment=deployment_for(self.tier),
                 seconds=time.perf_counter() - started, status=status,
                 input_tokens=tokens[0], output_tokens=tokens[1], failure=failure))
 
 
 def make_stage_model() -> StageModel:
     """The real model when AI is allowed and configured, else :class:`NoModel`."""
+    from core.llm.clients import resolve_tier
     from studio.ai.client import llm_available
 
     if not llm_available():
         return NoModel()
-    config = exec_tier_config()
-    effort = getattr(config, "effort", None) or "classic"
-    return AzureStageModel(config=config, label=f"{config.deployment}:{effort}")
+    config = resolve_tier(STAGE_TIER)
+    # The label keys the stage cache, so a model or effort change never serves old answers.
+    return AzureStageModel(label=f"{config.deployment}:{config.effort or 'classic'}")
 
 
 # ── the stage cache ──────────────────────────────────────────────────────────
