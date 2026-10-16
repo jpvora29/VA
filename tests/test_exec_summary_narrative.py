@@ -123,19 +123,83 @@ def _analysis(products=("Cyber", "Property", "Casualty")):
     return analyse(ctx, _book(products), {}, None, CFG)
 
 
-def test_the_summary_names_the_leader_its_rank_move_its_industry_and_the_drag():
+def test_the_summary_reads_overall_then_country_then_products_gaps_and_openings():
     a = _analysis()
-    statements = [f.statement for f in overall_fallback(a, {}).findings]
-    text = " ".join(statements)
-    assert "led by Cyber" in statements[0] and "in H1 2025" in statements[0]
-    assert statements[1].startswith("Cyber added $20.0M")            # what drove it
-    assert "Technology adding the most" in statements[1]              # the industry inside
-    assert re.search(r"(climbed to|slipped to|held) #\d", statements[1])  # its rank
-    assert statements[2].startswith("Casualty held the total back")   # what held it back
-    assert "fell 19.4%" in statements[2] and "mainly in Wholesale" in statements[2]
-    # Every sentence names something that moved — no sentence is just figures.
-    names = ("Cyber", "Property", "Casualty", "Technology", "Wholesale", "SG", "Focal")
-    assert all(any(n in s for n in names) for s in statements)
+    findings = overall_fallback(a, {}).findings
+    rules = [f.rule_id for f in findings]
+    statements = [f.statement for f in findings]
+    # The order the user asked for (2026-10-17).
+    assert rules[:2] == ["EXEC_OVERALL", "EXEC_COUNTRY"]
+    assert rules.index("EXEC_PRODUCT") > rules.index("EXEC_COUNTRY")
+    assert rules.index("EXEC_GAP") > rules.index("EXEC_PRODUCT")
+    # 1. Overall: carrier premium + YoY and the Marsh book — no product, no country.
+    overall = statements[0]
+    assert overall.startswith("Overall, Focal's Marsh-placed premium grew 19.3% to $99.0M "
+                              "in H1 2025")
+    assert "the Marsh book grew 19.8% to $459.0M" in overall
+    assert not any(n in overall for n in ("Cyber", "Property", "Casualty", "SG"))
+    # 2. The country: share of wallet and rank.
+    assert statements[1].startswith("In SG,") and "share of wallet at" in statements[1]
+    assert re.search(r"at rank #\d", statements[1])
+    # 3. Products: what added most (rank move, industry inside), what held it back.
+    product = [s for f, s in zip(findings, statements) if f.rule_id == "EXEC_PRODUCT"]
+    assert product[0].startswith("By product, Cyber added the most, $20.0M")
+    assert "mostly in Technology" in product[0]
+    assert re.search(r"(climbing to|slipping to|holding) #\d", product[0])
+    assert product[1].startswith("Casualty held the total back: it fell 19.4%")
+    assert "mostly in Wholesale" in product[1]
+    # 4. Gaps: the product behind its Marsh book.
+    gap = statements[rules.index("EXEC_GAP")]
+    assert "Casualty trails its Marsh book's growth by" in gap
+
+
+def test_a_multi_country_summary_says_where_each_product_moved():
+    rows = []
+    for country, cyber in (("SG", (10, 30)), ("HK", (10, 14))):
+        for year, focal in ((2024, cyber[0]), (2025, cyber[1])):
+            rows += [
+                {"country": country, "product": "Cyber", "industry": "Tech", "segment": "C",
+                 "carrier": "Focal", "year": year, "premium": focal * M},
+                {"country": country, "product": "Cyber", "industry": "Tech", "segment": "C",
+                 "carrier": "Rival", "year": year, "premium": 50 * M},
+            ]
+    ctx = AnalysisContext(carrier="Focal", countries=("SG", "HK"), current_year=2025,
+                          prior_year=2024, current_label="FY2025", prior_label="FY2024",
+                          currency="USD", symbol="$")
+    a = analyse(ctx, pd.DataFrame(rows), {}, None, CFG)
+    findings = overall_fallback(a, {}).findings
+    assert [f.rule_id for f in findings][:3] == ["EXEC_OVERALL", "EXEC_COUNTRY", "EXEC_COUNTRY"]
+    assert findings[1].statement.startswith("In SG,")              # largest market first
+    assert findings[2].statement.startswith("In HK,")
+    product = next(f.statement for f in findings if f.rule_id == "EXEC_PRODUCT")
+    assert "($20.0M in SG and $4.0M in HK)" in product
+
+
+def test_the_verifier_holds_the_overall_structure():
+    """A model answer that opens with a product, or omits WHERE, is refused — and verified
+    findings are put back in section order whatever order they came in."""
+    from studio.exec_summary import payloads as P
+    from studio.exec_summary.schemas import ModelFinding, StageOutput
+    from studio.exec_summary.verify import names_universe, verify_stage
+
+    a = _analysis()
+    payload = P.overall_payload(a, {}, {})
+    w = a.overall_evidence
+    disp = a.evidence.get(w["carrier_premium"]).display
+
+    def finding(rule, text, ids):
+        return ModelFinding(rule_id=rule, severity="context", statement=text,
+                            interpretation="", recommendation="", evidence_ids=ids,
+                            qualifications=[])
+
+    out = StageOutput(scope_id="ALL/overall", priority_refs=[], missing_references=[], findings=[
+        finding("EXEC_GAP", f"The gap is share at {disp}.", [w["carrier_premium"]]),
+        finding("EXEC_OVERALL", f"Cyber led premium to {disp}.", [w["carrier_premium"]]),
+        finding("EXEC_OVERALL", f"Overall premium reached {disp}.", [w["carrier_premium"]]),
+    ])
+    verified = verify_stage(out, payload, a.evidence, universe=names_universe(_book()))
+    assert [f.rule_id for f in verified.findings] == ["EXEC_OVERALL", "EXEC_GAP"]
+    assert any("overall sentence names 'Cyber'" in e for e in verified.errors)
 
 
 def test_every_fallback_sentence_still_passes_the_claim_checks():

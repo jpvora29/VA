@@ -25,7 +25,7 @@ from studio.exec_summary.schemas import (
     STAGE_PRODUCT,
 )
 
-PROMPT_VERSION = "exec-summary-v2"
+PROMPT_VERSION = "exec-summary-v3"
 
 _COMMON = """\
 You are a senior Marsh broker briefing the executives of ONE insurance carrier on how
@@ -142,32 +142,47 @@ severity: "strength", "attention", "opportunity" or "context".
 """
 
 _OVERALL = """\
-TASK (overall stage): write the executive summary across all selected countries. Your
-findings are joined, in order, into ONE paragraph on the summary slide: it must read as
-one flowing argument, not a list of figures.
-Write {min_findings} to {max_findings} findings where the evidence supports them:
-1. EXEC_TRAJECTORY: the headline for the period: total premium and its growth against
-   the Marsh book (and peer average), and the share of wallet movement, in one sentence
-   that also names the product that led it.
-2. EXEC_STRENGTH: where the growth came from: the top growth_led_by product(s) with what
-   they added, their rank movement and the industry inside that did most of the work.
-3. EXEC_WEAKNESS: what held it back: the held_back_by product, which KPI moved the
-   wrong way and the industry behind it. Include it even if the total grew.
-4. EXEC_COUNTRY (several countries only): which country contributed most of the change
-   and any country moving against the trend.
-5. EXEC_SURVEY (if available): one sentence on the survey score and gap to peers,
-   linked to the weakest attribute when given.
-6. EXEC_OPPORTUNITY: the best qualified opportunity (industry within product and
-   country) with its action and that appetite and capacity are still to be validated.
-Keep the whole summary under 170 words.
+TASK (overall stage): write the executive summary. Your findings are joined, in order,
+into ONE paragraph on the summary slide. Follow the five sections of "sections" in this
+exact order; each section starts from its own block of facts.
+
+1. EXEC_OVERALL (exactly one finding, from "1_overall"): the whole selection with NO
+   country and NO product named: the carrier's total Marsh-placed premium and its growth
+   for the period, the Marsh book's total premium and growth, and the peer average
+   premium and growth (say "the average peer"), ending with the carrier's share of wallet.
+2. EXEC_COUNTRY (one finding PER COUNTRY in "2_countries", in the order given): name the
+   country, its premium and growth against its Marsh book, its share of wallet (and the
+   change) against the peer average share, and its rank and rank movement.
+3. EXEC_PRODUCT (one or two findings, from "3_products"): the product(s) that added the
+   most and the product that held the total back. When several countries are selected,
+   say for EVERY figure WHICH COUNTRY it belongs to, using "by_country" (e.g. "Cyber added
+   $21.8M in Singapore and $21.4M in Hong Kong"), plus rank movement and the industry
+   inside that moved most.
+4. EXEC_GAP (one or two findings, from "4_gaps"): the gaps to close: each product_gap
+   named with its country and the KPI that is behind (growth against the Marsh book or
+   peers, share of wallet lost), and where the carrier's share of wallet sits below the
+   peer average by country.
+   EXEC_SURVEY (only if "4_gaps.survey" has a score): the survey score, its change and
+   gap to peers, with the weakest attribute and its country.
+5. EXEC_OPPORTUNITY (one finding, from "5_opportunities"): the best one or two openings,
+   each named as industry (or segment) within product in country, with its Marsh book,
+   growth and the carrier's share; end with reviewing appetite, capacity and placement
+   access, which are not yet validated.
+Never start the paragraph with a product or a country. Use "verified_country_findings"
+only as background.
 severity: "strength", "attention", "opportunity" or "context".
 
-EXAMPLE PARAGRAPH (invented figures, shape only — see how each sentence names what moved):
-"Marsh-placed premium rose 18.0% to $250.0M in H1 2026, well ahead of the Marsh book's
-7.0%, lifting share of wallet to 9.1%, led by Cyber. Cyber added $20.0M and climbed to #1,
-with Technology accounting for 40.0% of that increase. Casualty held the total back: it
-was flat while its Marsh book grew 10.0%, so share of wallet slipped 0.8 points and rank
-fell to #7, mainly in Financial Services. ..."
+EXAMPLE PARAGRAPH (invented figures, shape only):
+"Overall, the carrier's Marsh-placed premium grew 18.0% to $250.0M in H1 2026, while the
+Marsh book grew 7.0% to $3.0B and the average peer grew 5.0% to $300.0M, lifting the
+carrier's share of wallet to 8.3%. In Singapore, premium grew 20.0% to $130.0M against a
+Marsh book up 8.0%, a 9.0% share of wallet (up 0.9 points) against 10.5% for peers, at
+rank #5, up 1. In Hong Kong, ... By product, Cyber added the most, $20.0M ($12.0M in
+Singapore, $8.0M in Hong Kong), climbing to #1, mostly in Technology; Casualty held the
+total back, down 4.0% in Hong Kong while flat in Singapore. The gaps to close are
+Casualty in Hong Kong, growing 12.0 points slower than its Marsh book, and a share of
+wallet below the peer average in both markets. The clearest opening is Chemicals within
+Property in Singapore ..."
 """
 
 _STAGE_PROMPTS = {

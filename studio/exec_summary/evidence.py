@@ -166,6 +166,12 @@ def add_slice_evidence(store: EvidenceStore, m: SliceMetrics, period: str,
         put("peer_avg_yoy", m.peer.growth.pct, growth_display(m.peer.growth), UNIT_PCT_CHANGE)
         if m.peer.sow_cur is not None:
             put("peer_avg_sow", m.peer.sow_cur, pct(m.peer.sow_cur), UNIT_PCT)
+        # The gaps to the peer average, so a gap sentence quotes a checked figure.
+        gap = m.carrier_cur - m.peer.mean_cur
+        put("peer_premium_gap", gap, money_text(gap, symbol=symbol, signed=True), UNIT_MONEY)
+        if m.peer.sow_cur is not None and m.sow_cur is not None:
+            put("sow_gap_vs_peers", m.sow_cur - m.peer.sow_cur,
+                points(m.sow_cur - m.peer.sow_cur), UNIT_PP)
     if m.growth_gap_marsh_pp is not None:
         put("growth_gap_vs_marsh", m.growth_gap_marsh_pp, points(m.growth_gap_marsh_pp),
             UNIT_PP)

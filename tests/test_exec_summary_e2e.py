@@ -70,7 +70,9 @@ def test_ai_off_builds_a_complete_deck_from_deterministic_findings(tmp_path):
     cover, summary, detail, _ = _deck_text(built.deck_path)
     assert "Zurich Executive Summary" in cover
     assert "Zurich — Carrier Performance Executive Summary (FY2025)" in summary
-    assert "Singapore and Hong Kong" in summary and "survey score" in summary
+    assert "Overall, Zurich's Marsh-placed premium" in summary and "survey score" in summary
+    assert summary.index("In Singapore,") < summary.index("In Hong Kong,") < summary.index(
+        "By product,")
     for text in (cover, summary, detail):
         assert not PLACEHOLDER.search(text), PLACEHOLDER.search(text)
 

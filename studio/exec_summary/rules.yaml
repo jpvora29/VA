@@ -37,13 +37,13 @@ findings:
   opportunity_max: 3
   country_max: 4
   overall_min: 4
-  overall_max: 6
+  overall_max: 12                     # overall + one per country (up to 6) + products, gaps, survey, openings
 
 budgets:                               # tokens per call (design Section 19)
   input_tokens:                        # system prompt + payload, counted before sending
     product: 4500                      # prompt ~1.3k (narrative rules + example) + payload
     opportunity: 4000
     country: 6500                      # carries condensed child findings + story (~4.7k at 2 countries)
-    overall: 9000                      # carries up to 6 country summaries + story (~5.6k at 2 countries)
+    overall: 11000                     # five sections; ~5.9k at 2 countries, ~8.2k at 4
   output_tokens: 800
   concurrency: 6                       # product + opportunity calls in flight at once

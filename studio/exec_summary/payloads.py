@@ -51,8 +51,8 @@ RULES_BY_STAGE: Mapping[str, Tuple[str, ...]] = {
     STAGE_OPPORTUNITY: ("WS_EXPAND", "WS_REBUILD", "WS_DEVELOP"),
     STAGE_COUNTRY: ("COUNTRY_PERFORMANCE", "COUNTRY_STRENGTH", "COUNTRY_WEAKNESS",
                     "COUNTRY_SURVEY", "COUNTRY_OPPORTUNITY"),
-    STAGE_OVERALL: ("EXEC_TRAJECTORY", "EXEC_COUNTRY", "EXEC_STRENGTH", "EXEC_WEAKNESS",
-                    "EXEC_SURVEY", "EXEC_OPPORTUNITY", "EXEC_ACTION"),
+    STAGE_OVERALL: ("EXEC_OVERALL", "EXEC_COUNTRY", "EXEC_PRODUCT", "EXEC_GAP", "EXEC_SURVEY",
+                    "EXEC_OPPORTUNITY"),
 }
 
 
@@ -283,62 +283,103 @@ def country_payload(analysis: ExecAnalysis, ca: CountryAnalysis,
                         child_refs=tuple(r.scope_id for r in [*child_results, *opps]))
 
 
-def _ordered_countries(analysis: ExecAnalysis, n: int) -> Tuple[list, list]:
-    leaders = sorted(analysis.countries, key=lambda c: -c.metrics.carrier_cur)[:n]
-    weak = sorted(analysis.countries, key=lambda c: -K.adversity_score(c.metrics))
-    weak = [c for c in weak if K.adverse_reasons(c.metrics, analysis.config.materiality)][:n]
-    return leaders, weak
+#: The executive summary's sections, in reading order — overall, each country, products,
+#: gaps, opportunities. The overall answer is re-ordered to this after verification, so a
+#: model that writes them out of order still produces the paragraph in this order.
+OVERALL_SECTIONS: Tuple[str, ...] = ("EXEC_OVERALL", "EXEC_COUNTRY", "EXEC_PRODUCT", "EXEC_GAP",
+                                     "EXEC_SURVEY", "EXEC_OPPORTUNITY")
+
+#: Section 1: the whole selection — carrier, Marsh book and the average peer, no names.
+OVERALL_FACTS = ("carrier_premium", "carrier_premium_change", "carrier_yoy", "marsh_premium",
+                 "marsh_yoy", "peer_avg_premium", "peer_avg_yoy", "carrier_sow", "sow_change")
+#: Section 2: each country — premium, growth, share of wallet and rank.
+COUNTRY_FACTS = ("carrier_premium", "carrier_premium_change", "carrier_yoy", "marsh_yoy",
+                 "carrier_sow", "sow_change", "peer_avg_sow", "carrier_rank", "rank_movement",
+                 "contribution_to_change")
+#: A product mover's movement in ONE country.
+SPLIT_FACTS = ("carrier_premium_change", "carrier_yoy", "carrier_rank", "rank_movement")
+#: Section 4: a gap to close — growth and share against the Marsh book and the peers.
+GAP_FACTS = ("carrier_yoy", "marsh_yoy", "growth_gap_vs_marsh", "growth_gap_vs_peers",
+             "carrier_sow", "sow_change", "peer_avg_sow", "sow_gap_vs_peers")
+PEER_GAP_FACTS = ("carrier_sow", "peer_avg_sow", "sow_gap_vs_peers", "carrier_premium",
+                  "peer_avg_premium", "peer_premium_gap")
+
+
+def _by_country(facts: "_Facts", analysis: ExecAnalysis, product: str) -> dict:
+    """A product's movement in each selected country — so the summary says WHERE."""
+    out = {}
+    for ca in analysis.countries:
+        pa = analysis.product_in(ca.country, product)
+        if pa is not None:
+            out[ca.country] = facts.pick(pa.evidence, SPLIT_FACTS)
+    return out
+
+
+def _product_mover(facts: "_Facts", analysis: ExecAnalysis, mover) -> dict:
+    out = _mover(facts, mover)
+    if analysis.context.multi_country:
+        out["by_country"] = _by_country(facts, analysis, mover.name)
+    return out
+
+
+def _gap(facts: "_Facts", pa: ProductAnalysis) -> dict:
+    return {"country": pa.country, "product": pa.product,
+            "basis": list(pa.classification.reasons) if pa.classification else [],
+            **facts.pick(pa.evidence, GAP_FACTS)}
+
+
+def _survey_section(facts: "_Facts", analysis: ExecAnalysis) -> dict:
+    if not analysis.overall_survey_evidence:
+        return {"grain": "unavailable",
+                "reason": analysis.overall_survey.note if analysis.overall_survey
+                else "survey not in the run's data basis"}
+    return {**facts.pick(analysis.overall_survey_evidence, SURVEY_FACTS),
+            "weakest_attribute_by_country": {
+                ca.country: {"name": ca.weakest_attributes[0],
+                             **facts.pick(ca.attribute_evidence[ca.weakest_attributes[0]],
+                                          ("survey_score", "survey_gap_vs_peers"))}
+                for ca in analysis.countries if ca.weakest_attributes}}
 
 
 def overall_payload(analysis: ExecAnalysis, countries: Mapping[str, StageResult],
                     products: Mapping[str, StageResult]) -> StagePayload:
     cfg = analysis.config
     facts = _Facts(analysis.evidence)
-    leaders, weak = _ordered_countries(analysis, cfg.shortlist.countries_per_side)
-    chosen = list({c.country: c for c in [*leaders, *weak]}.values())
-    country_results = [countries[f"{c.country}/country"] for c in chosen
+    ordered = sorted(analysis.countries, key=lambda c: -c.metrics.carrier_cur)
+    country_results = [countries[f"{c.country}/country"] for c in ordered
                        if f"{c.country}/country" in countries]
-    # Product evidence across the whole run, so the summary can name the strongest and
-    # weakest lines with their basis even in a one-country deck.
-    totals = {p.scope.product: facts.pick(analysis.product_total_evidence[p.scope.product],
-                                          ("carrier_premium", "carrier_yoy", "marsh_yoy",
-                                           "carrier_sow", "sow_change", "carrier_rank",
-                                           "rank_movement", "portfolio_mix"))
-              for p in analysis.product_totals[:6]}
     opportunities = sorted((c for ca in analysis.countries for c in ca.shortlist),
-                           key=lambda c: c.ranking_keys())[:cfg.shortlist.opportunities_per_country]
+                           key=lambda c: c.ranking_keys())[:2]
+    contributions = {m.name: m.evidence for m in analysis.country_movers}
     data = {
         "stage": STAGE_OVERALL, "scope_id": "ALL/overall",
-        "context": _context(analysis, countries=list(analysis.context.countries)),
-        "overall": facts.pick(analysis.overall_evidence, SLICE_FACTS),
-        "status": _status(analysis.overall_classification),
-        "survey": ({**facts.pick(analysis.overall_survey_evidence, SURVEY_FACTS),
-                    "weakest_attribute_by_country": {
-                        ca.country: {"name": ca.weakest_attributes[0],
-                                     **facts.pick(ca.attribute_evidence[ca.weakest_attributes[0]],
-                                                  ("survey_score", "survey_gap_vs_peers"))}
-                        for ca in analysis.countries if ca.weakest_attributes}}
-                   if analysis.overall_survey_evidence else
-                   {"grain": "unavailable",
-                    "reason": analysis.overall_survey.note if analysis.overall_survey
-                    else "survey not in the run's data basis"}),
-        "story": {**_story(facts, analysis.product_leaders, analysis.product_drags),
-                  "countries": [{"name": m.name, **facts.pick(m.evidence, (
-                      "carrier_premium_change", "carrier_yoy", "marsh_yoy",
-                      "contribution_to_change", "carrier_rank", "rank_movement"))}
-                      for m in analysis.country_movers] if analysis.context.multi_country else []},
-        "products_all_countries": totals,
-        "country_totals": {
-            c.country: facts.pick(c.evidence, ("carrier_premium", "carrier_yoy", "marsh_yoy",
-                                               "carrier_sow", "sow_change", "rank_movement"))
-            for c in sorted(analysis.countries, key=lambda c: -c.metrics.carrier_cur)[:6]},
-        "leading_countries": [c.country for c in leaders],
-        "weak_countries": [c.country for c in weak],
-        "country_findings": [_child(facts, r) for r in country_results],
-        "top_opportunities": [{"country": c.country, "product": c.product,
-                               **_candidate(facts, c)} for c in opportunities],
+        "context": _context(analysis, countries=list(analysis.context.countries),
+                            peer_note=("peer_avg_premium overall = the average peer's premium "
+                                       "summed across the selected countries")
+                            if analysis.context.multi_country else ""),
+        "sections": {
+            "1_overall": facts.pick(analysis.overall_evidence, OVERALL_FACTS),
+            "2_countries": [{"country": c.country,
+                             **facts.pick({**c.evidence, **contributions.get(c.country, {})},
+                                          COUNTRY_FACTS)}
+                            for c in ordered[:6]],
+            "3_products": {
+                "growth_led_by": [_product_mover(facts, analysis, m)
+                                  for m in analysis.product_leaders],
+                "held_back_by": [_product_mover(facts, analysis, m)
+                                 for m in analysis.product_drags],
+            },
+            "4_gaps": {
+                "product_gaps": [_gap(facts, pa) for pa in analysis.gaps],
+                "share_vs_peers_by_country": {c.country: facts.pick(c.evidence, PEER_GAP_FACTS)
+                                              for c in ordered[:6]},
+                "survey": _survey_section(facts, analysis),
+            },
+            "5_opportunities": [{"country": c.country, "product": c.product,
+                                 **_candidate(facts, c)} for c in opportunities],
+        },
+        "verified_country_findings": [_child(facts, r) for r in country_results],
         "counts": {"countries": len(analysis.countries),
-                   "countries_sent": len(country_results),
                    "opportunities_qualified": sum(c.qualified for c in analysis.register)},
         "allowed_rule_ids": list(RULES_BY_STAGE[STAGE_OVERALL]),
     }
@@ -362,8 +403,8 @@ def token_count(text: str) -> int:
 def trim_for_budget(payload: StagePayload, system: str, budget: int) -> Optional[StagePayload]:
     """Drop optional blocks (segments, attribute lists) until the call fits; ``None`` if it
     still does not — the caller then uses the structured fallback (design Section 19)."""
-    optional = (("segments",), ("survey", "best_attributes"), ("survey", "weakest_attributes"),
-                ("industries", "rows"))
+    optional = (("verified_country_findings",), ("segments",), ("survey", "best_attributes"),
+                ("survey", "weakest_attributes"), ("industries", "rows"))
     for path in (None, *optional):
         if path is not None:
             node = payload.data

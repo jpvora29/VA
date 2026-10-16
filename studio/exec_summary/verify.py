@@ -15,7 +15,7 @@ scope, not only "does this number appear somewhere":
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable, List, Sequence, Set, Tuple
 
 from studio.ai.verifier import allowed_numbers, verify_bullets
@@ -26,8 +26,14 @@ from studio.exec_summary.evidence import (
     UNIT_SCORE,
     EvidenceStore,
 )
-from studio.exec_summary.payloads import StagePayload
-from studio.exec_summary.schemas import VERIFIED, Finding, ModelFinding, StageOutput
+from studio.exec_summary.payloads import OVERALL_SECTIONS, StagePayload
+from studio.exec_summary.schemas import (
+    STAGE_OVERALL,
+    VERIFIED,
+    Finding,
+    ModelFinding,
+    StageOutput,
+)
 
 MAX_WORDS = 60
 
@@ -108,8 +114,41 @@ def _direction_issue(text: str, store: EvidenceStore, ids: Sequence[str]) -> str
     return ""
 
 
+def _countries(payload: StagePayload) -> List[str]:
+    return list((payload.data.get("context") or {}).get("countries") or [])
+
+
+def _section_issue(f: ModelFinding, payload: StagePayload, names: Iterable[str]) -> str:
+    """The overall summary's structure: an overall sentence that names nothing, and
+    product sentences that say which country each figure belongs to."""
+    if payload.stage != STAGE_OVERALL:
+        return ""
+    if f.rule_id == "EXEC_OVERALL":
+        named = [n for n in names if _mentions(f.statement, n, case=True)]
+        if named:
+            return (f"the overall sentence names {named[0]!r}; it must cover the whole "
+                    "selection with no country or product")
+    countries = _countries(payload)
+    if (f.rule_id == "EXEC_PRODUCT" and len(countries) > 1
+            and not any(_mentions(f.statement, c, case=True) for c in countries)):
+        return "a product sentence must say which country each figure belongs to"
+    return ""
+
+
+def order_sections(findings: Sequence[Finding], countries: Sequence[str]) -> List[Finding]:
+    """The overall findings in reading order: overall, each country (in the slide's country
+    order), products, gaps, survey, opportunities — whatever order they were written in."""
+    def key(f: Finding):
+        section = OVERALL_SECTIONS.index(f.rule_id) if f.rule_id in OVERALL_SECTIONS else 99
+        country = next((i for i, c in enumerate(countries)
+                        if _mentions(f.statement, c, case=True)), 99)
+        return section, country if f.rule_id == "EXEC_COUNTRY" else 0
+    return sorted(findings, key=key)
+
+
 def check_finding(f: ModelFinding, payload: StagePayload, store: EvidenceStore, *,
-                  forbidden_names: Iterable[str], unknown_names: Iterable[str]) -> str:
+                  forbidden_names: Iterable[str], unknown_names: Iterable[str],
+                  universe: Iterable[str] = ()) -> str:
     """``""`` when the finding passes every check, else the first reason it fails."""
     text = " ".join(t for t in (f.statement, f.interpretation, f.recommendation) if t)
     if f.rule_id not in payload.allowed_rules:
@@ -141,6 +180,9 @@ def check_finding(f: ModelFinding, payload: StagePayload, store: EvidenceStore, 
     invented = [n for n in unknown_names if _mentions(text, n, case=True)]
     if invented:
         return f"mentions {invented[0]!r}, which is not in the input"
+    section = _section_issue(f, payload, universe)
+    if section:
+        return section
     if _words(f.statement) > MAX_WORDS:
         return f"statement is {_words(f.statement)} words (max {MAX_WORDS})"
     return ""
@@ -153,7 +195,8 @@ def verify_stage(output: StageOutput, payload: StagePayload, store: EvidenceStor
     if output.scope_id != payload.scope_id:
         return VerifiedStage((), (f"scope_id {output.scope_id!r} != {payload.scope_id!r}",), False)
     in_payload = payload.to_json().lower()
-    unknown = [n for n in universe if n and n.lower() not in in_payload]
+    names = [n for n in universe if n]
+    unknown = [n for n in names if n.lower() not in in_payload]
     forbidden = list(forbidden_names)
     kept: List[Finding] = []
     errors: List[str] = []
@@ -162,7 +205,7 @@ def verify_stage(output: StageOutput, payload: StagePayload, store: EvidenceStor
             errors.append(f"finding {n}: more than {payload.max_findings} findings")
             continue
         reason = check_finding(f, payload, store, forbidden_names=forbidden,
-                               unknown_names=unknown)
+                               unknown_names=unknown, universe=names)
         if reason:
             errors.append(f"finding {n}: {reason}")
             continue
@@ -173,6 +216,9 @@ def verify_stage(output: StageOutput, payload: StagePayload, store: EvidenceStor
             evidence_ids=tuple(dict.fromkeys(f.evidence_ids)),
             qualifications=tuple(q.strip() for q in f.qualifications if q.strip()),
             validation_status=VERIFIED))
+    if payload.stage == STAGE_OVERALL:
+        kept = [replace(f, finding_id=f"o{i}")
+                for i, f in enumerate(order_sections(kept, _countries(payload)), start=1)]
     return VerifiedStage(tuple(kept), tuple(errors), True)
 
 

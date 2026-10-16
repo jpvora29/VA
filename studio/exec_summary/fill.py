@@ -107,9 +107,26 @@ def write_summary(ctx: FillContext) -> None:
     title = _title(slide)
     T.set_text(title.text_frame, ctx.content.summary_title)
     body = _by_text(slide, "Marsh-placed premium")
-    T.set_text(body.text_frame, ctx.content.summary_paragraph or
-               "Commentary unavailable for this selection.")
+    text = ctx.content.summary_paragraph or "Commentary unavailable for this selection."
+    T.set_text(body.text_frame, text)
+    size = summary_font_size(text)
+    if size is not None:
+        for run in body.text_frame.paragraphs[0].runs:
+            run.font.size = Pt(size)
     _add_footnote(slide, ctx.content.summary_footnote)
+
+
+#: The summary panel holds about this many characters at the template's 12pt; past it,
+#: a selection of many countries steps the type down rather than spilling off the panel.
+SUMMARY_FIT_12PT = 3400
+SUMMARY_FIT_11PT = 4000
+
+
+def summary_font_size(text: str) -> Optional[int]:
+    """``None`` to keep the template's 12pt, else the smaller size the paragraph needs."""
+    if len(text) <= SUMMARY_FIT_12PT:
+        return None
+    return 11 if len(text) <= SUMMARY_FIT_11PT else 10
 
 
 def write_detail_title(ctx: FillContext) -> None:

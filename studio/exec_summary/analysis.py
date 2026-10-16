@@ -14,7 +14,7 @@ from typing import Dict, List, Mapping, Optional
 import pandas as pd
 
 from studio.exec_summary import evidence as E
-from studio.exec_summary.classify import Classification, classify
+from studio.exec_summary.classify import ATTENTION, Classification, adversity_score, classify
 from studio.exec_summary.config import ExecConfig
 from studio.exec_summary.context import AnalysisContext
 from studio.exec_summary.metrics import Scope, SliceMetrics, slice_metrics
@@ -108,6 +108,14 @@ class ExecAnalysis:
     product_leaders: List[Mover] = field(default_factory=list)   # across the countries
     product_drags: List[Mover] = field(default_factory=list)
     country_movers: List[Mover] = field(default_factory=list)    # every country, by change
+    gaps: List[ProductAnalysis] = field(default_factory=list)    # material gaps, worst first
+
+    def product_in(self, country: str, product: str) -> Optional[ProductAnalysis]:
+        """One product's analysis in one country — how a mover is split by market."""
+        for ca in self.countries:
+            if ca.country == country:
+                return next((p for p in ca.products if p.product == product), None)
+        return None
 
     @property
     def register(self) -> List[OpportunityCandidate]:
@@ -358,6 +366,15 @@ class ExecAnalysisBuilder:
                 mover.within = pa.industry_up if mover.direction == UP else pa.industry_down
         return self
 
+    def add_gaps(self) -> "ExecAnalysisBuilder":
+        """The material gaps to close: country × product slices flagged for attention
+        (growth behind the Marsh book or peers, or share lost), worst first."""
+        flagged = [p for ca in self._result.countries for p in ca.products
+                   if p.classification and ATTENTION in p.classification.labels]
+        flagged.sort(key=lambda p: -adversity_score(p.metrics))
+        self._result.gaps = flagged[:self._cfg.shortlist.products_per_side]
+        return self
+
     def build(self) -> ExecAnalysis:
         return self._result
 
@@ -441,5 +458,6 @@ def analyse(context: AnalysisContext, cube: pd.DataFrame, peer_sets: Mapping[str
         .add_opportunities()
         .add_product_totals()
         .add_drivers()
+        .add_gaps()
         .build()
     )
