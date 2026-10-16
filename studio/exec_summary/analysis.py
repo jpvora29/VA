@@ -28,6 +28,16 @@ from studio.exec_summary.survey import (
     overall_survey,
     ranked_attributes,
 )
+from studio.exec_summary.drivers import (
+    DOWN,
+    UP,
+    Mover,
+    change_of,
+    contribution,
+    drags,
+    growth_leaders,
+    industry_mover,
+)
 from studio.exec_summary.whitespace import (
     PATH_DEVELOP,
     PATH_EXPAND,
@@ -56,6 +66,8 @@ class ProductAnalysis:
     survey_evidence: Dict[str, str] = field(default_factory=dict)
     candidates: List[OpportunityCandidate] = field(default_factory=list)
     shortlist: List[OpportunityCandidate] = field(default_factory=list)
+    industry_up: Optional[Mover] = None       # the SIC major that added most premium
+    industry_down: Optional[Mover] = None     # the SIC major that lost most premium
 
     @property
     def scope_id(self) -> str:
@@ -73,6 +85,8 @@ class CountryAnalysis:
     survey: Optional[SurveySummary] = None
     survey_evidence: Dict[str, str] = field(default_factory=dict)
     attribute_evidence: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    product_leaders: List[Mover] = field(default_factory=list)
+    product_drags: List[Mover] = field(default_factory=list)
     best_attributes: List[str] = field(default_factory=list)
     weakest_attributes: List[str] = field(default_factory=list)
     shortlist: List[OpportunityCandidate] = field(default_factory=list)
@@ -91,6 +105,9 @@ class ExecAnalysis:
     countries: List[CountryAnalysis] = field(default_factory=list)
     product_totals: List[SliceMetrics] = field(default_factory=list)
     product_total_evidence: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    product_leaders: List[Mover] = field(default_factory=list)   # across the countries
+    product_drags: List[Mover] = field(default_factory=list)
+    country_movers: List[Mover] = field(default_factory=list)    # every country, by change
 
     @property
     def register(self) -> List[OpportunityCandidate]:
@@ -308,10 +325,70 @@ class ExecAnalysisBuilder:
             row.scope.product: self._evidence(row) for row in self._result.product_totals}
         return self
 
+    def add_drivers(self) -> "ExecAnalysisBuilder":
+        """Who moved: product leaders and drags (with the industry inside each that did
+        the work) across the countries and per country, and each country's share."""
+        res, rules, n = self._result, self._cfg.materiality, self._cfg.shortlist.products_per_side
+        total = change_of(res.overall)
+        res.product_leaders = growth_leaders(res.product_totals, _product_name, 2)
+        res.product_drags = drags(res.product_totals, _product_name, 2, rules,
+                                  exclude=[m.name for m in res.product_leaders])
+        for mover in [*res.product_leaders, *res.product_drags]:
+            self._register(mover, total, res.product_total_evidence.get(mover.name))
+            industries = [self._metrics(Scope(product=mover.name, industry=i))
+                          for i in self._all_names(mover.name, "industry")]
+            mover.within = self._industry(industries, mover.direction, change_of(mover.metrics))
+        res.country_movers = sorted((Mover(c.country, c.metrics, UP if change_of(c.metrics) >= 0
+                                           else DOWN, evidence=c.evidence)
+                                     for c in res.countries), key=lambda m: -m.change)
+        for mover in res.country_movers:
+            self._register(mover, total, mover.evidence)
+        for ca in res.countries:
+            for pa in ca.products:
+                pa.industry_up = self._industry(pa.industries, UP, change_of(pa.metrics))
+                pa.industry_down = self._industry(pa.industries, DOWN, change_of(pa.metrics))
+            by_metrics = {id(p.metrics): p for p in ca.products}
+            rows = [p.metrics for p in ca.products]
+            ca.product_leaders = growth_leaders(rows, _product_name, n)
+            ca.product_drags = drags(rows, _product_name, n, rules,
+                                     exclude=[m.name for m in ca.product_leaders])
+            for mover in [*ca.product_leaders, *ca.product_drags]:
+                pa = by_metrics[id(mover.metrics)]
+                self._register(mover, change_of(ca.metrics), pa.evidence)
+                mover.within = pa.industry_up if mover.direction == UP else pa.industry_down
+        return self
+
     def build(self) -> ExecAnalysis:
         return self._result
 
     # helpers that answer one question each ---------------------------------------
+
+    def _register(self, mover: Mover, parent_change: float,
+                  evidence: Optional[Dict[str, str]] = None) -> None:
+        """Give a mover its evidence ids, plus its share of the parent's change."""
+        mover.evidence = dict(evidence) if evidence else self._evidence(mover.metrics)
+        mover.contribution = contribution(mover.change, parent_change)
+        if mover.contribution is not None:
+            word = "increase" if parent_change > 0 else "decline"
+            m = mover.metrics
+            mover.evidence["contribution_to_change"] = self._result.evidence.add(
+                "contribution_to_change", m.scope.scope_id, f"{m.scope.label} share of the {word}",
+                self._ctx.current_label, mover.contribution, E.pct(mover.contribution),
+                E.UNIT_PCT)
+
+    def _industry(self, rows: List[SliceMetrics], direction: str,
+                  parent_change: float) -> Optional[Mover]:
+        """The industry that moved most in ``direction`` inside a product, registered."""
+        row = industry_mover(rows, direction)
+        if row is None:
+            return None
+        mover = Mover(row.scope.industry, row, direction)
+        self._register(mover, parent_change)
+        return mover
+
+    def _all_names(self, product: str, column: str) -> List[str]:
+        local = self._cube[self._cube["product"] == product]
+        return sorted(str(v) for v in local[column].unique())
 
     def _names(self, country: str, product: str, column: str) -> List[str]:
         local = self._cube[(self._cube["country"] == country) & (self._cube["product"] == product)]
@@ -332,6 +409,10 @@ class ExecAnalysisBuilder:
             if low and m.marsh_cur > 0 and (best is None or m.marsh_cur > best[1]):
                 best = (segment, m.marsh_cur)
         return best[0] if best else None
+
+
+def _product_name(m: SliceMetrics) -> str:
+    return m.scope.product
 
 
 def _path_for(classification: Optional[Classification]) -> str:
@@ -359,5 +440,6 @@ def analyse(context: AnalysisContext, cube: pd.DataFrame, peer_sets: Mapping[str
         .add_segments()
         .add_opportunities()
         .add_product_totals()
+        .add_drivers()
         .build()
     )

@@ -44,6 +44,9 @@ class AnalysisContext:
     peer_pins: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
     survey_on: bool = False
     flow: str = "gpr"
+    # True when the Setup period (R12M, a date range) already relabels ``Year`` into a
+    # like-for-like window — month coverage must then not be second-guessed.
+    period_relabelled: bool = False
 
     @property
     def multi_country(self) -> bool:
@@ -108,6 +111,24 @@ def build_analysis_context(result: Any, *, data_basis: Optional[str] = None,
         peer_pins=pins,
         survey_on=str(data_basis or "") == DATA_BASIS_WITH_SURVEY,
         flow=str(getattr(result, "flow", "gpr") or "gpr"),
+        period_relabelled=bool(getattr(window, "relabels", False)),
+    )
+
+
+def with_coverage(context: AnalysisContext, coverage) -> AnalysisContext:
+    """The same context over the months the current year actually holds — both years
+    pinned to them, and the period named for them ("H1 2026" vs "H1 2025")."""
+    from dataclasses import replace
+
+    from studio.exec_summary.coverage import MONTH_COL, period_label
+
+    if coverage is None or coverage.full_year or not coverage.month_values:
+        return context
+    return replace(
+        context,
+        current_label=period_label(coverage.months, context.current_year),
+        prior_label=period_label(coverage.months, context.prior_year),
+        slice_filters={**context.slice_filters, MONTH_COL: list(coverage.month_values)},
     )
 
 

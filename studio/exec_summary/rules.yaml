@@ -41,9 +41,9 @@ findings:
 
 budgets:                               # tokens per call (design Section 19)
   input_tokens:                        # system prompt + payload, counted before sending
-    product: 3500
-    opportunity: 3500
-    country: 4500                      # carries condensed child findings
-    overall: 6000                      # carries up to 6 country summaries
+    product: 4500                      # prompt ~1.3k (narrative rules + example) + payload
+    opportunity: 4000
+    country: 6500                      # carries condensed child findings + story (~4.7k at 2 countries)
+    overall: 9000                      # carries up to 6 country summaries + story (~5.6k at 2 countries)
   output_tokens: 800
   concurrency: 6                       # product + opportunity calls in flight at once

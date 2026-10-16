@@ -3,15 +3,22 @@
 Same shape as a model answer (:class:`StageOutput`), written from the same evidence ids,
 and passed through the same verifier. Used when AI is off (``STUDIO_AI=off``), when the
 endpoint fails, when a payload exceeds its budget, or when an answer fails verification
-twice. The wording follows the design's reusable commentary pattern (Section 13).
+twice.
+
+Written as a story, not a read-out: every sentence names WHAT moved (a product, an
+industry inside it, a country), which way, how that compares with the Marsh book, and
+what happened to share and rank — the headline, then what drove it, then what held it
+back, then where to look next.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import List, Mapping, Optional, Sequence
 
 from studio.exec_summary import classify as K
 from studio.exec_summary.analysis import CountryAnalysis, ExecAnalysis, ProductAnalysis
+from studio.exec_summary.drivers import Mover
 from studio.exec_summary.evidence import EvidenceStore
+from studio.exec_summary.metrics import SliceMetrics
 from studio.exec_summary.schemas import ModelFinding, StageOutput, StageResult
 from studio.exec_summary.whitespace import (
     FIT_QUALIFICATION,
@@ -21,6 +28,10 @@ from studio.exec_summary.whitespace import (
 )
 
 _RULE_FOR_PATH = {PATH_EXPAND: "WS_EXPAND", PATH_REBUILD: "WS_REBUILD"}
+#: A growth gap this wide reads as "well ahead of" rather than "ahead of".
+WELL_AHEAD_PP = 10.0
+#: A growth gap this narrow reads as "in line with".
+IN_LINE_PP = 0.5
 
 
 class _Writer:
@@ -33,9 +44,14 @@ class _Writer:
         return all(m in self.ids for m in metrics)
 
     def __call__(self, metric: str) -> str:
+        """The display as written, sign included ("+12.1%")."""
         eid = self.ids[metric]
         self.used.append(eid)
         return self.store.get(eid).display
+
+    def mag(self, metric: str) -> str:
+        """The display without its sign ("12.1%"), for a sentence whose verb says which way."""
+        return self(metric).lstrip("+-")
 
     def cite(self, metric: str) -> None:
         """Cite a fact the sentence states in words rather than figures."""
@@ -55,38 +71,92 @@ def _finding(rule: str, severity: str, statement: str, ids: Sequence[str], *,
                         evidence_ids=list(ids), qualifications=list(qualifications))
 
 
-def _comparison(w: _Writer) -> str:
-    """", against +6.0% for the peer average and +11.1% for the Marsh book" — what exists."""
+# ── phrases: each one names a movement in words, quoting at most one figure ──
+
+
+def _moved(w: _Writer, m: SliceMetrics, metric: str = "carrier_yoy") -> str:
+    """"grew 12.1%", "fell 2.9%", "was flat" — the verb carries the sign."""
+    if not m.carrier_growth.valid:
+        w.cite(metric)
+        return "was " + w.store.get(w.ids[metric]).display if w.has(metric) else "moved"
+    if round(m.carrier_growth.pct, 1) == 0:
+        w.cite(metric)
+        return "was flat"
+    return ("grew " if m.carrier_growth.pct > 0 else "fell ") + w.mag(metric)
+
+
+def _versus(gap: Optional[float]) -> str:
+    if gap is None:
+        return ""
+    if abs(gap) < IN_LINE_PP:
+        return "in line with"
+    if gap >= WELL_AHEAD_PP:
+        return "well ahead of"
+    return "ahead of" if gap > 0 else "behind"
+
+
+def _against_book(w: _Writer, m: SliceMetrics) -> str:
+    """", well ahead of the Marsh book's 9.5% and the peer average's 8.0%" — what exists."""
     parts = []
-    if w.has("peer_avg_yoy"):
-        parts.append(f"{w('peer_avg_yoy')} for the peer average")
-    if w.has("marsh_yoy"):
-        parts.append(f"{w('marsh_yoy')} for the Marsh book")
-    return (", against " + " and ".join(parts)) if parts else ""
+    if w.has("marsh_yoy") and m.growth_gap_marsh_pp is not None:
+        parts.append(f"{_versus(m.growth_gap_marsh_pp)} the Marsh book's {w.mag('marsh_yoy')}")
+    if w.has("peer_avg_yoy") and m.growth_gap_peer_pp is not None:
+        parts.append(f"the peer average's {w.mag('peer_avg_yoy')}")
+    return (", " + " and ".join(parts)) if parts else ""
 
 
-def _position(w: _Writer, subject: str) -> str:
-    return (f"{subject} carrier premium of {w('carrier_premium')} was {w('carrier_yoy')} "
-            f"year on year{_comparison(w)}.")
+def _share(w: _Writer, m: SliceMetrics) -> str:
+    """"lifting share of wallet to 9.1%" / "cutting share of wallet to 7.4%"."""
+    if not w.has("carrier_sow") or m.sow_change_pp is None or round(m.sow_change_pp, 1) == 0:
+        return ""
+    w.cite("sow_change")
+    verb = "lifting" if m.sow_change_pp > 0 else "cutting"
+    return f"{verb} share of wallet to {w('carrier_sow')}"
 
 
-def _share(w: _Writer, subject: str) -> Optional[str]:
-    if not w.has("carrier_sow"):
-        return None
-    text = f"{subject} share of wallet is {w('carrier_sow')}"
-    if w.has("sow_change"):
-        text += f" ({w('sow_change')})"
-    if w.has("peer_avg_sow"):
-        text += f" against a peer average of {w('peer_avg_sow')}"
-    return text + "."
+def _rank(w: _Writer, m: SliceMetrics) -> str:
+    """"climbing to #1" / "slipping to #7" / "holding #3" — empty when unranked."""
+    if not w.has("carrier_rank"):
+        return ""
+    move = m.rank_movement
+    w.cite("rank_movement")
+    if move is None:
+        return ""
+    if move > 0:
+        return f"climbing to {w('carrier_rank')}"
+    if move < 0:
+        return f"slipping to {w('carrier_rank')}"
+    return f"holding {w('carrier_rank')}"
 
 
-def _severity(classification) -> Tuple[str, str]:
-    if classification is not None and K.ATTENTION in classification.labels:
-        return "PRODUCT_WEAKNESS", "attention"
-    if classification is not None and K.STRENGTH in classification.labels:
-        return "PRODUCT_STRENGTH", "strength"
-    return "PRODUCT_POSITION", "context"
+def _joined(parts: Sequence[str], last: str = "and") -> str:
+    """"Singapore", "Singapore and Hong Kong", "Singapore, Japan and Hong Kong"."""
+    items = [p for p in parts if p]
+    if len(items) <= 1:
+        return items[0] if items else ""
+    return ", ".join(items[:-1]) + f" {last} " + items[-1]
+
+
+def _inside(store: EvidenceStore, within: Optional[Mover], ids: List[str], *,
+            gained: bool) -> str:
+    """"with Technology & Telecom adding the most at $7.4M (17.2% of it)"."""
+    if within is None:
+        return ""
+    iw = _Writer(store, within.evidence)
+    share = f" ({iw('contribution_to_change')} of it)" if iw.has("contribution_to_change") else ""
+    text = (f"{within.name} adding the most at {iw.mag('carrier_premium_change')}{share}"
+            if gained else f"mainly in {within.name}, which lost {iw.mag('carrier_premium_change')}")
+    ids.extend(iw.take())
+    return text
+
+
+def _headline_tail(w: _Writer, m: SliceMetrics) -> str:
+    """", lifting share of wallet to 9.1% and climbing to #5" — share and rank, if moved."""
+    tail = _joined([_share(w, m), _rank(w, m)])
+    return f", {tail}" if tail else ""
+
+
+# ── product stage ────────────────────────────────────────────────────────────
 
 
 #: The facts a classification's stated basis quotes, so the basis can be cited.
@@ -94,41 +164,71 @@ _BASIS_FACTS = ("growth_gap_vs_marsh", "growth_gap_vs_peers", "sow_change", "car
                 "peer_avg_sow")
 
 
+def _severity(classification) -> tuple:
+    if classification is not None and K.ATTENTION in classification.labels:
+        return "PRODUCT_WEAKNESS", "attention"
+    if classification is not None and K.STRENGTH in classification.labels:
+        return "PRODUCT_STRENGTH", "strength"
+    return "PRODUCT_POSITION", "context"
+
+
+def _industry_sentence(store: EvidenceStore, pa: ProductAnalysis) -> Optional[ModelFinding]:
+    """"Inside Property, Healthcare added $1.2M while Construction lost $0.4M."."""
+    parts, ids = [], []
+    for mover, verb in ((pa.industry_up, "added"), (pa.industry_down, "lost")):
+        if mover is None:
+            continue
+        w = _Writer(store, mover.evidence)
+        parts.append(f"{mover.name} {verb} {w.mag('carrier_premium_change')}")
+        ids.extend(w.take())
+    if not parts:
+        return None
+    return _finding("PRODUCT_POSITION", "context",
+                    f"Inside {pa.product}, {_joined(parts, 'while')}.", ids)
+
+
 def product_fallback(analysis: ExecAnalysis, ca: CountryAnalysis,
                      pa: ProductAnalysis) -> StageOutput:
-    w = _Writer(analysis.evidence, pa.evidence)
+    store, m = analysis.evidence, pa.metrics
+    w = _Writer(store, pa.evidence)
     rule, severity = _severity(pa.classification)
-    statement = _position(w, pa.product)
+    statement = (f"{pa.product} in {ca.country} {_moved(w, m)} to {w('carrier_premium')}"
+                 f"{_against_book(w, m)}{_headline_tail(w, m)}.")
+    ids = w.take()
     reasons = pa.classification.reasons if pa.classification else ()
-    basis_ids = [pa.evidence[m] for m in _BASIS_FACTS if reasons and m in pa.evidence]
-    interpretation = "; ".join(reasons)
-    findings = [_finding(rule, severity, statement, [*w.take(), *basis_ids],
-                         interpretation=interpretation[:1].upper() + interpretation[1:])]
-    share = _share(w, pa.product)
-    if share:
-        findings.append(_finding("PRODUCT_POSITION", "context", share, w.take()))
+    ids += [pa.evidence[m] for m in _BASIS_FACTS if reasons and m in pa.evidence]
+    findings = [_finding(rule, severity, statement, ids,
+                         interpretation=("; ".join(reasons)[:1].upper() + "; ".join(reasons)[1:])
+                         if reasons else "")]
+    industries = _industry_sentence(store, pa)
+    if industries is not None:
+        findings.append(industries)
     if pa.survey_line is not None and pa.survey_evidence:
-        sw = _Writer(analysis.evidence, pa.survey_evidence)
+        sw = _Writer(store, pa.survey_evidence)
         text = f"The {pa.product} survey score is {sw('survey_score')}"
         if sw.has("survey_score_prior"):
-            text += f" versus {sw('survey_score_prior')} a year earlier"
-        if sw.has("survey_gap_vs_peers"):
-            text += f", {sw('survey_gap_vs_peers')} against the peer average"
+            text += f" against {sw('survey_score_prior')} a year earlier"
         findings.append(_finding("SURVEY_SIGNAL", "context", text + ".", sw.take()))
-    return StageOutput(scope_id=pa.scope_id, findings=findings[:analysis.config.findings.product_max],
+    return StageOutput(scope_id=pa.scope_id,
+                       findings=findings[:analysis.config.findings.product_max],
                        priority_refs=[], missing_references=[])
 
 
-def _opportunity_finding(store: EvidenceStore, c: OpportunityCandidate) -> ModelFinding:
+# ── opportunity stage ────────────────────────────────────────────────────────
+
+
+def _opportunity_finding(store: EvidenceStore, c: OpportunityCandidate,
+                         carrier: str = "the carrier") -> ModelFinding:
     w = _Writer(store, c.evidence)
     where = f" ({c.segment_detail} segment)" if c.segment_detail else ""
+    name = f"the {c.name} segment" if c.view == "segment" else c.name
     if c.metrics.carrier_cur > 0:
-        carrier = f"the carrier holds {w('carrier_premium')}, a {w('carrier_sow')} share of wallet"
+        holds = f"{carrier} holds only {w('carrier_premium')}, a {w('carrier_sow')} share of wallet"
     else:
         w.cite("carrier_premium")
-        carrier = "the carrier places none of it through Marsh"
-    statement = (f"Within {c.product} in {c.country}, {c.name}{where} has a Marsh book of "
-                 f"{w('marsh_premium')} ({w('marsh_yoy')} year on year) while {carrier}.")
+        holds = f"{carrier} places none of it through Marsh"
+    statement = (f"The clearest opening is {name}{where} within {c.product} in {c.country}: "
+                 f"a {w('marsh_premium')} Marsh book growing {w.mag('marsh_yoy')} where {holds}.")
     return _finding(_RULE_FOR_PATH.get(c.path, "WS_DEVELOP"), "opportunity", statement,
                     w.take(), interpretation="A growing Marsh book with low carrier participation.",
                     recommendation=f"Review appetite, capacity and placement access for {c.name}.",
@@ -137,124 +237,176 @@ def _opportunity_finding(store: EvidenceStore, c: OpportunityCandidate) -> Model
 
 def opportunity_fallback(analysis: ExecAnalysis, ca: CountryAnalysis,
                          pa: ProductAnalysis) -> StageOutput:
-    findings = [_opportunity_finding(analysis.evidence, c) for c in pa.shortlist]
+    carrier = analysis.context.carrier
+    findings = [_opportunity_finding(analysis.evidence, c, carrier) for c in pa.shortlist]
     return StageOutput(scope_id=f"{pa.scope_id}/opportunity",
                        findings=findings[:analysis.config.findings.opportunity_max],
                        priority_refs=[], missing_references=[])
 
 
-def _rescoped(result: StageResult, rule: str) -> Optional[ModelFinding]:
-    """A verified child finding carried up under a parent rule id."""
-    if not result.findings:
+# ── movers: the sentences that say who did it ────────────────────────────────
+
+
+def _leaders_sentence(store: EvidenceStore, leaders: Sequence[Mover]) -> Optional[ModelFinding]:
+    """"Cyber added $43.2M (52.0% of the increase) and climbed to #1, with Technology &
+    Telecom adding the most at $7.4M; Financial Lines added $32.6M and rose to #3."."""
+    if not leaders:
         return None
-    f = result.findings[0]
-    return _finding(rule, f.severity, f.statement, f.evidence_ids,
-                    interpretation=f.interpretation, recommendation=f.recommendation,
-                    qualifications=f.qualifications)
+    ids: List[str] = []
+    clauses = []
+    for i, mover in enumerate(leaders):
+        w = _Writer(store, mover.evidence)
+        share = (f" ({w('contribution_to_change')} of the increase)"
+                 if i == 0 and w.has("contribution_to_change") else "")
+        rank = _rank(w, mover.metrics).replace("climbing", "climbed").replace(
+            "slipping", "slipped").replace("holding", "held")
+        clause = f"{mover.name} added {w.mag('carrier_premium_change')}{share}"
+        clause += f" and {rank}" if rank else ""
+        ids.extend(w.take())
+        if i == 0:
+            inside = _inside(store, mover.within, ids, gained=True)
+            clause += f", with {inside}" if inside else ""
+        clauses.append(clause)
+    return _finding("EXEC_STRENGTH", "strength", "; ".join(clauses) + ".", ids)
+
+
+def _drag_sentence(store: EvidenceStore, drag: Optional[Mover], rule: str) -> Optional[ModelFinding]:
+    """"Casualty held the total back: it was flat while its Marsh book grew 9.5%, cutting
+    share of wallet to 7.4% and slipping to #7, mainly in Financial Services."."""
+    if drag is None:
+        return None
+    m = drag.metrics
+    w = _Writer(store, drag.evidence)
+    book = f" while its Marsh book grew {w.mag('marsh_yoy')}" if (
+        w.has("marsh_yoy") and m.marsh_growth.valid and m.marsh_growth.pct > 0) else ""
+    text = f"{drag.name} held the total back: it {_moved(w, m)}{book}{_headline_tail(w, m)}"
+    ids = w.take()
+    inside = _inside(store, drag.within, ids, gained=False)
+    text += f", {inside}" if inside else ""
+    return _finding(rule, "attention", text + ".", ids)
+
+
+# ── country stage ────────────────────────────────────────────────────────────
 
 
 def country_fallback(analysis: ExecAnalysis, ca: CountryAnalysis,
                      children: Mapping[str, StageResult]) -> StageOutput:
-    w = _Writer(analysis.evidence, ca.evidence)
-    text = _position(w, f"In {ca.country}, the")
-    text = text[0].upper() + text[1:]
-    if w.has("carrier_sow"):
-        text = text[:-1] + f"; share of wallet is {w('carrier_sow')}"
-        if w.has("carrier_rank"):
-            text += f" and rank is {w('carrier_rank')}"
-        text += "."
+    store, m = analysis.evidence, ca.metrics
+    w = _Writer(store, ca.evidence)
+    led = f", led by {ca.product_leaders[0].name}" if ca.product_leaders else ""
+    text = (f"In {ca.country}, premium {_moved(w, m)} to {w('carrier_premium')}"
+            f"{_against_book(w, m)}{_headline_tail(w, m)}{led}.")
     findings = [_finding("COUNTRY_PERFORMANCE", "context", text, w.take())]
-    picks = [("COUNTRY_STRENGTH", K.STRENGTH), ("COUNTRY_WEAKNESS", K.ATTENTION)]
-    for rule, label in picks:
-        pa = next((p for p in ca.products if p.classification and label in p.classification.labels
-                   and p.scope_id in children), None)
-        carried = _rescoped(children[pa.scope_id], rule) if pa else None
-        if carried:
-            findings.append(carried)
+    leaders = _leaders_sentence(store, ca.product_leaders[:2])
+    if leaders is not None:
+        findings.append(leaders.model_copy(update={"rule_id": "COUNTRY_STRENGTH"}))
+    drag = _drag_sentence(store, ca.product_drags[0] if ca.product_drags else None,
+                          "COUNTRY_WEAKNESS")
+    if drag is not None:
+        findings.append(drag)
     opp = next((children[f"{p.scope_id}/opportunity"] for p in ca.products
-                if f"{p.scope_id}/opportunity" in children), None)
-    carried = _rescoped(opp, "COUNTRY_OPPORTUNITY") if opp else None
-    if carried:
-        findings.append(carried)
+                if f"{p.scope_id}/opportunity" in children
+                and children[f"{p.scope_id}/opportunity"].findings), None)
+    if opp is not None:
+        f = opp.findings[0]
+        findings.append(_finding("COUNTRY_OPPORTUNITY", "opportunity", f.statement,
+                                 f.evidence_ids, recommendation=f.recommendation,
+                                 qualifications=f.qualifications))
     return StageOutput(scope_id=f"{ca.country}/country",
                        findings=findings[:analysis.config.findings.country_max],
                        priority_refs=[], missing_references=[])
 
 
-def _product_extremes(analysis: ExecAnalysis) -> Tuple[Optional[str], Optional[str]]:
-    """(largest product, the product growing furthest below its Marsh book)."""
-    rows = analysis.product_totals
-    if not rows:
-        return None, None
-    largest = rows[0].scope.product
-    behind = [r for r in rows if r.growth_gap_marsh_pp is not None and r.growth_gap_marsh_pp < 0
-              and r.scope.product != largest]
-    worst = min(behind, key=lambda r: r.growth_gap_marsh_pp).scope.product if behind else None
-    return largest, worst
+# ── overall stage ────────────────────────────────────────────────────────────
 
 
-def _joined(names: Sequence[str]) -> str:
-    """"Singapore", "Singapore and Hong Kong", "Singapore, Japan and Hong Kong"."""
-    names = list(names)
-    if len(names) <= 1:
-        return names[0] if names else ""
-    return ", ".join(names[:-1]) + " and " + names[-1]
+def _trajectory(analysis: ExecAnalysis) -> ModelFinding:
+    """The headline: how much, against what, what it did to share — and who led it."""
+    ctx, m = analysis.context, analysis.overall
+    w = _Writer(analysis.evidence, analysis.overall_evidence)
+    where = _joined(ctx.countries)
+    scope = f" across {where}" if ctx.multi_country else (f" in {where}" if where else "")
+    led = f", led by {analysis.product_leaders[0].name}" if analysis.product_leaders else ""
+    text = (f"{ctx.carrier}'s Marsh-placed premium{scope} {_moved(w, m)} to "
+            f"{w('carrier_premium')} in {ctx.current_label}{_against_book(w, m)}"
+            f"{_headline_tail(w, m)}{led}.")
+    return _finding("EXEC_TRAJECTORY", "context", text, w.take())
+
+
+def _countries_sentence(analysis: ExecAnalysis) -> Optional[ModelFinding]:
+    """"Singapore contributed 55.6% of the increase, growing 28.6%; Hong Kong grew 23.0%."."""
+    movers = analysis.country_movers
+    if not analysis.context.multi_country or not movers:
+        return None
+    store, ids, clauses = analysis.evidence, [], []
+    for i, mover in enumerate(movers[:3]):
+        w = _Writer(store, mover.evidence)
+        moved = _moved(w, mover.metrics)
+        if i == 0 and w.has("contribution_to_change"):
+            clauses.append(f"{mover.name} contributed {w('contribution_to_change')} of the "
+                           f"change and {moved}")
+        else:
+            clauses.append(f"{mover.name} {moved}")
+        ids.extend(w.take())
+    return _finding("EXEC_COUNTRY", "context", "; ".join(clauses) + ".", ids)
+
+
+def _survey_sentence(analysis: ExecAnalysis) -> Optional[ModelFinding]:
+    if not analysis.overall_survey_evidence:
+        return None
+    line = analysis.overall_survey.overall
+    w = _Writer(analysis.evidence, analysis.overall_survey_evidence)
+    move = line.movement
+    mood = ("steady" if move is None or abs(move) < 0.1 else
+            "improving" if move > 0 else "softening")
+    text = f"Service perception is {mood}: the survey score is {w('survey_score')}"
+    if w.has("survey_score_prior"):
+        text += f" against {w('survey_score_prior')} a year earlier"
+    if w.has("survey_gap_vs_peers") and line.peer_gap is not None and round(line.peer_gap, 1) != 0:
+        side = "behind" if line.peer_gap < 0 else "ahead of"
+        text += f", {w.mag('survey_gap_vs_peers')} {side} the peer average"
+    ids = w.take()
+    weakest = _weakest_attribute(analysis)
+    if weakest is not None:
+        country, name, aw = weakest
+        text += f", with {name} the weakest area in {country} at {aw('survey_score')}"
+        ids.extend(aw.take())
+    return _finding("EXEC_SURVEY", "context", text + ".", ids)
+
+
+def _weakest_attribute(analysis: ExecAnalysis):
+    for ca in analysis.countries:
+        if ca.weakest_attributes:
+            name = ca.weakest_attributes[0]
+            return ca.country, name, _Writer(analysis.evidence, ca.attribute_evidence[name])
+    return None
+
+
+def _opportunity_close(analysis: ExecAnalysis) -> Optional[ModelFinding]:
+    best = sorted((c for ca in analysis.countries for c in ca.shortlist),
+                  key=lambda c: c.ranking_keys())
+    if not best:
+        return None
+    opp = _opportunity_finding(analysis.evidence, best[0], analysis.context.carrier)
+    return opp.model_copy(update={
+        "rule_id": "EXEC_OPPORTUNITY",
+        "statement": f"{opp.statement[:-1]}; review appetite, capacity and placement access "
+                     "there before pursuing it."})
 
 
 def overall_fallback(analysis: ExecAnalysis, countries: Mapping[str, StageResult]) -> StageOutput:
-    store, ctx = analysis.evidence, analysis.context
-    w = _Writer(store, analysis.overall_evidence)
-    where = _joined(ctx.countries)
-    opener = ("Across " if ctx.multi_country else "In ") + where + ", " if where else ""
-    lead = _position(w, f"{opener}Marsh-placed")
-    share = _share(w, "Carrier")
-    trajectory_ids = w.take()
-    findings = [_finding("EXEC_TRAJECTORY", "context",
-                         lead + (" " + share if share else ""), trajectory_ids)]
-    if ctx.multi_country and analysis.countries:
-        top = max(analysis.countries, key=lambda c: c.metrics.carrier_cur)
-        cw = _Writer(store, top.evidence)
-        findings.append(_finding(
-            "EXEC_COUNTRY", "context",
-            f"{top.country} is the largest market at {cw('carrier_premium')} "
-            f"({cw('carrier_yoy')} year on year).", cw.take()))
-    largest, worst = _product_extremes(analysis)
-    if largest:
-        pw = _Writer(store, analysis.product_total_evidence[largest])
-        findings.append(_finding(
-            "EXEC_STRENGTH", "strength",
-            f"{largest} is the largest line at {pw('carrier_premium')}, "
-            f"{pw('portfolio_mix')} of the portfolio.", pw.take()))
-    if worst:
-        pw = _Writer(store, analysis.product_total_evidence[worst])
-        findings.append(_finding(
-            "EXEC_WEAKNESS", "attention",
-            f"{worst} needs attention: premium was {pw('carrier_yoy')} year on year against "
-            f"{pw('marsh_yoy')} for the Marsh book.", pw.take()))
-    if analysis.overall_survey_evidence:
-        sw = _Writer(store, analysis.overall_survey_evidence)
-        text = f"The carrier survey score is {sw('survey_score')}"
-        if sw.has("survey_score_prior"):
-            text += f" versus {sw('survey_score_prior')} a year earlier"
-        if sw.has("survey_gap_vs_peers"):
-            text += f", {sw('survey_gap_vs_peers')} against the peer average"
-        findings.append(_finding("EXEC_SURVEY", "context", text + ".", sw.take()))
-    best = sorted((c for ca in analysis.countries for c in ca.shortlist),
-                  key=lambda c: c.ranking_keys())
-    if best:
-        # The opportunity closes the paragraph WITH its action — the design's
-        # "[Action], subject to [qualification]"; the qualification is the action itself.
-        opp = _opportunity_finding(store, best[0])
-        findings.append(opp.model_copy(update={
-            "rule_id": "EXEC_OPPORTUNITY",
-            "statement": f"{opp.statement} {opp.recommendation[:-1]} before pursuing it."}))
-    else:
-        findings.append(_finding(
-            "EXEC_ACTION", "context",
-            "Review the weaker lines against their peer and Marsh book references before "
-            "scaling placements.", trajectory_ids[:1]))
+    store = analysis.evidence
+    drag = analysis.product_drags[0] if analysis.product_drags else None
+    findings = [f for f in (
+        _trajectory(analysis),
+        _leaders_sentence(store, analysis.product_leaders),
+        _drag_sentence(store, drag, "EXEC_WEAKNESS"),
+        _countries_sentence(analysis),
+        _survey_sentence(analysis),
+        _opportunity_close(analysis),
+    ) if f is not None]
     cap = analysis.config.findings.overall_max
-    if len(findings) > cap:          # keep the trajectory and the closing action
+    if len(findings) > cap:          # keep the headline and the closing action
         findings = findings[:cap - 1] + findings[-1:]
     return StageOutput(scope_id="ALL/overall", findings=findings, priority_refs=[],
                        missing_references=[])

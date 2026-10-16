@@ -37,9 +37,9 @@ _MARKET = re.compile(r"\b(market share|insurance market|the market|whole market|
                      r"overall market)\b", re.I)
 _MARKDOWN = re.compile(r"(\*\*|__|^\s*[-*•#]\s|`)", re.M)
 _UP = re.compile(r"\b(grew|grow|grows|growing|rose|rise|rising|increased|increase|up|gained|"
-                 r"gain|expanded|improved|higher)\b", re.I)
+                 r"gain|expanded|improved|higher|climbed|added|lifted)\b", re.I)
 _DOWN = re.compile(r"\b(fell|fall|falling|declined|decline|declining|decreased|decrease|down|"
-                   r"dropped|drop|contracted|lost|shrank|lower|weakened)\b", re.I)
+                   r"dropped|drop|contracted|lost|shrank|lower|weakened|slipped|eased)\b", re.I)
 _SIGNED_UNITS = {UNIT_PCT_CHANGE, UNIT_PP, UNIT_SCORE, UNIT_MONEY}
 
 
@@ -65,28 +65,46 @@ def _mentions(text: str, name: str, *, case: bool = False) -> bool:
     return bool(name) and re.search(rf"(?<![\w]){re.escape(name)}(?![\w])", text, flags) is not None
 
 
+def _occurrences(text: str, needle: str) -> list:
+    out, at = [], text.find(needle)
+    while at >= 0:
+        out.append(at)
+        at = text.find(needle, at + 1)
+    return out
+
+
+def _contradicts(text: str, at: int, item) -> str:
+    """The contradiction at one position: a verb just before it pointing the wrong way."""
+    window = text[max(0, at - 40):at]
+    up = [m.end() for m in _UP.finditer(window)]
+    down = [m.end() for m in _DOWN.finditer(window)]
+    nearest_up = max(up) if up else -1
+    nearest_down = max(down) if down else -1
+    if item.value < 0 and nearest_up > nearest_down:
+        return f"says it rose beside a negative {item.metric_id} ({item.display})"
+    if (item.value > 0 and nearest_down > nearest_up and item.metric_id != "rank_movement"
+            and "below" not in window and "behind" not in window):
+        return f"says it fell beside a positive {item.metric_id} ({item.display})"
+    return ""
+
+
 def _direction_issue(text: str, store: EvidenceStore, ids: Sequence[str]) -> str:
-    """A movement verb right before a signed display that contradicts its sign."""
+    """A movement verb right before a signed figure that contradicts its sign.
+
+    The figure is looked for as written ("-20.0%") and as its magnitude ("fell 20.0%"),
+    which the prompt allows. A magnitude can appear more than once ("A added $0.5M while
+    B lost $0.5M"), so a figure is only flagged when NO occurrence reads the right way.
+    """
     for eid in ids:
         item = store.get(eid)
         if item is None or item.unit not in _SIGNED_UNITS or item.value in (None, 0):
             continue
         if item.unit == UNIT_MONEY and not item.display.startswith(("+", "-")):
             continue                     # a level, not a change
-        at = text.find(item.display)
-        if at < 0:
-            continue
-        window = text[max(0, at - 40):at]
-        up = [m.end() for m in _UP.finditer(window)]
-        down = [m.end() for m in _DOWN.finditer(window)]
-        if not up and not down:
-            continue
-        nearest_up = max(up) if up else -1
-        if item.value < 0 and nearest_up > (max(down) if down else -1):
-            return f"says it rose beside a negative {item.metric_id} ({item.display})"
-        if item.value > 0 and down and max(down) > nearest_up and item.metric_id != "rank_movement":
-            if "below" not in window and "behind" not in window:
-                return f"says it fell beside a positive {item.metric_id} ({item.display})"
+        spots = _occurrences(text, item.display) or _occurrences(text, item.display.lstrip("+-"))
+        issues = [_contradicts(text, at, item) for at in spots]
+        if issues and all(issues):
+            return issues[0]
     return ""
 
 

@@ -32,6 +32,13 @@ SLICE_FACTS = ("carrier_premium", "carrier_premium_prior", "carrier_premium_chan
                "growth_gap_vs_peers")
 INDUSTRY_FACTS = ("carrier_premium", "carrier_yoy", "marsh_premium", "marsh_yoy",
                   "carrier_sow", "sow_change", "portfolio_mix", "peer_avg_sow")
+#: What a named mover carries: how much it moved, how that compares, where it ranks now.
+MOVER_FACTS = ("carrier_premium", "carrier_premium_change", "carrier_yoy", "marsh_yoy",
+               "carrier_sow", "sow_change", "carrier_rank", "rank_movement",
+               "contribution_to_change")
+#: An industry inside a mover: how much it moved, and its share of the mover's change.
+INSIDE_FACTS = ("carrier_premium_change", "carrier_yoy", "contribution_to_change")
+
 SURVEY_FACTS = ("survey_score", "survey_score_prior", "survey_movement", "survey_peer_avg",
                 "survey_gap_vs_peers", "survey_gap_change", "survey_book_avg",
                 "survey_gap_vs_book")
@@ -110,6 +117,21 @@ def _context_text(analysis: ExecAnalysis, *more: str) -> List[str]:
             *more]
 
 
+def _mover(facts: "_Facts", mover) -> dict:
+    """One named mover, its facts, and the industry inside it that did most of the work."""
+    out = {"name": mover.name, **facts.pick(mover.evidence, MOVER_FACTS)}
+    if mover.within is not None:
+        out["driven_by_industry"] = {"name": mover.within.name,
+                                     **facts.pick(mover.within.evidence, INSIDE_FACTS)}
+    return out
+
+
+def _story(facts: "_Facts", leaders, drags) -> dict:
+    """The decomposition the narrative is built on: who added premium, who held it back."""
+    return {"growth_led_by": [_mover(facts, m) for m in leaders],
+            "held_back_by": [_mover(facts, m) for m in drags]}
+
+
 def _status(classification) -> dict:
     if classification is None:
         return {}
@@ -163,6 +185,14 @@ def product_payload(analysis: ExecAnalysis, ca: CountryAnalysis,
                                   "selected": len(sel.rows), "omitted": sel.omitted},
                        "top3": list(sel.top), "bottom3": list(sel.bottom), "rows": industries},
         "segments": segments,
+        "industry_movers": {
+            "added_most": ({"name": pa.industry_up.name,
+                            **facts.pick(pa.industry_up.evidence, INSIDE_FACTS)}
+                           if pa.industry_up else "none"),
+            "lost_most": ({"name": pa.industry_down.name,
+                           **facts.pick(pa.industry_down.evidence, INSIDE_FACTS)}
+                          if pa.industry_down else "none"),
+        },
         "allowed_rule_ids": list(RULES_BY_STAGE[STAGE_PRODUCT]),
     }
     return StagePayload(STAGE_PRODUCT, pa.scope_id, data, facts.ids,
@@ -238,6 +268,7 @@ def country_payload(analysis: ExecAnalysis, ca: CountryAnalysis,
                             peer_set=f"{len(ca.peer_set.members)} approved peers in {ca.country}"),
         "country": facts.pick(ca.evidence, SLICE_FACTS),
         "status": _status(ca.classification),
+        "story": _story(facts, ca.product_leaders, ca.product_drags),
         "survey": _survey_block(facts, ca, None, analysis),
         "leading_products": [p.product for p in leaders],
         "weak_products": [p.product for p in weak],
@@ -270,8 +301,9 @@ def overall_payload(analysis: ExecAnalysis, countries: Mapping[str, StageResult]
     # Product evidence across the whole run, so the summary can name the strongest and
     # weakest lines with their basis even in a one-country deck.
     totals = {p.scope.product: facts.pick(analysis.product_total_evidence[p.scope.product],
-                                          ("carrier_premium", "carrier_yoy", "carrier_sow",
-                                           "portfolio_mix", "marsh_yoy"))
+                                          ("carrier_premium", "carrier_yoy", "marsh_yoy",
+                                           "carrier_sow", "sow_change", "carrier_rank",
+                                           "rank_movement", "portfolio_mix"))
               for p in analysis.product_totals[:6]}
     opportunities = sorted((c for ca in analysis.countries for c in ca.shortlist),
                            key=lambda c: c.ranking_keys())[:cfg.shortlist.opportunities_per_country]
@@ -280,11 +312,21 @@ def overall_payload(analysis: ExecAnalysis, countries: Mapping[str, StageResult]
         "context": _context(analysis, countries=list(analysis.context.countries)),
         "overall": facts.pick(analysis.overall_evidence, SLICE_FACTS),
         "status": _status(analysis.overall_classification),
-        "survey": (facts.pick(analysis.overall_survey_evidence, SURVEY_FACTS)
+        "survey": ({**facts.pick(analysis.overall_survey_evidence, SURVEY_FACTS),
+                    "weakest_attribute_by_country": {
+                        ca.country: {"name": ca.weakest_attributes[0],
+                                     **facts.pick(ca.attribute_evidence[ca.weakest_attributes[0]],
+                                                  ("survey_score", "survey_gap_vs_peers"))}
+                        for ca in analysis.countries if ca.weakest_attributes}}
                    if analysis.overall_survey_evidence else
                    {"grain": "unavailable",
                     "reason": analysis.overall_survey.note if analysis.overall_survey
                     else "survey not in the run's data basis"}),
+        "story": {**_story(facts, analysis.product_leaders, analysis.product_drags),
+                  "countries": [{"name": m.name, **facts.pick(m.evidence, (
+                      "carrier_premium_change", "carrier_yoy", "marsh_yoy",
+                      "contribution_to_change", "carrier_rank", "rank_movement"))}
+                      for m in analysis.country_movers] if analysis.context.multi_country else []},
         "products_all_countries": totals,
         "country_totals": {
             c.country: facts.pick(c.evidence, ("carrier_premium", "carrier_yoy", "marsh_yoy",

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Tuple
 
 from core.analytics.money_units import money_scale, money_text
 from studio.exec_summary.analysis import ExecAnalysis
@@ -18,7 +18,7 @@ from studio.exec_summary.schemas import StageResult
 
 MAX_CHART_COUNTRIES = 6
 MAX_RANK_ROWS = 5
-MAX_TABLE_ROWS = 9
+MAX_TABLE_ROWS = 7          # top lines by carrier GWP — fits the slide without crowding
 
 
 @dataclass(frozen=True)

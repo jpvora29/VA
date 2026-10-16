@@ -17,11 +17,14 @@ from logger import get_logger
 from studio.exec_summary.analysis import ExecAnalysis, analyse
 from studio.exec_summary.config import ExecConfig, load_config
 from studio.exec_summary.context import (
-    AnalysisContext,
+    COUNTRY_COL,
     YEAR_COL,
+    AnalysisContext,
     build_analysis_context,
     with_countries,
+    with_coverage,
 )
+from studio.exec_summary.coverage import detect_coverage
 from studio.exec_summary.cube import carrier_countries, load_premium_cube
 from studio.exec_summary.fill import fill_exec_summary
 from studio.exec_summary.llm import StageModel, make_stage_model
@@ -61,6 +64,17 @@ def resolve_context(result: Any, data_basis: Optional[str]) -> AnalysisContext:
     return build_analysis_context(result, data_basis=data_basis, latest_year=year)
 
 
+def resolve_period(context: AnalysisContext, engine: Any) -> AnalysisContext:
+    """Name and match the period the data really covers (H1, Q1, 9M … — see coverage)."""
+    if context.period_relabelled:
+        return context
+    filters = dict(context.slice_filters)
+    if context.countries:
+        filters[COUNTRY_COL] = list(context.countries)
+    return with_coverage(context, detect_coverage(engine, context.flow, filters,
+                                                  context.current_year))
+
+
 def build_stage_env(analysis: ExecAnalysis, cube, model: StageModel,
                     config: ExecConfig) -> StageEnv:
     return StageEnv(
@@ -79,7 +93,7 @@ def build_exec_summary(result: Any, *, out_path: str, data_basis: Optional[str] 
                        today: Optional[date] = None) -> ExecSummaryResult:
     """The whole executive summary for one Setup selection's ``OverallResult``."""
     config = config or load_config()
-    context = resolve_context(result, data_basis)
+    context = resolve_period(resolve_context(result, data_basis), result.engine)
     cube = load_premium_cube(context, result.engine)
     if not context.countries:
         context = with_countries(context, carrier_countries(cube, context.carrier,
