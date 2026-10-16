@@ -150,6 +150,10 @@
     align-items: start;
 }
 .qs-root .qs6-brief-grid > .qs6-row { grid-template-columns: minmax(0, 1fr); gap: 7px; padding: 0; }
+/* The deliverable choice spans the brief: every answer below it serves that deck. */
+.qs-root .qs6-brief-grid > .qs6-row.qs6-row-wide { grid-column: 1 / -1; }
+/* The executive summary's fixed pages: no tick, so the icon sits where the tick would. */
+.qs-root .qs-exec-pages .qs-exec-page { grid-template-columns: auto minmax(0, 1fr); cursor: default; }
 .qs-root .qs6-brief-grid .qs6-row-control { align-items: stretch; }
 .qs-root .qs6-brief-grid .qs6-seg { display: flex !important; width: 100%; }
 .qs-root .qs6-brief-grid .qs6-seg .dash-options-list-option {

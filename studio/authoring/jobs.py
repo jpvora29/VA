@@ -110,8 +110,11 @@ def _shape_label(selection: dict) -> str:
     Read off the page selection rather than a scope choice, because the page selection is
     now what decides the deck (:mod:`studio.template_fill.deck_slides`).
     """
+    from studio.page.authoring.deliverable import is_exec_summary
     from studio.template_fill.deck_slides import from_selection
 
+    if is_exec_summary(selection.get("report")):
+        return "Executive summary"
     slides = from_selection(selection)
     if slides.empty:
         return "Full QBR"

@@ -1,0 +1,49 @@
+# Executive summary — the configurable definitions of the system design (Section 12, 19).
+#
+# These are the design's ILLUSTRATIVE starting values. They are not approved business
+# targets: calibrate them by currency, country, product and book size before production
+# (design Section 22, "Strength and weakness rules" / "Opportunity eligibility").
+#
+# Money is in raw reporting-currency units (the warehouse stores premium in USD).
+rule_version: exec_rules_v1
+selection_rule_version: industry_selection_v1
+
+whitespace:
+  material_marsh_premium: 10000000     # Marsh slice book at or above this (10M)
+  min_marsh_growth_pct: 10.0           # Marsh YoY growth at or above this (%)
+  max_carrier_sow_pct: 1.0             # carrier SoW at or below this (%) ...
+  max_carrier_premium: 1000000         # ... AND carrier premium at or below this (1M)
+
+materiality:
+  growth_gap_pp: 5.0                   # carrier growth this far below a reference triggers diagnosis
+  sow_loss_pp: 1.0                     # ... or a SoW loss this large
+  survey_gap_points: 0.3               # survey gap material on a 1-5 scale
+
+survey:
+  min_responses: 5                     # suppress a survey cut thinner than this
+  min_peer_carriers: 2                 # need this many surveyed peers for a peer reference
+
+shortlist:
+  opportunities_per_country: 3         # executive shortlist per country (full register kept)
+  opportunities_per_product: 3         # candidates sent to one opportunity call
+  industries_top: 3                    # top-N premium leaders per product payload
+  industries_bottom: 3                 # bottom-N low-participation slices per product payload
+  products_per_side: 3                 # leading / weak products sent to a country call
+  countries_per_side: 3                # leading / weak countries sent to the overall call
+  attributes_per_side: 3               # best / weakest survey attributes
+
+findings:
+  product_max: 3
+  opportunity_max: 3
+  country_max: 4
+  overall_min: 4
+  overall_max: 6
+
+budgets:                               # tokens per call (design Section 19)
+  input_tokens:                        # system prompt + payload, counted before sending
+    product: 3500
+    opportunity: 3500
+    country: 4500                      # carries condensed child findings
+    overall: 6000                      # carries up to 6 country summaries
+  output_tokens: 800
+  concurrency: 6                       # product + opportunity calls in flight at once

@@ -24,6 +24,7 @@ from logger import get_logger
 from studio.compute import FILTER_COLUMN
 from studio.data import cascade_options, peer_members
 from studio.page import authoring as A
+from studio.page.authoring import deliverable as DV
 from studio.page.authoring import period_picker as PP
 from studio.page.authoring.period_picker import date_keys
 from studio.template_fill import registry, slide_previews
@@ -861,12 +862,13 @@ def register_setup(app):
         State("qs-gen-job", "data"),
         State("studio-period-basis", "value"),
         State("studio-period-dates", "data"),
+        State("studio-deliverable", "value"),
         prevent_initial_call=True,
     )
     def start_generate(n, fvals, fids, cut_vals, cut_ids, peer_mode, peer_vals, peer_ids,
                        audience, style, slide_store, data_basis,
                        survey_carrier, survey_peer_vals, survey_peer_ids, dataset_store,
-                       running_job, period_basis=None, period_dates=None):
+                       running_job, period_basis=None, period_dates=None, report=None):
         """Read the form, refuse what we must, and start the build in its own thread.
 
         Returns in milliseconds either way: what comes back is the job to follow, not the
@@ -913,11 +915,13 @@ def register_setup(app):
         # the DATA BASIS, so on a premium run it is never unticked (its rows are not on
         # screen) and a selection with everything else off still looked like a deck.
         slides = DeckSlides.from_store(slide_store)
-        if not A.deck_axes(data_basis, slides):
+        exec_summary = DV.is_exec_summary(report)
+        if not exec_summary and not A.deck_axes(data_basis, slides):
             return (*_REFUSED[:-1], _no_pages_warning())
         selection = {
-            # Full QBR is the only deliverable, so the Setup form no longer asks.
-            "report": "qbr",
+            # Which deliverable: the full QBR, or the Carrier Executive Summary
+            # (``studio.exec_summary``). The rest of the selection serves either.
+            "report": DV.REPORT_EXEC_SUMMARY if exec_summary else DV.REPORT_QBR,
             "filters": filters,
             # The breakdown control was removed from Setup; the deck keeps the deterministic
             # default breakdowns so the on-screen DeckSpec still has its sections.
@@ -1272,16 +1276,20 @@ def register_setup(app):
         Output("studio-template-sections", "children"),
         Input("qs-slides", "data"),
         Input("studio-data-basis", "value"),
-        # Same full-page cue as the other Setup controls: either input re-derives the
+        Input("studio-deliverable", "value"),
+        # Same full-page cue as the other Setup controls: any input re-derives the
         # page list, and the author should see that it is happening.
         running=_busy(A.BUSY_SECTIONS),
         prevent_initial_call=True,
     )
-    def deck_pages(stored, basis):
+    def deck_pages(stored, basis, report=None):
         """Repaint the page list: what is ticked, and what the deck now costs.
 
         Two inputs because two choices change the deck. The ticks decide which pages (and
         so which sub-decks) are built; the DATA BASIS decides whether each country block is
         followed by a Carrier Survey page, which is sourced from a different book entirely.
         """
+        if DV.is_exec_summary(report):
+            # The executive summary's pages are fixed: listed, nothing to tick.
+            return DV.exec_summary_pages_panel()
         return A.template_sections_panel(basis=basis, slides=DeckSlides.from_store(stored))

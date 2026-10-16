@@ -16,6 +16,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 from dash import dcc, html
 
+from studio.page.authoring import deliverable as DV
 from studio.page.authoring import setup as S
 from studio.page.layout import DROPDOWN_MAX_HEIGHT, GPR_FILTERS
 
@@ -47,15 +48,18 @@ def segmented(cid: str, options: Sequence[Mapping[str, str]], value: str, *,
 
 
 def brief_row(label: str, control: Any, *, tip_id: str = "", tip: str = "",
-              below: Any = None) -> html.Div:
-    """One line of the brief: a short label (with its ⓘ) and the control beside it."""
+              below: Any = None, wide: bool = False) -> html.Div:
+    """One line of the brief: a short label (with its ⓘ) and the control beside it.
+
+    ``wide`` spans both columns of the brief grid — for the one choice every other
+    answer depends on (which deliverable is being built)."""
     return html.Div(
         [
             html.Div([html.Span(label), S.info_tip(tip_id, tip) if tip_id else None],
                      className="qs6-row-label"),
             html.Div([control, below], className="qs6-row-control"),
         ],
-        className="qs6-row",
+        className="qs6-row" + (" qs6-row-wide" if wide else ""),
     )
 
 
@@ -112,6 +116,11 @@ def hero() -> html.Div:
 def brief(dataset: Optional[Mapping[str, Any]]) -> html.Section:
     rows = [
         brief_row(
+            "Deliverable",
+            segmented("studio-deliverable", list(DV.OPTIONS), DV.DEFAULT_REPORT),
+            tip_id="qs-tip-deliverable", tip=DV.TIP, wide=True,
+        ),
+        brief_row(
             "Audience",
             segmented("studio-audience", [
                 {"label": "Carrier team", "value": "carrier_leadership"},
@@ -158,7 +167,8 @@ def brief(dataset: Optional[Mapping[str, Any]]) -> html.Section:
                 "sourced from the survey book.",
         ),
     ]
-    # Two across (Audience | Commentary, Source | Data basis), every control the same size.
+    # Deliverable across the top, then two across (Audience | Commentary, Source | Data
+    # basis), every control the same size.
     return section("The brief", html.Div(rows, className="qs6-brief-grid"),
                    tip_id="qs-tip-sec-shape",
                    tip="Answer these from the brief: who the commentary is pitched at, how "

@@ -11,6 +11,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 from dash import ALL, ClientsideFunction, Input, Output, State, html
 
+from studio.page.authoring import deliverable as DV
 from studio.page.authoring import setup as S
 from studio.template_fill.deck_slides import DeckSlides
 
@@ -31,11 +32,14 @@ def _carrier(ids: Sequence[Mapping[str, Any]], values: Sequence[Any]) -> Optiona
 
 
 def bar_state(carrier: Optional[str], pages: int, basis: Optional[str],
-              audience: Optional[str], source: Optional[str]):
+              audience: Optional[str], source: Optional[str],
+              report: Optional[str] = None):
     """``(icon class, status text, summary text, ready)`` for the action bar."""
     books = "Custom data" if source == "custom" else _BASIS.get(str(basis), "GPR only")
     parts = [f"{pages} page" + ("s" if pages != 1 else ""), books,
              _AUDIENCE.get(str(audience), "Carrier team")]
+    if DV.is_exec_summary(report):
+        parts.insert(0, "Executive summary")
     summary = " · ".join(parts)
     if not carrier:
         return "bi bi-circle", "Pick a carrier to begin", summary, False
@@ -56,13 +60,16 @@ def register_setup_summary(app) -> None:
         Input("studio-data-basis", "value"),
         Input("studio-audience", "value"),
         Input("studio-data-source", "value"),
+        Input("studio-deliverable", "value"),
         State({"type": "studio-filter", "col": ALL}, "id"),
     )
-    def paint_bar(values, slides, basis, audience, source, ids):
+    def paint_bar(values, slides, basis, audience, source, report, ids):
         """The one-line answer to "is this ready to generate, and what will it be?"."""
-        icon, text, summary, ready = bar_state(
-            _carrier(ids, values), page_count(basis, DeckSlides.from_store(slides)),
-            basis, audience, source)
+        pages = DV.page_count(report)
+        if pages is None:
+            pages = page_count(basis, DeckSlides.from_store(slides))
+        icon, text, summary, ready = bar_state(_carrier(ids, values), pages, basis, audience,
+                                               source, report)
         badge = "Custom data" if source == "custom" else "Governed data"
         return (html.I(className=icon), text, summary,
                 "qs6-status-icon" + (" is-ready" if ready else ""), badge)

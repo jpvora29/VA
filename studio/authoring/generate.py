@@ -370,6 +370,15 @@ def _assembled_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
     path = _assembled_export(selection)
     if not path:
         return None
+    return _preview_tdoc(path, _assembled_review(path, selection))
+
+
+def _preview_tdoc(path: str, review: Dict[str, Any]) -> Dict[str, Any]:
+    """A finished ``.pptx`` as a read-only canvas document: its slides, rendered.
+
+    Shared by the assembled QBR and the executive summary — both are already filled, so
+    the canvas only pages through renders and Export re-serves the file.
+    """
     from studio.template_fill.analyze import analyze
 
     template = analyze(path)
@@ -393,7 +402,6 @@ def _assembled_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
         prune_cache([path])
     except Exception as exc:  # noqa: BLE001 — housekeeping must never cost us the deck
         log.warning("preview cache prune failed: %s", exc)
-    review = _assembled_review(path, selection)
     return {
         "template_path": path,
         # NOT editable state: Review reads these to say what is still a placeholder in
@@ -425,6 +433,72 @@ def _generated_assembled_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[D
     except Exception:  # noqa: BLE001 — a bad assembly must not white-screen the app
         log.exception("assembled preview build failed")
         return None
+
+
+# ── the executive summary (a second deliverable from the same selection) ─────
+
+
+def is_exec_summary(selection: Optional[Dict[str, Any]]) -> bool:
+    from studio.page.authoring.deliverable import is_exec_summary as _is
+
+    return _is((selection or {}).get("report"))
+
+
+@lru_cache(maxsize=8)
+def _exec_summary_for(selection_json: str) -> Optional[str]:
+    """Build the Carrier Executive Summary for a selection, once; its ``.pptx`` path.
+
+    Reads the same cached analytics result as the QBR (:func:`_result_for`) — the working
+    book, the resolved filters and the per-market peer pins — so the two deliverables
+    answer one selection the same way.
+    """
+    selection = json.loads(selection_json)
+    filters = _selection_filters(selection)
+    if not filters.get("carrier"):
+        return None
+    from studio.exec_summary.pipeline import build_exec_summary
+
+    subject = str(_one(filters.get("carrier")) or "Carrier").replace(" ", "_")
+    tag = hashlib.sha1(selection_json.encode("utf-8")).hexdigest()[:8]
+    out = Path(tempfile.gettempdir()) / f"{subject}_{tag}_Executive_Summary.pptx"
+    built = build_exec_summary(_result_for(selection_json), out_path=str(out),
+                               data_basis=selection.get("data_basis"))
+    return built.deck_path
+
+
+def _exec_summary_tdoc(selection: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The executive summary as a read-only canvas document (Export re-serves the file)."""
+    key = json.dumps(selection or {}, sort_keys=True)
+    path = _exec_summary_for(key)
+    if path and not Path(path).exists():
+        _exec_summary_for.cache_clear()           # Windows emptied %TEMP% — rebuild
+        path = _exec_summary_for(key)
+    if not path:
+        return None
+    carrier = _one(_selection_filters(selection or {}).get("carrier"))
+    review = {"values": {"subject_name": carrier}, "manifest": [], "commentary_fields": None}
+    return {**_preview_tdoc(path, review), "report": "exec_summary"}
+
+
+def build_exec_summary_documents(selection: Optional[Dict[str, Any]],
+                                 report: Reporter = silent) -> DeckDocuments:
+    """Generate for the executive summary: the book, the analysis + commentary, the render.
+
+    No on-screen DeckSpec: the executive summary IS its template, so the canvas shows the
+    filled deck and Export re-serves it.
+    """
+    key = json.dumps(selection or {}, sort_keys=True)
+    label = (selection or {}).get("filters", {}).get("carrier") or "deck"
+    with telemetry.job(f"{label}:exec_summary"), build_memo(f"exec_summary:{label}"):
+        report("data", "Loading the book for this selection…")
+        with telemetry.phase("data"):
+            _result_for(key)
+        report("assemble", "Analysing products, countries and opportunities, then writing "
+                           "and fact-checking the executive summary…")
+        with telemetry.phase("assemble"):
+            tdoc = _exec_summary_tdoc(selection)
+    report("render", "Rendering the slides…")
+    return DeckDocuments(doc=None, tdoc=tdoc)
 
 
 # ── the whole build, as one reportable pipeline ──────────────────────────────
@@ -486,6 +560,8 @@ def build_documents(selection: Optional[Dict[str, Any]],
     # thirtieth minute — and the analytics layer below is minutes of querying.
     commentary_mode.preflight()
     log.info("studio generate: %s", commentary_mode.describe(label))
+    if is_exec_summary(selection):
+        return build_exec_summary_documents(selection, report)
 
     # ONE memo for the whole build. The on-screen deck and the assembled deck ask the
     # warehouse the same questions about the same scopes; measured, 217 of 305

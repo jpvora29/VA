@@ -44,23 +44,30 @@ def _form() -> str:
     return _rendered(setup_body([], filter_options={}, filter_values={}))
 
 
-# ── report type: Full QBR is the only deliverable, so there is no chooser ─────
+# ── deliverable: a full QBR or the Carrier Executive Summary (2026-10-16) ─────
+#
+# Replaces the old "Full QBR is the only deliverable" rule: the brief now asks which deck
+# to build, and the old free-standing report-type control stays gone.
 
 
-def test_setup_form_has_no_report_type_control():
+def test_setup_form_offers_qbr_or_executive_summary_and_defaults_to_qbr():
     form = _form()
     assert "studio-report-type" not in form
-    assert "Full QBR" not in form
+    assert "studio-deliverable" in form
+    assert "Full QBR" in form and "Executive summary" in form
+    from studio.page.authoring.deliverable import DEFAULT_REPORT, REPORT_QBR
+
+    assert DEFAULT_REPORT == REPORT_QBR
 
 
-def test_generate_pins_the_report_to_qbr():
-    """The control is gone, so the callback must supply the value itself."""
+def test_generate_reads_the_deliverable_into_the_selection():
     import inspect
 
     from studio.authoring import setup as S
 
     src = inspect.getsource(S.register_setup)
-    assert '"report": "qbr"' in src
+    assert 'State("studio-deliverable", "value")' in src
+    assert '"report": DV.REPORT_EXEC_SUMMARY if exec_summary else DV.REPORT_QBR' in src
     assert 'State("studio-report-type"' not in src
 
 
