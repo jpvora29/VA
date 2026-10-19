@@ -364,8 +364,10 @@ def grid_values(template: Template, result) -> Dict[str, Any]:
             text = _COUNTRY_TOKEN.sub(country, token)
             text = _CARRIER_TOKEN.sub(str(subject), text)
             out[f"grid:{slide.index}:subtitle"] = text
+        peers = _market_peers(result, country)
         try:
-            rows = product_breakdown_rows(result.flow, filters, result.engine, subject, top=n)
+            rows = product_breakdown_rows(result.flow, filters, result.engine, subject, top=n,
+                                          peers=peers)
         except Exception as exc:  # noqa: BLE001 — a failing slide must not break the doc
             logger.warning("grids: product rows failed on slide %d: %s", slide.index, exc)
             rows = []
@@ -378,6 +380,19 @@ def grid_values(template: Template, result) -> Dict[str, Any]:
                 None if r is None else r.get("rank_change"))
         _trim_runway_chart(out, slide.index, grid, len(rows))
     return out
+
+
+def _market_peers(result, country: Optional[str]) -> Optional[Tuple[str, ...]]:
+    """The peer set the "Peer GWP" column averages for one country's breakdown slide.
+
+    The run's pin for that market (``scope_to_country``'s narrowing), else the flat pin;
+    None lets the Peers table resolve the carrier's approved set for the country.
+    """
+    from studio.template_fill.bindings import _pin_market_peers
+
+    scoped = _pin_market_peers(result, str(country)) if country is not None else result
+    peers = getattr(scoped, "peers", None)
+    return tuple(peers) if peers else None
 
 
 def _trim_runway_chart(out: Dict[str, Any], slide_idx: int, grid: Grid, live: int) -> None:

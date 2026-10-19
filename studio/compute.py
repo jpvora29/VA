@@ -626,7 +626,8 @@ def peer_gap(flow, filters, engine, peers=None) -> Optional[Dict[str, Any]]:
 
 @memoized
 def product_breakdown_rows(
-    flow, filters, engine, subject, *, dim: str = "Product_Line", top: int = 7
+    flow, filters, engine, subject, *, dim: str = "Product_Line", top: int = 7,
+    peers: Optional[Tuple[str, ...]] = None,
 ) -> List[Dict[str, Any]]:
     """Per-product-line breakdown for the 'Carrier breakdown' slide.
 
@@ -640,12 +641,18 @@ def product_breakdown_rows(
       • ``runway``      — own premium − the AVERAGE premium of THAT product line's five
                           largest carriers in the scope (the country), ranked by their
                           premium in that line — so each row has its own top 5
-                          (negative = behind them);
-      • ``peer_gwp``    — that top-5 average itself (the confidential benchmark the
-                          breakdown table's "Peer GWP" column shows beside the runway).
-    Never the author's selected peer group, and never the country's overall leaders: the
+                          (negative = behind them). The subject never counts toward its
+                          own benchmark: when it is in the top 5, the other four are
+                          averaged;
+      • ``top5_avg``    — that top-5 benchmark itself;
+      • ``peer_gwp``    — the mean premium in that line of the carrier's PEER SET for the
+                          country (``peers`` when the run pins them, else the approved set
+                          in the Peers table), averaged over the peers that write the line —
+                          the breakdown table's "Peer GWP" column.
+    The runway is never the peer group, and never the country's overall leaders: the
     header says "Runway to Top 5" of the line, and a carrier that leads the country can be
-    absent from a line another five dominate (see ``product_top_average``).
+    absent from a line another five dominate (see ``product_top_average``). A line no
+    other carrier writes has no runway, and a line no peer writes has no peer GWP — None.
     Everything is premium-derived — no LLM, no random values.
     """
     if not subject:
@@ -678,13 +685,18 @@ def product_breakdown_rows(
     rank_cur = ranks(cur)
     rank_prev = ranks(cur - 1) if cur is not None else {}
 
-    # Runway: each product's own five largest carriers, averaged (one grouped query).
+    # Runway: each product's own five largest carriers, the subject left out (one grouped query).
     per_carrier = premium_by_dim_and_carrier(flow, dim, scoped(base, cur), engine)
     runway: Dict[str, float] = {}
-    peer_avg: Dict[str, float] = {}
+    top_avg: Dict[str, float] = {}
     for p, by_carrier in per_carrier.items():
-        peer_avg[p] = avg = product_top_average(by_carrier)
+        avg = product_top_average(by_carrier, subject)
+        if avg is None:
+            continue
+        top_avg[p] = avg
         runway[p] = (gwp.get(p, 0.0) or 0.0) - avg
+
+    peer_avg = peer_average_by_dim(flow, dim, scoped(base, cur), engine, subject, peers)
 
     rows: List[Dict[str, Any]] = []
     for p in sorted(gwp, key=lambda k: gwp[k] or 0.0, reverse=True)[:top]:
@@ -694,9 +706,25 @@ def product_breakdown_rows(
         rows.append({
             "name": p, "gwp": gwp.get(p), "var": var, "sow": sow.get(p),
             "rank": rank_cur.get(p), "rank_change": rc, "runway": runway.get(p),
-            "peer_gwp": peer_avg.get(p),
+            "top5_avg": top_avg.get(p), "peer_gwp": peer_avg.get(p),
         })
     return rows
+
+
+def peer_average_by_dim(flow, dim, filters, engine, subject,
+                        peers: Optional[Tuple[str, ...]] = None) -> Dict[str, float]:
+    """``{dim value: mean premium of the subject's peers}`` in one grouped query.
+
+    Each peer's premium is summed within the cut, then averaged across the peers present
+    in it (``compute_peer_average_total``). ``peers`` pins the set; None resolves the
+    subject's approved group for the filters' country from the Peers table.
+    """
+    facts = compute_peer_average_total(
+        PrimitiveArgs(flow=flow, metric="premium", group_by=(dim,), filters=filters,
+                      subject=subject, peers=tuple(peers) if peers else None),
+        engine=engine,
+    )
+    return {str(f.dims.get(dim)): f.value for f in facts if f.dims.get(dim) is not None}
 
 
 _PEER_TOP_N = 5
@@ -712,13 +740,23 @@ def premium_by_dim_and_carrier(flow, dim, filters, engine) -> Dict[str, Dict[str
     return out
 
 
-def product_top_average(by_carrier: Mapping[str, float], *, top: int = _PEER_TOP_N) -> float:
-    """The average premium of the ``top`` largest carriers IN ONE CUT — the runway benchmark.
+def product_top_average(by_carrier: Mapping[str, float], subject: Optional[str] = None, *,
+                        top: int = _PEER_TOP_N) -> Optional[float]:
+    """The runway benchmark: average premium of the cut's ``top`` largest carriers, subject out.
 
-    Ranked by their premium in this cut, so a product line's benchmark is its own leaders,
-    the subject eligible. Fewer than ``top`` carriers averages the ones there are.
+    The ``top`` are ranked by their premium in this cut (one country's product line), whoever
+    they are — never the author's peer group. When the subject is one of them it is dropped
+    and the OTHER ``top - 1`` are averaged (not topped back up to ``top``), so a carrier is
+    never measured against itself. Fewer carriers average the ones there are; ``None`` when
+    no other carrier writes the line.
     """
-    return _top_average(list(by_carrier.values()), top=top)
+    leaders = sorted(by_carrier.items(), key=lambda kv: kv[1] or 0.0, reverse=True)[:top]
+    others = [value or 0.0 for name, value in leaders if not _same_carrier(name, subject)]
+    return (sum(others) / len(others)) if others else None
+
+
+def _same_carrier(name: str, subject: Optional[str]) -> bool:
+    return bool(subject) and str(name).strip().lower() == str(subject).strip().lower()
 
 
 def _top_average(values: List[float], *, top: int = _PEER_TOP_N) -> float:
