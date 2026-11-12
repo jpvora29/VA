@@ -89,10 +89,34 @@ MAX_KEY_TAKEAWAYS = 6
 # Safety limit on force-compress merge iterations so a stuck/failing
 # LLM call can never spin the pipeline in an infinite loop.
 MAX_FORCE_COMPRESS_ITERATIONS = 20
+# Hard word-count cap on each key-takeaway narrative enforced by the
+# deterministic safety net _enforce_narrative_word_cap().
+# Two-tier rule:
+#   • Fresh generation (RECAP_GENERATION_SYSTEM_PROMPT) — ≤ 60 words.
+#     This is enforced at the prompt level so individual bullets stay tight.
+#   • Dedup / force-compress merged bullets — ≤ 65 words.
+#     When two bullets are merged, the combined narrative must not exceed
+#     65 words. If preserving all individual facts would exceed this cap,
+#     the LLM is instructed to prefer aggregate/overall framing over
+#     enumerating every individual country or LoB result.
+# The safety net enforces the outer ceiling of 65 words on ALL bullets,
+# catching any LLM that ignores either limit before the narrative reaches
+# the PPTX renderer.
+MAX_NARRATIVE_WORDS = 65
+# Minimum word count a takeaway narrative must reach before it is
+# considered substantive.  Any bullet whose narrative is shorter than
+# this after all LLM synthesis passes is treated as a stub — it is
+# dropped from the final output and a WARNING is logged so the run log
+# always shows when the safety-net fired.  The threshold is deliberately
+# conservative (20 words) so that genuinely short but correct one-line
+# summaries are never discarded; only placeholder-length fragments like
+# "Finland remains more mixed." (4 words) are caught.
+MIN_STUB_WORDS = 20
 # Maximum total insights sent to the action ranker
 MAX_ACTION_CANDIDATES = 20
 # Number of action items to keep in the final output
-TOP_N_ACTIONS = 5
+# The recap specification requires the top 3–4 prioritised actions.
+TOP_N_ACTIONS = 4
 # Maximum number of countries shown on the Country Feedback slide.
 # When more unique countries are found, they are ranked by importance
 # (volume of information + breadth of tags discussed) and only the
@@ -108,13 +132,40 @@ MIN_MENTIONS_TO_INCLUDE = 2
 import re as _re
 
 # ---------------------------------------------------------------------------
-# Structural markup stripping — removes raw table/chart block content so the
-# LLM never sees bare data rows, cell fragments, or block headers.
+# Null-safe string helper — used everywhere an LLM response field is parsed.
 # ---------------------------------------------------------------------------
+
+def _safe_str(val) -> str:
+    """
+    Convert an LLM JSON field value to a clean string, treating Python None
+    and the sentinel strings "None", "null" (any casing) as empty.
+
+    Motivation: json.loads converts JSON null → Python None, and str(None)
+    produces the truthy string "None", which bypasses `if not narrative`
+    guards.  Using _safe_str() everywhere instead of str(val).strip() means
+    a null narrative is correctly rejected at the parsing stage, before it
+    can propagate into a TitledTakeaway and reach the PPTX renderer.
+    """
+    if val is None:
+        return ""
+    s = str(val).strip()
+    return "" if s.lower() in ("none", "null") else s
+
+
+
 
 # [TABLE DATA] / [CHART DATA] / [TABLE CONTEXT] / [CHART CONTEXT] block headers
 _RE_BLOCK_HEADER = _re.compile(
     r"^\[(TABLE DATA|TABLE CONTEXT|CHART DATA|CHART CONTEXT)\]$", _re.M
+)
+# [IMAGE-ONLY CHART: ...] sentinel lines emitted by the extractor when a chart
+# element cannot be read (the data is embedded as a raster image).  These lines
+# are instruction text written to prevent the LLM from asserting values — they
+# carry zero business content and must be stripped before prose-sufficiency
+# checks so they cannot fool _is_prose_sentence() into letting an otherwise
+# empty content unit through into key-takeaway generation.
+_RE_IMAGE_ONLY_SENTINEL = _re.compile(
+    r"^\[IMAGE-ONLY[^\]]*\][^\n]*$", _re.M | _re.IGNORECASE
 )
 # Labelled table rows: "Row 1: ...", "Table (N rows, ...)".
 # Only strips the dimension/row-index label itself — NOT "Headers:" lines,
@@ -130,10 +181,17 @@ _RE_ROW_LABEL_PREFIX = _re.compile(
     r"^\s*(?:Headers?|Row\s+\d+):\s*", _re.M
 )
 # Pipe-delimited lines — table rows serialised as "cell | cell | cell".
-# A line with ANY pipe character is structurally a table row, not prose.
-_RE_PIPE_ROW = _re.compile(
-    r"^[^\n]*\|[^\n]*$", _re.M
-)
+# NOTE: these are NOT deleted wholesale. Many genuinely substantive table
+# rows (named accounts, GWP figures, loss amounts, metric comparisons) are
+# serialised this way, and a prior version of this regex deleted the ENTIRE
+# line on sight of any "|" character — silently wiping out real business
+# content (e.g. "Top Renewals: Bank of East Asia | FL, Cyber | 3.7m" became
+# an empty string), which caused correctly-classified insights to fail the
+# downstream _has_sufficient_prose() check and be dropped from key-takeaway
+# synthesis entirely. Instead, the pipe delimiter itself is converted to a
+# comma-separated reading (see _strip_structural_markup below) so the cell
+# values survive as plain prose text.
+_RE_PIPE_DELIM = _re.compile(r"[ \t]*\|[ \t]*")
 # Raw data cell lines — lines that are pure noise: no prose (3+ consecutive
 # alpha words) AND no digit at all (i.e. pure labels/codes with no number
 # and no sentence structure, e.g. a bare section header fragment).
@@ -157,10 +215,15 @@ def _is_prose_sentence(text: str) -> bool:
     This distinguishes genuine prose ("2025 focuses on rebuilding SRCS UK
     Global after loss") from label fragments ("Marsh Book % Change+10.2%",
     "GWP94,665,505", "SoW2.9%") that look like data-cell content.
+
+    NOTE: pipe-delimited table cells are converted to comma-separated text
+    by _strip_structural_markup() before this function ever sees them, so
+    no pipe-rejection guard is needed here any more (a prior version of this
+    guard rejected ANY line containing "|", which — combined with the old
+    _RE_PIPE_ROW deletion — caused genuinely substantive table rows such as
+    "Top Renewals: Bank of East Asia | FL, Cyber | 3.7m" to be treated as
+    non-prose and dropped from key-takeaway synthesis).
     """
-    # Reject lines that contain any pipe character — these are table rows
-    if "|" in text:
-        return False
     tokens = text.split()
     if len(tokens) < 5:
         return False
@@ -176,23 +239,39 @@ def _strip_structural_markup(content: str) -> str:
     """
     Remove raw structured-data markup from an insight's content string.
 
-    Strips in order:
+    Strips/transforms in order:
+      0. [IMAGE-ONLY CHART: ...] sentinel lines (extractor placeholder for
+         raster-image charts — instruction text, not business content)
       1. [TABLE DATA] / [CHART DATA] / context block headers
       2. Labelled table rows (Row N: / Headers: / Table(N rows))
-      3. Bare data-cell lines — lines with no alphabetic word ≥ 4 chars,
+      3. Pipe-delimited cell separators ("cell | cell | cell") converted to
+         comma-separated prose ("cell, cell, cell") — NOT deleted, since the
+         cell values themselves are real business content.
+      4. Bare data-cell lines — lines with no alphabetic word ≥ 4 chars,
          which are raw cell values that leaked through without Row/Header labels
          (e.g. "GWP94,665,505", "% Change-16.1%", "SoW2.9%", "Rank12")
 
     Leaves only prose sentences and inline numbers that are part of context.
     """
-    text = _RE_BLOCK_HEADER.sub("", content)
+    # Strip image-only sentinel FIRST — before any other pass — so the
+    # instruction words in the sentinel (e.g. "data", "not", "extractable",
+    # "assert") cannot fool _is_prose_sentence() into treating the placeholder
+    # as real prose and letting an otherwise empty content unit through into
+    # key-takeaway generation.
+    text = _RE_IMAGE_ONLY_SENTINEL.sub("", content)
+    text = _RE_BLOCK_HEADER.sub("", text)
     text = _RE_TABLE_ROW.sub("", text)
     # Strip "Headers:" / "Row N:" label prefixes but KEEP the rest of the
     # line — this is what preserves the metric value that used to be
     # deleted wholesale by the old _RE_TABLE_ROW (e.g. "Headers: GWP...60,909,659").
     text = _RE_ROW_LABEL_PREFIX.sub("", text)
-    # Strip pipe-delimited table rows (cell | cell | cell)
-    text = _RE_PIPE_ROW.sub("", text)
+    # Convert pipe-delimited table cells (cell | cell | cell) into a plain,
+    # comma-separated reading instead of deleting the whole line. Deleting
+    # on sight of "|" used to destroy real business content — named
+    # accounts, GWP figures, loss amounts — any time a table row was
+    # serialised with pipes, which is the normal serialisation format for
+    # every [TABLE DATA] block the extractor produces.
+    text = _RE_PIPE_DELIM.sub(", ", text)
     # Strip lines that are pure noise: no prose AND no digit at all
     text = _RE_DATA_CELL.sub("", text)
     text = _re.sub(r"\n{3,}", "\n\n", text)
@@ -301,6 +380,76 @@ def _country_mention_count(insights: List[StructuredInsight]) -> int:
     return sum(1 for i in insights if _has_sufficient_prose(i.content))
 
 
+# Build a case-insensitive index of canonical country names once at import time.
+# Maps every lower-cased canonical name to itself so any casing variant the LLM
+# returns (e.g. "UK", "Uk", "uk", "united kingdom") resolves to the correct
+# canonical name from settings.countries (e.g. "United Kingdom").
+@lru_cache(maxsize=1)
+def _country_canonical_index() -> dict:
+    return {c.lower(): c for c in settings.countries}
+
+
+def _normalise_country(raw: str) -> str:
+    """
+    Snap a raw country string to its canonical name from settings.countries.
+
+    Matching is case-insensitive. A small abbreviation map handles common
+    ISO-style codes (UK, US, UAE, NL, DE …) that the LLM may return instead
+    of the full name. Falls back to str.title() if no canonical match is found.
+
+    Examples:
+        "UK"             → "United Kingdom"
+        "Uk"             → "United Kingdom"
+        "united kingdom" → "United Kingdom"
+        "US"             → "United States"
+        "germany"        → "Germany"
+        "FRANCE"         → "France"
+    """
+    # Common ISO / informal abbreviations → canonical full name
+    _ABBREV: dict = {
+        "uk":  "United Kingdom",
+        "gb":  "United Kingdom",
+        "us":  "United States",
+        "usa": "United States",
+        "uae": "United Arab Emirates",
+        "nl":  "Netherlands",
+        "de":  "Germany",
+        "fr":  "France",
+        "it":  "Italy",
+        "es":  "Spain",
+        "se":  "Sweden",
+        "no":  "Norway",
+        "dk":  "Denmark",
+        "fi":  "Finland",
+        "be":  "Belgium",
+        "at":  "Austria",
+        "ie":  "Ireland",
+        "pt":  "Portugal",
+        "ch":  "Switzerland",
+        "au":  "Australia",
+        "nz":  "New Zealand",
+        "sg":  "Singapore",
+        "hk":  "Hong Kong",
+        "jp":  "Japan",
+        "cn":  "China",
+        "br":  "Brazil",
+        "mx":  "Mexico",
+    }
+    stripped = raw.strip()
+    key = stripped.lower()
+    # 1. Abbreviation map first
+    abbrev_match = _ABBREV.get(key)
+    if abbrev_match:
+        return abbrev_match
+    # 2. Case-insensitive lookup against canonical names in settings
+    index = _country_canonical_index()
+    canonical = index.get(key)
+    if canonical:
+        return canonical
+    # 3. title() as fallback
+    return stripped.title()
+
+
 def _country_target_sentences(insights: List[StructuredInsight]) -> int:
     """
     Decide how many sentences a country's summary should contain,
@@ -363,6 +512,147 @@ def _priority_score(ai: ActionItemSummary) -> float:
     return score
 
 
+# ---------------------------------------------------------------------------
+# Second-pass sub-category heuristic for (performance_and_position, None)
+# ---------------------------------------------------------------------------
+# When the LLM sub-category classifier returns null for a
+# performance_and_position insight — meaning no single sub-category was a
+# clear winner — this function applies a lightweight keyword/metadata
+# scoring heuristic to assign the best-fit sub-category.
+#
+# Scoring rules (additive, per sub-category):
+#   overall_trading_performance:
+#     +3  content mentions aggregate/overall GWP, total portfolio, retention
+#         rate, or attachment rate WITHOUT naming specific countries or LoBs
+#     +2  metadata has growth_value AND no countries AND ≤1 LoB
+#     +1  keywords: "overall", "total", "portfolio growth", "aggregate",
+#         "retention", "attachment", "peer", "benchmark"
+#   new_business_performance:
+#     +3  content mentions "new business", "new wins", "cross-sell",
+#         "conversion", "capture rate", "NB", or submissions won
+#     +2  metadata is_opportunity=True AND growth_value present
+#     +1  keywords: "submission", "quote", "hit rate", "pipeline won",
+#         "new account"
+#   line_of_business_performance:
+#     +3  metadata has ≥2 distinct lines of business
+#     +2  content names multiple LoB results with individual figures
+#     +1  keywords: "property", "casualty", "financial lines", "cyber",
+#         "marine", "specialty" — score once per distinct LoB keyword
+#         (max +3 from this alone)
+#   country_regional_performance:
+#     +3  metadata has ≥2 distinct countries
+#     +2  content names multiple country results with individual figures
+#     +1  keywords: country names appearing in the content (max +3)
+#
+# A sub-category is assigned only when it scores ≥2 points clear of the
+# next-highest candidate (unambiguous winner).  Tied or close scores
+# return None so the null-bucket aggregate prompt handles them.
+
+_PERF_SUBCAT_LOB_KEYWORDS = {
+    "property", "casualty", "financial lines", "finpro", "cyber",
+    "marine", "specialty", "construction", "e&p", "d&o", "pi",
+    "liability", "professional indemnity",
+}
+
+_PERF_SUBCAT_OVERALL_KEYWORDS = {
+    "overall", "total", "aggregate", "portfolio growth", "retention",
+    "attachment", "peer", "benchmark", "gwp", "book",
+}
+
+_PERF_SUBCAT_NB_KEYWORDS = {
+    "new business", "new wins", "cross-sell", "cross sell", "conversion",
+    "capture rate", "submission", "quote", "hit rate", "pipeline won",
+    "new account", "nb ",
+}
+
+
+def _infer_performance_sub_category(ins) -> Optional[str]:
+    """
+    Heuristic best-fit assignment for performance_and_position insights
+    whose LLM sub-category classification returned null.
+
+    Returns the winning sub-category key string, or None if no clear
+    winner can be determined (tied scores or insufficient signal).
+    """
+    content_lower = ins.content.lower()
+    md = ins.metadata
+
+    countries = [c.lower() for c in (md.countries or [])]
+    lobs      = [l.lower() for l in (md.lines_of_business or [])]
+    n_countries = len(set(countries))
+    n_lobs      = len(set(lobs))
+
+    scores: Dict[str, float] = {
+        "overall_trading_performance":  0.0,
+        "new_business_performance":     0.0,
+        "line_of_business_performance": 0.0,
+        "country_regional_performance": 0.0,
+    }
+
+    # ── overall_trading_performance ─────────────────────────────────────
+    if n_countries == 0 and n_lobs <= 1:
+        if md.growth_value:
+            scores["overall_trading_performance"] += 2.0
+    for kw in _PERF_SUBCAT_OVERALL_KEYWORDS:
+        if kw in content_lower:
+            scores["overall_trading_performance"] += 1.0
+            break  # one keyword hit is enough for the +1
+
+    # ── new_business_performance ─────────────────────────────────────────
+    nb_hits = sum(1 for kw in _PERF_SUBCAT_NB_KEYWORDS if kw in content_lower)
+    if nb_hits >= 2:
+        scores["new_business_performance"] += 3.0
+    elif nb_hits == 1:
+        scores["new_business_performance"] += 1.5
+    if getattr(md, "is_opportunity", False) and md.growth_value:
+        scores["new_business_performance"] += 2.0
+
+    # ── line_of_business_performance ─────────────────────────────────────
+    if n_lobs >= 2:
+        scores["line_of_business_performance"] += 3.0
+    elif n_lobs == 1:
+        scores["line_of_business_performance"] += 1.0
+    # keyword scan — up to +3 from distinct LoB name hits
+    lob_kw_hits = min(
+        3,
+        sum(1 for kw in _PERF_SUBCAT_LOB_KEYWORDS if kw in content_lower),
+    )
+    scores["line_of_business_performance"] += float(lob_kw_hits)
+
+    # ── country_regional_performance ─────────────────────────────────────
+    if n_countries >= 2:
+        scores["country_regional_performance"] += 3.0
+    elif n_countries == 1:
+        scores["country_regional_performance"] += 1.0
+    # keyword scan — count distinct country name hits (max +3)
+    country_kw_hits = min(
+        3,
+        sum(
+            1 for c in set(countries)
+            if c and c in content_lower
+        ),
+    )
+    scores["country_regional_performance"] += float(country_kw_hits)
+
+    # ── pick winner only when there is a clear margin ────────────────────
+    ranked = sorted(scores.items(), key=lambda kv: -kv[1])
+    best_key, best_score = ranked[0]
+    second_score         = ranked[1][1]
+
+    if best_score < 2.0:
+        # Not enough signal to override null
+        return None
+    if best_score - second_score < 2.0:
+        # Too close to call — keep null
+        return None
+
+    logger.debug(
+        "Second-pass sub-category: %s → %s (score=%.1f, gap=%.1f)",
+        ins.content_unit_id, best_key, best_score, best_score - second_score,
+    )
+    return best_key
+
+
 class RecapGenerator:
     """
     Generates a structured recap from the InsightStore.
@@ -394,6 +684,9 @@ class RecapGenerator:
         meeting_date: Optional[str] = None,
         meeting_type: Optional[str] = None,
         min_confidence: float = 0.0,
+        outputs_dir=None,
+        deck_id_for_artefacts: Optional[str] = None,
+        source_graph: Optional[dict] = None,
     ) -> RecapOutput:
         """
         Generate a recap for a specific deck.
@@ -425,10 +718,20 @@ class RecapGenerator:
         groups = self._group_insights(insights)
         logger.info("Insight groups (umbrella × sub_category): %d", len(groups))
 
+        # Derive deck speaker (carrier name) from the first insight that
+        # carries a company_name.  This tells the takeaway/exec-summary/
+        # fact-checker LLMs that "Our" / "We" in the source text refers to
+        # the carrier, not to Marsh — preventing subject-perspective flips.
+        deck_speaker: str = next(
+            (i.company_name for i in insights if i.company_name),
+            client_name or "the carrier",
+        )
+
         # 2. Generate one titled bullet per group — all groups run concurrently
         takeaway_tasks = [
             self._generate_takeaway(umbrella_key, sub_cat_key, group_insights,
-                                    client_name, period_label, meeting_type)
+                                    client_name, period_label, meeting_type,
+                                    deck_speaker)
             for (umbrella_key, sub_cat_key), group_insights in groups.items()
         ]
         takeaway_results = await asyncio.gather(*takeaway_tasks, return_exceptions=True)
@@ -452,6 +755,12 @@ class RecapGenerator:
             t.sub_category or "",
         ))
 
+        # Save pre-dedup takeaways for tracking/auditing
+        _artefact_id = deck_id_for_artefacts or deck_id
+        self._save_takeaway_artefact(
+            outputs_dir, _artefact_id, "05a_takeaways_pre_dedup", key_takeaways
+        )
+
         # 3. Executive summary — sourced ONLY from the Performance & Position
         #    umbrella (excluding the Line of Business Performance sub-category,
         #    which is LoB-specific detail that does not belong in the
@@ -470,7 +779,17 @@ class RecapGenerator:
         #    from untainted performance_and_position-only content.
         exec_summary_source_takeaways = self._filter_exec_summary_source(key_takeaways)
         executive_summary = await self._generate_exec_summary(
-            exec_summary_source_takeaways, client_name, period_label, meeting_type
+            exec_summary_source_takeaways, client_name, period_label, meeting_type,
+            deck_speaker
+        )
+
+        # 4. Rank action items early — before dedup and overlap removal —
+        #    so that all downstream cleanup steps have the full picture of
+        #    what is already committed as an action, and the three-way
+        #    overlap removal (step 6b) can compare KT bullets against both
+        #    the exec summary AND the action items in one pass.
+        action_items = await self._rank_action_items(
+            insights, client_name, period_label, meeting_date
         )
 
         # 3b. Deduplication checkpoint — merge or drop bullets that carry the
@@ -482,10 +801,70 @@ class RecapGenerator:
         )
         logger.info("Takeaways after dedup: %d", len(key_takeaways))
 
-        # 3c. Hard-cap enforcement — if more than MAX_KEY_TAKEAWAYS bullets
-        #     survive the 65%-overlap dedup pass, repeatedly merge the most
-        #     similar remaining pair (no information loss) until the list
-        #     is at or below the cap.
+        # Save post-dedup takeaways for tracking/auditing
+        self._save_takeaway_artefact(
+            outputs_dir, _artefact_id, "05b_takeaways_post_dedup", key_takeaways
+        )
+
+        # 5. Fact-check Pass 1 — verify exec summary and takeaways.
+        #    Action items are passed in so the fact-checker can flag any
+        #    action-language that leaked into the exec summary or KT bullets.
+        executive_summary, key_takeaways, action_items = (
+            await self._fact_check_slide1(
+                insights, executive_summary, key_takeaways,
+                action_items, client_name, period_label, deck_speaker,
+                source_graph=source_graph,
+            )
+        )
+        logger.info(
+            "Fact-check pass 1 complete: %d takeaways",
+            len(key_takeaways),
+        )
+
+        # Save post-fact-check takeaways for validation
+        self._save_takeaway_artefact(
+            outputs_dir, _artefact_id, "05c_takeaways_post_factcheck", key_takeaways
+        )
+
+        # 6b. Full three-way overlap removal — all three sections are now
+        #     available so this single pass covers every cross-section:
+        #       • KT ↔ exec summary
+        #       • KT ↔ action items  (fixes the "last KT / first action"
+        #                             duplication identified in root-cause analysis)
+        #     Any KT bullet whose core commercial point is already expressed
+        #     in either the exec summary or an action item is rewritten to
+        #     surface distinct detail, or dropped if nothing distinct remains.
+        #
+        #     Build a map of content_unit_id → stripped prose so that the
+        #     overlap LLM has the actual source text available when it needs
+        #     to re-synthesise a split or rewritten bullet.  Without this,
+        #     the LLM only has the current (possibly already-trimmed) bullet
+        #     narrative to work from, which is why split bullets previously
+        #     produced stub fragments like "Finland remains more mixed."
+        _source_text_map: Dict[str, str] = {
+            ins.content_unit_id: _strip_structural_markup(ins.content)
+            for ins in insights
+            if ins.content_unit_id
+        }
+        key_takeaways = await self._remove_exec_summary_overlap(
+            executive_summary, key_takeaways, client_name, period_label,
+            action_items=action_items,
+            source_text_map=_source_text_map,
+        )
+        logger.info(
+            "Takeaways after full three-way overlap removal: %d", len(key_takeaways)
+        )
+
+        # Save post-overlap-removal takeaways for validation
+        self._save_takeaway_artefact(
+            outputs_dir, _artefact_id, "05d_takeaways_post_overlap_removal", key_takeaways
+        )
+
+        # 6c. Hard-cap enforcement — last resort only.
+        #     Force-compress runs AFTER all dedup and overlap-removal passes
+        #     so it only fires when > MAX_KEY_TAKEAWAYS genuinely distinct
+        #     bullets remain. Repeatedly merges the most similar remaining
+        #     pair (no information loss) until at or below the cap.
         key_takeaways = await self._force_compress_takeaways(
             key_takeaways, client_name, period_label
         )
@@ -494,55 +873,17 @@ class RecapGenerator:
             MAX_KEY_TAKEAWAYS, len(key_takeaways),
         )
 
-        # 4b. Remove overlap between the executive summary and the key
-        #     takeaways — the point used for the executive summary should
-        #     not also appear as (essentially) the first key takeaway.
-        key_takeaways = await self._remove_exec_summary_overlap(
-            executive_summary, key_takeaways, client_name, period_label
-        )
-        logger.info("Takeaways after exec-summary overlap removal: %d", len(key_takeaways))
-
-        # 5. Fact-check Pass 1 — verify exec summary, takeaways BEFORE
-        #    ranking so only fact-checked content enters the ranker.
-        #    Action items are not yet generated here; we pass an empty list
-        #    and rank afterward so the ranker works on clean, checked inputs.
-        executive_summary, key_takeaways, _ = (
-            await self._fact_check_slide1(
-                insights, executive_summary, key_takeaways,
-                [], client_name, period_label,
-            )
-        )
-        logger.info(
-            "Fact-check pass 1 complete: %d takeaways",
-            len(key_takeaways),
+        # Save post-force-compress takeaways for validation
+        self._save_takeaway_artefact(
+            outputs_dir, _artefact_id, "05e_takeaways_post_force_compress", key_takeaways
         )
 
-        # 6. Rank and cap action items — runs on fact-checked takeaways.
-        action_items = await self._rank_action_items(
-            insights, client_name, period_label, meeting_date
-        )
-
-        # 7. Fact-check Pass 1b — re-verify exec summary + takeaways +
-        #    action items together now that action items are available.
-        executive_summary, key_takeaways, action_items = (
-            await self._fact_check_slide1(
-                insights, executive_summary, key_takeaways,
-                action_items, client_name, period_label,
-            )
-        )
-        logger.info(
-            "Fact-check pass 1b complete: %d takeaways, %d actions",
-            len(key_takeaways), len(action_items),
-        )
-
-        # 7b. Re-run action-item dedup AFTER the fact-checker rewrite.
-        #     The fact-checker is allowed to rewrite action text (e.g. to fix
-        #     geographic scope or metric conflation), and that rewrite can
-        #     pull two previously-distinct items back into near-duplicate
-        #     wording (both ending up describing the same pipeline goal, for
-        #     example). Dedup only ran once, before this rewrite, so it must
-        #     run again on the post-fact-check text to catch duplicates that
-        #     the rewrite itself introduced.
+        # 7. Re-run action-item dedup AFTER the fact-checker rewrite.
+        #    The fact-checker is allowed to rewrite action text (e.g. to fix
+        #    geographic scope or metric conflation), and that rewrite can
+        #    pull two previously-distinct items back into near-duplicate
+        #    wording. Dedup must run again on the post-fact-check text to
+        #    catch any duplicates the rewrite itself introduced.
         _pre_dedup_count = len(action_items)
         action_items = self._dedup_action_items(action_items)
         if len(action_items) != _pre_dedup_count:
@@ -560,6 +901,7 @@ class RecapGenerator:
         #    generation, before they are written to the output object / PPTX.
         country_summaries = await self._fact_check_slide2(
             insights, country_summaries, client_name, period_label,
+            source_graph=source_graph,
         )
         logger.info(
             "Fact-check pass 2 complete: %d countries", len(country_summaries),
@@ -572,6 +914,25 @@ class RecapGenerator:
         #     cannot be bypassed by an LLM that ignores the prompt rule.
         key_takeaways = self._neutralise_takeaway_titles(key_takeaways)
 
+        # 9c. Deterministic word-count safety net — hard-cap each takeaway
+        #     narrative at MAX_NARRATIVE_WORDS words.  The LLM prompts all
+        #     instruct ≤ 75 words, but an LLM that ignores the cap can still
+        #     produce an overlong sentence (as seen in the run where bullet 1
+        #     was 106 words).  This pure-Python pass truncates any narrative
+        #     that exceeds the cap by cutting at the last word boundary that
+        #     fits and appending "…" so the sentence never looks abruptly cut.
+        #     It logs a warning so overlong LLM responses are visible in the
+        #     run log without requiring manual inspection of every artefact.
+        key_takeaways = self._enforce_narrative_word_cap(key_takeaways)
+
+        # 9d. Deterministic stub-narrative safety net — drop any takeaway
+        #     whose narrative is shorter than MIN_STUB_WORDS words.
+        #     This catches fragments produced by Stage 5d (overlap removal)
+        #     when a split/rewrite produces a placeholder sentence instead
+        #     of a full narrative (e.g. "Finland remains more mixed." — 4
+        #     words).  Dropped bullets are logged at WARNING level.
+        key_takeaways = self._enforce_narrative_min_length(key_takeaways)
+
         # Overall confidence
         conf_scores = [
             i.metadata.overall_confidence
@@ -579,7 +940,7 @@ class RecapGenerator:
         ]
         overall_conf = statistics.mean(conf_scores) if conf_scores else 0.0
 
-        return RecapOutput(
+        recap = RecapOutput(
             deck_id=deck_id,
             period_label=period_label,
             client_name=client_name,
@@ -590,10 +951,74 @@ class RecapGenerator:
             overall_confidence=round(overall_conf, 3),
             contributing_insight_ids=[i.insight_id for i in insights],
         )
+        self._save_recap_artefact(
+            outputs_dir, _artefact_id, recap, source_graph=source_graph
+        )
+        return recap
 
     # ----------------------------------------------------------------
-    # Grouping
+    # Artefact saving helper (mirrors pipeline._save_artefact)
     # ----------------------------------------------------------------
+
+    @staticmethod
+    def _save_takeaway_artefact(
+        outputs_dir,
+        deck_id: str,
+        suffix: str,
+        takeaways: list,
+    ) -> None:
+        """
+        Serialise a list of TitledTakeaway objects to
+        outputs_dir/{deck_id}_{suffix}.json.
+
+        Silently skips if outputs_dir is None, deck_id is empty, or
+        serialisation fails — this must never block the pipeline.
+        """
+        if not outputs_dir or not deck_id:
+            return
+        try:
+            from pathlib import Path as _Path
+            payload = [
+                t.model_dump(mode="json") if hasattr(t, "model_dump") else t
+                for t in takeaways
+            ]
+            out = _Path(outputs_dir) / f"{deck_id}_{suffix}.json"
+            out.write_text(
+                __import__("json").dumps(payload, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            logger.info("Saved artefact: %s", out.name)
+        except Exception as exc:
+            logger.warning(
+                "Could not save takeaway artefact %s_%s: %s", deck_id, suffix, exc
+            )
+
+    @staticmethod
+    def _save_recap_artefact(
+        outputs_dir,
+        deck_id: str,
+        recap: RecapOutput,
+        source_graph: Optional[dict] = None,
+    ) -> None:
+        """Save the authoritative structured recap and audit graph."""
+        if not outputs_dir or not deck_id:
+            return
+        try:
+            from pathlib import Path as _Path
+            payload = {
+                "recap": recap.model_dump(mode="json"),
+                "source_graph": source_graph or {},
+            }
+            # Its own name: it used to share 05e's and overwrite that artefact.
+            out = _Path(outputs_dir) / f"{deck_id}_06_structured_recap.json"
+            out.write_text(
+                __import__("json").dumps(payload, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            logger.info("Saved structured recap artefact: %s", out.name)
+        except Exception as exc:
+            logger.warning("Could not save structured recap artefact %s: %s", deck_id, exc)
+
 
     def _group_insights(
         self, insights: List[StructuredInsight]
@@ -604,6 +1029,22 @@ class RecapGenerator:
         An insight may appear in multiple groups if it belongs to multiple
         umbrellas.  Within each group, keep the highest-confidence insights
         up to MAX_INSIGHTS_PER_GROUP.
+
+        Second-pass sub-category resolution (Option 1 fix):
+        Insights that land in (performance_and_position, None) — i.e. the
+        sub-category classifier returned null — are re-examined using a
+        lightweight heuristic best-fit assignment.  Rather than running
+        additional LLM calls, we score each insight against the four
+        performance_and_position sub-categories by counting keyword signals
+        in the insight's content and metadata, then assign the highest-
+        scoring sub-category when the signal is unambiguous (clear winner
+        by at least 2 points over the runner-up).  Insights with tied or
+        absent signals stay in the null bucket so the synthesis prompt's
+        existing aggregate-only note handles them correctly.
+
+        This prevents the "dump-bucket" effect where a large deck with many
+        performance insights produces a single oversized null-bucket bullet
+        that tries to cover all sub-category angles in one sentence.
         """
         # umbrella_key → sub_category attr name on ClassificationBundle
         _sub_cat_attr = {
@@ -634,6 +1075,13 @@ class RecapGenerator:
                     sc_result = getattr(ins.classification, sub_cat_attr, None)
                     if sc_result and sc_result.sub_category:
                         sub_cat_key = sc_result.sub_category
+
+                # Second-pass best-fit for (performance_and_position, None):
+                # apply keyword heuristic to avoid everything landing in the
+                # aggregate null bucket when a clear sub-category signal exists.
+                if umbrella_key == "performance_and_position" and sub_cat_key is None:
+                    sub_cat_key = _infer_performance_sub_category(ins)
+
                 raw[(umbrella_key, sub_cat_key)].append(ins)
 
         # Sort each group by confidence desc, cap at MAX_INSIGHTS_PER_GROUP
@@ -644,6 +1092,46 @@ class RecapGenerator:
                 key=lambda i: -i.metadata.overall_confidence,
             )
             grouped[key] = sorted_group[:MAX_INSIGHTS_PER_GROUP]
+
+        # Observability — warn if a large fraction of insights produced no umbrella.
+        # Insights with umbrella_labels=[] are excluded from recap synthesis
+        # entirely; a high exclusion rate indicates enrichment quality issues
+        # (e.g. token budget too low, image-only sentinels reaching classification)
+        # or a misconfigured umbrella classifier threshold.  This log is surfaced
+        # at WARNING level so it is visible in normal INFO+ log runs without
+        # requiring debug mode.  (Fix for issue 5.1 — exclusion log.)
+        total = len(insights)
+        grouped_ids: set = {
+            ins.content_unit_id
+            for group_list in grouped.values()
+            for ins in group_list
+        }
+        excluded = [
+            ins for ins in insights
+            if ins.content_unit_id not in grouped_ids
+        ]
+        if total > 0:
+            excluded_pct = 100.0 * len(excluded) / total
+            log_fn = logger.warning if excluded_pct > 50 else logger.info
+            log_fn(
+                "_group_insights: %d/%d insights (%.0f%%) had no umbrella label "
+                "and were excluded from recap synthesis — "
+                "check enrichment confidence distribution and classification thresholds",
+                len(excluded),
+                total,
+                excluded_pct,
+            )
+            if excluded_pct > 50:
+                # Surface a sample of the top-5 excluded by confidence to aid debugging
+                sample = sorted(excluded, key=lambda i: -i.metadata.overall_confidence)[:5]
+                for s in sample:
+                    logger.warning(
+                        "  excluded sample: slide=%s content_unit=%s confidence=%.3f content=%.80s",
+                        s.slide_number,
+                        s.content_unit_id,
+                        s.metadata.overall_confidence,
+                        s.content.replace("\n", " "),
+                    )
 
         return grouped
 
@@ -659,21 +1147,41 @@ class RecapGenerator:
         client_name: Optional[str],
         period_label: Optional[str],
         meeting_type: Optional[str] = None,
+        deck_speaker: Optional[str] = None,
     ) -> Optional[TitledTakeaway]:
         """Call the LLM once to produce a titled bullet for one group."""
         umbrella_label = UMBRELLA_DEFINITIONS[umbrella_key]["label"]
         sub_cat_label = _sub_category_label(umbrella_key, sub_cat_key)
         insights_block = self._build_insights_block(group_insights)
 
+        # When no sub-category was assigned, this group contains insights
+        # that were not specific enough for any sub-category bucket.
+        # Constrain the LLM to aggregate-only framing so it does not
+        # reproduce country or LoB breakdowns that will already appear in
+        # dedicated sub-category bullets (country_regional_performance,
+        # line_of_business_performance, etc.).
+        unclassified_note = ""
+        if not sub_cat_key:
+            unclassified_note = (
+                "\nNOTE: These insights were not assigned to a specific "
+                "sub-category. Synthesise them at an AGGREGATE level only. "
+                "Do NOT structure the narrative around individual country "
+                "results or individual LoB results — those will appear in "
+                "dedicated sub-category bullets. Focus instead on the "
+                "overall cross-cutting commercial theme (e.g. total volume, "
+                "headline trajectory, or relationship-wide signal)."
+            )
+
         user_message = RECAP_GENERATION_USER_TEMPLATE.format(
             client_name=client_name or "the client",
             period_label=period_label or "",
             meeting_type=meeting_type or "(not detected)",
+            deck_speaker=deck_speaker or client_name or "the carrier",
             umbrella_label=umbrella_label,
             sub_category_label=sub_cat_label,
             insight_count=len(group_insights),
             insights_block=insights_block,
-        )
+        ) + unclassified_note
 
         try:
             raw = await self._llm.call(
@@ -684,8 +1192,8 @@ class RecapGenerator:
                 stage="recap_takeaway",
             )
             d = json.loads(raw) if isinstance(raw, str) else raw
-            title = str(d.get("title", sub_cat_label)).strip()
-            narrative = str(d.get("narrative", "")).strip()
+            title = _safe_str(d.get("title")) or sub_cat_label
+            narrative = _safe_str(d.get("narrative"))
             if not narrative:
                 return None
             return TitledTakeaway(
@@ -693,9 +1201,10 @@ class RecapGenerator:
                 narrative=narrative,
                 umbrella=umbrella_key,
                 sub_category=sub_cat_key,
-                source_content_unit_ids=d.get("source_content_unit_ids", [
-                    i.content_unit_id for i in group_insights
-                ]),
+                source_content_unit_ids=(
+                    d.get("source_content_unit_ids")
+                    or [i.content_unit_id for i in group_insights]
+                ),
             )
         except Exception as exc:
             logger.error(
@@ -835,8 +1344,8 @@ class RecapGenerator:
 
             deduped: List[TitledTakeaway] = []
             for item in deduped_raw:
-                title     = str(item.get("title", "")).strip()
-                narrative = str(item.get("narrative", "")).strip()
+                title     = _safe_str(item.get("title"))
+                narrative = _safe_str(item.get("narrative"))
                 source_nums = item.get("source_bullet_numbers", []) or []
                 if not title or not narrative or not source_nums:
                     continue
@@ -944,8 +1453,8 @@ class RecapGenerator:
 
                 compressed: List[TitledTakeaway] = []
                 for item in compressed_raw:
-                    title     = str(item.get("title", "")).strip()
-                    narrative = str(item.get("narrative", "")).strip()
+                    title     = _safe_str(item.get("title"))
+                    narrative = _safe_str(item.get("narrative"))
                     source_nums = item.get("source_bullet_numbers", []) or []
                     if not title or not narrative or not source_nums:
                         continue
@@ -962,11 +1471,11 @@ class RecapGenerator:
                         source_content_unit_ids=source_ids,
                     ))
 
-                if not compressed or len(compressed) >= len(takeaways):
+                if not compressed or len(compressed) != len(takeaways) - 1:
                     logger.warning(
-                        "Force-compress produced no valid reduction (%d -> %d) "
-                        "— stopping compression",
-                        len(takeaways), len(compressed),
+                        "Force-compress must merge exactly one pair (%d -> %d requested); "
+                        "received %d — stopping compression",
+                        len(takeaways), len(takeaways) - 1, len(compressed),
                     )
                     break
 
@@ -1045,6 +1554,7 @@ class RecapGenerator:
         client_name: Optional[str],
         period_label: Optional[str],
         meeting_type: Optional[str] = None,
+        deck_speaker: Optional[str] = None,
     ) -> str:
         if not takeaways:
             return "No insights available for this review period."
@@ -1056,6 +1566,7 @@ class RecapGenerator:
             client_name=client_name or "the client",
             period_label=period_label or "",
             meeting_type=meeting_type or "(not detected)",
+            deck_speaker=deck_speaker or client_name or "the carrier",
             takeaways_block=takeaways_block,
         )
         try:
@@ -1083,23 +1594,50 @@ class RecapGenerator:
         takeaways: List[TitledTakeaway],
         client_name: Optional[str],
         period_label: Optional[str],
+        action_items: Optional[List[ActionItemSummary]] = None,
+        source_text_map: Optional[Dict[str, str]] = None,
     ) -> List[TitledTakeaway]:
         """
-        Post-processing checkpoint that runs after the executive summary
-        has been finalised.
+        Post-processing checkpoint that runs after both the executive summary
+        and the action items have been finalised.
 
-        The executive summary is synthesised from the takeaway bullets, so
-        without this step the first key takeaway (and sometimes others)
-        tends to restate almost exactly the same claim as the executive
-        summary. This call sends the finalised executive summary plus all
-        takeaway bullets to the LLM, which rewrites or drops any bullet
-        that is substantially a repeat of the executive summary's claim.
+        Sends the finalised executive summary, the ranked action items, and
+        all takeaway bullets to the LLM, which rewrites or drops any bullet
+        whose core commercial claim is substantially the same as a claim in
+        EITHER the executive summary OR any action item — covering all three
+        cross-sections: exec↔KTs, actions↔KTs, and exec↔actions (the last
+        of which is checked inside the prompt but exec summary is not edited
+        here; only KT bullets are rewritten/dropped).
+
+        source_text_map, if provided, is a dict mapping content_unit_id →
+        stripped source prose.  It is appended to the user message so the
+        LLM has the original source text available when it needs to
+        re-synthesise a rewritten or split bullet.  This prevents stub
+        narratives (e.g. "Finland remains more mixed.") that arise when the
+        LLM only has the current trimmed bullet narrative to draw from.
 
         On any failure or empty/invalid response, the original takeaways
         are returned unchanged so the pipeline is never blocked.
         """
         if not takeaways or not executive_summary:
             return takeaways
+
+        # Serialise action items for the prompt — numbered list, or a clear
+        # "(none)" marker so the LLM knows the field is intentionally empty.
+        if action_items:
+            ai_lines = []
+            for i, ai in enumerate(action_items, 1):
+                parts = [f"{i}. {ai.action}"]
+                if ai.owner:
+                    parts.append(f"(Owner: {ai.owner})")
+                if ai.deadline:
+                    parts.append(f"(Deadline: {ai.deadline})")
+                if ai.geography:
+                    parts.append(f"(Geography: {ai.geography})")
+                ai_lines.append(" ".join(parts))
+            action_items_block = "\n".join(ai_lines)
+        else:
+            action_items_block = "(none)"
 
         bullets_lines: List[str] = []
         for i, t in enumerate(takeaways, 1):
@@ -1111,13 +1649,38 @@ class RecapGenerator:
             )
         bullets_block = "\n\n".join(bullets_lines)
 
+        # Build source content block: for each bullet, collect the stripped
+        # prose of every source content unit it references, so the LLM can
+        # draw on original source material when rewriting or splitting a bullet.
+        source_content_block = ""
+        if source_text_map:
+            sc_parts: List[str] = []
+            for i, t in enumerate(takeaways, 1):
+                texts = [
+                    source_text_map[cuid]
+                    for cuid in (t.source_content_unit_ids or [])
+                    if cuid in source_text_map and source_text_map[cuid].strip()
+                ]
+                if texts:
+                    sc_parts.append(
+                        f"Bullet {i} source content:\n"
+                        + "\n---\n".join(texts)
+                    )
+            if sc_parts:
+                source_content_block = (
+                    "\n\nSource content for each bullet "
+                    "(use this when rewriting — do not add new facts not present here):\n"
+                    + "\n\n".join(sc_parts)
+                )
+
         user_message = RECAP_OVERLAP_USER_TEMPLATE.format(
             client_name=client_name or "the client",
             period_label=period_label or "",
             executive_summary=executive_summary,
+            action_items_block=action_items_block,
             bullet_count=len(takeaways),
             bullets_block=bullets_block,
-        )
+        ) + source_content_block
 
         try:
             raw = await self._llm.call(
@@ -1137,9 +1700,9 @@ class RecapGenerator:
 
             revised: List[TitledTakeaway] = []
             for item in revised_raw:
-                title     = str(item.get("title", "")).strip()
-                narrative = str(item.get("narrative", "")).strip()
-                umbrella  = str(item.get("umbrella", "")).strip()
+                title     = _safe_str(item.get("title"))
+                narrative = _safe_str(item.get("narrative"))
+                umbrella  = _safe_str(item.get("umbrella"))
                 sub_cat   = item.get("sub_category") or None
                 if not title or not narrative or not umbrella:
                     continue
@@ -1189,6 +1752,8 @@ class RecapGenerator:
         action_items: List[ActionItemSummary],
         client_name: Optional[str],
         period_label: Optional[str],
+        deck_speaker: Optional[str] = None,
+        source_graph: Optional[dict] = None,
     ) -> tuple:
         """
         Fact-check Pass 1 — Slide 1 content only.
@@ -1203,16 +1768,33 @@ class RecapGenerator:
         if not takeaways and not executive_summary:
             return executive_summary, takeaways, action_items
 
-        # Compact source block (all insights, stripped of markup).
-        # Includes a Metrics: line from structured metadata (same fields
-        # used in _build_insights_block) so the fact-checker's own view of
-        # "the source" contains every number the takeaway/exec-summary LLM
-        # was given — otherwise the fact-checker can flag a correctly
-        # sourced figure as unsupported (because it only appears in
-        # structured metadata, not in the stripped prose) and strip it
-        # back out of the takeaway/exec-summary text.
+        # Compact source block — restricted to insights whose content_unit_id
+        # is referenced by at least one of the takeaway bullets or action items
+        # being fact-checked.  Sending all 400+ insights would exceed the
+        # model's context window on large decks; the fact-checker only needs
+        # the evidence that actually underpins the claims it is verifying.
+        # Includes a Metrics: line from structured metadata (same fields used
+        # in _build_insights_block) so the fact-checker's own view of "the
+        # source" contains every number the takeaway/exec-summary LLM was
+        # given — otherwise the fact-checker can flag a correctly sourced
+        # figure as unsupported and strip it back out.
+        _referenced_cu_ids: set = set()
+        for t in takeaways:
+            _referenced_cu_ids.update(t.source_content_unit_ids or [])
+        for ai in action_items:
+            if ai.source_content_unit_id:
+                _referenced_cu_ids.add(ai.source_content_unit_id)
+        _relevant_insights = (
+            [ins for ins in insights if ins.content_unit_id in _referenced_cu_ids]
+            if _referenced_cu_ids
+            else insights
+        )
+        logger.info(
+            "Fact-check pass 1: sending %d/%d insights (referenced by takeaways/actions)",
+            len(_relevant_insights), len(insights),
+        )
         source_lines: List[str] = []
-        for ins in insights[:60]:
+        for ins in _relevant_insights:
             clean = _strip_structural_markup(ins.content)
             md = ins.metadata
             metric_entries = [_format_metric_entry(m) for m in (md.metrics or md.kpis)]
@@ -1251,12 +1833,15 @@ class RecapGenerator:
             if ai.deadline:         parts.append(f"   Deadline: {ai.deadline}")
             if ai.geography:        parts.append(f"   Geography: {ai.geography}")
             if ai.line_of_business: parts.append(f"   LoB: {ai.line_of_business}")
+            if ai.source_bullet_id: parts.append(f"   Source bullet: {ai.source_bullet_id}")
+            if ai.source_element_ids: parts.append(f"   Source elements: {', '.join(ai.source_element_ids)}")
             action_lines.append("\n".join(parts))
         actions_block = "\n\n".join(action_lines)
 
         user_message = FACT_CHECKER_SLIDE1_USER_TEMPLATE.format(
             client_name=client_name or "the client",
             period_label=period_label or "",
+            deck_speaker=deck_speaker or client_name or "the carrier",
             source_block=source_block,
             executive_summary=executive_summary,
             takeaway_count=len(takeaways),
@@ -1284,9 +1869,9 @@ class RecapGenerator:
             # Key takeaways
             checked_takeaways: List[TitledTakeaway] = []
             for item in d.get("takeaways", []):
-                title     = str(item.get("title", "")).strip()
-                narrative = str(item.get("narrative", "")).strip()
-                umbrella  = str(item.get("umbrella", "")).strip()
+                title     = _safe_str(item.get("title"))
+                narrative = _safe_str(item.get("narrative"))
+                umbrella  = _safe_str(item.get("umbrella"))
                 sub_cat   = item.get("sub_category") or None
                 if not title or not narrative or not umbrella:
                     continue
@@ -1315,22 +1900,25 @@ class RecapGenerator:
             checked_actions: List[ActionItemSummary] = []
             for i, item in enumerate(d.get("action_items", [])):
                 action_text = str(item.get("action", "")).strip()
-                if not action_text:
+                owner_value = _str_or_none(item.get("owner"))
+                if not action_text or not owner_value:
                     continue
                 orig_ai = action_items[i] if i < len(action_items) else None
                 checked_actions.append(ActionItemSummary(
                     action=action_text,
-                    owner=_str_or_none(item.get("owner")),
+                    owner=owner_value,
                     deadline=_str_or_none(item.get("deadline")),
                     line_of_business=_str_or_none(item.get("line_of_business")),
                     geography=_str_or_none(item.get("geography")),
                     urgency=Urgency(_urgency_val(item.get("urgency", "unknown"))),
                     source_slide_number=orig_ai.source_slide_number if orig_ai else None,
                     source_content_unit_id=orig_ai.source_content_unit_id if orig_ai else None,
+                    source_bullet_id=orig_ai.source_bullet_id if orig_ai else None,
+                    source_element_ids=orig_ai.source_element_ids if orig_ai else [],
                     confidence=float(item.get("confidence", orig_ai.confidence if orig_ai else 0.0)),
                 ))
             if not checked_actions:
-                checked_actions = action_items
+                checked_actions = [ai for ai in action_items if ai.owner]
 
             logger.info(
                 "Fact-check pass 1: summary=%s, takeaways %d->%d, actions %d->%d",
@@ -1342,7 +1930,7 @@ class RecapGenerator:
 
         except Exception as exc:
             logger.error("Fact-check pass 1 failed: %s — returning unchecked", exc)
-            return executive_summary, takeaways, action_items
+            return executive_summary, takeaways, [ai for ai in action_items if ai.owner]
 
     async def _fact_check_slide2(
         self,
@@ -1350,6 +1938,7 @@ class RecapGenerator:
         country_summaries: List[CountrySummary],
         client_name: Optional[str],
         period_label: Optional[str],
+        source_graph: Optional[dict] = None,
     ) -> List[CountrySummary]:
         """
         Fact-check Pass 2 — Slide 2 country summaries only.
@@ -1363,15 +1952,32 @@ class RecapGenerator:
         if not country_summaries:
             return country_summaries
 
-        # Build source block grouped by country for clearer attribution.
+        # Build source block grouped by country — restricted to insights
+        # whose content_unit_id is referenced by one of the country summaries
+        # being fact-checked.  Sending all insights would exceed the model's
+        # context window on large decks; the fact-checker only needs the
+        # evidence that actually underpins the country summaries it verifies.
         # Includes a Metrics: line from structured metadata so the
         # fact-checker's source view contains every number the country
         # summary LLM was given (see _build_insights_block) — otherwise it
         # can flag a correctly sourced figure as unsupported and strip it.
+        _referenced_cu_ids_s2: set = set()
+        for cs in country_summaries:
+            _referenced_cu_ids_s2.update(cs.source_content_unit_ids or [])
+        _relevant_insights_s2 = (
+            [ins for ins in insights if ins.content_unit_id in _referenced_cu_ids_s2]
+            if _referenced_cu_ids_s2
+            else insights
+        )
+        logger.info(
+            "Fact-check pass 2: sending %d/%d insights (referenced by country summaries)",
+            len(_relevant_insights_s2), len(insights),
+        )
         from collections import defaultdict as _dd
         country_insights: dict = _dd(list)
-        for ins in insights:
+        for ins in _relevant_insights_s2:
             for country in (ins.metadata.countries or []):
+                normalised = _normalise_country(country)
                 clean = _strip_structural_markup(ins.content)
                 md = ins.metadata
                 metric_entries = [_format_metric_entry(m) for m in (md.metrics or md.kpis)]
@@ -1387,7 +1993,7 @@ class RecapGenerator:
                     block = f"[Slide {ins.slide_number} | {ins.slide_title or 'no title'}]\n{clean.strip()}"
                     if metrics_line:
                         block += f"\nMetrics: {metrics_line}"
-                    country_insights[country].append(block)
+                    country_insights[normalised].append(block)
 
         source_parts: List[str] = []
         for cs in country_summaries:
@@ -1472,22 +2078,31 @@ class RecapGenerator:
         # Collect raw action items from insights
         candidates: List[ActionItemSummary] = []
         for ins in insights:
-            if not ins.action_item.is_action_item:
-                continue
-            ai = ins.action_item
-            item = ActionItemSummary(
-                action=ai.action_description or ins.content[:160],
-                owner=ai.owner,
-                deadline=ai.deadline,
-                line_of_business=ai.line_of_business,
-                geography=ai.geography,
-                urgency=ai.urgency,
-                source_slide_number=ins.slide_number,
-                source_content_unit_id=ins.content_unit_id,
-                confidence=ai.confidence,
-            )
-            item.priority_score = _priority_score(item)
-            candidates.append(item)
+            atomic_actions = ins.action_item.actions or []
+            if not atomic_actions and ins.action_item.is_action_item:
+                atomic_actions = [{"task": ins.action_item.action_description or ins.content[:160], "owner": ins.action_item.owner, "deadline": ins.action_item.deadline, "line_of_business": ins.action_item.line_of_business, "geography": ins.action_item.geography, "urgency": ins.action_item.urgency, "confidence": ins.action_item.confidence, "source_bullet_id": ins.action_item.source_bullet_id, "source_element_ids": ins.action_item.evidence_element_ids}]
+            for atomic in atomic_actions:
+                get = atomic.get if isinstance(atomic, dict) else lambda key, default=None: getattr(atomic, key, default)
+                # An action without a directly supported responsible party is
+                # not an accountable action item under the recap rules. Keep it
+                # out of the ranked action list rather than inventing ownership.
+                if not get("owner"):
+                    continue
+                item = ActionItemSummary(
+                    action=get("task") or ins.content[:160],
+                    owner=get("owner"),
+                    deadline=get("deadline"),
+                    line_of_business=get("line_of_business"),
+                    geography=get("geography"),
+                    urgency=get("urgency") if isinstance(get("urgency"), Urgency) else Urgency(str(get("urgency") or "unknown")),
+                    source_slide_number=ins.slide_number,
+                    source_content_unit_id=ins.content_unit_id,
+                    source_bullet_id=get("source_bullet_id"),
+                    source_element_ids=get("source_element_ids") or ins.source_element_ids,
+                    confidence=float(get("confidence") or 0.0),
+                )
+                item.priority_score = _priority_score(item)
+                candidates.append(item)
 
         if not candidates:
             return []
@@ -1529,15 +2144,21 @@ class RecapGenerator:
                         urgency = Urgency(urgency_val)
                     except Exception:
                         urgency = Urgency.UNKNOWN
+                    action_text = str(ai.get("action", "")).strip()
+                    owner_value = ai.get("owner") or None
+                    if not action_text or not owner_value:
+                        continue
                     item = ActionItemSummary(
-                        action=str(ai.get("action", "")),
-                        owner=ai.get("owner") or None,
+                        action=action_text,
+                        owner=owner_value,
                         deadline=ai.get("deadline") or None,
                         line_of_business=ai.get("line_of_business") or None,
                         geography=ai.get("geography") or None,
                         urgency=urgency,
                         source_slide_number=ai.get("source_slide_number"),
                         source_content_unit_id=ai.get("source_content_unit_id") or None,
+                        source_bullet_id=ai.get("source_bullet_id") or None,
+                        source_element_ids=ai.get("source_element_ids") or [],
                         confidence=float(ai.get("confidence", 0.0)),
                     )
                     item.priority_score = _priority_score(item)
@@ -1587,7 +2208,13 @@ class RecapGenerator:
             is_dup = False
             for existing in kept:
                 tokens_existing = _normalise(existing.action)
-                if _jaccard(tokens_item, tokens_existing) >= 0.60:
+                same_scope = (
+                    existing.owner == item.owner
+                    and existing.deadline == item.deadline
+                    and existing.geography == item.geography
+                    and existing.line_of_business == item.line_of_business
+                )
+                if same_scope and _jaccard(tokens_item, tokens_existing) >= 0.60:
                     logger.info(
                         "Action dedup: dropped near-duplicate\n  kept: %s\n  dropped: %s",
                         existing.action, item.action,
@@ -1624,11 +2251,11 @@ class RecapGenerator:
         plus breadth of tags/topics discussed for that country) and only
         the top MAX_COUNTRIES_ON_SLIDE are summarised and rendered.
         """
-        # Build country → insights map (normalise country name to title-case)
+        # Build country → insights map (normalise country name to canonical form)
         country_map: Dict[str, List[StructuredInsight]] = defaultdict(list)
         for ins in insights:
             for country in ins.metadata.countries:
-                normalised = country.strip().title()
+                normalised = _normalise_country(country)
                 if normalised:
                     country_map[normalised].append(ins)
 
@@ -1934,6 +2561,77 @@ class RecapGenerator:
                 t.title, neutral_title,
             )
             result.append(t.model_copy(update={"title": neutral_title}))
+        return result
+
+    @classmethod
+    def _enforce_narrative_word_cap(
+        cls,
+        takeaways: List[TitledTakeaway],
+        max_words: int = MAX_NARRATIVE_WORDS,
+    ) -> List[TitledTakeaway]:
+        """
+        Deterministic word-count safety net — hard-caps each takeaway
+        narrative at `max_words` words regardless of what the LLM returned.
+
+        All generation/dedup/compress prompts instruct ≤ 75 words, but an
+        LLM that ignores the cap can still produce an overlong sentence.
+        This pure-Python pass truncates any narrative that exceeds the cap
+        by cutting at the last word boundary that fits, then appending "…"
+        so the sentence is visually complete on the slide.
+
+        A WARNING is logged whenever a narrative is truncated so overlong
+        LLM responses are always visible in the run log.
+        """
+        result: List[TitledTakeaway] = []
+        for t in takeaways:
+            words = t.narrative.split()
+            if len(words) <= max_words:
+                result.append(t)
+            else:
+                truncated = " ".join(words[:max_words]) + "…"
+                logger.warning(
+                    "Narrative word-cap enforced for bullet %r: %d words → %d words",
+                    t.title, len(words), max_words,
+                )
+                result.append(t.model_copy(update={"narrative": truncated}))
+        return result
+
+    @classmethod
+    def _enforce_narrative_min_length(
+        cls,
+        takeaways: List[TitledTakeaway],
+        min_words: int = MIN_STUB_WORDS,
+    ) -> List[TitledTakeaway]:
+        """
+        Deterministic stub-narrative safety net — drops any takeaway whose
+        narrative is shorter than `min_words` words.
+
+        A stub narrative can reach this point when Stage 5d (overlap
+        removal) rewrites or splits a bullet but the LLM produces only a
+        placeholder fragment (e.g. "Finland remains more mixed.") instead
+        of a full sentence.  Keeping such a bullet on the slide would be
+        misleading — it signals that something was discussed but gives the
+        reader nothing to act on.
+
+        Any dropped bullet is logged at WARNING level so the behaviour is
+        always visible in the run log without requiring manual inspection
+        of the artefact files.
+
+        The threshold (MIN_STUB_WORDS = 20) is deliberately conservative
+        so that short but correct one-line summaries are never discarded.
+        Only fragments that are clearly incomplete placeholder text are
+        caught here.
+        """
+        result: List[TitledTakeaway] = []
+        for t in takeaways:
+            words = t.narrative.split()
+            if len(words) >= min_words:
+                result.append(t)
+            else:
+                logger.warning(
+                    "Stub narrative dropped for bullet %r: only %d word(s) — '%s'",
+                    t.title, len(words), t.narrative,
+                )
         return result
 
     # ----------------------------------------------------------------

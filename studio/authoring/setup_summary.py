@@ -15,7 +15,7 @@ from studio.page.authoring import deliverable as DV
 from studio.page.authoring import setup as S
 from studio.template_fill.deck_slides import DeckSlides
 
-_AUDIENCE = {"carrier_leadership": "Carrier team", "marsh_regional": "Regional"}
+_AUDIENCE = {"carrier_leadership": "Carrier team", "marsh_regional": "Executive"}
 _BASIS = {S.DATA_BASIS_WITH_SURVEY: "GPR + Survey"}
 
 

@@ -69,7 +69,7 @@ def _report(stage: str, message: str = "") -> None:
 
 def _metadata_from(args: argparse.Namespace, decks: Sequence[Path]) -> DeckMetadata:
     """What was typed, falling back to what the first deck's cover slide says."""
-    detected = read_cover(decks[0].read_bytes()) if decks else DeckMetadata()
+    detected = read_cover(decks[0].read_bytes(), filename=decks[0].name) if decks else DeckMetadata()
     return DeckMetadata(
         client_name=args.client or detected.client_name,
         company_name=args.company or detected.company_name,
@@ -123,7 +123,7 @@ def cmd_run_batch(args: argparse.Namespace) -> None:
         request = RecapRequest(
             deck_paths=tuple(decks),
             metadata=DeckMetadata.from_store(
-                {**read_cover(decks[0].read_bytes()).as_store(),
+                {**read_cover(decks[0].read_bytes(), filename=decks[0].name).as_store(),
                  **{k: str(v) for k, v in entry.items() if k != "file_path" and v}}
             ),
             paths=new_run_paths(),

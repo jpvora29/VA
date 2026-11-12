@@ -504,3 +504,25 @@ def test_the_ladder_still_decides_when_nothing_was_asked_for():
     assert sub.positioning_dimension(
         {"routing_context": _routing_context(), "route": "premium"}, scope
     ) == "Product_Line"
+
+
+def test_the_position_table_is_recorded_as_satisfied_progress(warehouse):
+    """The table is gathered outside the plan; progress must still know it exists,
+    or the writer is told "position cannot be established" beside the table."""
+    import core.graph.analyst_subgraph as sub
+    from core.analysis.progress import PlanProgress
+
+    contract = build_contract(detect_operation(QUESTION), allowed_sources=("gpr",))
+    progress = PlanProgress(contract=contract)
+    assert any("Position" in text for text in progress.limitations())
+    state = {
+        "question": QUESTION, "route": "premium", "flow": "gpr",
+        "routing_context": _routing_context(analysis_depth="analytical"),
+        "contract": contract, "progress": progress, "evidence": [],
+    }
+    out = sub.positioning_node(state)
+
+    assert "positioning" in out["progress"].satisfied_requirements()
+    assert not any("Position" in text for text in out["progress"].limitations())
+    outcome = out["progress"].outcomes["positioning_table"]
+    assert set(outcome.evidence_ids) == {row["evidence_id"] for row in out["evidence"]}

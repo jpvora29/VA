@@ -14,9 +14,11 @@ numbers.
 
 That is what this module enforces. :func:`verify_narration` re-reads the finished
 text against the ledger and drops any line carrying a figure the evidence does
-not support, so an invented number cannot survive onto the screen; a narration
-that loses the headline figure is rejected whole, and the deterministic ledger is
-always there to fall back on.
+not support, so an invented number cannot survive onto the screen. It drops,
+the same way, any sentence naming a carrier, country or year the evidence never
+mentions (:mod:`core.answers.subjects`) — a real number on the wrong subject is
+still a false sentence. A narration that loses the headline figure is rejected
+whole, and the deterministic ledger is always there to fall back on.
 
 Pure: dataclasses and strings in, dataclasses and strings out. No model, no
 database — so the verifier is unit-testable with planted violations, which is the
@@ -26,12 +28,18 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Callable, Iterable, Sequence
 
 from core.answers import figures as fig
 from core.answers.claims import AnswerClaim
 from core.answers.facts import AnswerFact
 from core.answers.scope import DisplayScope
+from core.answers.subjects import (
+    SubjectCheck,
+    allowed_texts_of,
+    build_subject_check,
+    warehouse_vocabulary,
+)
 
 #: How much of the ledger the writer is shown. Past this the brief is padding — a
 #: writer that cannot make an answer out of twelve verified findings will not be
@@ -230,11 +238,23 @@ def split_sentences(line: str) -> list[str]:
     return out
 
 
-def _keep_prose(line: str, allowed: frozenset[str]) -> tuple[str, list[str]]:
+SentenceCheck = Callable[[str], list[str]]
+
+
+def sentence_check(allowed: frozenset[str], subjects: SubjectCheck | None = None) -> SentenceCheck:
+    """What makes one fragment unsupported: a figure the ledger lacks, or a
+    carrier, country or year the evidence never mentions."""
+    def check(fragment: str) -> list[str]:
+        bad = unsupported_in(fragment, allowed)
+        return bad + subjects.unsupported(fragment) if subjects else bad
+    return check
+
+
+def _keep_prose(line: str, check: SentenceCheck) -> tuple[str, list[str]]:
     """A prose line with its unsupported sentences removed."""
     kept, dropped = [], []
     for sentence in split_sentences(line):
-        bad = unsupported_in(sentence, allowed)
+        bad = check(sentence)
         if bad:
             dropped.extend(bad)
         else:
@@ -242,15 +262,15 @@ def _keep_prose(line: str, allowed: frozenset[str]) -> tuple[str, list[str]]:
     return " ".join(kept), dropped
 
 
-def _keep_line(line: str, allowed: frozenset[str]) -> tuple[str, list[str]]:
+def _keep_line(line: str, check: SentenceCheck) -> tuple[str, list[str]]:
     """One markdown line after checking: kept whole, trimmed, or gone."""
     stripped = line.strip()
     if not stripped:
         return line, []
     if _STRUCTURE.match(stripped):
-        bad = unsupported_in(stripped, allowed)
+        bad = check(stripped)
         return ("" if bad else line), bad
-    return _keep_prose(stripped, allowed)
+    return _keep_prose(stripped, check)
 
 
 def _leads_a_group(lines: Sequence[str], index: int) -> bool:
@@ -317,7 +337,8 @@ def verify_narration(text: str, brief: NarrationBrief) -> Narration:
     if not (text or "").strip():
         return Narration(rejected="empty")
     allowed = supported_numbers(brief.claims, brief.facts)
-    checked = [_keep_line(line, allowed) for line in text.splitlines()]
+    check = sentence_check(allowed, subject_check_for(brief))
+    checked = [_keep_line(line, check) for line in text.splitlines()]
     kept = _tidy([line for line, _ in checked])
     dropped = tuple(dict.fromkeys(item for _, bad in checked for item in bad))
     if not kept:
@@ -327,6 +348,16 @@ def verify_narration(text: str, brief: NarrationBrief) -> Narration:
     if headline and not (headline & written):
         return Narration(dropped=dropped, rejected="the headline figure was lost")
     return Narration(text=kept, dropped=dropped)
+
+
+def subject_check_for(brief: NarrationBrief,
+                      vocabulary: Iterable[str] | None = None) -> SubjectCheck:
+    """The names and years this brief entitles its writer to use."""
+    texts = allowed_texts_of(brief.question, brief.scope, brief.facts, brief.claims,
+                             brief.defaulted_period)
+    texts += list(brief.limitations)
+    return build_subject_check(warehouse_vocabulary() if vocabulary is None else vocabulary,
+                               texts)
 
 
 def narrate(brief: NarrationBrief, writer: Writer) -> Narration:

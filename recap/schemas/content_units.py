@@ -11,7 +11,7 @@ full provenance to the original PPT is always available.
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -83,3 +83,12 @@ class SemanticContentUnit(BaseModel):
     has_percentage: bool    = False
     has_currency: bool      = False
     has_trend_indicator: bool = False   # ▲ ▼ + - arrow glyphs
+
+    # Deterministic chart/table evidence generated before LLM enrichment.
+    deterministic_records: Dict[str, Any] = Field(default_factory=dict)
+    parent_source_element_ids: List[str] = Field(default_factory=list)
+
+    # --- Pre-filter audit ---
+    # Set by ContentPreFilter on units that are skipped before enrichment.
+    # None on every eligible (non-skipped) SCU.
+    filter_reason: Optional[str] = None

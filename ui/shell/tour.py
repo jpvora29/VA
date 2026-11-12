@@ -117,9 +117,9 @@ def art_workspaces():
         _box(14, 20, 292, 30, fill="#ffffff"),
         # The navbar's real order, so the picture and the product agree.
         *_pill(22, 25, 58, "Studio", fill=_SURFACE, stroke=_LINE, color=_INK),
-        *_pill(86, 25, 58, "Chatbot", fill=_BLUE, stroke=_BLUE, color="#ffffff"),
-        *_pill(150, 25, 58, "Recap", fill=_SURFACE, stroke=_LINE, color=_INK),
-        *_pill(214, 25, 58, "MoM", fill=_SURFACE, stroke=_LINE, color=_INK),
+        *_pill(86, 25, 58, "Recap", fill=_SURFACE, stroke=_LINE, color=_INK),
+        *_pill(150, 25, 58, "MoM", fill=_SURFACE, stroke=_LINE, color=_INK),
+        *_pill(214, 25, 58, "Ask ICG", fill=_BLUE, stroke=_BLUE, color="#ffffff"),
         _box(14, 60, 292, 100, fill="#ffffff"),
         _text(26, 72, 270, "Ask a question, and the answer arrives here.", size=9),
         _bar(26, 92, 150, 8),

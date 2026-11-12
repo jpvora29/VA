@@ -9,7 +9,7 @@ and the evidence element IDs that support it.
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -64,6 +64,22 @@ class EvidenceField(BaseModel):
 # Metadata produced by the enrichment LLM
 # ---------------------------------------------------------------------------
 
+class ConfidenceDimensions(BaseModel):
+    extraction: float = Field(ge=0.0, le=1.0, default=0.0)
+    metric_mapping: float = Field(ge=0.0, le=1.0, default=0.0)
+    geography: float = Field(ge=0.0, le=1.0, default=0.0)
+    commercial_interpretation: float = Field(ge=0.0, le=1.0, default=0.0)
+
+
+class FieldProvenance(BaseModel):
+    source_type: str = "unknown"
+    source_element_ids: List[str] = Field(default_factory=list)
+    source_content_unit_id: Optional[str] = None
+    source_path: Optional[str] = None
+    confidence: float = Field(ge=0.0, le=1.0, default=0.0)
+    rationale: Optional[str] = None
+
+
 class InsightMetadata(BaseModel):
     """
     Business metadata extracted from a single SemanticContentUnit.
@@ -105,6 +121,8 @@ class InsightMetadata(BaseModel):
 
     # Confidence on the overall metadata extraction
     overall_confidence: float = Field(ge=0.0, le=1.0, default=0.0)
+    confidence_dimensions: ConfidenceDimensions = Field(default_factory=ConfidenceDimensions)
+    field_provenance: Dict[str, FieldProvenance] = Field(default_factory=dict)
 
 
 class EnrichedInsight(BaseModel):
@@ -120,6 +138,11 @@ class EnrichedInsight(BaseModel):
     section: Optional[str]    = None
     slide_title: Optional[str] = None
     content: str
+
+    # Carrier resolved from the deck's company_name / title slide text.
+    # Populated by the enrichment stage from deck.company_name so every
+    # insight carries the canonical carrier label (e.g. "QBE", "Zurich").
+    carrier: Optional[str] = None
 
     # Source provenance
     source_element_ids: List[str] = Field(min_length=1)

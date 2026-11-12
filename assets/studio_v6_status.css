@@ -136,3 +136,44 @@
     transition: background 120ms;
 }
 .qs-root .qs6-link-btn:hover { background: rgba(11, 75, 255, 0.14); }
+
+/* Mixed peers: each market's own Existing | Custom switch, and the strip at the top of
+   the panel naming which markets use which peers (2026-11-11). */
+.qs-root .qs6-sec .qs-peer-market-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 9px;
+}
+.qs-root .qs6-sec .qs-peer-market-head .qs-peer-market-name { margin-bottom: 0; }
+.qs-root .qs-peer-market-mode {
+    display: inline-flex; padding: 2px; border-radius: 999px; background: var(--va-surface-2);
+}
+.qs-root .qs-peer-market-mode .dash-options-list-option,
+.qs-root .qs-peer-market-mode label {
+    display: inline-flex; align-items: center; margin: 0; padding: 3px 10px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 700; color: var(--va-ink-500); cursor: pointer;
+}
+.qs-root .qs-peer-market-mode .dash-options-list-option-wrapper { display: none; }
+.qs-root .qs-peer-market-mode input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; }
+.qs-root .qs-peer-market-mode .dash-options-list-option.selected,
+.qs-root .qs-peer-market-mode label:has(input:checked) {
+    color: var(--va-navy); background: var(--va-surface-0); box-shadow: 0 1px 2px rgba(15, 30, 60, .12);
+}
+.qs-root .qs-peer-market-mode .dash-options-list-option:has(input:focus-visible),
+.qs-root .qs-peer-market-mode label:has(input:focus-visible) { outline: 2px solid var(--va-blue); outline-offset: 1px; }
+.qs-root .qs6-sec .qs-peer-market.is-custom { box-shadow: inset 3px 0 0 var(--va-blue), inset 0 0 0 1px var(--qs6-hair); }
+.qs-root .qs6-sec .qs-peer-market.is-existing { box-shadow: inset 3px 0 0 var(--va-ink-300, #b8c0cc), inset 0 0 0 1px var(--qs6-hair); }
+.qs-root .qs6-sec .qs-peer-market.is-existing .qs-peer-note { margin-top: 8px; }
+
+.qs-root .studio-peer-summary:empty { display: none; }
+.qs-root .qs-peer-summary {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 10px 0 4px;
+}
+.qs-root .qs-peer-summary-n { font-size: 12.5px; font-weight: 700; color: var(--va-navy); }
+.qs-root .qs-peer-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.qs-root .qs-peer-pill {
+    display: inline-flex; align-items: center; overflow: hidden; border-radius: 999px;
+    font-size: 12px; font-weight: 600; box-shadow: inset 0 0 0 1px var(--qs6-hair-strong);
+}
+.qs-root .qs-peer-pill-c { padding: 2px 8px 2px 10px; color: var(--va-ink-800); }
+.qs-root .qs-peer-pill-m { padding: 2px 9px; font-size: 11px; font-weight: 800; letter-spacing: .02em; }
+.qs-root .qs-peer-pill.is-custom .qs-peer-pill-m { color: #fff; background: var(--va-blue); }
+.qs-root .qs-peer-pill.is-existing .qs-peer-pill-m { color: var(--va-ink-600); background: var(--va-surface-2); }

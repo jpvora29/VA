@@ -25,7 +25,7 @@ from studio.exec_summary.schemas import (
     STAGE_PRODUCT,
 )
 
-PROMPT_VERSION = "exec-summary-v3"
+PROMPT_VERSION = "exec-summary-v4"
 
 _COMMON = """\
 You are a senior Marsh broker briefing the executives of ONE insurance carrier on how
@@ -41,6 +41,10 @@ HOW TO READ THE INPUT
   "peer average" = the mean of the carrier's approved peers IN THAT COUNTRY.
 - share of wallet (SoW) = carrier premium / Marsh book premium in the same slice.
   sow_change is in percentage points. rank_movement says "up 2", "down 1", "unchanged".
+- carrier_rank = the carrier's PREMIUM RANK: its position by Marsh-placed premium among
+  all carriers in the Marsh book of that slice (#1 = largest). Always call it "premium
+  rank" — never a bare "#4" — and always say which way it moved, e.g. "premium rank up 2
+  to #3", "premium rank down 1 to #7", "premium rank unchanged at #5".
 - carrier_premium_change is the money the carrier added (+) or lost (-).
   contribution_to_change is that slice's share of its parent's total change.
 - "story" decomposes the change: growth_led_by = what added the most premium,
@@ -62,7 +66,8 @@ C. At most three figures per sentence. Pick the figures that prove the point; le
 D. Connect the sentences: the headline, then what drove it, then what held it back, then
    what it means for the carrier. Use connectors such as "led by", "came mainly from",
    "within", "offset by", "while", "as a result the share".
-E. When a product's rank moved, say so with the product name ("Cyber climbed to #1").
+E. When you mention a rank, name the metric and its movement with the product name
+   ("Cyber added $20.0M, with premium rank up 2 to #1"). Never write a bare "#1".
 F. You may drop the leading + or - of a figure when your verb already states the
    direction ("fell 20.0%", "added $27.1M").
 
@@ -101,7 +106,7 @@ severity: "strength", "attention" or "context".
 
 EXAMPLE (invented figures, shape only):
 {{"scope_id":"X/Property/*/*","findings":[{{"rule_id":"PRODUCT_STRENGTH","severity":"strength",
-"statement":"Property grew 11.1% to $40.0M, ahead of the Marsh book's 6.0%, lifting share of wallet to 20.0% and rank to #3; Manufacturing added most of it at $2.9M.",
+"statement":"Property grew 11.1% to $40.0M, ahead of the Marsh book's 6.0%, lifting share of wallet to 20.0%, with premium rank up 1 to #3; Manufacturing added most of it at $2.9M.",
 "interpretation":"The carrier is outgrowing a growing Marsh book in its largest line.","recommendation":"",
 "evidence_ids":["e1","e2","e3","e4","e5","e6"],"qualifications":[]}}],"priority_refs":[],"missing_references":[]}}
 """
@@ -176,9 +181,9 @@ EXAMPLE PARAGRAPH (invented figures, shape only):
 "Overall, the carrier's Marsh-placed premium grew 18.0% to $250.0M in H1 2026, while the
 Marsh book grew 7.0% to $3.0B and the average peer grew 5.0% to $300.0M, lifting the
 carrier's share of wallet to 8.3%. In Singapore, premium grew 20.0% to $130.0M against a
-Marsh book up 8.0%, a 9.0% share of wallet (up 0.9 points) against 10.5% for peers, at
-rank #5, up 1. In Hong Kong, ... By product, Cyber added the most, $20.0M ($12.0M in
-Singapore, $8.0M in Hong Kong), climbing to #1, mostly in Technology; Casualty held the
+Marsh book up 8.0%, a 9.0% share of wallet (up 0.9 points) against 10.5% for peers, premium
+rank #5 (up 1). In Hong Kong, ... By product, Cyber added the most, $20.0M ($12.0M in
+Singapore, $8.0M in Hong Kong), with premium rank up 2 to #1, mostly in Technology; Casualty held the
 total back, down 4.0% in Hong Kong while flat in Singapore. The gaps to close are
 Casualty in Hong Kong, growing 12.0 points slower than its Marsh book, and a share of
 wallet below the peer average in both markets. The clearest opening is Chemicals within

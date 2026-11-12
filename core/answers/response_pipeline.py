@@ -6,6 +6,8 @@ from core.agents.common.directives import answer_shape, presentation_mode, prose
 from core.answers.grounded import AnswerRequest
 from core.answers.writer import write_answer
 from core.answers.scope import answer_scope, defaulted_period
+from core.answers.verification import VerificationInput
+from core.answers.verify_gate import GateResult, run_verify_gate
 
 
 FLOW_FIELDS = {
@@ -46,4 +48,14 @@ def write_response(state: dict, key: str, flows: tuple[str, ...], *, client=None
                             presentation_mode(state.get("routing_context")), answer_scope(state),
                             defaulted_period(evidence))
     answer = write_answer(request, client=client)
-    return {key: answer.text, key + "_record": answer.as_dict()}
+    gate = verify_response(answer, evidence, route=key)
+    return {key: gate.text, key + "_record": gate.record or answer.as_dict()}
+
+
+def verify_response(answer, evidence: tuple[dict, ...], *, route: str) -> GateResult:
+    """The same meaning checks the analyst path runs: subject binding, units,
+    scope and unhedged causation. A lookup owes no evidence contract, so the
+    completeness check has nothing to read here."""
+    data = VerificationInput(text=answer.text, claims=tuple(answer.claims),
+                             facts=tuple(answer.facts), evidence=evidence)
+    return run_verify_gate(data, answer.as_dict(), node="response_verifier", route=route)

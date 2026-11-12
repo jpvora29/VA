@@ -13,98 +13,827 @@
 
 # ── Carriers ────────────────────────────────────────────────────────────────
 # Add any insurer or Lloyd's syndicate that appears as a QBR counterparty.
+#
+# Each entry is a canonical name followed by zero or more aliases — alternate
+# names, sub-company names, or regional variants that should resolve to the
+# same carrier.  Matching is case-insensitive word-boundary search against
+# slide text.  The FIRST entry that matches wins, so list the most specific
+# sub-company variants BEFORE the generic parent name to avoid a short parent
+# name (e.g. "AIG") swallowing a more specific hit (e.g. "AIG Talbot").
+#
+# Format:
+#   canonical: <display name used in output>
+#   aliases:   [list of alternate names to match in slide text]
+#
+# IMPORTANT — ordering within aliases does not matter (all are tried);
+# ordering between carrier blocks DOES matter (first match wins).
 carriers:
-  - AIG
-  - Allianz
-  - Aviva
-  - AXA
-  - Beazley
-  - Chubb
-  - Convex
-  - Everest
-  - Hiscox
-  - Liberty
-  - Lloyd's
-  - Munich Re
-  - QBE
-  - RSA
-  - Swiss Re
-  - Talbot
-  - Tokio Marine
-  - Zurich
-  - WR Berkley
-  - Markel
-  - Axis
 
+  # ── AIG / Talbot ────────────────────────────────────────────────────────
+  - canonical: AIG
+    aliases:
+      - AIG Talbot
+      - AIG Europe
+      - AIG UK
+      - AIG Malaysia Insurance Berhad
+      - AIG AHAC (Retail)
+      - AIG AML (Wholesale)
+      - American International Group
+      - Talbot Underwriting
+      - Talbot
 
+  # ── Allianz ─────────────────────────────────────────────────────────────
+  - canonical: Allianz
+    aliases:
+      - Allianz Global Corporate & Specialty
+      - AGCS
+      - Allianz Commercial
+      - Allianz Commercial (Including AGCS)
+      - Allianz Commercial Large Corp
+      - Allianz Commercial Mid Corp
+      - Allianz (AGCS)
+      - Allianz / AGCS
+      - Allianz AGCS (Large Corp)
+      - Allianz Ayudhya
+      - Allianz General Insurance Company (Malaysia) Berhad
+      - Allianz France
+      - Allianz Seguros Generales
+      - Allianz Spa
+      - Allianz Trade
+      - Grupo Allianz
+      - Allianz UK
+      - Allianz Europe
+      - Allianz Insurance
+      - Allianz Re
+
+  # ── Aviva ────────────────────────────────────────────────────────────────
+  - canonical: Aviva
+    aliases:
+      - Aviva Insurance
+      - Aviva UK
+      - Aviva Commercial
+      - Aviva Specialty
+      - Aviva Branch
+      - Aviva GCS
+
+  # ── AXA ──────────────────────────────────────────────────────────────────
+  - canonical: AXA
+    aliases:
+      - AXA XL
+      - AXA XL Insurance
+      - AXA XL Reinsurance
+      - AXA General Insurance
+      - AXA Insurance Indonesia
+      - AXA Belgium
+      - AXA Commercial
+      - AXA France
+      - AXA Insurance DAC
+      - AXA Assicurazioni
+      - AXA Seguros
+      - Charter AXA
+      - AXA UK
+      - AXA Europe
+      - AXA Group
+      - AXA Corporate Solutions
+
+  # ── Beazley ──────────────────────────────────────────────────────────────
+  - canonical: Beazley
+    aliases:
+      - Beazley Group
+      - Beazley Insurance
+      - Beazley London Market
+
+  # ── Chubb ────────────────────────────────────────────────────────────────
+  - canonical: Chubb
+    aliases:
+      - Chubb Group
+      - Chubb European Group
+      - Chubb UK
+      - Chubb Insurance
+      - Chubb Insurance Malaysia Berhad
+      - Chubb / Insurance Company of North America
+      - Chubb Limited
+      - Chubb Global Markets (Wholesale)
+      - Chubb UK & I (Retail)
+      - ACE (now Chubb)
+      - ACE Group
+
+  # ── Convex ───────────────────────────────────────────────────────────────
+  - canonical: Convex
+    aliases:
+      - Convex Group
+      - Convex Insurance
+      - Convex Re
+
+  # ── Everest ──────────────────────────────────────────────────────────────
+  - canonical: Everest
+    aliases:
+      - Everest Re
+      - Everest Insurance
+      - Everest Group
+      - Everest Reinsurance
+      - Everest International Reinsurance Ltd
+      - Everest National Ins Co
+
+  # ── Hiscox ───────────────────────────────────────────────────────────────
+  - canonical: Hiscox
+    aliases:
+      - Hiscox Group
+      - Hiscox Insurance
+      - Hiscox London Market
+      - Hiscox UK
+      - Hiscox Re
+
+  # ── Liberty ──────────────────────────────────────────────────────────────
+  - canonical: Liberty
+    aliases:
+      - Liberty Mutual
+      - Liberty Mutual Insurance
+      - Liberty Mutual Group (Retail)
+      - Liberty Mutual Insurance Europe SE
+      - Liberty Specialty Markets
+      - Liberty Specialty Markets Europe
+      - Liberty Specialty
+      - Liberty General Insurance Berhad
+      - Liberty Mutual (Retail)
+      - LM Insurance
+
+  # ── Lloyd's ──────────────────────────────────────────────────────────────
+  - canonical: Lloyd's
+    aliases:
+      - Lloyd's of London
+      - Lloyd's Market
+      - Lloyds
+
+  # ── Munich Re ────────────────────────────────────────────────────────────
+  - canonical: Munich Re
+    aliases:
+      - Munich Reinsurance
+      - Munich Re Group
+      - MunichRe
+      - Munich Re
+      - Munich Re / Great Lakes
+      - Munich Re Syndicate
+      - ERGO / Munich Re
+      - Great Lakes Insurance
+      - Great Lakes Re
+
+  # ── QBE ──────────────────────────────────────────────────────────────────
+  - canonical: QBE
+    aliases:
+      - QBE Europe
+      - QBE UK
+      - QBE Insurance
+      - QBE Group
+      - QBE European Operations
+      - QBE Insurance Malaysia Berhad
+      - QBE
+
+  # ── RSA ──────────────────────────────────────────────────────────────────
+  - canonical: RSA
+    aliases:
+      - RSA Insurance
+      - RSA Group
+      - Royal & Sun Alliance
+      - Royal Sun Alliance
+      - RSA UK
+
+  # ── Swiss Re ─────────────────────────────────────────────────────────────
+  - canonical: Swiss Re
+    aliases:
+      - Swiss Reinsurance
+      - Swiss Re Group
+      - SwissRe
+      - Swiss Re Corporate Solutions
+      - Swiss Re CorSo
+
+  # ── Tokio Marine ─────────────────────────────────────────────────────────
+  - canonical: Tokio Marine
+    aliases:
+      - Tokio Marine & Nichido
+      - Tokio Marine HCC
+      - Tokio Marine Kiln
+      - TMK
+      - Tokio Marine Group
+      - TMHCC
+      - Tokio Marine Insurance (Malaysia) Berhad
+      - Tokio Marine Safety
+      - Tokio Marine Group (HCC)
+      - HCC Tokio Marine
+      - TMK
+      - TMHCC
+      - TM HCC
+      - Tokio Marine Group
+
+  # ── Zurich ───────────────────────────────────────────────────────────────
+  - canonical: Zurich
+    aliases:
+      - Zurich Insurance
+      - Zurich Insurance Group
+      - Zurich Group
+      - Zurich UK
+      - Zurich Commercial
+      - Zurich Global Corporate
+      - Zurich Resilience Solutions
+      - Zurich General Insurance Malaysia Berhad
+      - Zurich Insurance Europe AG
+      - Zurich (P&C)
+      - Zurich (DIFC)
+      - Zurich Life
+      - Z-Horizon
+
+  # ── WR Berkley ───────────────────────────────────────────────────────────
+  - canonical: WR Berkley
+    aliases:
+      - W.R. Berkley
+      - W.R Berkley
+      - Berkley
+      - Berkley Insurance
+      - WR Berkley Europe
+      - WR Berkley
+      - Berkley Pro
+      - WRB
+
+  # ── Markel ───────────────────────────────────────────────────────────────
+  - canonical: Markel
+    aliases:
+      - Markel Group
+      - Markel Insurance
+      - Markel International
+      - Markel Specialty
+
+  # ── Axis ─────────────────────────────────────────────────────────────────
+  - canonical: Axis
+    aliases:
+      - Axis Capital
+      - Axis Insurance
+      - Axis Re
+      - AXIS Capital
+
+  - canonical: Generali
+    aliases:
+    - Generali Global Corporate & Commercial
+    - Generali Global Corporate
+    - Generali Insurance Malaysia Berhad
+    - Generali Portugal
+    - Generali Italia SPA
+
+  - canonical: Sura
+    aliases:
+    - SURA
+    - Suramericana Group
+    - Suramericana
+    - Seguros Suramericana
+
+  - canonical: Federacion Patronal
+    aliases:
+  - canonical: La Segunda
+    aliases:
+  - canonical: Meridional
+    aliases:
+  - canonical: Sancor
+    aliases:
+  - canonical: Swiss Medical Group (SMG)
+    aliases:
+    - Swiss Medical Group
+  - canonical: Aioi Nissay Dowa
+    aliases:
+  - canonical: Allied Bankers
+    aliases:
+  - canonical: Allied World
+    aliases:
+    - Allied World (AWAC)
+    - AWAC
+  - canonical: Asia Insurance Company Limited
+    aliases:
+  - canonical: Astra Buana
+    aliases:
+  - canonical: Asuransi Central Asia
+    aliases:
+  - canonical: Asuransi Harta
+    aliases:
+  - canonical: Asuransi Multi Artha Guna
+    aliases:
+  - canonical: Asuransi Sinar Mas
+    aliases:
+  - canonical: Asuransi Tugu Pratama Indonesia
+    aliases:
+  - canonical: Bangkok Insurance
+    aliases:
+  - canonical: Bank of China Group Insurance Company Limited
+    aliases:
+    - BOC
+  - canonical: Berjaya Sompo
+    aliases:
+  - canonical: Berkshire Hathaway
+    aliases:
+  - canonical: BPI/MS
+    aliases:
+  - canonical: Canopius
+    aliases:
+    - Canopius (Energy)
+  - canonical: Chaucer
+    aliases:
+  - canonical: China Taiping
+    aliases:
+    - Taiping
+  - canonical: China Pacific Insurance (CPIC)
+    aliases:
+    - CPIC
+    - CPIC Average
+    - CPIC Beijing
+    - CPIC Ningbo
+    - CPIC Shanghai
+    - CPIC Shenzhen
+    - CPIC Suzhou
+    - CPIC Wuxi
+  - canonical: Starr
+    aliases: [CV Starr, Starr Companies, Starr Thailand]
+  - canonical: Dhipaya Insurance
+    aliases:
+  - canonical: ERGO
+    aliases: [ERGO Insurance]
+  - canonical: Etiqa
+    aliases: [Etiqa General Insurance Berhad]
+  - canonical: Falcon Insurance
+    aliases: [Falcon Risk]
+  - canonical: FM Global
+    aliases: [FM, FM Insurance Company, FM Insurance Europe S.A, FM Affiliated, Affiliated FM]
+  - canonical: FPG
+    aliases:
+  - canonical: Great Eastern
+    aliases: [Great Eastern General, Great Eastern General Insurance (Malaysia) Berhad]
+  - canonical: Hartford
+    aliases: [The Hartford]
+  - canonical: HDI
+    aliases: [HDI Global, HDI Global SE, HDI / Hannover, HDI Specialty, Grupo HDI]
+  - canonical: Korean Re
+    aliases:
+  - canonical: Lippo General Insurance
+    aliases: [Lippo General Ins]
+  - canonical: Lonpac Insurance
+    aliases: [Lonpac Insurance BHD]
+  - canonical: MAA
+    aliases:
+  - canonical: Malayan Insurance
+    aliases:
+  - canonical: Mitsui Sumitomo
+    aliases: [Mitsui Sumitomo Insurance]
+  - canonical: MSIG
+    aliases: [MS Amlin, MS First Capital Insurance, MSIG Insurance, MSIG Insurance (Malaysia) BHD, MSIG Europe, MSIG Europe SE, MSIG - Mitsui]
+  - canonical: Muang Thai Insurance
+    aliases:
+  - canonical: Paramount
+    aliases:
+  - canonical: Pioneer
+    aliases:
+  - canonical: Samsung Fire and Marine
+    aliases:
+  - canonical: SCOR
+    aliases:
+  - canonical: Sompo
+    aliases: [Sompo Insurance, Sompo International, Sompo Group, Sompo International (Endurance)]
+  - canonical: Standard Insurance
+    aliases:
+  - canonical: Stronghold Insurance
+    aliases:
+  - canonical: UCPB Gen
+    aliases:
+  - canonical: Visayan Surety
+    aliases:
+  - canonical: Wahana Tata
+    aliases:
+  - canonical: Arch
+    aliases: [Arch Insurance Company (Europe) Ltd, Arch Insurance EU]
+  - canonical: CFC
+    aliases: [CFC Underwriting]
+  - canonical: Coalition
+    aliases: [Coalition Insurance Company]
+  - canonical: CGU
+    aliases:
+  - canonical: NTI
+    aliases:
+  - canonical: Vero
+    aliases: [Vero Insurance, Vero Liability]
+  - canonical: Alta Signa
+    aliases:
+  - canonical: ANV
+    aliases:
+  - canonical: Applied
+    aliases:
+  - canonical: CNA
+    aliases: [CNA Hardy]
+  - canonical: Gothaer
+    aliases: [BarmeniaGothaer]
+  - canonical: Mosaic
+    aliases:
+  - canonical: Newline
+    aliases:
+  - canonical: R+V
+    aliases:
+  - canonical: UNIQA
+    aliases:
+  - canonical: VIG
+    aliases:
+  - canonical: Argo Re
+    aliases:
+  - canonical: Ascot
+    aliases:
+  - canonical: Aspen
+    aliases: [Aspen Insurance UK Ltd]
+  - canonical: Everen
+    aliases:
+  - canonical: Hamilton
+    aliases: [Hamilton Re]
+  - canonical: AKAD
+    aliases:
+  - canonical: AXA Seguros
+    aliases:
+  - canonical: Coface
+    aliases:
+  - canonical: Fairfax
+    aliases: [Southbridge (Fairfax)]
+  - canonical: Junto
+    aliases:
+  - canonical: Porto Seguro
+    aliases:
+  - canonical: Pottencial
+    aliases:
+  - canonical: Ecclesiastical
+    aliases:
+  - canonical: Economical
+    aliases:
+  - canonical: HSB
+    aliases:
+  - canonical: Intact
+    aliases: [Intact Insurance, Intact Specialty Solutions]
+  - canonical: Northbridge
+    aliases:
+  - canonical: Sovereign General
+    aliases:
+  - canonical: Temple
+    aliases:
+  - canonical: Travelers
+    aliases: [Travelers (Energy)]
+  - canonical: Trisura
+    aliases:
+  - canonical: BCI
+    aliases:
+  - canonical: Contempora
+    aliases:
+  - canonical: Reale
+    aliases: [Reale Mutua]
+  - canonical: Unnio
+    aliases:
+  - canonical: China Continent Insurance Company
+    aliases:
+  - canonical: China Life P&C
+    aliases: [China Life P&C Average, China Life P&C Shanghai Branch]
+  - canonical: Huatai P&C Company Ltd
+    aliases:
+  - canonical: PICC
+    aliases: [PICC Average, PICC Guangzhou, PICC Shanghai, PICC Suzhou]
+  - canonical: Ping An
+    aliases: [Ping An Average, Ping An Dongguan, Ping An Fujian, Ping An Guangdong, Ping An Shanghai, Ping An Shenzhen]
+  - canonical: Bolivar Group
+    aliases:
+  - canonical: Confianza
+    aliases: [Confianza (Swiss Re Corporate Solutions)]
+  - canonical: Mundial de Seguros
+    aliases:
+  - canonical: SBS
+    aliases: [SBS (Fairfax Financial)]
+  - canonical: Ageas
+    aliases:
+  - canonical: Albingia
+    aliases:
+  - canonical: Amica
+    aliases:
+  - canonical: Amlin
+    aliases:
+  - canonical: Baloise
+    aliases:
+  - canonical: Dual
+    aliases:
+  - canonical: Ethias
+    aliases:
+  - canonical: Fidelidade
+    aliases: [Fidelidade (Fosun)]
+  - canonical: Geo
+    aliases:
+  - canonical: Helvetia
+    aliases:
+  - canonical: MMA
+    aliases:
+  - canonical: P&V
+    aliases:
+  - canonical: Probitas
+    aliases:
+  - canonical: Protection
+    aliases:
+  - canonical: Risk Point
+    aliases: [RiskPoint]
+  - canonical: Ryan Specialty
+    aliases: [Ryan]
+  - canonical: Humano Seguros
+    aliases:
+  - canonical: La Colonial
+    aliases:
+  - canonical: Seguros Reservas
+    aliases:
+  - canonical: Seguros Universal
+    aliases: [Universal]
+  - canonical: Brit
+    aliases: [Brit Global Specialty]
+  - canonical: Fidelis
+    aliases:
+  - canonical: Inigo
+    aliases:
+  - canonical: IQUW
+    aliases:
+  - canonical: KI
+    aliases:
+  - canonical: Westfield
+    aliases: [Westfield Speciality]
+  - canonical: Ambridge
+    aliases:
+  - canonical: AmTrust
+    aliases:
+  - canonical: Arrowhead
+    aliases:
+  - canonical: At-Bay
+    aliases:
+  - canonical: BH Specialty
+    aliases:
+  - canonical: Bowhead
+    aliases:
+  - canonical: Cincinnati
+    aliases:
+  - canonical: Crum & Forster
+    aliases:
+  - canonical: EIM
+    aliases:
+  - canonical: Euclid
+    aliases:
+  - canonical: GAPRIS
+    aliases:
+  - canonical: GCube
+    aliases:
+  - canonical: Great American
+    aliases: [Great American Executive Liability, Great American Fidelity & Crime Division]
+  - canonical: Houston Casualty
+    aliases:
+  - canonical: Nationwide
+    aliases: [Nationwide Management Liability and Specialty]
+  - canonical: Neil Cedar Hamilton
+    aliases:
+  - canonical: N2G
+    aliases: [N2G (formerly Generali)]
+  - canonical: Old Republic
+    aliases: [Old Republic Pro]
+  - canonical: Perse
+    aliases:
+  - canonical: Philadelphia
+    aliases:
+  - canonical: PMA
+    aliases:
+  - canonical: Resilience
+    aliases:
+  - canonical: Safety National
+    aliases:
+  - canonical: Sentry
+    aliases:
+  - canonical: Skyward Specialty
+    aliases:
+  - canonical: Vantage Risk
+    aliases:
+
+  - canonical: Al Ahli Ahlia
+    aliases: [Al Alin Ahlia]
+  - canonical: Abu Dhabi National Takaful Company
+    aliases: [ADNIC, Abu Dhabi National Takaful Company P.S.C]
+  - canonical: Al Khaleej Takaful
+    aliases: [Al Khaleej Takaful Ins & Reinsurance Co]
+  - canonical: Al Koot Insurance & Reinsurance
+    aliases: [Al Koot Insurance & Reinsurance Company]
+  - canonical: Al Madina Insurance Company
+    aliases:
+  - canonical: Bahrain Kuwait Insurance Company
+    aliases: [Bahrain Kuwait Insurance Company (Bahrain)]
+  - canonical: Bahrain National Insurance
+    aliases: [BNI]
+  - canonical: Dhofar Insurance
+    aliases: [Dhofar]
+  - canonical: Doha Insurance Group
+    aliases:
+  - canonical: Emirates Insurance
+    aliases: [Emirates Ins Co]
+  - canonical: GIG
+    aliases: [GIG Gulf]
+  - canonical: Liva
+    aliases: [Liva Retail, Liva Wholesale]
+  - canonical: Oman Insurance Company
+    aliases:
+  - canonical: Oman Qatar Insurance Company
+    aliases:
+  - canonical: Oman United Insurance
+    aliases: [Oman United Ins Co]
+  - canonical: Orient Insurance
+    aliases:
+  - canonical: Qatar General Insurance and Reinsurance Company
+    aliases:
+  - canonical: Qatar Insurance Company
+    aliases: [Qatar Insurance Company SAQ]
+  - canonical: Solidarity
+    aliases:
+  - canonical: Sukoon
+    aliases: [Sukoon Retail P&C, Sukoon Wholesale, Sukoon Insurance Energy]
+  - canonical: Ando Insurance Group
+    aliases: [Ando Insurance Group Ltd]
+  - canonical: IAG New Zealand
+    aliases: [IAG New Zealand Limited]
+  - canonical: Aegis
+    aliases:
+  - canonical: Alm. Brand
+    aliases: [Alm. Brand/Codan]
+  - canonical: Ark Group
+    aliases:
+  - canonical: Gard
+    aliases:
+  - canonical: Gjensidige
+    aliases:
+  - canonical: IF P&C
+    aliases: [IF Industry P&C]
+  - canonical: IGI
+    aliases:
+  - canonical: NOA
+    aliases:
+  - canonical: Norwegian Hull Club
+    aliases:
+  - canonical: OP Pohjola
+    aliases:
+  - canonical: Protector
+    aliases:
+  - canonical: Topdanmark
+    aliases:
+  - canonical: Tryg
+    aliases: [Trygg Forsikring, Trygg-Hansa]
+  - canonical: Volante
+    aliases:
+  - canonical: Acerta
+    aliases: [Acerta Compania de Seguros]
+  - canonical: Aseguradora Ancon
+    aliases:
+  - canonical: Assa Compania de Seguros
+    aliases: [Assa CIA de Seguros SA]
+  - canonical: CIA Internacional de Seguros
+    aliases: [CIA Internacional de Seguros SA]
+  - canonical: Optima
+    aliases:
+  - canonical: AVLA Peru
+    aliases:
+  - canonical: La Positiva Group
+    aliases:
+  - canonical: Pacifico
+    aliases:
+  - canonical: RIMAC
+    aliases: [RIMAC Compania de Seguros y Reaseguros SA]
+  - canonical: Multinational Insurance Company
+    aliases: [Multinational Ins Co (Ancon)]
+  - canonical: Triple-S Propiedad
+    aliases:
+  - canonical: Bryte
+    aliases:
+  - canonical: ITOO
+    aliases:
+  - canonical: Old Mutual Insurance
+    aliases:
+  - canonical: Santam
+    aliases:
+  - canonical: Hollard
+    aliases: [The Hollard Insurance Company]
+  - canonical: Banco del Estado
+    aliases:
+  - canonical: SBI
+    aliases:
+  - canonical: Albus
+    aliases:
 # ── Lines of Business ────────────────────────────────────────────────────────
-# Add any LoB label as it appears in QBR slide text (case-insensitive).
-# Includes both full names and common internal abbreviations so either form
-# in a slide will be matched.
+# Each entry has a canonical name (used in prompts and stored on insights)
+# plus a list of aliases — abbreviations or alternate phrasings that should
+# resolve to that same canonical name (case-insensitive matching).
+# Add new aliases here (not new duplicate top-level entries) when the LLM or
+# a deck uses different wording for a LoB that already exists below.
 lines_of_business:
   # Core P&C
-  - Property
-  - Casualty
-  - General Liability
-  - Product Liability
-  - Professional Liability
-  - Motor / Auto
-  - Trade Credit
-  - Political Risk
-  - Surety
+  - canonical: Property
+    aliases:
+  - canonical: Casualty
+    aliases:
+  - canonical: P&C
+    aliases:
+  - canonical: General Liability
+    aliases: [GL, Liability, PDBI]
+  - canonical: Decennial Liability
+    aliases:
+  - canonical: Product Liability
+    aliases:
+  - canonical: Professional Liability
+    aliases: [PI, Professional Indemnity]
+  - canonical: Motor / Auto
+    aliases: [Motor, Auto]
+  - canonical: Trade Credit
+    aliases:
+  - canonical: Political Risk
+    aliases:
+  - canonical: Surety
+    aliases:
 
   # Financial / Management Lines
-  - Directors & Officers (D&O)
-  - Errors & Omissions (E&O)
-  - Crime / Fidelity
-  - Management Liability
-  - FINPRO
-  - D&O
-  - E&O
-  - PI
-  - Crime
-  - EPL
+  - canonical: Directors & Officers (D&O)
+    aliases: [D&O, Directors and Officers]
+  - canonical: Errors & Omissions (E&O)
+    aliases: [E&O, Errors and Omissions]
+  - canonical: Crime / Fidelity
+    aliases: [Crime, Fidelity]
+  - canonical: Management Liability
+    aliases:
+  - canonical: FINPRO
+    aliases: [Financial Lines, Financial and Professional Lines, Financial Institutions]
+  - canonical: EPL
+    aliases: [Employment Practices Liability]
 
   # Specialty Lines
-  - Aviation & Space
-  - Marine / Cargo / Logistics
-  - Marine & Cargo
-  - Energy & Power
-  - Construction / Infrastructure / Surety
-  - Construction & Surety
-  - Credit Specialties
-  - Cyber
-  - Real Estate
-  - Private Equity, M&A / Transactional Risk
-  - Political Risk / Structured Credit
-  - Political Violence / Terrorism / War
-  - Political Violence
-  - Kidnap & Ransom
-  - PEMA
-  - Specialty lines
+  - canonical: Aviation & Space
+    aliases: [Aviation, Space]
+  - canonical: Marine / Cargo / Logistics
+    aliases: [Marine & Cargo, Marine, Cargo, Logistics]
+  - canonical: Energy & Power
+    aliases: [Energy, Power]
+  - canonical: Construction / Infrastructure / Surety
+    aliases: [Construction & Surety, Construction, Infrastructure]
+  - canonical: Credit Specialties
+    aliases:
+  - canonical: Cyber
+    aliases:
+  - canonical: Real Estate
+    aliases:
+  - canonical: Private Equity, M&A / Transactional Risk
+    aliases: [Private Equity, M&A, Transactional Risk]
+  - canonical: Political Risk / Structured Credit
+    aliases: [Structured Credit]
+  - canonical: Political Violence / Terrorism / War
+    aliases: [Political Violence, Terrorism, War]
+  - canonical: Defence
+    aliases: [Defence and Security, Defense, Defense and Security]
+  - canonical: Kidnap & Ransom
+    aliases: [K&R]
+  - canonical: PEMA
+    aliases:
+  - canonical: Specialty Lines
+    aliases: [Specialty lines]
+  - canonical: Life Science
+    aliases: [Life Sciences]
+  - canonical: Pharma Life Science
+    aliases: [Pharma & Life Science, Pharma Life Sciences]
 
   # People / Benefits
-  - Employee Benefits
-  - Health & Benefits
-  - Pensions / Retirement consulting
-  - Life / Accident / Disability
-  - Wellbeing
+  - canonical: Employee Benefits
+    aliases:
+  - canonical: Health & Benefits
+    aliases: [Health and Benefits]
+  - canonical: Pensions / Retirement consulting
+    aliases: [Pensions, Retirement Consulting]
+  - canonical: Life / Accident / Disability
+    aliases: [Life, Accident, Disability]
+  - canonical: Wellbeing
+    aliases:
 
   # Reinsurance / Capital
-  - Reinsurance
-  - Reinsurance broking
-  - Capital advisory
-  - Catastrophe / portfolio analytics
-  - Alternative risk transfer
-  - Insurance-linked securities
+  - canonical: Reinsurance
+    aliases: [Reinsurance broking]
+  - canonical: Capital advisory
+    aliases:
+  - canonical: Catastrophe / portfolio analytics
+    aliases: [Catastrophe, CAT]
+  - canonical: Alternative risk transfer
+    aliases: [ART]
+  - canonical: Insurance-linked securities
+    aliases: [ILS]
 
   # Program / Delegated / Facility
-  - Programs
-  - Delegated authority
-  - Affinity
-  - Captives
-  - Facilities / lineslips
-  - Binding authorities
+  - canonical: Programs
+    aliases:
+  - canonical: Delegated authority
+    aliases: [Delegated Authority, DA]
+  - canonical: Affinity
+    aliases:
+  - canonical: Captives
+    aliases:
+  - canonical: Facilities / lineslips
+    aliases: [Facilities, Lineslips]
+  - canonical: Binding authorities
+    aliases: [Binding Authorities, Binders]
 
 
 # ── Countries ────────────────────────────────────────────────────────────────
@@ -168,6 +897,7 @@ regions:
   - MENA
   - North America
   - Pacific
+  - Nordics
 
 
 # ── Company & Team Context ────────────────────────────────────────────────────
@@ -202,10 +932,17 @@ context:
 
 # ── Segments ──────────────────────────────────────────────────────────────────
 # ICG client segments. The LLM must only use values from this list.
+# Same canonical + aliases shape as lines_of_business above.
 segments:
-  - Risk Management
-  - NOT DEFINED
-  - Commercial
-  - Corporate
-  - MMC
-  - Consumer
+  - canonical: Risk Management
+    aliases: []
+  - canonical: NOT DEFINED
+    aliases: []
+  - canonical: Commercial
+    aliases: []
+  - canonical: Corporate
+    aliases: []
+  - canonical: MMC
+    aliases: []
+  - canonical: Consumer
+    aliases: [Retail]

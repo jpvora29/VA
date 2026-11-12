@@ -42,6 +42,7 @@ import logging
 from typing import Dict, List, Optional, Set, Tuple
 
 from recap.schemas.raw_extraction import ElementType, RawElement, RawSlide
+from recap.extraction.deterministic import parse_elements
 from recap.schemas.content_units import (
     ContentUnitType,
     GroupingMethod,
@@ -404,12 +405,15 @@ def _build_scu(
     reading_orders = [e.reading_order for e in elements if e.reading_order is not None]
     ro = min(reading_orders) if reading_orders else None
 
+    deterministic_records = parse_elements(elements)
+    parent_ids = [e.element_id for e in elements if e.element_type in (ElementType.CHART, ElementType.TABLE)]
+
     return SemanticContentUnit(
         content_unit_id=_make_scu_id(deck_id, slide.slide_number, index),
         deck_id=deck_id,
         slide_number=slide.slide_number,
-        section=slide.section,
-        slide_title=slide.title,
+        section=slide.section.replace("\x0b", " ").strip() if slide.section else None,
+        slide_title=slide.title.replace("\x0b", " ").strip() if slide.title else None,
         content=content,
         content_unit_type=_classify_unit_type(elements),
         source_element_ids=[e.element_id for e in elements],
@@ -423,6 +427,8 @@ def _build_scu(
         has_percentage=has_pct,
         has_currency=has_cur,
         has_trend_indicator=has_trend,
+        deterministic_records=deterministic_records,
+        parent_source_element_ids=parent_ids,
     )
 
 
@@ -499,12 +505,47 @@ class ContentUnitBuilder:
                 if other.element_type in (ElementType.TEXT_BOX, ElementType.SHAPE, ElementType.PLACEHOLDER):
                     if _distance(chart_el, other) < PROXIMITY_EMU:
                         members.append(other)
+
+            # If the chart XML carries no series names and no category labels
+            # (common for Excel-linked charts where labels live as separate
+            # AUTO_SHAPE text boxes on the slide rather than inside the chart
+            # XML), widen context to include ALL remaining text/shape elements
+            # on the slide.  This ensures the LLM sees the LoB names, series
+            # legend labels, and axis annotations that visually annotate the
+            # chart, even when they fall outside the proximity threshold.
+            chart_has_xml_labels = (
+                chart_el.chart is not None
+                and (
+                    any(s.series_name for s in chart_el.chart.series)
+                    or any(s.categories for s in chart_el.chart.series)
+                )
+            )
+            # Track which members were added via the wide-context path so we
+            # can avoid marking them assigned.  Text shapes borrowed for
+            # context on an unlabelled chart must remain available to a
+            # second chart on the same slide (e.g. two scatter charts that
+            # share the same set of category-label shapes).
+            wide_context_ids: set = set()
+            if not chart_has_xml_labels:
+                already_in = {m.element_id for m in members}
+                for other in kept_elements:
+                    if other.element_id in assigned or other.element_id in already_in:
+                        continue
+                    if other.element_type in (
+                        ElementType.TEXT_BOX, ElementType.SHAPE, ElementType.PLACEHOLDER
+                    ):
+                        members.append(other)
+                        wide_context_ids.add(other.element_id)
+
             scu = _build_scu(deck_id, slide, members, counter, GroupingMethod.CHART_ELEMENTS)
             if scu:
                 scus.append(scu)
                 counter += 1
                 for m in members:
-                    assigned.add(m.element_id)
+                    # Only mark the chart shape and proximity-pulled context
+                    # as assigned — wide-context borrowed shapes stay free.
+                    if m.element_id not in wide_context_ids:
+                        assigned.add(m.element_id)
 
         # ----------------------------------------------------------------
         # Strategy 3: Tables

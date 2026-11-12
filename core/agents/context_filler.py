@@ -21,7 +21,7 @@ from typing import List
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
-from core.agents.common.contract import detect_metrics, resolve_entities
+from core.agents.common.contract import detect_metrics, resolve_entities, resolved_filters_of
 from core.agents.common.dimensions import detect_group_by
 from core.context.bundle import schema_outline
 from core.context.engine import engine_enabled
@@ -60,12 +60,14 @@ class ContextFillerNode:
         current_user_query: str,
         last_user_query: str,
         conversation_history: List[str],
+        last_resolved_scope: str = "{}",
     ) -> RoutingContext:
         result = self.predictor(
             static_context=static_context,
             current_user_query=current_user_query,
             last_user_query=last_user_query,
             conversation_history=conversation_history,
+            last_resolved_scope=last_resolved_scope,
         )
         routing = result.routing_context
         if isinstance(routing, BaseModel):
@@ -86,6 +88,20 @@ class ContextFillerNode:
 # Depth/directive/meta-intent finalization now lives in the IntentClassifier
 # (Layer 2); this node owns Layer 1 filter extraction only.
 _CONTEXT_FILLER_NODE = ContextFillerNode()
+
+
+def prior_turn_scope(state: AgentState, *, is_follow_up: bool) -> str:
+    """The filters the previous turn ran with, as JSON for the filler's prompt.
+
+    The checkpoint still holds the previous turn's `routing_context` when this
+    node starts (per-turn resets leave it alone), so its resolved filters are
+    exactly what the user's last answer was computed on. Handing them over
+    beats asking the model to re-derive them from the last question's wording.
+    """
+    if not is_follow_up:
+        return "{}"
+    return json.dumps(resolved_filters_of(state.get("routing_context")),
+                      sort_keys=True, default=str)
 
 
 class ContextFillingAgent:
@@ -143,6 +159,7 @@ class ContextFillingAgent:
         else:
             last_user_query = ""
             conversation_history = []
+        last_resolved_scope = prior_turn_scope(state, is_follow_up=len(user_messages) > 1)
 
         # ContextEngine routing view (step 4): routing only needs to know which
         # columns live in which table to pick a table_family — not the full
@@ -163,6 +180,7 @@ class ContextFillingAgent:
             current_user_query=question,
             last_user_query=last_user_query,
             conversation_history=conversation_history,
+            last_resolved_scope=last_resolved_scope,
         )
 
         # NOTE: analysis_depth, output_directives, and conversation_intent are

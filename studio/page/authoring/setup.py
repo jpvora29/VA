@@ -225,13 +225,13 @@ def _setup_options() -> html.Div:
             # selection policy already understands them.
             _radio_field(
                 "Who is this deck for?", "studio-audience", [
-                    {"label": "Regional", "value": "marsh_regional"},
+                    {"label": "Executive", "value": "marsh_regional"},
                     {"label": "Carrier team", "value": "carrier_leadership"},
                 ], "carrier_leadership",
                 tip_id="qs-tip-audience",
                 tip="The reader the commentary is pitched at. Carrier team is the "
                     "client-facing read — the carrier's own underwriting and "
-                    "distribution leads. Regional is the internal Marsh view, which "
+                    "distribution leads. Executive is the internal Marsh view, which "
                     "may weigh placement and pipeline the carrier would not see.",
             ),
             # Commentary voice — words, not meeting minutes. Passed to the deck when the
@@ -339,20 +339,128 @@ def _market_pickers(groups: PeerGroups, kind: str, placeholder, *,
     return html.Div(blocks, className="qs-peer-markets" + (" per-market" if per_market else ""))
 
 
-def custom_peer_picker(groups: PeerGroups = ()) -> html.Div:
+PEER_EXISTING = "existing"
+PEER_CUSTOM = "custom"
+_MODE_LABEL = {PEER_EXISTING: "Existing", PEER_CUSTOM: "Custom"}
+
+
+def custom_peer_picker(groups: PeerGroups = (), *,
+                       existing: Optional[Mapping[str, Sequence[str]]] = None,
+                       modes: Optional[Mapping[str, str]] = None) -> html.Div:
     """One custom-peer dropdown per market, each with its own minimum.
 
     With several countries in scope, each gets its own picker under its own heading and its
     own candidate list — a carrier that writes nothing in Japan is not offered as a Japanese
     peer. A single flat dropdown could only pin one set for the whole run, so Japan's page
     ranked against carriers chosen for Singapore.
+
+    ``existing`` is ``{country: [peer…]}`` from the Peers table. When it is given and the
+    run covers several markets, each market also gets its own Existing | Custom switch, so
+    an author can re-pick peers for two of four countries and keep the governed group for
+    the rest. ``modes`` carries each market's switch across a rebuild (default Custom).
     """
-    return _market_pickers(
-        groups, "studio-peer-custom",
-        lambda country, per_market: f"Select at least {MIN_CUSTOM_PEERS} peer carriers"
-                                    + (f" in {country}" if per_market else ""),
-        minimum=True,
+    if existing is None or len(list(groups)) <= 1:
+        return _market_pickers(
+            groups, "studio-peer-custom",
+            lambda country, per_market: f"Select at least {MIN_CUSTOM_PEERS} peer carriers"
+                                        + (f" in {country}" if per_market else ""),
+            minimum=True,
+        )
+    modes = modes or {}
+    blocks = [_switchable_market(str(country), options, chosen,
+                                 existing.get(str(country)) or (),
+                                 modes.get(str(country)) or PEER_CUSTOM)
+              for country, options, chosen in groups]
+    return html.Div(blocks, className="qs-peer-markets per-market")
+
+
+def market_mode_style(mode: str) -> Tuple[dict, dict, str]:
+    """``(custom-area style, existing-area style, block class)`` for one market's switch."""
+    custom = mode != PEER_EXISTING
+    hidden = {"display": "none"}
+    return ({} if custom else hidden, hidden if custom else {},
+            "qs-peer-market " + ("is-custom" if custom else "is-existing"))
+
+
+def _switchable_market(country: str, options, chosen, existing_names: Sequence[str],
+                       mode: str) -> html.Div:
+    """One market with its own Existing | Custom switch, its picker and its governed group."""
+    custom_style, existing_style, block_class = market_mode_style(mode)
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.Div([html.I(className="bi bi-geo-alt"), html.Span(country)],
+                             className="qs-peer-market-name"),
+                    dcc.RadioItems(
+                        id={"type": "studio-peer-market-mode", "country": country},
+                        options=[{"label": _MODE_LABEL[m], "value": m}
+                                 for m in (PEER_EXISTING, PEER_CUSTOM)],
+                        value=mode if mode in _MODE_LABEL else PEER_CUSTOM,
+                        className="qs-peer-market-mode",
+                        inputClassName="qs-peer-market-mode-input",
+                        labelClassName="qs-peer-market-mode-label",
+                    ),
+                ],
+                className="qs-peer-market-head",
+            ),
+            html.Div(
+                [
+                    dcc.Dropdown(
+                        id={"type": "studio-peer-custom", "country": country},
+                        options=list(options),
+                        value=[str(c) for c in (chosen or [])],
+                        multi=True,
+                        placeholder=f"Select at least {MIN_CUSTOM_PEERS} peer carriers "
+                                    f"in {country}",
+                        maxHeight=DROPDOWN_MAX_HEIGHT,
+                        className="qs6-dd",
+                    ),
+                    html.Div(peer_counter(chosen),
+                             id={"type": "studio-peer-min", "country": country},
+                             className="qs-peer-min qs6-peer-min"),
+                ],
+                id={"type": "studio-peer-market-custom", "country": country},
+                style=custom_style,
+            ),
+            html.Div(
+                [
+                    _peer_chips(existing_names)
+                    or html.Div("No peer group in this market.", className="qs-peer-note warn"),
+                    html.Div("Peers table group — used as is.", className="qs-peer-note"),
+                ],
+                id={"type": "studio-peer-market-existing", "country": country},
+                style=existing_style,
+            ),
+        ],
+        id={"type": "studio-peer-market", "country": country},
+        className=block_class,
     )
+
+
+def peer_mode_summary(markets: Sequence[Tuple[str, str]]) -> Optional[html.Div]:
+    """The strip at the top of the peer panel: which markets use which peers.
+
+    ``markets`` is ``[(country, mode)]``. One pill per market, tagged Custom or Existing,
+    plus a "2 of 4 markets custom" count — so a mixed run is visible before the author
+    scrolls through every market's picker.
+    """
+    if not markets:
+        return None
+    n_custom = sum(1 for _, mode in markets if mode == PEER_CUSTOM)
+    pills = [html.Span([html.Span(country or "All markets", className="qs-peer-pill-c"),
+                        html.Span(_MODE_LABEL.get(mode, "Existing"), className="qs-peer-pill-m")],
+                       className=f"qs-peer-pill is-{mode}")
+             for country, mode in markets]
+    if n_custom == 0:
+        count = "Existing peers everywhere"
+    elif n_custom == len(markets):
+        count = "Custom peers everywhere"
+    else:
+        count = f"{n_custom} of {len(markets)} markets custom"
+    return html.Div([html.Span(count, className="qs-peer-summary-n"),
+                     html.Div(pills, className="qs-peer-pills")],
+                    className="qs-peer-summary")
 
 
 def peer_counter(chosen: Optional[Sequence[str]]) -> html.Div:
@@ -452,6 +560,7 @@ def _peers_panel() -> html.Div:
                 inputClassName="studio-report-input",
                 labelClassName="studio-report-label",
             ),
+            html.Div(id="studio-peer-summary", className="studio-peer-summary"),
             html.Div(
                 peer_set_body((), "Select a carrier to see its existing peers."),
                 id="studio-peer-msg",

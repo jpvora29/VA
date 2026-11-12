@@ -40,12 +40,16 @@ ANSWER = {
     "lines_of_business": ["Property"], "countries": ["Germany", "Spain"],
     "regions": ["Europe"], "segments": ["Multinational"],
     "kpis": ["GWP"], "metrics": ["GWP"], "performance_direction": "positive",
+    # Enrichment reads this from the model; below 0.15 an insight skips classification.
+    "overall_confidence": 0.9,
     "value": True, "evidence_element_ids": ["e1"], "rationale": "stub",
     "sub_category": None,
     "is_action_item": True, "urgency": "high",
     "action": "Confirm the Spain renewal terms", "owner": "Marsh", "deadline": "Q3",
     "title": "Growth in Germany",
-    "narrative": "Germany grew on property renewals while Spain outperformed plan.",
+    # At least 20 words: the generator drops shorter narratives as stubs.
+    "narrative": ("Germany grew on property renewals while Spain outperformed plan on new "
+                  "business, and the loss ratio improved to 61% across the whole portfolio."),
     "executive_summary": "Growth held up across both markets with property leading.",
     "summary": "Germany anchored the quarter. Spain outperformed plan on new business.",
 }
@@ -130,10 +134,31 @@ def test_the_cover_slide_names_the_client_and_the_period(deck):
     assert metadata.meeting_date == "2026-04-15"
 
 
-def test_a_period_label_is_only_carried_when_it_adds_something(deck):
-    """With a quarter AND a year, a label saying "Q2 2026" says it twice — and the
-    recap title would then read it twice."""
-    assert read_cover(deck.read_bytes()).period_label == ""
+def test_the_period_label_is_always_filled_when_the_cover_states_one(deck):
+    """Recap titles and output filenames carry the whole period, so the label is
+    kept even beside a quarter and a year (run.period_label prefers it, so the
+    title still reads the period once)."""
+    assert read_cover(deck.read_bytes()).period_label == "Q2 2026"
+
+
+def test_the_year_falls_back_to_the_filename():
+    """A cover that names only the quarter takes its year from the deck's name."""
+    from recap.metadata import _read_period
+
+    found = _read_period("Quarterly Business Review | Q2", "UK QBE QBR Europe 2026 Q2 v3.pptx")
+    assert (found["quarter"], found["year"], found["period_label"]) == ("Q2", "2026", "Q2 2026")
+
+
+def test_a_carrier_alias_resolves_to_its_canonical_name_and_names_the_client():
+    """The longest alias wins, and carrier + cover region become the client label."""
+    from recap.config import settings
+    from recap.metadata import _carrier_named, _client_from_scope
+
+    alias, canonical = max(settings.carrier_alias_index.items(), key=lambda kv: len(kv[0]))
+    assert _carrier_named(f"Review with {alias.upper()} this quarter") == canonical
+    names = {"client_name": "Title text", "company_name": ""}
+    scope = {"carrier": canonical, "country_region": "Europe"}
+    assert _client_from_scope(names, scope)["client_name"] == f"{canonical} Europe"
 
 
 def test_an_unreadable_deck_costs_the_run_nothing():

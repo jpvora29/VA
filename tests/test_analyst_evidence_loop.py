@@ -239,16 +239,36 @@ def test_the_verifier_deletes_an_overclaiming_sentence_and_keeps_the_findings(st
     assert "Cyber grew 90." in result["answer"]
 
 
+def _without_contract(state):
+    """Isolate a non-completeness check: no evidence contract, nothing owed."""
+    state["contract"] = None
+    state["progress"] = None
+    return state
+
+
 def test_the_verifier_leaves_a_clean_answer_untouched(state):
+    _without_contract(state)
     state["answer"] = "Premium fell 250 while Cyber grew 90."
     state["answer_record"] = _record()
     assert subgraph.verify_node(state) == {}
+
+
+def test_a_turn_that_investigated_nothing_is_not_excused_by_generic_limitations(state):
+    """Every unmet requirement carries a generic limitation sentence; that
+    boilerplate must not make a turn where no step ran read as complete."""
+    state["answer"] = "Premium fell 250 while Cyber grew 90."
+    state["answer_record"] = _record()
+    assert state["progress"].limitations()
+    result = subgraph.verify_node(state)
+    kinds = {f["kind"] for f in result["answer_record"]["verification"]}
+    assert kinds == {"missing_investigation"}
 
 
 def test_a_scope_divergence_becomes_a_stated_limitation_not_a_silent_answer(state):
     """The answer is still published — it is the SILENT version that is dangerous."""
     from core.analysis.evidence_ledger import build_evidence
 
+    _without_contract(state)
     state["answer"] = "Premium fell 250."
     state["answer_record"] = _record()
     state["evidence"] = [
@@ -334,3 +354,70 @@ def test_a_lookup_is_not_inflated_into_a_performance_review():
         "What was Zurich's premium in Singapore in 2025?", route="premium"
     )
     assert contract.keys() == ("direct_value",)
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2 step 2 — the position table counts, and the story shadow sees it
+# --------------------------------------------------------------------------- #
+
+
+def _performance_turn_with_position(state, stub_solver):
+    """Run the real wave and join, then add what `positioning_node` contributes."""
+    from core.analysis.evidence_ledger import build_evidence
+    from core.answers.positioning_claims import LENS
+
+    stub_solver(performance_script)
+    wave = []
+    for send in subgraph.dispatch(state):
+        wave.extend(subgraph.generic_solver_node(send.arg)["evidence"])
+    state["evidence"] = wave
+    joined = subgraph.join_node(state)
+    position = build_evidence(flow="gpr", rows=[{"Product_Line": "Property", "rank": 2}],
+                              lens=LENS, tool="build_positioning",
+                              requested_scope=SCOPE, actual_scope=SCOPE)
+    state["progress"] = joined["progress"]
+    state["progress"].record(subgraph.positioning_outcome([position]))
+    state["evidence"] = [*wave, *(joined.get("evidence") or []), position]
+    return state
+
+
+def test_the_position_table_satisfies_positioning_without_a_plan_step(state, stub_solver):
+    state = _performance_turn_with_position(state, stub_solver)
+    satisfied = state["progress"].satisfied_requirements()
+    assert "positioning" in satisfied and "annual_movement" in satisfied
+    assert not any("Position" in text for text in state["progress"].limitations())
+
+
+def test_the_verifier_no_longer_flags_a_gathered_position_table(state, stub_solver):
+    state = _performance_turn_with_position(state, stub_solver)
+    state["answer"] = "Premium fell 250 while Cyber grew 90."
+    state["answer_record"] = _record()
+    result = subgraph.verify_node(state)
+    details = [f for f in (result.get("answer_record") or {}).get("verification") or []]
+    assert not any("positioning" in str(entry) for entry in details)
+
+
+def test_the_story_shadow_reports_the_answered_turns_open_sections(state, stub_solver, monkeypatch):
+    from core.turn import story_shadow
+
+    events = []
+    monkeypatch.setattr(story_shadow, "log_event",
+                        lambda _logger, name, *a, **kw: events.append((name, kw)))
+    state = _performance_turn_with_position(state, stub_solver)
+    state["answer"] = "Premium fell 250 while Cyber grew 90."
+    state["answer_record"] = _record()
+    subgraph.verify_node(state)
+
+    name, fields = events[-1]
+    assert name == "story_coverage" and fields["stage"] == "answered"
+    assert fields["shape"] == "analyst"
+    assert "position" not in fields["left_open"]
+    assert "movement" not in fields["left_open"]
+
+
+def test_the_planner_counts_the_position_node_as_planned(state):
+    planned = subgraph.planned_requirements(state["plan"], state["contract"], "gpr")
+    assert planned[:3] == ("annual_movement", "product_contributors", "quarterly_comparison")
+    assert "positioning" in planned
+    assert "positioning" not in subgraph.planned_requirements(
+        state["plan"], state["contract"], "survey")

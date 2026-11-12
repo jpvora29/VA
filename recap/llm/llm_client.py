@@ -131,7 +131,8 @@ class LLMClient:
         response_model  : If provided, the raw JSON is parsed into this
                           Pydantic model and returned typed.
         tier            : Override the tier for this one call.
-        max_completion_tokens : Output cap (see ``_bind`` for when it is sent).
+        max_completion_tokens : The stage's budget. Kept for the call sites, but no
+                          longer sent — see ``_bind``.
         reasoning_effort : Recap's own effort for this call, from
                           ``settings.reasoning_effort_for(stage)``. None leaves the
                           tier exactly as ``core.llm.clients`` configures it.
@@ -243,12 +244,12 @@ class LLMClient:
                 response = await client.ainvoke(messages)
                 _log_usage(response, stage)
                 self._record_usage(stage, response)
-                return (response.content or "").strip()
+                return _require_content(response)
             except Exception as exc:  # noqa: BLE001 - retry, then re-raise
                 attempt += 1
                 if attempt > settings.max_llm_retries or not _is_transient(exc):
                     raise
-                wait = settings.retry_base_delay * (2 ** (attempt - 1))
+                wait = _retry_delay(exc, attempt)
                 logger.warning(
                     "LLM call failed - retrying in %.1fs (attempt %d/%d): %s",
                     wait, attempt, settings.max_llm_retries, exc,
@@ -261,18 +262,19 @@ class LLMClient:
 # ---------------------------------------------------------------------------
 
 def _bind(tier: str, max_completion_tokens: int, reasoning_effort: Optional[str] = None):
-    """The shared client for ``tier``, pinned to JSON output and an output cap.
+    """The shared client for ``tier``, pinned to JSON output and Recap's timeout.
 
     ``reasoning_effort`` is Recap's own (RECAP_REASONING_EFFORT*). When given, it
     replaces the tier's effort for this call and drops the tier's temperature — a
     reasoning request takes one and rejects the other.
 
-    The output cap follows the effort:
-      classic tier               ``max_tokens`` (what the tier has always been sent)
-      Recap effort               ``max_completion_tokens`` — the parameter a reasoning
-                                 deployment accepts; the stage budget covers its
-                                 reasoning tokens too, as recap.config sizes it
-      tier's own <TIER>_EFFORT   no cap, as before: that budget is the app's, not ours
+    No output cap is sent. The standalone app dropped it (2026-11): on a reasoning
+    deployment the cap is shared with the hidden reasoning tokens, so a long slide
+    came back empty (finish_reason="length") instead of short. ``max_completion_tokens``
+    stays in the signature because every call site still names its stage budget.
+
+    The timeout is ``settings.http_timeout`` (RECAP's 120 s, not the app-wide
+    LLM_TIMEOUT): a recap pass routinely runs past a minute.
     """
     from core.llm.clients import client_for, resolve_tier
 
@@ -280,21 +282,54 @@ def _bind(tier: str, max_completion_tokens: int, reasoning_effort: Optional[str]
     if reasoning_effort:
         config = replace(config, effort=reasoning_effort, temperature=None)
 
-    client = client_for(config).bind(response_format={"type": "json_object"})
-    if not max_completion_tokens:
-        return client
-    if reasoning_effort:
-        return client.bind(max_completion_tokens=max_completion_tokens)
-    if not config.effort:
-        return client.bind(max_tokens=max_completion_tokens)
-    return client
+    return client_for(config).bind(
+        response_format={"type": "json_object"},
+        timeout=settings.http_timeout,
+    )
+
+
+class EmptyResponseError(RuntimeError):
+    """The model answered with no content — a content-filter hit or a truncation.
+
+    Its message starts "Empty response", which ``_is_transient`` treats as worth
+    another attempt.
+    """
+
+
+def _require_content(response) -> str:
+    """The reply's text, or a retryable error when the model sent nothing."""
+    text = (response.content or "").strip()
+    if text:
+        return text
+    finish_reason = (getattr(response, "response_metadata", None) or {}).get("finish_reason")
+    raise EmptyResponseError(
+        f"Empty response content (finish_reason={finish_reason!r}) — possible "
+        "content-filter hit or token-budget truncation; will retry"
+    )
+
+
+# A timeout usually means the endpoint is under load. Backing off from 15 s rather
+# than the ordinary base delay keeps the concurrent calls from all retrying at once.
+_TIMEOUT_BASE_DELAY = 15.0
+
+
+def _retry_delay(exc: Exception, attempt: int) -> float:
+    """Seconds to wait before retry number ``attempt``."""
+    base = _TIMEOUT_BASE_DELAY if _is_timeout(exc) else settings.retry_base_delay
+    return base * (2 ** (attempt - 1))
+
+
+def _is_timeout(exc: Exception) -> bool:
+    text = f"{type(exc).__name__} {exc}".lower()
+    return "timeout" in text or "timed out" in text
 
 
 # The two failures worth another attempt: the tenant is throttling us, or the call
 # fell over in transit. Anything else (a bad prompt, an unknown deployment) fails the
 # same way on every retry, so retrying only makes the user wait longer for it.
 _TRANSIENT = ("ratelimit", "429", "timeout", "timed out", "connection",
-              "temporarily", "service unavailable", "503", "500", "apierror")
+              "temporarily", "service unavailable", "503", "500", "apierror",
+              "empty response")
 
 
 def _is_transient(exc: Exception) -> bool:

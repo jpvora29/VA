@@ -340,7 +340,8 @@ class GPRSubGraph:
 
         # Success: if a fixer ran earlier this turn, persist the verified fix so
         # similar future queries can recall the working SQL.
-        record_recovered_sql_fix(state, route="premium", working_sql=sql_query)
+        record_recovered_sql_fix(state, route="premium", working_sql=sql_query,
+                                 row_count=result.row_count)
 
         logger.debug("GPR query fetched %d row(s)", result.row_count)
         # Peer confidentiality at the same boundary the analyst uses: these rows

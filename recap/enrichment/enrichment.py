@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import List, Optional
 
 from recap.schemas.content_units import SemanticContentUnit
@@ -35,6 +36,7 @@ from recap.schemas.enrichment import (
     PerformanceDirection,
 )
 from recap.schemas.raw_extraction import RawDeck
+from recap.extraction.deterministic import records_to_metrics
 from recap.glossary.glossary import BusinessGlossary
 from recap.llm.llm_client import LLMClient
 from recap.config import settings
@@ -113,6 +115,53 @@ class EnrichmentLLM:
         output, but we keep them sequential to avoid unnecessary fan-out and
         to stay within concurrency budgets).
         """
+        # Pre-enrichment skip guard — decorative / label SCUs.
+        #
+        # An SCU with no numeric/percentage/currency/trend signal AND no
+        # structured-data block prefix AND under 10 words of content is a
+        # header, label, or caption that carries no extractable business
+        # metadata.  Running the two LLM passes on it:
+        #   - costs 2 LLM calls and ~2,500 tokens for zero return
+        #   - produces overall_confidence ~0.0 that drags down fill-rate
+        #     percentages for LoB, country, and KPI
+        #   - increases the pool of low-confidence insights that the
+        #     confidence gate in pipeline._classify_one() must then handle
+        #
+        # Early-returning _empty_enriched() here eliminates that waste at
+        # the source.  The confidence gate at classification still catches
+        # any that slip through (belt-and-braces), so there is no data-
+        # loss risk — structured types (TABLE_BLOCK, CHART_INSIGHT, KPI_CARD)
+        # are never a match for all three conditions simultaneously because
+        # they always carry a numeric signal or a structured-data prefix.
+        #
+        # Conditions (all three must be true to skip):
+        #   1. No numeric/percentage/currency/trend signal on the SCU
+        #   2. Content does not start with [TABLE DATA] or [CHART DATA]
+        #   3. Stripped content is ≤ 9 words (a label/heading, not a sentence)
+        _LABEL_WORD_LIMIT = 9
+        _content_stripped = scu.content.strip()
+        _has_data_signal = (
+            scu.has_numeric_value
+            or scu.has_percentage
+            or scu.has_currency
+            or scu.has_trend_indicator
+        )
+        _has_structured_prefix = _content_stripped.startswith(
+            ("[TABLE DATA]", "[CHART DATA]")
+        )
+        _is_label = (
+            not _has_data_signal
+            and not _has_structured_prefix
+            and len(_content_stripped.split()) <= _LABEL_WORD_LIMIT
+        )
+        if _is_label:
+            logger.debug(
+                "Pre-enrichment skip: %s — label/header (≤%d words, no data signal)",
+                scu.content_unit_id,
+                _LABEL_WORD_LIMIT,
+            )
+            return self._empty_enriched(scu, deck)
+
         # Retrieve relevant glossary terms (shared across both passes)
         matched_terms = self._glossary.retrieve_for_context(
             content=scu.content,
@@ -131,22 +180,30 @@ class EnrichmentLLM:
             section=scu.section or "(none)",
             content_unit_id=scu.content_unit_id,
             content=scu.content,
+            deterministic_metrics=records_to_metrics(scu.deterministic_records),
+            deterministic_records=json.dumps(scu.deterministic_records, ensure_ascii=False),
         )
 
         # ── Pass 1: Context (LoB, countries, regions) ──────────────
         context_block = settings.context_block()
         lob_list      = ", ".join(settings.lines_of_business) or "(none defined)"
         segment_list  = ", ".join(settings.segments) or "(none defined)"
+        # Canonical country list injected so the LLM uses exact spellings and
+        # cannot invent country names — mirrors the same discipline applied to
+        # LoB and segments.  Fixes the 73% country miss-rate (issue 4.3).
+        country_list  = ", ".join(settings.countries) or "(none defined)"
         context_system = ENRICHMENT_CONTEXT_SYSTEM_PROMPT.format(
             context_block=context_block,
             lob_list=lob_list,
             segment_list=segment_list,
+            country_list=country_list,
             glossary_block=glossary_block,
         )
         context_user = ENRICHMENT_CONTEXT_USER_TEMPLATE.format(
             **template_kwargs,
             lob_list=lob_list,
             segment_list=segment_list,
+            country_list=country_list,
         )
 
         raw_context = await self._llm.call(
@@ -176,6 +233,8 @@ class EnrichmentLLM:
         metadata = self._merge_metadata(
             raw_context, raw_kpi, scu.source_element_ids,
             content_unit_id=scu.content_unit_id,
+            deterministic_records=scu.deterministic_records,
+            scu_content=scu.content,
         )
 
         return EnrichedInsight(
@@ -185,6 +244,7 @@ class EnrichmentLLM:
             section=scu.section,
             slide_title=scu.slide_title,
             content=scu.content,
+            carrier=deck.company_name or None,
             source_element_ids=scu.source_element_ids,
             metadata=metadata,
             glossary_terms_used=glossary_term_names,
@@ -200,6 +260,8 @@ class EnrichmentLLM:
         raw_kpi: str,
         source_element_ids: List[str],
         content_unit_id: str = "",
+        deterministic_records: Optional[dict] = None,
+        scu_content: str = "",
     ) -> InsightMetadata:
         """
         Parse both LLM JSON responses and merge them into one InsightMetadata.
@@ -255,6 +317,22 @@ class EnrichmentLLM:
         kpi_conf = _confidence(kpi.get("overall_confidence", 0.0))
         merged_confidence = round((ctx_conf + kpi_conf) / 2, 4)
 
+        # Deterministic values are authoritative for chart/table metrics.
+        deterministic_metrics = records_to_metrics(deterministic_records or {})
+        llm_metrics = _list_of_str(kpi.get("metrics"))
+        merged_metrics = list(dict.fromkeys(deterministic_metrics + llm_metrics))
+        deterministic_conf = 1.0 if deterministic_metrics else 0.0
+        extraction_conf = 1.0 if deterministic_records and deterministic_records.get("record_count", 0) else min(ctx_conf, kpi_conf)
+        metric_conf = 1.0 if deterministic_metrics else kpi_conf
+        geo_conf = ctx_conf
+        commercial_conf = max(ctx_conf, kpi_conf)
+        overall = round((extraction_conf + metric_conf + geo_conf + commercial_conf) / 4, 4)
+        field_provenance = {}
+        for field in ("lines_of_business", "segments", "countries", "regions", "owner", "deadline"):
+            field_provenance[field] = {"source_type": "llm", "source_element_ids": source_element_ids, "source_content_unit_id": content_unit_id, "confidence": ctx_conf if field in ("lines_of_business", "segments", "countries", "regions") else kpi_conf}
+        field_provenance["metrics"] = {"source_type": "deterministic_chart_table" if deterministic_metrics else "llm", "source_element_ids": source_element_ids, "source_content_unit_id": content_unit_id, "confidence": metric_conf}
+        # growth_type provenance is set after the deterministic inference below
+
         # Merge matched_glossary_terms from both passes (deduplicated)
         merged_glossary = list(dict.fromkeys(
             _list_of_str(ctx.get("matched_glossary_terms"))
@@ -281,6 +359,32 @@ class EnrichmentLLM:
             content_unit_id=content_unit_id,
         )
 
+        # growth_type: deterministic regex is authoritative — if an explicit
+        # label (YoY, QoQ, YTD, CAGR, etc.) is present in the content, the
+        # regex result is used directly and the LLM result is ignored.
+        # The LLM result is only used when the regex finds no explicit label,
+        # covering cases where the growth period is implied rather than named.
+        det_growth_type = self._infer_growth_type(scu_content) if scu_content else None
+        llm_growth_type = _growth_type(kpi.get("growth_type"))
+        resolved_growth_type = det_growth_type if det_growth_type is not None else llm_growth_type
+        growth_type_source = (
+            "deterministic_regex" if det_growth_type is not None
+            else ("llm" if llm_growth_type is not None else "llm")
+        )
+        if det_growth_type is not None and llm_growth_type is not None and det_growth_type != llm_growth_type:
+            logger.debug(
+                "growth_type: deterministic regex %r overrides LLM %r for %s",
+                det_growth_type.value, llm_growth_type.value,
+                content_unit_id or "(unknown unit)",
+            )
+
+        field_provenance["growth_type"] = {
+            "source_type": growth_type_source,
+            "source_element_ids": source_element_ids,
+            "source_content_unit_id": content_unit_id,
+            "confidence": 1.0 if growth_type_source == "deterministic_regex" else kpi_conf,
+        }
+
         return InsightMetadata(
             # From Pass 1 — Context
             lines_of_business=filtered_lobs,
@@ -289,9 +393,9 @@ class EnrichmentLLM:
             regions=_list_of_str(ctx.get("regions")),
             # From Pass 2 — KPI / Performance
             kpis=_list_of_str(kpi.get("kpis")),
-            metrics=_list_of_str(kpi.get("metrics")),
+            metrics=merged_metrics,
             performance_direction=_perf_dir(kpi.get("performance_direction", "unknown")),
-            growth_type=_growth_type(kpi.get("growth_type")),
+            growth_type=resolved_growth_type,
             growth_value=_str_or_none(kpi.get("growth_value")),
             baseline_value=_str_or_none(kpi.get("baseline_value")),
             current_value=_str_or_none(kpi.get("current_value")),
@@ -303,8 +407,58 @@ class EnrichmentLLM:
             owner=_str_or_none(kpi.get("owner")),
             deadline=_str_or_none(kpi.get("deadline")),
             matched_glossary_terms=merged_glossary,
-            overall_confidence=merged_confidence,
+            overall_confidence=overall,
+            confidence_dimensions={
+                "extraction": extraction_conf,
+                "metric_mapping": metric_conf,
+                "geography": geo_conf,
+                "commercial_interpretation": commercial_conf,
+            },
+            field_provenance=field_provenance,
         )
+
+    # ----------------------------------------------------------------
+    # Deterministic growth-type inference
+    # ----------------------------------------------------------------
+
+    # Ordered list of (compiled_pattern, GrowthType) pairs.
+    # Each pattern is tried against the full content string (case-insensitive).
+    # First match wins, so more-specific patterns appear before broader ones
+    # (e.g. "half-over-half" before plain "half"; "quarter-on-quarter" before
+    # "quarter"; CAGR before any generic YoY catch-all).
+    _GROWTH_TYPE_PATTERNS: list = [
+        # CAGR — must come first; contains "annual" which could match YoY
+        (re.compile(r'\bcagr\b', re.I),                                GrowthType.CAGR),
+        # YTD / MTD — must come before YoY to avoid partial matches
+        (re.compile(r'\bytd\b|\byear[\s\-]to[\s\-]date\b', re.I),     GrowthType.YTD),
+        (re.compile(r'\bmtd\b|\bmonth[\s\-]to[\s\-]date\b', re.I),    GrowthType.MTD),
+        # Half-over-half
+        (re.compile(r'\bhoh\b|\bhalf[\s\-](?:over|on|vs\.?)[\s\-]half\b', re.I), GrowthType.HOH),
+        # Quarter-over-quarter
+        (re.compile(r'\bqoq\b|\bquarter[\s\-](?:over|on|vs\.?)[\s\-]quarter\b', re.I), GrowthType.QOQ),
+        # Year-over-year — broadest; also catches "YoY", "year on year", axis labels
+        (re.compile(r'\byoy\b|\byear[\s\-](?:over|on|vs\.?)[\s\-]year\b', re.I), GrowthType.YOY),
+    ]
+
+    @staticmethod
+    def _infer_growth_type(content: str) -> Optional[GrowthType]:
+        """
+        Deterministically infer growth_type from explicit labels in the
+        content string (e.g. "YoY", "QoQ", "YTD", "CAGR").
+
+        Only returns a value when a recognised label is literally present —
+        never guesses from dates, context, or numeric patterns.  Returns
+        None when no label is found, preserving the existing behaviour for
+        ambiguous or unlabelled content.
+
+        This is used as a fallback when the LLM KPI pass returns null or
+        unknown for growth_type.  The LLM result always takes priority;
+        this only fires to fill gaps the LLM missed.
+        """
+        for pattern, growth_type in EnrichmentLLM._GROWTH_TYPE_PATTERNS:
+            if pattern.search(content):
+                return growth_type
+        return None
 
     @staticmethod
     def _canonicalize(
@@ -353,6 +507,7 @@ class EnrichmentLLM:
             section=scu.section,
             slide_title=scu.slide_title,
             content=scu.content,
+            carrier=deck.company_name or None,
             source_element_ids=scu.source_element_ids,
             metadata=InsightMetadata(),
             glossary_terms_used=[],

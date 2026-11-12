@@ -12,6 +12,7 @@ from core.agents.common.node_hooks import NodeHooks, with_node_hooks, _DEFAULT_N
 from core.context.gate import gate_enabled, gated_valid_values
 from core.llm import Example, Predictor
 from core.schemas.analytical import SQLAgentSignature, SQLFixerOutput
+from core.observability import log_event
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -82,13 +83,24 @@ def log_sql_failure(question: str, failed_sql: str, error: Any, route: str) -> d
     }
 
 
-def record_recovered_sql_fix(state: dict, route: str, working_sql: str) -> None:
-    """If this turn recovered from a SQL error, persist the verified fix.
+def record_recovered_sql_fix(
+    state: dict, route: str, working_sql: str, *, row_count: int
+) -> None:
+    """If this turn recovered from a SQL error, persist the fix.
 
     Called from an execute node on success: reads the latest ``sql_error_log``
     breadcrumb (set by the fixer) and stores ``failed_sql → working_sql`` against
     the user. Best-effort; never raises into the graph.
+
+    A query that merely RAN is not a correct one, and the stored fix is recalled
+    later as a few-shot example — so a wrong-but-valid query would teach the
+    model its own mistake. A fix that returned no rows is the commonest such case
+    (a filter the fixer mangled into matching nothing), so it is never kept.
     """
+    if row_count <= 0:
+        log_event(logger, "sql_fix_not_recorded", node="sql_fix_memory",
+                  route=route, reason="zero_rows")
+        return
     log = state.get("sql_error_log") or []
     if not log:
         return

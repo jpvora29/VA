@@ -52,9 +52,11 @@ from recap.classification.subcategory_classifier import SubCategoryClassifier
 from recap.classification.action_item_classifier import ActionItemClassifier
 from recap.store.insight_store import InsightStore, assemble_insight
 from recap.generation.recap_generator import RecapGenerator
-from recap.schemas.raw_extraction import RawDeck
+from recap.schemas.raw_extraction import ElementType, RawDeck, RawElement
 from recap.schemas.content_units import SemanticContentUnit
-from recap.schemas.enrichment import EnrichedInsight
+from recap.schemas.enrichment import EnrichedInsight, Urgency
+from recap.schemas.classification import ClassificationResult, UmbrellaLabel
+from recap.schemas.action_item import ActionItemResult
 from recap.schemas.recap import RecapOutput
 from recap.llm.llm_client import LLMClient
 from recap.progress import Reporter, silent
@@ -270,6 +272,7 @@ class BusinessReviewPipeline:
             meeting_date=deck.meeting_date,
             meeting_type=deck.meeting_type,
             min_confidence=min_recap_confidence,
+            source_graph=deck.model_dump(mode="json"),
         )
 
         elapsed = time.perf_counter() - t0
@@ -290,9 +293,14 @@ class BusinessReviewPipeline:
         meeting_date: Optional[str] = None,
         meeting_type: Optional[str] = None,
         min_confidence: float = 0.0,
+        source_graph: Optional[dict] = None,
     ) -> RecapOutput:
         """
         Generate one recap from everything the insight store currently holds.
+
+        With an outputs_dir, the generator writes its audit artefacts (takeaways
+        before/after dedup, fact-check, overlap removal, force-compress) there.
+        `source_graph` is the deck it came from, saved beside the final recap.
 
         `run()` calls this at its own last stage. It is public because a run over
         SEVERAL decks wants exactly one recap covering all of them: the caller runs
@@ -308,6 +316,9 @@ class BusinessReviewPipeline:
             meeting_date=meeting_date,
             meeting_type=meeting_type,
             min_confidence=min_confidence,
+            outputs_dir=self._outputs_dir,
+            deck_id_for_artefacts=deck_id,
+            source_graph=source_graph,
         )
         self._llm.log_usage_summary()
         return recap
@@ -396,6 +407,7 @@ class BusinessReviewPipeline:
             if fs is None:
                 continue
             kept = self._noise_filter.get_kept_elements(slide, fs)
+            kept = drop_inert_elements(slide.slide_number, kept)
             scus = self._cu_builder.build(slide, kept)
             all_scus.extend(scus)
 
@@ -448,7 +460,18 @@ class BusinessReviewPipeline:
         Classify a single insight through all classifier stages.
         Runs umbrella classifiers + action item classifier concurrently,
         then sub-category classifiers for active umbrellas.
+
+        A near-empty insight skips every classifier (see `unclassified_insight`).
         """
+        if insight.metadata.overall_confidence < CLASSIFICATION_MIN_CONFIDENCE:
+            logger.debug(
+                "Skipping classification for %s (confidence=%.3f < %.2f)",
+                insight.content_unit_id,
+                insight.metadata.overall_confidence,
+                CLASSIFICATION_MIN_CONFIDENCE,
+            )
+            return unclassified_insight(insight, deck)
+
         async with self._classify_sem:
             # Stages 5 + 7 concurrently: 4 umbrella LLMs + action item LLM
             umbrella_task     = self._umbrella_clf.classify(insight)
@@ -469,3 +492,72 @@ class BusinessReviewPipeline:
             action_item_result=action_item_result,
             deck=deck,
         )
+
+
+# ---------------------------------------------------------------------------
+# Pre-grouping and pre-classification gates
+# ---------------------------------------------------------------------------
+
+def drop_inert_elements(slide_number: int, elements: List[RawElement]) -> List[RawElement]:
+    """Kept elements minus connectors and elements with nothing in them.
+
+    Neither carries text, a table, a chart or alt text, but both act as anchors in
+    proximity clustering and drag unrelated text into one mixed-type SCU. The RawDeck
+    is untouched, so provenance is unaffected.
+    """
+    useful = [
+        el for el in elements
+        if el.element_type is not ElementType.CONNECTOR
+        and bool((el.text or "").strip() or el.table or el.chart or el.alt_text)
+    ]
+    dropped = len(elements) - len(useful)
+    if dropped:
+        logger.debug(
+            "Slide %d: dropped %d connector/empty elements before SCU build (%d → %d)",
+            slide_number, dropped, len(elements), len(useful),
+        )
+    return useful
+
+
+# Below this, an enriched insight is almost always an image-only sentinel, a logo or
+# an icon with empty metadata. Classifying it costs up to nine model calls (four
+# umbrellas, one action item, four sub-categories) — about 40% of classification
+# spend on a real QBR — and contributes nothing to the recap.
+CLASSIFICATION_MIN_CONFIDENCE = 0.15
+
+_UMBRELLA_KEYS = (
+    "performance_and_position",
+    "opportunity_and_growth",
+    "market_and_external_context",
+    "relationship_and_collaboration",
+)
+
+
+def unclassified_insight(insight: EnrichedInsight, deck: RawDeck):
+    """The insight stored with every umbrella False and no action item.
+
+    It still reaches the store with full provenance; with no umbrella label it is
+    simply left out of recap synthesis.
+    """
+    umbrellas = {
+        key: ClassificationResult(
+            umbrella=UmbrellaLabel(key),
+            value=False,
+            confidence=0.0,
+            rationale="skipped_low_confidence",
+        )
+        for key in _UMBRELLA_KEYS
+    }
+    no_action = ActionItemResult(
+        content_unit_id=insight.content_unit_id,
+        is_action_item=False,
+        urgency=Urgency.NONE,
+        confidence=0.0,
+    )
+    return assemble_insight(
+        enriched=insight,
+        umbrella_results=umbrellas,
+        sub_category_results={},
+        action_item_result=no_action,
+        deck=deck,
+    )

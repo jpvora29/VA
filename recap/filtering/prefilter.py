@@ -68,6 +68,7 @@ eligible, skipped = prefilter.filter(all_scus)
 from __future__ import annotations
 
 import logging
+import re
 from collections import Counter
 from typing import List, Optional, Tuple
 
@@ -81,7 +82,11 @@ logger = logging.getLogger(__name__)
 
 # A unit with this many words or fewer is "header-length" — a real sentence
 # describing a business point is almost never this short.
-MAX_HEADER_WORDS = 4
+# Raised from 4 → 6: a 4-word cap was incorrectly filtering strategic
+# sub-headings like "Client Segmentation Focus" (3 words) and
+# "Multinational Development" (2 words) that appear as meaningful category
+# labels on strategy slides.
+MAX_HEADER_WORDS = 6
 
 # Content-unit types that always carry structured/quantitative data and
 # must never be skipped, regardless of length (mirrors rules.py's
@@ -99,6 +104,194 @@ _NEVER_SKIP_TYPES = {
 # like a real sentence/clause, not a bare label, so it's never skipped even
 # if short (e.g. "Portfolio grew." is 2 words but is a real statement).
 _SENTENCE_END_CHARS = (".", "!", "?")
+
+# ---------------------------------------------------------------------------
+# Known Line-of-Business vocabulary
+# ---------------------------------------------------------------------------
+# Short single-word (or short multi-word) labels that are genuine LoB names
+# must never be suppressed by the short_header_like_fragment rule — they are
+# the only place LoB context appears on many chart slides.  This set is
+# intentionally broad: false positives (keeping a non-LoB word that happens
+# to match) have negligible cost; false negatives (dropping a real LoB label)
+# strip commercial attribution from every downstream stage.
+#
+# Match is case-insensitive against the *full stripped text* of the SCU as
+# well as *any individual word* within it, so multi-word labels like
+# "Financial Lines" and single-word labels like "Marine" both match.
+_LOB_VOCABULARY: set[str] = {
+    # Core insurance lines
+    "marine", "aviation", "energy", "property", "casualty", "liability",
+    "motor", "health", "life", "cyber", "construction", "engineering",
+    "cargo", "hull", "specie", "war", "terrorism", "kidnap",
+    # Financial/professional lines
+    "finpro", "financial lines", "financial", "professional", "pi", "d&o",
+    "directors", "officers", "fidelity", "crime", "surety", "credit",
+    "political", "trade credit", "transactional",
+    # Specialty / regional
+    "pema", "latam", "apac", "emea", "dach",
+    "reinsurance", "facultative", "treaty", "excess", "surplus",
+    "accident", "personal accident", "pa",
+    # Segment / portfolio labels
+    "specialty", "commercial", "corporate", "sme", "mid-market", "midmarket",
+    "wholesale", "retail", "multinational", "global", "local",
+    "infrastructure", "natural resources", "power", "mining",
+    "agriculture", "agri", "forestry",
+}
+
+
+def _is_lob_label(text: str) -> bool:
+    """
+    Return True if *text* matches a known LoB name — either the whole
+    stripped text or any single word within it, case-insensitive.
+    This prevents short LoB labels from being dropped by the
+    short_header_like_fragment rule.
+    """
+    t = text.strip().lower()
+    if t in _LOB_VOCABULARY:
+        return True
+    # Also check individual words so "Financial Lines" (2 words) matches
+    # "financial lines" in the set.
+    words = t.split()
+    if len(words) >= 2:
+        for size in (2, 3):
+            for i in range(len(words) - size + 1):
+                phrase = " ".join(words[i:i + size])
+                if phrase in _LOB_VOCABULARY:
+                    return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Legal / boilerplate detection
+# ---------------------------------------------------------------------------
+# Patterns that identify Marsh/MMC standard legal footer text that appears
+# on back-cover and disclaimer slides.  These should always be filtered out
+# regardless of numeric content (registration numbers contain digits that
+# would otherwise trip the numeric early-pass).
+_LEGAL_PATTERNS = [
+    re.compile(r"registered\s+in\s+england\s+and\s+wales", re.I),
+    re.compile(r"registered\s+office\s*:", re.I),
+    re.compile(r"authorised\s+and\s+regulated\s+by\s+the\s+financial", re.I),
+    re.compile(r"financial\s+conduct\s+authority", re.I),
+    re.compile(r"marsh\s+(?:ltd|limited)\b", re.I),
+    re.compile(r"all\s+rights\s+reserved", re.I),
+    re.compile(r"confidential(?:ity)?\s+notice", re.I),
+    re.compile(r"this\s+(?:document|presentation|report)\s+(?:is\s+)?(?:confidential|for\s+information)", re.I),
+]
+
+
+def _is_legal_boilerplate(text: str) -> bool:
+    """
+    Return True if *text* reads like a legal / disclaimer / registered-office
+    footer that should always be suppressed regardless of numeric content.
+    """
+    for pat in _LEGAL_PATTERNS:
+        if pat.search(text):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Image-only chart sentinel detection
+# ---------------------------------------------------------------------------
+# The extractor emits a sentinel line "[IMAGE-ONLY CHART: data not
+# extractable — do not assert specific values or trend direction]" for any
+# chart element that is stored as a raster image with no underlying PPTX
+# chart XML.  An SCU whose content consists ONLY of such sentinel line(s)
+# — with nothing else — carries zero extractable business data.  Sending it
+# through enrichment wastes 2 LLM calls (context + KPI) and 4-5 more in
+# classification, returning empty metadata every time.  This guard detects
+# that case deterministically and routes the unit to the skip list instead.
+#
+# Safety: the check is strict — the unit is only skipped when the sentinel
+# accounts for ALL non-whitespace content (i.e. there is no accompanying
+# prose or numeric context that would make it worth enriching).  A slide
+# that mixes an image-only chart with a real narrative paragraph produces a
+# mixed-type SCU whose non-sentinel text will NOT be all-sentinel, so it
+# passes through normally.
+_RE_IMAGE_ONLY_SENTINEL_LINE = re.compile(
+    r"^\[IMAGE-ONLY[^\]]*\][^\n]*$", re.M | re.IGNORECASE
+)
+
+
+def _is_image_only_sentinel(text: str) -> bool:
+    """
+    Return True when *text* contains at least one [IMAGE-ONLY …] sentinel
+    AND has no other meaningful content once those sentinel lines are removed.
+    """
+    stripped_of_sentinels = _RE_IMAGE_ONLY_SENTINEL_LINE.sub("", text).strip()
+    # There must be at least one sentinel line present
+    has_sentinel = bool(_RE_IMAGE_ONLY_SENTINEL_LINE.search(text))
+    return has_sentinel and not stripped_of_sentinels
+
+# ---------------------------------------------------------------------------
+# ICG Carrier Exec / contact-table detection
+# ---------------------------------------------------------------------------
+# Every country-specific slide in an ICG QBR deck contains a standard
+# "ICG Carrier Exec's" box that lists the Marsh placement contact and the
+# QBE relationship manager by name and title — for example:
+#
+#   ICG Carrier Exec's
+#   Ellen Cameron   Insurer ICG Coordinator, Norway
+#   Scott Ormen     CEO
+#
+# These contact tables:
+#   - Are extracted as TABLE DATA SCUs by the extractor.
+#   - Contain a country name → enrichment assigns conf 0.70–0.95 (country
+#     signal fires) but returns empty LoB, KPI, and performance_direction.
+#   - Are correctly rejected by all four umbrella classifiers (no commercial
+#     claim) — but only AFTER 2 enrichment + 4 umbrella + 1 action-item =
+#     7 LLM calls have already been wasted per slide.
+#
+# The "ICG Carrier Exec" phrase is a fixed template heading that appears in
+# every contact block in the ICG deck format and nowhere else.  Detecting it
+# deterministically here costs zero LLM calls and has zero false-positive
+# risk — no real business content begins with this exact heading.
+#
+# Safety: the guard checks BOTH that the heading is present AND that the
+# remaining lines contain no numeric or percentage signal.  A contact table
+# that somehow also contains GWP figures (unexpected but theoretically
+# possible) would be kept so its numeric data is not silently lost.
+_RE_ICG_CONTACT_HEADING = re.compile(
+    r"ICG\s+Carrier\s+Exec",
+    re.IGNORECASE,
+)
+_RE_NUMERIC_OR_PCT = re.compile(r"[\d]+(?:[.,]\d+)?[%mMkKbB€£$]?|[€£$][\d]")
+# TABLE DATA extractor prefix lines that must be excluded from the numeric
+# check (they always contain digits as part of the row/col count, e.g.
+# "Table (2 rows x 2 cols)").
+_RE_TABLE_STRUCTURE_LINE = re.compile(
+    r"^\s*(?:\[TABLE DATA\]|\[CHART DATA\]|Table\s*\(\d+\s*rows?\s*x\s*\d+\s*cols?\))",
+    re.IGNORECASE,
+)
+
+
+def _is_icg_contact_table(text: str) -> bool:
+    """
+    Return True when *text* is an ICG Carrier Exec's contact block —
+    i.e. it contains the 'ICG Carrier Exec' heading and the remaining
+    content is entirely names/roles with no numeric or percentage signal.
+
+    Strips [TABLE DATA] / "Table (N rows x M cols)" header lines before
+    the numeric check — those lines always contain digits as part of the
+    extractor's row/column count and must not be treated as business data.
+    """
+    if not _RE_ICG_CONTACT_HEADING.search(text):
+        return False
+    # Strip the ICG heading line(s) AND extractor-format header lines,
+    # then check what remains for any genuine numeric/percentage/currency.
+    remaining_lines = [
+        line for line in text.splitlines()
+        if not _RE_ICG_CONTACT_HEADING.search(line)
+        and not _RE_TABLE_STRUCTURE_LINE.match(line)
+    ]
+    remaining = " ".join(remaining_lines).strip()
+    # If any genuine numeric / percentage / currency signal remains in the
+    # non-heading content, this is not a pure contact table — keep it.
+    if _RE_NUMERIC_OR_PCT.search(remaining):
+        return False
+    return True
+
 
 def _is_bare_value_fragment(scu: SemanticContentUnit) -> bool:
     """
@@ -141,6 +334,34 @@ def is_substantive(scu: SemanticContentUnit) -> Tuple[bool, str]:
     (False, reason)        — skip; reason is a short machine-readable tag
                               recorded on the audit artefact.
     """
+    # Legal / boilerplate footer text is always dropped, even if it contains
+    # digits (e.g. a company registration number).  This check must come
+    # before the numeric early-pass below.
+    if _is_legal_boilerplate(scu.content):
+        return False, "legal_boilerplate"
+
+    # Image-only chart sentinels — an SCU whose entire content is one or more
+    # "[IMAGE-ONLY CHART: …]" placeholder lines (emitted when the extractor
+    # cannot read a raster-image chart) carries zero extractable business data.
+    # Enriching it wastes 2 context/KPI LLM calls and 4-5 classifier calls
+    # while returning empty metadata every time.  Skip it here so those tokens
+    # are saved.  (Fix for issue 4.4 — image-only SCUs producing 58% low-conf
+    # insights and 74% missing KPI/metric rates on the QBE Q2 2026 run.)
+    if _is_image_only_sentinel(scu.content):
+        return False, "image_only_sentinel"
+
+    # ICG Carrier Exec's contact tables — standard per-country boilerplate
+    # listing the Marsh placement lead and QBE relationship manager by name
+    # and title only (no numeric / LoB / performance data).  The enrichment
+    # LLM incorrectly assigns high confidence (0.70–0.95) to these because
+    # they contain a country name, but all four umbrella classifiers then
+    # correctly reject them — wasting 7+ LLM calls per country slide for
+    # zero recap contribution.  Detecting them deterministically here with
+    # zero LLM cost: the heading "ICG Carrier Exec" is a fixed template
+    # phrase that appears in every ICG deck contact block and nowhere else.
+    if _is_icg_contact_table(scu.content):
+        return False, "contact_table"
+
     # Structured/quantitative content is always kept.
     if scu.content_unit_type in _NEVER_SKIP_TYPES:
         return True, ""
@@ -176,7 +397,13 @@ def is_substantive(scu: SemanticContentUnit) -> Tuple[bool, str]:
     # like a bare section header/label (e.g. "Attendees", "Performance",
     # "Leadership Introductions", "The Vision") rather than a business
     # statement with a subject and a claim.
+    # Exception: known Line-of-Business labels (e.g. "Marine", "Finpro",
+    # "PEMA", "Financial Lines") must never be dropped here — they are the
+    # only place LoB context appears on many chart slides and their loss
+    # silently strips commercial attribution from every downstream stage.
     if word_count <= MAX_HEADER_WORDS:
+        if _is_lob_label(text):
+            return True, ""
         return False, "short_header_like_fragment"
 
     return True, ""
@@ -264,7 +491,10 @@ class ContentPreFilter:
             if keep:
                 eligible.append(scu)
             else:
-                skipped.append(scu)
+                # Annotate with the filter reason so the 02b artefact carries
+                # a machine-readable audit trail explaining why each unit was
+                # dropped without needing a separate lookup structure.
+                skipped.append(scu.model_copy(update={"filter_reason": reason or "unknown"}))
                 reasons[reason] += 1
 
         if restored:

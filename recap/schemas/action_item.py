@@ -6,7 +6,7 @@ Structured output for the action-item classifier.
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Any
 
 from pydantic import BaseModel, Field
 
@@ -41,3 +41,19 @@ class ActionItemResult(BaseModel):
     # Source context
     source_slide_number: Optional[int] = None
     source_section: Optional[str]      = None
+    source_bullet_id: Optional[str] = None
+    actions: List["AtomicAction"] = Field(default_factory=list)
+
+
+class AtomicAction(BaseModel):
+    """One distinct task extracted from one sentence or bullet."""
+    task: str
+    owner: Optional[str] = None
+    deadline: Optional[str] = None
+    geography: Optional[str] = None
+    line_of_business: Optional[str] = None
+    source_bullet_id: Optional[str] = None
+    source_element_ids: List[str] = Field(default_factory=list)
+    confidence: float = Field(ge=0.0, le=1.0, default=0.0)
+    urgency: Urgency = Urgency.UNKNOWN
+    rationale: Optional[str] = None

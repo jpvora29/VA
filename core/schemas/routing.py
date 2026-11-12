@@ -378,7 +378,9 @@ class ContextFillerSignature(Signature):
     [INHERITANCE POLICY]
     - P0: Always begin with the current user query.
     - P1: If filters (Country, Carrier, Year, Product, etc.) are missing in
-      the current query, inherit from the IMMEDIATE prior query first.
+      the current query, inherit from the IMMEDIATE prior turn first — use the
+      values in `last_resolved_scope` (what that answer was computed on), not
+      a re-reading of `last_user_query`.
     - P2: If P1 yields nothing, scan older history (newest -> oldest) and
       inherit from the most recent turn whose family matches (or overlaps for
       HYBRID) the current family.
@@ -435,6 +437,15 @@ class ContextFillerSignature(Signature):
     )
     conversation_history: List[str] = InputField(
         desc="Older user queries (oldest -> newest), excluding `last_user_query` and `current_user_query`. Empty list if not available."
+    )
+    last_resolved_scope: str = InputField(
+        desc=(
+            "JSON of the filters the PRIOR turn actually ran with, already resolved to "
+            "canonical column -> values (e.g. {\"Carrier_Group\": [\"ZURICH\"], "
+            "\"Country\": [\"Singapore\"]}). '{}' on the first turn. For P1 inheritance, "
+            "take filter VALUES from here rather than re-reading `last_user_query`: these "
+            "are what the user saw the answer computed on."
+        )
     )
     routing_context: RoutingContext = OutputField(
         desc="Structured routing decision + inherited filters + timeframe + intent + rationale."

@@ -119,9 +119,12 @@ _STAGE_TOKEN_DEFAULTS = {
     "umbrella_classification": 512,
     "subcategory_classification": 512,
     "action_item_classification": 512,
-    # Enrichment — structured metadata extraction
-    "enrichment_context": 600,
-    "enrichment_kpi": 1024,
+    # Enrichment — structured metadata extraction. Raised 600→1200 / 1024→1500:
+    # long mixed-type SCUs (tables, multi-series charts) were cut off before every
+    # LoB and country was listed, and owner/deadline prose needs headroom beside
+    # the KPIs.
+    "enrichment_context": 1200,
+    "enrichment_kpi": 1500,
     # Recap generation — free-text synthesis, largest budgets
     "recap_takeaway": 2000,
     "recap_dedup": 5000,
@@ -163,8 +166,21 @@ class Settings:
 
     @property
     def carriers(self) -> List[str]:
-        """Canonical carrier names for metadata matching."""
-        return _ASSET_CONFIG.get("carriers", [])
+        """Canonical carrier names for metadata matching.
+
+        Accepts the current ``{canonical, aliases}`` entries and the legacy flat list
+        of strings, so an older config.yaml keeps working.
+        """
+        return [_entry_canonical(e) for e in _ASSET_CONFIG.get("carriers", [])]
+
+    @property
+    def carrier_alias_index(self) -> dict:
+        """Every carrier alias and canonical name, lowercased, to its canonical name.
+
+        e.g. {"agcs": "Allianz", "z-horizon": "Zurich", ...} — how the slide-1
+        metadata reader resolves a sub-company named in the text to its carrier.
+        """
+        return _build_alias_index(_ASSET_CONFIG.get("carriers", []))
 
     @property
     def lines_of_business(self) -> List[str]:
@@ -302,8 +318,16 @@ class Settings:
     # ----------------------------------------------------------------
 
     @property
+    def http_timeout(self) -> float:
+        """Seconds each Recap model call may take (HTTP_TIMEOUT, default 120).
+
+        A completion routinely runs 30-90 s, so the app-wide LLM_TIMEOUT is too short.
+        """
+        return float(os.environ.get("HTTP_TIMEOUT", "120"))
+
+    @property
     def max_concurrent_llm_calls(self) -> int:
-        return int(os.environ.get("MAX_CONCURRENT_LLM_CALLS", "10"))
+        return int(os.environ.get("MAX_CONCURRENT_LLM_CALLS", "5"))
 
     @property
     def max_concurrent_insight_classification(self) -> int:

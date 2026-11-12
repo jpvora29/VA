@@ -25,9 +25,11 @@ class Tab:
 # Order IS the navbar order. Studio is first because it is the landing workspace.
 TABS: Tuple[Tab, ...] = (
     Tab("studio", "Studio", "bi-easel2", "Build a QBR deck from the data"),
-    Tab("chat", "Chatbot", "bi-chat-square-dots", "Ask the Virtual Analyst"),
     Tab("recap", "Recap", "bi-journal-text", "Recap a review from its decks"),
     Tab("mom", "MoM", "bi-card-checklist", "Draft minutes of meeting"),
+    # The chatbot sits last and goes by "Ask ICG" (2026-11-11). The id stays "chat":
+    # it is the pane's DOM id and the value saved in the session's ``active-tab`` store.
+    Tab("chat", "Ask ICG", "bi-chat-square-dots", "Ask the Virtual Analyst"),
 )
 
 DEFAULT_TAB: str = TABS[0].id

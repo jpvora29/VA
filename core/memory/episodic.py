@@ -125,6 +125,7 @@ class SqliteEpisodicStore:
         question: str | None = None,
         route: str | None = None,
         answer: str | None = None,
+        turn_id: str | None = None,
     ) -> None:
         """Persist one rating, with the diagnosis when the user gave one.
 
@@ -138,7 +139,9 @@ class SqliteEpisodicStore:
         verbatim.
 
         The question and the route travel with it so a correction can later be
-        matched to similar turns without re-reading the transcript.
+        matched to similar turns without re-reading the transcript. `turn_id`
+        is the id on the turn's saved trace (`core.store.run_traces`), which
+        joins the rating to the exact run that produced the answer.
         """
         self.remember(
             user_id,
@@ -154,6 +157,7 @@ class SqliteEpisodicStore:
                         ("reason", reason),
                         ("question", question),
                         ("answer", (answer or "")[:1000] or None),
+                        ("turn_id", turn_id),
                     )
                     if value
                 },

@@ -68,7 +68,7 @@ def test_the_unprefixed_standalone_variables_are_not_read(monkeypatch):
     monkeypatch.setenv("REASONING_EFFORT_RECAP_DEDUP", "high")
     monkeypatch.setenv("TOKENS_ENRICHMENT_KPI", "9")
     assert settings.reasoning_effort_for("recap_dedup") is None
-    assert settings.token_budget("enrichment_kpi") == 1024
+    assert settings.token_budget("enrichment_kpi") == 1500
 
 
 def test_the_tier_effort_does_not_leak_into_the_recap_effort(monkeypatch):
@@ -77,12 +77,12 @@ def test_the_tier_effort_does_not_leak_into_the_recap_effort(monkeypatch):
 
 
 def test_token_budgets_have_defaults_and_overrides(monkeypatch):
-    assert settings.token_budget("enrichment_kpi") == 1024
+    assert settings.token_budget("enrichment_kpi") == 1500
     assert settings.token_budget("no_such_stage") == 1024
     monkeypatch.setenv("RECAP_TOKENS_ENRICHMENT_KPI", "1500")
     assert settings.token_budget("enrichment_kpi") == 1500
     monkeypatch.setenv("RECAP_TOKENS_ENRICHMENT_KPI", "lots")
-    assert settings.token_budget("enrichment_kpi") == 1024
+    assert settings.token_budget("enrichment_kpi") == 1500
 
 
 # ── _bind: the request a call is built from ─────────────────────────────────
@@ -119,20 +119,32 @@ REASONING = TierConfig("gpt-reasoning", effort="high")
 
 
 def test_a_classic_tier_without_recap_effort_is_unchanged(bind_with):
+    """JSON output and Recap's own timeout — and no output cap (see the next test)."""
     client = bind_with(CLASSIC, 512)
     assert client.config == CLASSIC
-    assert client.bound == {"response_format": {"type": "json_object"}, "max_tokens": 512}
+    assert client.bound == {"response_format": {"type": "json_object"}, "timeout": 120.0}
+
+
+def test_no_output_cap_is_ever_sent(bind_with):
+    """The standalone app dropped the cap: on a reasoning deployment it is shared with
+    the hidden reasoning tokens, and a long slide came back empty, not short."""
+    for config, effort in ((CLASSIC, None), (CLASSIC, "low"), (REASONING, None)):
+        bound = bind_with(config, 512, effort).bound
+        assert "max_tokens" not in bound
+        assert "max_completion_tokens" not in bound
+
+
+def test_http_timeout_is_recaps_own_setting(bind_with, monkeypatch):
+    monkeypatch.setenv("HTTP_TIMEOUT", "45")
+    assert bind_with(CLASSIC, 512).bound["timeout"] == 45.0
 
 
 def test_a_recap_effort_turns_the_call_into_a_reasoning_request(bind_with):
-    """Effort replaces temperature — a reasoning model rejects one — and the cap goes
-    out as max_completion_tokens, the parameter a reasoning deployment accepts."""
+    """Effort replaces temperature — a reasoning model rejects one."""
     client = bind_with(CLASSIC, 512, "low")
     assert client.config.effort == "low"
     assert client.config.temperature is None
     assert client.config.deployment == "gpt-classic"
-    assert client.bound["max_completion_tokens"] == 512
-    assert "max_tokens" not in client.bound
 
 
 def test_a_recap_effort_replaces_the_tier_effort(bind_with):
@@ -243,3 +255,56 @@ def test_the_cover_names_the_carrier_and_the_country(tmp_path):
     metadata = read_cover(path.read_bytes())
     assert metadata.carrier == carrier
     assert metadata.country_region == country
+
+
+# ── retries ─────────────────────────────────────────────────────────────────
+
+
+class FlakyRunnable:
+    """Fails with each of ``failures`` in turn, then answers."""
+
+    def __init__(self, failures) -> None:
+        self._failures = list(failures)
+        self.calls = 0
+
+    async def ainvoke(self, messages):
+        self.calls += 1
+        if self._failures:
+            failure = self._failures.pop(0)
+            if failure == "empty":
+                return SimpleNamespace(content="", usage_metadata={},
+                                       response_metadata={"finish_reason": "length"})
+            raise failure
+        return SimpleNamespace(content='{"ok": true}', usage_metadata={})
+
+
+def _no_sleep(monkeypatch):
+    waits = []
+
+    async def fake_sleep(seconds):
+        waits.append(seconds)
+
+    monkeypatch.setattr(llm_client.asyncio, "sleep", fake_sleep)
+    return waits
+
+
+def test_an_empty_reply_is_retried(monkeypatch):
+    """A content-filter hit or truncation comes back empty; it is worth another try."""
+    waits = _no_sleep(monkeypatch)
+    flaky = FlakyRunnable(["empty"])
+    monkeypatch.setattr(llm_client, "_bind", lambda tier, budget, effort=None: flaky)
+
+    raw = asyncio.run(LLMClient().call(system_prompt="s", user_message="u"))
+    assert raw == '{"ok": true}'
+    assert flaky.calls == 2 and len(waits) == 1
+
+
+def test_a_timeout_backs_off_longer_than_an_ordinary_failure(monkeypatch):
+    waits = _no_sleep(monkeypatch)
+    flaky = FlakyRunnable([TimeoutError("Request timed out."), RuntimeError("429 ratelimit")])
+    monkeypatch.setattr(llm_client, "_bind", lambda tier, budget, effort=None: flaky)
+
+    asyncio.run(LLMClient().call(system_prompt="s", user_message="u"))
+    timeout_wait, ratelimit_wait = waits
+    assert timeout_wait == 15.0
+    assert ratelimit_wait == llm_client.settings.retry_base_delay * 2

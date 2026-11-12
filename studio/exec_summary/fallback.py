@@ -32,6 +32,9 @@ _RULE_FOR_PATH = {PATH_EXPAND: "WS_EXPAND", PATH_REBUILD: "WS_REBUILD"}
 WELL_AHEAD_PP = 10.0
 #: A growth gap this narrow reads as "in line with".
 IN_LINE_PP = 0.5
+#: What a bare "#4" means, said every time: the carrier's position by Marsh-placed
+#: premium among all carriers in the slice's Marsh book.
+RANK_LABEL = "premium rank"
 
 
 class _Writer:
@@ -115,18 +118,19 @@ def _share(w: _Writer, m: SliceMetrics, owner: str = "") -> str:
 
 
 def _rank(w: _Writer, m: SliceMetrics) -> str:
-    """"climbing to #1" / "slipping to #7" / "holding #3" — empty when unranked."""
-    if not w.has("carrier_rank"):
+    """"premium rank up 2 to #1" / "premium rank down 1 to #7" / "premium rank unchanged
+    at #3" — names the metric and the direction, empty when unranked."""
+    if not w.has("carrier_rank") or m.rank_movement is None or not w.has("rank_movement"):
         return ""
-    move = m.rank_movement
-    w.cite("rank_movement")
-    if move is None:
-        return ""
-    if move > 0:
-        return f"climbing to {w('carrier_rank')}"
-    if move < 0:
-        return f"slipping to {w('carrier_rank')}"
-    return f"holding {w('carrier_rank')}"
+    if m.rank_movement == 0:
+        return f"{RANK_LABEL} {w('rank_movement')} at {w('carrier_rank')}"
+    return f"{RANK_LABEL} {w('rank_movement')} to {w('carrier_rank')}"
+
+
+def _with_rank(w: _Writer, m: SliceMetrics) -> str:
+    """"with premium rank up 2 to #1" — the clause form callers append."""
+    rank = _rank(w, m)
+    return f"with {rank}" if rank else ""
 
 
 def _joined(parts: Sequence[str], last: str = "and") -> str:
@@ -152,7 +156,7 @@ def _inside(store: EvidenceStore, within: Optional[Mover], ids: List[str], *,
 
 def _headline_tail(w: _Writer, m: SliceMetrics) -> str:
     """", lifting share of wallet to 9.1% and climbing to #5" — share and rank, if moved."""
-    tail = _joined([_share(w, m), _rank(w, m)])
+    tail = ", ".join(p for p in (_share(w, m), _with_rank(w, m)) if p)
     return f", {tail}" if tail else ""
 
 
@@ -258,10 +262,9 @@ def _leaders_sentence(store: EvidenceStore, leaders: Sequence[Mover]) -> Optiona
         w = _Writer(store, mover.evidence)
         share = (f" ({w('contribution_to_change')} of the increase)"
                  if i == 0 and w.has("contribution_to_change") else "")
-        rank = _rank(w, mover.metrics).replace("climbing", "climbed").replace(
-            "slipping", "slipped").replace("holding", "held")
+        rank = _with_rank(w, mover.metrics)
         clause = f"{mover.name} added {w.mag('carrier_premium_change')}{share}"
-        clause += f" and {rank}" if rank else ""
+        clause += f", {rank}" if rank else ""
         ids.extend(w.take())
         if i == 0:
             inside = _inside(store, mover.within, ids, gained=True)
@@ -352,11 +355,11 @@ def _overall_sentence(analysis: ExecAnalysis) -> ModelFinding:
 
 
 def _rank_clause(w: _Writer, m: SliceMetrics) -> str:
-    """"at rank #5, up 1" / "at rank #7, unchanged"."""
+    """"premium rank #5 (up 1)" / "premium rank #7 (unchanged)"."""
     if not w.has("carrier_rank"):
         return ""
-    move = f", {w('rank_movement')}" if w.has("rank_movement") and m.rank_movement else ""
-    return f"at rank {w('carrier_rank')}{move}"
+    move = f" ({w('rank_movement')})" if w.has("rank_movement") else ""
+    return f"{RANK_LABEL} {w('carrier_rank')}{move}"
 
 
 def _country_sentence(analysis: ExecAnalysis, ca: CountryAnalysis) -> ModelFinding:
@@ -412,7 +415,7 @@ def _product_leader_sentence(analysis: ExecAnalysis) -> Optional[ModelFinding]:
         if multi:
             where = _split(analysis, mover.name, ids, by="change")
             clause += f" ({where})" if where else ""
-        rank = _rank(w, mover.metrics)
+        rank = _with_rank(w, mover.metrics)
         clause += f", {rank}" if rank else ""
         ids.extend(w.take())
         if i == 0 and mover.within is not None:
@@ -436,7 +439,7 @@ def _product_drag_sentence(analysis: ExecAnalysis) -> Optional[ModelFinding]:
         moved = _moved(w, m)
     book = (f" while its Marsh book grew {w.mag('marsh_yoy')}"
             if w.has("marsh_yoy") and m.marsh_growth.valid and m.marsh_growth.pct > 0 else "")
-    rank = _rank(w, m)
+    rank = _with_rank(w, m)
     text = f"{drag.name} held the total back: it {moved}{book}" + (f", {rank}" if rank else "")
     ids.extend(w.take())
     if drag.within is not None:

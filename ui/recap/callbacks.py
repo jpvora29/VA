@@ -85,15 +85,20 @@ def stage_decks(
     return staged, errors
 
 
-def read_first_cover(contents: Optional[Sequence[str]]) -> DeckMetadata:
+def read_first_cover(
+    contents: Optional[Sequence[str]],
+    filenames: Optional[Sequence[str]] = None,
+) -> DeckMetadata:
     """The cover slide of the first deck in the drop, or nothing readable.
 
     The first deck decides, rather than the last one to parse cleanly: the user
     picked them in an order, and the earliest is the one whose client and period the
     others are being read alongside.
     """
-    for content in contents or []:
-        metadata = read_cover(decode(content))
+    names = list(filenames or [])
+    for index, content in enumerate(contents or []):
+        name = names[index] if index < len(names) else ""
+        metadata = read_cover(decode(content), filename=name)
         if not metadata.is_empty():
             return metadata
     return DeckMetadata()
@@ -132,7 +137,7 @@ def register_recap(app) -> None:
         if not contents:
             return no_update, no_update, no_update, no_update
         staged, errors = stage_decks(contents, filenames)
-        metadata = read_first_cover(contents)
+        metadata = read_first_cover(contents, filenames)
         return (
             [file.as_store() for file in staged],
             metadata.as_store(),

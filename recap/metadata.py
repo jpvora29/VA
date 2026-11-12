@@ -64,8 +64,11 @@ class DeckMetadata:
         return not self.found()
 
 
-def read_cover(pptx_bytes: bytes) -> DeckMetadata:
+def read_cover(pptx_bytes: bytes, filename: str = "") -> DeckMetadata:
     """Parse the first slide of a QBR deck for whatever metadata it states.
+
+    ``filename`` is the fallback for the year, which a deck often states only in its
+    name ("UK QBE QBR Europe 2026 Q2 v3.pptx").
 
     Never raises: a deck that will not open, or one with no cover slide, simply
     contributes nothing — the run can still proceed with what the user typed or with
@@ -83,10 +86,10 @@ def read_cover(pptx_bytes: bytes) -> DeckMetadata:
 
     slide = slides[0]
     cover_text = _all_text(slide)
-    period = _read_period(cover_text)
+    period = _read_period(cover_text, filename)
     names = _read_names(slide)
     scope = _read_scope(cover_text, slides)
-    return DeckMetadata(**period, **names, **scope)
+    return DeckMetadata(**period, **_client_from_scope(names, scope), **scope)
 
 
 def deck_id_for(filename: str, index: int = 0) -> str:
@@ -112,23 +115,29 @@ def _all_text(slide) -> str:
     )
 
 
-def _read_period(text: str) -> dict:
-    """Quarter, year, a free-form period label, and the meeting date."""
+def _read_period(text: str, filename: str = "") -> dict:
+    """Quarter, year, the period label, and the meeting date.
+
+    The year falls back to the filename when the cover does not state it. The label
+    is always filled when it can be — as written on the cover, else quarter + year —
+    so recap titles and output filenames carry the whole period.
+    """
     quarter = _PERIOD.search(text)
-    year = _YEAR.search(text)
+    year = _YEAR.search(text) or _YEAR.search(filename or "")
     date = _ISO_DATE.search(text)
+    label = _PERIOD_WITH_YEAR.search(text)
 
     found = {
         "quarter": quarter.group(1).upper() if quarter else "",
         "year": year.group(1) if year else "",
         "meeting_date": date.group(1).replace("/", "-") if date else "",
-        "period_label": "",
     }
-    # A period label is only worth carrying when quarter and year are not both known:
-    # with both, it says the same thing twice and the recap title reads it twice.
-    if not (found["quarter"] and found["year"]):
-        label = _PERIOD_WITH_YEAR.search(text)
-        found["period_label"] = label.group(1).strip() if label else ""
+    if label:
+        found["period_label"] = label.group(1).strip()
+    else:
+        found["period_label"] = " ".join(
+            part for part in (found["quarter"], found["year"]) if part
+        ) if found["quarter"] and found["year"] else ""
     return found
 
 
@@ -162,22 +171,46 @@ def _read_names(slide) -> dict:
 def _read_scope(cover_text: str, slides: list) -> dict:
     """The carrier and the country or region the review is about.
 
-    Matched against the canonical lists in ``assets/config.yaml``: the cover first,
-    since that is where a deck says what it is about, and the whole deck only when
-    the cover names neither. A region wins over a country — it is the broader scope,
-    and the one the chip should show.
-    """
-    carrier = _first_named(cover_text, settings.carriers)
-    country_region = _first_named(cover_text, settings.regions + settings.countries)
-    if carrier and country_region:
-        return {"carrier": carrier, "country_region": country_region}
+    The carrier is matched through every alias in ``assets/config.yaml`` ("AGCS",
+    "Zurich UK", "AIG Talbot") to its canonical name: on the cover first, and across
+    the whole deck only when the cover names none.
 
-    deck_text = " | ".join(_all_text(slide) for slide in slides)
+    The country or region is read from the cover ONLY. A body slide that merely
+    mentions one ("Zurich has a US Surplus Lines licence") would otherwise become the
+    scope, and the client label would read "Zurich North America". A region wins over
+    a country — it is the broader scope, and the one the chip should show.
+    """
+    carrier = _carrier_named(cover_text)
+    if not carrier:
+        carrier = _carrier_named(" | ".join(_all_text(slide) for slide in slides))
     return {
-        "carrier": carrier or _first_named(deck_text, settings.carriers),
-        "country_region": country_region
-        or _first_named(deck_text, settings.regions + settings.countries),
+        "carrier": carrier,
+        "country_region": _first_named(cover_text, settings.regions + settings.countries),
     }
+
+
+def _client_from_scope(names: dict, scope: dict) -> dict:
+    """The client label as "<carrier> <country/region>" whenever either was found.
+
+    Both come from the canonical lists, so they beat whatever the title placeholder
+    held — and give the "QBE Europe" label recap titles and filenames want.
+    """
+    from_scope = " ".join(part for part in (scope["carrier"], scope["country_region"]) if part)
+    return {**names, "client_name": from_scope or names["client_name"]}
+
+
+def _carrier_named(text: str) -> str:
+    """The canonical carrier whose longest alias appears in ``text``, or "".
+
+    Longest wins so the most specific name decides: "Zurich UK" over "Zurich".
+    """
+    best_alias, best_canonical = "", ""
+    for alias, canonical in settings.carrier_alias_index.items():
+        if len(alias) > len(best_alias) and re.search(
+            r"\b" + re.escape(alias) + r"\b", text, re.I
+        ):
+            best_alias, best_canonical = alias, canonical
+    return best_canonical
 
 
 def _first_named(text: str, names: List[str]) -> str:

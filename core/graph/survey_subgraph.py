@@ -330,7 +330,8 @@ class SurveySubGraph:
                 "survey_overflow": False,
             }
 
-        record_recovered_sql_fix(state, route="survey", working_sql=sql_query)
+        record_recovered_sql_fix(state, route="survey", working_sql=sql_query,
+                                 row_count=result.row_count)
 
         logger.debug("Survey query fetched %d row(s)", result.row_count)
         query_result = GeneralFunctions.clean_sql_output(

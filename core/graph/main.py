@@ -39,6 +39,7 @@ from core.graph.gpr_subgraph import GPRSubGraph
 from core.graph.survey_subgraph import SurveySubGraph
 from core.observability import latency_timer, log_event, turn_context
 from core.state.agent_state import AgentState
+from core.turn.node import turn_spec_node
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -123,6 +124,7 @@ class LangGraph:
         workflow.add_node("clarify_gate", self.clarify_gate)
         workflow.add_node("custom_peer_gate", self.custom_peer_gate)
         workflow.add_node("rephraser_agent", self.rephraser_agent)
+        workflow.add_node("turn_spec", turn_spec_node)
         workflow.add_node("router", self.router)
         workflow.add_node("survey_agent", self.survey_agent)
         workflow.add_node("gpr_agent", self.gpr_agent)
@@ -165,7 +167,10 @@ class LangGraph:
         # Custom-peer mismatch HITL: pauses only when a pinned peer set is active
         # and the turn asks about a different carrier. Pass-through otherwise.
         workflow.add_edge("rephraser_agent", "custom_peer_gate")
-        workflow.add_edge("custom_peer_gate", "router")
+        # Phase 2 shadow: one TurnSpec built from every decision above, with the
+        # places they contradict each other logged. Read by nothing yet.
+        workflow.add_edge("custom_peer_gate", "turn_spec")
+        workflow.add_edge("turn_spec", "router")
 
         # Conditional routing
         workflow.add_conditional_edges(

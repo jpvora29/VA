@@ -80,17 +80,31 @@ class StructuredInsight(BaseModel):
         """
         Populate denormalised umbrella_labels and sub_category_labels
         from the classification bundle. Call after assembly.
+
+        Parent–child enforcement: a sub-category is only included in
+        sub_category_labels when its parent umbrella survived the
+        active_umbrellas() cull and is present in umbrella_labels.
+        This prevents orphaned sub-category labels (e.g. market_conditions
+        appearing without market_and_external_context in umbrella_labels).
         """
         self.umbrella_labels = [
             u.value for u in self.classification.active_umbrellas()
         ]
+        active_umbrella_set = set(self.umbrella_labels)
+
+        # Map each sub-category slot to its parent umbrella key
+        sub_cat_slots = [
+            ("performance_and_position",      self.classification.performance_sub_category),
+            ("opportunity_and_growth",         self.classification.growth_sub_category),
+            ("market_and_external_context",    self.classification.market_sub_category),
+            ("relationship_and_collaboration", self.classification.relationship_sub_category),
+        ]
+
         sub_cats: List[str] = []
-        for sc in [
-            self.classification.performance_sub_category,
-            self.classification.growth_sub_category,
-            self.classification.market_sub_category,
-            self.classification.relationship_sub_category,
-        ]:
+        for parent_umbrella_key, sc in sub_cat_slots:
             if sc and sc.sub_category:
-                sub_cats.append(sc.sub_category)
+                # Only include if the parent umbrella is still active
+                if parent_umbrella_key in active_umbrella_set:
+                    sub_cats.append(sc.sub_category)
+
         self.sub_category_labels = sub_cats

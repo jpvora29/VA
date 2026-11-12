@@ -176,6 +176,17 @@ class PlanProgress:
     def limitations(self) -> Tuple[str, ...]:
         return tuple(unmet.text for unmet in self.unmet())
 
+    def limited_requirements(self) -> Tuple[str, ...]:
+        """Requirement keys that carry a SPECIFIC reason a step reported.
+
+        Only an attempt that actually ran and came back empty or failed earns a
+        limitation that excuses its requirement. A requirement nothing tried
+        gets the generic sentence in `limitations()`, but stays missing for the
+        completeness check — "never investigated" is the defect it exists to
+        catch, and a boilerplate sentence must not hide it.
+        """
+        return tuple(self._attempts_by_requirement())
+
 
 # --------------------------------------------------------------------------- #
 # Deciding what to do next

@@ -40,6 +40,18 @@ def finish_transcript(request: TurnRequest, job: Job,
     return chat
 
 
+def stamp_turn_id(transcript: dict, first_new: int, turn_id: str) -> None:
+    """Mark every message this turn added with the turn's id.
+
+    The same id is written on the turn's saved trace, so a thumbs-down on an
+    answer can be joined to exactly the run that produced it — its route, its
+    model calls, its timings — instead of being matched by question text.
+    """
+    for message in transcript.get("messages", [])[first_new:]:
+        if isinstance(message, dict) and message.get("type") == "AIMessage":
+            message.setdefault("turn_id", turn_id)
+
+
 def early_job_id(job_id: str) -> str:
     """The `_job_id` an early (provisional) transcript carries."""
     return f"{job_id}:early"
@@ -68,6 +80,7 @@ def provisional_transcript(request: TurnRequest, job: Job, state: dict,
 def finalize_turn(request: TurnRequest, job: Job, *, commit: Callable,
                   persist: Callable[[Any, str, dict], Any]) -> None:
     transcript = finish_transcript(request, job, commit)
+    stamp_turn_id(transcript, len(request.transcript.get("messages", [])), job.id)
     # Retain the finished answer even if storage fails. The browser must explain
     # that it is unsaved instead of silently losing the result.
     job.transcript = transcript

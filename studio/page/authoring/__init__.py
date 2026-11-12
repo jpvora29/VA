@@ -110,6 +110,10 @@ from studio.page.authoring.setup import (
     generate_progress,
     custom_peer_picker,
     info_tip,
+    market_mode_style,
+    PEER_CUSTOM,
+    PEER_EXISTING,
+    peer_mode_summary,
     peer_counter,
     peer_min_note,
     peer_set_body,
@@ -141,6 +145,7 @@ __all__ = [
     "info_tip",
     "generate_progress",
     "custom_peer_picker", "survey_peer_picker", "peer_min_note", "peer_counter",
+    "market_mode_style", "peer_mode_summary", "PEER_CUSTOM", "PEER_EXISTING",
     "period_note", "PERIOD_BASIS_DEFAULT", "PERIOD_BASIS_OPTIONS",
     "DATA_BASIS_DEFAULT", "DATA_BASIS_OPTIONS", "MIN_CUSTOM_PEERS", "MIN_PEERS_MESSAGE",
     # busy overlay (one scope for the whole Studio pane)

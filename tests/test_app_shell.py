@@ -65,8 +65,9 @@ def _classes(node, prefix: str) -> dict[str, str]:
 
 
 def test_studio_is_the_landing_workspace():
-    """The user lands on Studio; Chatbot, Recap and MoM follow, in that order."""
-    assert [t.id for t in TABS] == ["studio", "chat", "recap", "mom"]
+    """The user lands on Studio; Recap and MoM follow, and Ask ICG (the chatbot) is last."""
+    assert [t.id for t in TABS] == ["studio", "recap", "mom", "chat"]
+    assert TABS[-1].label == "Ask ICG"
     assert DEFAULT_TAB == "studio"
 
 

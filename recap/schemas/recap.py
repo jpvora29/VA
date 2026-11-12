@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .enrichment import Urgency
 
@@ -23,6 +23,8 @@ class ActionItemSummary(BaseModel):
     urgency: Urgency            = Urgency.UNKNOWN
     source_slide_number: Optional[int] = None
     source_content_unit_id: Optional[str] = None
+    source_bullet_id: Optional[str] = None
+    source_element_ids: List[str] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0, default=0.0)
     # Composite ranking score (higher = more important); computed at parse time
     priority_score: float = Field(default=0.0, exclude=True)
@@ -52,6 +54,21 @@ class TitledTakeaway(BaseModel):
         description="Source sub-category key, or null if umbrella-level only.",
     )
     source_content_unit_ids: List[str] = Field(default_factory=list)
+
+    @field_validator("narrative", mode="before")
+    @classmethod
+    def narrative_must_not_be_null(cls, v):
+        """
+        Reject None and JSON-null sentinel strings ("None", "null") that can
+        arrive when an LLM returns `"narrative": null` and Python's json.loads
+        converts that to the Python value None, which str() would otherwise
+        coerce to the truthy string "None".
+        """
+        if v is None or str(v).strip().lower() in ("none", "null", ""):
+            raise ValueError(
+                "narrative must be a non-empty string — received null/None/empty"
+            )
+        return v
 
 
 class CountrySummary(BaseModel):

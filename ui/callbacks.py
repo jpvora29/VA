@@ -2086,6 +2086,8 @@ def _save_turn_trace(request: TurnRequest, job: Job) -> None:
         return
     if job.error:
         trace = dict(trace, status="error")
+    # The id stamped on this turn's answer (`stamp_turn_id`), so feedback joins it.
+    trace = dict(trace, turn_id=job.id)
     question = next((m.get("content") for m in reversed(request.transcript.get("messages", []))
                      if m.get("type") == "HumanMessage"), "")
     state = job.state or {}
@@ -2855,6 +2857,7 @@ def record_message_feedback(
         (answer.get("content") or "")[:300] or None,
         question=answer.get("question"),
         route=answer.get("route"),
+        turn_id=answer.get("turn_id"),
     )
     return {"idx": idx, "rating": rating}
 
@@ -2951,6 +2954,7 @@ def record_feedback_reason(
         question=answer.get("question"),
         route=answer.get("route"),
         answer=answer.get("content"),
+        turn_id=answer.get("turn_id"),
     )
     logger.info("feedback reason recorded: reason=%s noted=%s", reason, bool(note))
     return feedback_ack(reason_label(reason), bool(note))

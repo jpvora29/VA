@@ -140,12 +140,16 @@ def test_the_summary_reads_overall_then_country_then_products_gaps_and_openings(
     assert not any(n in overall for n in ("Cyber", "Property", "Casualty", "SG"))
     # 2. The country: share of wallet and rank.
     assert statements[1].startswith("In SG,") and "share of wallet at" in statements[1]
-    assert re.search(r"at rank #\d", statements[1])
+    assert re.search(r"premium rank #\d+ \((up \d+|down \d+|unchanged)\)", statements[1])
     # 3. Products: what added most (rank move, industry inside), what held it back.
     product = [s for f, s in zip(findings, statements) if f.rule_id == "EXEC_PRODUCT"]
     assert product[0].startswith("By product, Cyber added the most, $20.0M")
     assert "mostly in Technology" in product[0]
-    assert re.search(r"(climbing to|slipping to|holding) #\d", product[0])
+    assert re.search(r"with premium rank (up \d+ to|down \d+ to|unchanged at) #\d", product[0])
+    # The rank is never bare: every "#N" names its metric (user feedback, 2026-11-11).
+    for text in statements:
+        for hit in re.finditer(r"#\d", text):
+            assert "premium rank" in text[max(0, hit.start() - 40):hit.start()], text
     assert product[1].startswith("Casualty held the total back: it fell 19.4%")
     assert "mostly in Wholesale" in product[1]
     # 4. Gaps: the product behind its Marsh book.

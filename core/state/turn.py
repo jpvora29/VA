@@ -15,6 +15,7 @@ def fresh_turn_outputs() -> dict:
         "combined_chart": {}, "combined_response": "", "combined_response_record": {},
         "combined_sql_query": "", "out_of_scope_answer": "",
         "sql_error_log": Overwrite([]), "clarify_questions": [], "clarification": "",
+        "turn_spec": None,
     }
     for flow in ("gpr", "survey", "gimmi"):
         outputs.update({

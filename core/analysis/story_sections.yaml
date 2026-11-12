@@ -1,0 +1,165 @@
+# The story each answer shape tells, section by section, and the evidence that
+# fills each section.
+#
+# `intents.yaml` says what evidence a QUESTION is owed. This file says what an
+# ANSWER of a given shape is made of. The two are decided by different parts of
+# the graph (the operation detector and the shape detector), so a turn can be
+# promised a section that its evidence contract never gathers. The story plan
+# built from this file makes that visible: every section is either fillable, or
+# carries the reason it cannot be filled — a missing section is stated, never
+# silently dropped.
+#
+# The section lists mirror the writer contracts in
+# core/agents/common/answer_shape.py. Change both together.
+#
+# Fields
+#   shapes.<shape key>            one of the AnswerShape keys
+#     - key          stable section id (used in logs and, later, by the writer)
+#       label        what a reader calls the section
+#       requirements requirement keys from intents.yaml; ANY ONE of them in the
+#                    turn's contract fills the section. Empty = a synthesis
+#                    section, written from other sections rather than from data.
+#       builds_on    synthesis only: the sections it is written from. It is
+#                    fillable when at least one of them is.
+#       required     false for a section the shape includes only when the
+#                    evidence supports it (default true)
+
+shapes:
+  direct:
+    - key: answer
+      label: The answer
+      requirements: [direct_value, positioning, annual_movement, product_contributors]
+    - key: context
+      label: Context clause
+      requirements: [annual_movement]
+      required: false
+
+  ranking:
+    - key: leader
+      label: Who leads
+      builds_on: [ranked_list]
+    - key: ranked_list
+      label: Ranked table
+      requirements: [positioning, product_contributors]
+    - key: closing_read
+      label: The surprise in the ranking
+      builds_on: [ranked_list]
+      required: false
+
+  driver:
+    - key: movement
+      label: The movement
+      requirements: [annual_movement]
+    - key: drivers
+      label: What drove it
+      requirements: [product_contributors]
+    - key: offsets
+      label: What offset it
+      requirements: [product_contributors]
+    - key: timing
+      label: When it happened
+      requirements: [quarterly_comparison]
+      required: false
+    - key: concentration
+      label: Where it concentrated
+      requirements: [industry_concentration]
+      required: false
+    - key: actions
+      label: What to do about it
+      builds_on: [drivers]
+
+  comparison:
+    - key: verdict
+      label: The verdict
+      builds_on: [contrast]
+    - key: contrast
+      label: Where they differ
+      requirements: [positioning, annual_movement]
+    - key: side_by_side
+      label: Side-by-side table
+      requirements: [positioning]
+      required: false
+    - key: gap_explained
+      label: What explains the gap
+      requirements: [product_contributors]
+      required: false
+    - key: actions
+      label: What to do with the gap
+      builds_on: [contrast]
+      required: false
+
+  trend:
+    - key: series_shape
+      label: Shape of the series
+      requirements: [annual_movement]
+    - key: turning_points
+      label: The periods that matter
+      requirements: [quarterly_comparison]
+    - key: trajectory
+      label: Where it is heading
+      builds_on: [series_shape]
+
+  advisory:
+    - key: recommendation
+      label: The recommendation
+      builds_on: [evidence]
+    - key: evidence
+      label: The evidence for it
+      requirements: [positioning, whitespace, product_contributors, industry_concentration]
+    - key: case_against
+      label: The case against
+      builds_on: [evidence]
+    - key: moves
+      label: The moves
+      builds_on: [evidence]
+    - key: sizing
+      label: Sizing table
+      requirements: [positioning, whitespace]
+      required: false
+
+  briefing:
+    - key: headline
+      label: Executive insight
+      requirements: [positioning, direct_value, annual_movement]
+    - key: three_numbers
+      label: The three numbers that matter
+      requirements: [annual_movement, positioning]
+    - key: what_changed
+      label: What changed
+      requirements: [annual_movement, product_contributors]
+    - key: talking_points
+      label: Talking points
+      builds_on: [three_numbers, what_changed]
+    - key: watch
+      label: What to watch
+      builds_on: [what_changed]
+      required: false
+
+  analyst:
+    - key: executive_insight
+      label: Executive insight
+      builds_on: [movement, position]
+    - key: movement
+      label: The headline movement
+      requirements: [annual_movement]
+    - key: drivers
+      label: What drove it
+      requirements: [product_contributors]
+    - key: timing
+      label: When it happened
+      requirements: [quarterly_comparison]
+      required: false
+    - key: concentration
+      label: Where the book is concentrated
+      requirements: [industry_concentration]
+      required: false
+    - key: position
+      label: Where the carrier stands
+      requirements: [positioning]
+    - key: broker_view
+      label: What brokers say
+      requirements: [survey_movement]
+      required: false
+    - key: what_it_means
+      label: What it means
+      builds_on: [movement, drivers, position]

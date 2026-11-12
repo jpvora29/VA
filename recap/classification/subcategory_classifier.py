@@ -126,6 +126,25 @@ class SubCategoryClassifier:
             d = json.loads(raw) if isinstance(raw, str) else raw
 
             sub_cat_raw = d.get("sub_category")
+
+            # Guard: LLM occasionally returns a list instead of a single key,
+            # violating the "single best fit or null" instruction.
+            # If a list is returned, take the first entry only when there is
+            # exactly one element; otherwise coerce to null (ambiguous → null
+            # is the correct behaviour per the prompt).
+            if isinstance(sub_cat_raw, list):
+                if len(sub_cat_raw) == 1:
+                    sub_cat_raw = sub_cat_raw[0]
+                else:
+                    logger.warning(
+                        "Sub-category classifier returned a list (%r) for %s / %s "
+                        "— coercing to null (ambiguous multi-value response).",
+                        sub_cat_raw,
+                        insight.content_unit_id,
+                        umbrella_key,
+                    )
+                    sub_cat_raw = None
+
             sub_cat = None
             if sub_cat_raw and sub_cat_raw not in ("null", "unknown", ""):
                 # Validate against known sub-categories

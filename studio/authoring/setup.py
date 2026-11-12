@@ -254,7 +254,8 @@ def seeded_peers(selected: dict, picker_ids, current, record) -> list:
     return out
 
 
-def peer_panel_state(selected: dict, mode, record, options: dict, chosen: dict | None = None):
+def peer_panel_state(selected: dict, mode, record, options: dict, chosen: dict | None = None,
+                     modes: dict | None = None):
     """``(custom-peer picker, wrapper style, existing-peer read-out)`` for the peer panel.
 
     Existing mode shows ONLY the carrier's peer group from the Peers table, as names —
@@ -270,10 +271,17 @@ def peer_panel_state(selected: dict, mode, record, options: dict, chosen: dict |
     shown = {str(o.get("value", "")).lower() for o in opts}
     hidden = {"display": "none"}
     groups = custom_peer_groups(selected, record, chosen)
-    picker = A.custom_peer_picker(groups)
+    switchable = mode == "custom" and bool(carrier) and record is None and len(groups) > 1
+    # Several markets on governed data: each market gets its own Existing | Custom switch,
+    # so re-picking peers for two of four countries keeps the Peers table for the rest.
+    existing = dict(peer_groups("gpr", carrier, selected, record)) if switchable else None
+    picker = A.custom_peer_picker(groups, existing=existing, modes=modes)
 
     if mode == "custom":
-        note = (f"Pick at least {A.MIN_CUSTOM_PEERS} carriers per market — the deck shows "
+        note = (f"Pick at least {A.MIN_CUSTOM_PEERS} carriers in each Custom market, or "
+                f"switch a market to Existing to keep its Peers-table group. The deck shows "
+                f"the aggregate only, never a name." if switchable else
+                f"Pick at least {A.MIN_CUSTOM_PEERS} carriers per market — the deck shows "
                 f"the aggregate only, never a name." if len(groups) > 1 else
                 f"Pick at least {A.MIN_CUSTOM_PEERS} carriers to benchmark against — the "
                 f"deck shows the aggregate only.")
@@ -496,6 +504,52 @@ def peers_by_country(ids, values) -> dict:
 def picker_markets(ids) -> list:
     """The markets the form is currently showing a picker for, in form order."""
     return [str((ident or {}).get("country") or "") for ident in (ids or [])]
+
+
+def market_modes(ids, values) -> dict:
+    """``{country: "existing" | "custom"}`` from the per-market switches on the form."""
+    return {str((ident or {}).get("country") or ""): str(value or A.PEER_CUSTOM)
+            for ident, value in zip(ids or [], values or [])}
+
+
+def peer_mode_rows(peer_mode, markets: Sequence[str], modes: dict) -> list:
+    """``[(country, mode)]`` — which peers each market on the form will benchmark against.
+
+    The panel's top switch decides first: "existing" means the Peers table everywhere. In
+    "custom", a market keeps its own switch (Custom when it has none — a single market, or
+    a custom dataset with no governed group to fall back to).
+    """
+    if peer_mode != "custom":
+        return [(m, A.PEER_EXISTING) for m in markets]
+    return [(m, A.PEER_EXISTING if (modes or {}).get(m) == A.PEER_EXISTING else A.PEER_CUSTOM)
+            for m in markets]
+
+
+def custom_market_pins(peer_mode, picker_ids, picker_vals, modes: dict) -> tuple:
+    """``(by_country, custom markets)`` — the pins Generate sends, and the markets they cover.
+
+    A market switched to Existing is left OUT of ``by_country``: every consumer
+    (``scope_to_country``, the executive summary's ``resolve_peer_set``) then resolves that
+    market's own Peers-table group, exactly as a run with no custom peers would.
+    """
+    rows = peer_mode_rows(peer_mode, picker_markets(picker_ids), modes)
+    custom = [m for m, mode in rows if mode == A.PEER_CUSTOM]
+    pins = peers_by_country(picker_ids, picker_vals)
+    return {m: p for m, p in pins.items() if m in custom}, custom
+
+
+def overall_peers(by_country: dict, selected: dict, markets: Sequence[str], record) -> list:
+    """The overall block's benchmark: the custom pins, plus the governed group of every
+    market switched to Existing — so a mixed run benchmarks the whole selection, not just
+    the markets the author re-picked. ``[]`` when nothing was pinned (Peers table as before).
+    """
+    if not by_country:
+        return []
+    carrier = (selected or {}).get("carrier")
+    existing = [m for m in markets if m not in by_country]
+    groups = dict(peer_groups("gpr", carrier, selected, record)) if carrier and existing else {}
+    pins = {m: by_country.get(m) or [str(p) for p in groups.get(m) or []] for m in markets}
+    return flatten_peers({**by_country, **pins})
 
 
 def flatten_peers(by_country: dict) -> list:
@@ -851,6 +905,8 @@ def register_setup(app):
         State("studio-peer-mode", "value"),
         State({"type": "studio-peer-custom", "country": ALL}, "value"),
         State({"type": "studio-peer-custom", "country": ALL}, "id"),
+        State({"type": "studio-peer-market-mode", "country": ALL}, "value"),
+        State({"type": "studio-peer-market-mode", "country": ALL}, "id"),
         State("studio-audience", "value"),
         State("studio-commentary-style", "value"),
         State("qs-slides", "data"),
@@ -866,7 +922,7 @@ def register_setup(app):
         prevent_initial_call=True,
     )
     def start_generate(n, fvals, fids, cut_vals, cut_ids, peer_mode, peer_vals, peer_ids,
-                       audience, style, slide_store, data_basis,
+                       market_mode_vals, market_mode_ids, audience, style, slide_store, data_basis,
                        survey_carrier, survey_peer_vals, survey_peer_ids, dataset_store,
                        running_job, period_basis=None, period_dates=None, report=None):
         """Read the form, refuse what we must, and start the build in its own thread.
@@ -890,15 +946,17 @@ def register_setup(app):
         # checkboxes, so gating on a "peer_average" cut left the panel dead —
         # peer benchmarks in the filled template use this pinned set (or the
         # Peers table when the mode is "existing").
-        by_country = peers_by_country(peer_ids, peer_vals) if peer_mode == "custom" else {}
-        # Every market ON THE FORM is checked, not just the ones with an answer: a run over
-        # two countries with peers pinned in one of them is exactly the case a check over
-        # the answers alone would wave through.
-        short = short_markets(by_country, countries=picker_markets(peer_ids)) \
-            if peer_mode == "custom" else []
+        # A market switched to Existing keeps its Peers-table group and is left out.
+        by_country, custom = custom_market_pins(peer_mode, peer_ids, peer_vals,
+                                                market_modes(market_mode_ids, market_mode_vals))
+        # Every CUSTOM market on the form is checked, not just the ones with an answer: a
+        # run over two countries with peers pinned in one of them is exactly the case a
+        # check over the answers alone would wave through.
+        short = short_markets(by_country, countries=custom) if custom else []
         if short:
             return (*_REFUSED[:-1], _short_peer_warning(short))
-        peers = flatten_peers(by_country) or None
+        peers = overall_peers(by_country, filters, picker_markets(peer_ids),
+                              dataset_in_use(dataset_store)) or None
         survey_by_country = peers_by_country(survey_peer_ids, survey_peer_vals)
         # A submitted custom dataset pins its id into the selection: every cached
         # build (deck / tdoc / assembled) then keys and computes on THAT data.
@@ -1064,12 +1122,15 @@ def register_setup(app):
         State({"type": "studio-filter", "col": ALL}, "id"),
         State({"type": "studio-peer-custom", "country": ALL}, "value"),
         State({"type": "studio-peer-custom", "country": ALL}, "id"),
+        State({"type": "studio-peer-market-mode", "country": ALL}, "value"),
+        State({"type": "studio-peer-market-mode", "country": ALL}, "id"),
         State("qs-dataset", "data"),
         State("qs-filter-sig", "data"),
         State("qs-form-token", "data"),
         running=_busy(A.BUSY_FORM),
     )
-    def refresh_form(values, mode, ids, peer_vals, peer_ids, dataset_store, signature, token):
+    def refresh_form(values, mode, ids, peer_vals, peer_ids, mode_vals, mode_ids,
+                     dataset_store, signature, token):
         """Re-derive every dropdown's options and the peer panel — one cube pass.
 
         Only the FILTER lists that changed are sent back; the rest answer ``no_update``,
@@ -1087,7 +1148,8 @@ def register_setup(app):
         record = dataset_in_use(dataset_store)
         options = cascade_filter_options(selected, record)
         chosen = peers_by_country(peer_ids, peer_vals)
-        picker, peer_style, peer_msg = peer_panel_state(selected, mode, record, options, chosen)
+        picker, peer_style, peer_msg = peer_panel_state(
+            selected, mode, record, options, chosen, market_modes(mode_ids, mode_vals))
         if supersede.stale(ticket, "option cascade"):
             raise PreventUpdate
         fresh, signature = changed_options(options, signature, token)
@@ -1156,6 +1218,27 @@ def register_setup(app):
     def check_peer_minimum(chosen):
         """The live "3 of 5 · 2 more needed" counter under one market's picker."""
         return A.peer_counter(chosen)
+
+    # Each market's Existing | Custom switch, and the strip at the top of the panel that
+    # says which markets use which peers. Pure view: no data is read here.
+    @app.callback(
+        Output({"type": "studio-peer-market-custom", "country": ALL}, "style"),
+        Output({"type": "studio-peer-market-existing", "country": ALL}, "style"),
+        Output({"type": "studio-peer-market", "country": ALL}, "className"),
+        Output("studio-peer-summary", "children"),
+        Input("studio-peer-mode", "value"),
+        Input({"type": "studio-peer-market-mode", "country": ALL}, "value"),
+        Input({"type": "studio-peer-custom", "country": ALL}, "id"),
+        State({"type": "studio-peer-market-mode", "country": ALL}, "id"),
+    )
+    def show_market_modes(peer_mode, mode_vals, picker_ids, mode_ids):
+        """Show each market's picker or its Peers-table group, and the summary pills."""
+        modes = market_modes(mode_ids, mode_vals)
+        views = [A.market_mode_style(modes.get(str(i["country"]), A.PEER_CUSTOM))
+                 for i in (mode_ids or [])]
+        rows = peer_mode_rows(peer_mode, picker_markets(picker_ids), modes)
+        return ([v[0] for v in views], [v[1] for v in views], [v[2] for v in views],
+                A.peer_mode_summary(rows))
 
     # The survey panel is its own callback, not part of refresh_form: it queries a DIFFERENT
     # book, and only on the survey basis, so folding it in would make every premium-only

@@ -56,14 +56,8 @@ from core.agents.analyst.insight_writer import grounded_insight
 from core.answers.claims import AnswerClaim
 from core.answers.facts import AnswerFact
 from core.answers.scope import answer_scope
-from core.answers.verification import (
-    UNSUPPORTED_CAUSATION,
-    VerificationInput,
-    limitations_for,
-    strip_unsupported_causation,
-    verdict,
-    verify_answer,
-)
+from core.answers.verification import VerificationInput
+from core.answers.verify_gate import run_verify_gate
 from core.agents.analyst.peer_solver import solve_peer
 from core.agents.analyst.schema_identifier import identify_schema
 from core.agents.analyst.common import digest_evidence
@@ -93,6 +87,7 @@ from core.observability import log_event
 from core.schemas.analysis import AnalysisPlan, DerivedAnalysis
 from core.schemas.analyst_subgraph import Evidence, SchemaSlice
 from core.schemas.routing import RoutingContext
+from core.turn.story_shadow import record_story_coverage
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -222,6 +217,11 @@ def planner_node(state: AnalystState) -> dict:
         requirements=list(contract.keys()),
         deferred=[r.key for r in contract.deferred],
         step_limit=plan_limit(contract),
+    )
+    record_story_coverage(
+        answer_shape(state.get("routing_context")), contract,
+        planned_requirements(plan, contract, state.get("flow")),
+        stage="planned", node="analyst_planner", route=state["route"],
     )
     return {
         "plan": plan,
@@ -638,7 +638,7 @@ def positioning_node(state: AnalystState) -> dict:
     """
     contract = state.get("contract")
     required = set(contract.keys()) if contract else set()
-    if state.get("flow") != "gpr" or not (required & _POSITIONING_REQUIREMENTS):
+    if not serves_positioning(contract, state.get("flow")):
         log_event(logger, "positioning_skipped", logging.WARNING,
                   node="analyst_positioning", route=state["route"],
                   flow=state.get("flow"), requirements=sorted(required),
@@ -722,7 +722,28 @@ def positioning_node(state: AnalystState) -> dict:
               slices=sum(len(p.positions) for _, p, _ in packs),
               dimension=dimension, subject=subject or "(market)",
               missing=missing, charts=[spec.get("tab") for spec in plan])
-    return {"evidence": records, "chart_plan": plan}
+    update = {"evidence": records, "chart_plan": plan}
+    progress = state.get("progress")
+    if progress is not None:
+        progress.record(positioning_outcome(records))
+        update["progress"] = progress
+    return update
+
+
+def positioning_outcome(records: List[Evidence]) -> StepOutcome:
+    """The position table as a satisfied `positioning` step.
+
+    The table is gathered here, outside the plan, so without this record the
+    progress never knew it existed: the writer was told "position cannot be
+    established" beside the table itself, and the verifier flagged a missing
+    investigation for an answer that carried one.
+    """
+    return StepOutcome(
+        step_id="positioning_table",
+        status=SATISFIED,
+        requirement="positioning",
+        evidence_ids=tuple(record["evidence_id"] for record in records),
+    )
 
 
 def _with_market(rows: List[dict], market: str) -> List[dict]:
@@ -959,32 +980,31 @@ def verify_node(state: AnalystState) -> dict:
         requirements=tuple(contract.keys()) if contract else (),
         satisfied=tuple(progress.satisfied_requirements()) if progress else (),
         limitations=tuple(progress.limitations()) if progress else (),
+        limited=tuple(progress.limited_requirements()) if progress else (),
     )
-    result = verify_answer(data)
-    if result.passed:
+    record_story_coverage(
+        answer_shape(state.get("routing_context")), contract, data.satisfied,
+        stage="answered", node="analyst_verifier", route=state["route"],
+    )
+    gate = run_verify_gate(data, record, node="analyst_verifier", route=state["route"])
+    if gate.record is None:
         return {}
+    return {"answer": gate.text, "answer_record": gate.record}
 
-    repaired, removed = strip_unsupported_causation(answer, result.failures)
-    remaining = verdict(f for f in result.failures if f.kind != UNSUPPORTED_CAUSATION)
-    limitations = tuple(dict.fromkeys(
-        (*(record.get("limitations") or ()), *limitations_for(remaining))
-    ))
-    record["content"] = repaired or answer
-    record["limitations"] = list(limitations)
-    record["verification"] = result.as_dicts()
 
-    log_event(
-        logger,
-        "answer_verified",
-        logging.WARNING,
-        node="analyst_verifier",
-        route=state["route"],
-        stage=result.stage,
-        failures=[f.kind for f in result.failures],
-        causal_sentences_removed=removed,
-        limitations=len(limitations),
-    )
-    return {"answer": repaired or answer, "answer_record": record}
+def serves_positioning(contract: Optional[EvidenceContract], flow: Optional[str]) -> bool:
+    """Whether `positioning_node` will try to build the position table this turn."""
+    required = set(contract.keys()) if contract else set()
+    return flow == "gpr" and bool(required & _POSITIONING_REQUIREMENTS)
+
+
+def planned_requirements(plan: AnalysisPlan, contract: EvidenceContract,
+                         flow: Optional[str]) -> tuple:
+    """Requirements the plan's steps were assigned, plus the position table's."""
+    keys = [getattr(step, "requirement", "") for step in plan.derived]
+    if serves_positioning(contract, flow):
+        keys.append("positioning")
+    return tuple(dict.fromkeys(key for key in keys if key))
 
 
 def _claims_of(record: dict) -> List[AnswerClaim]:

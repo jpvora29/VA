@@ -124,11 +124,11 @@ def brief(dataset: Optional[Mapping[str, Any]]) -> html.Section:
             "Audience",
             segmented("studio-audience", [
                 {"label": "Carrier team", "value": "carrier_leadership"},
-                {"label": "Regional", "value": "marsh_regional"},
+                {"label": "Executive", "value": "marsh_regional"},
             ], "carrier_leadership"),
             tip_id="qs-tip-audience",
             tip="Who is this deck for? Carrier team is the client-facing read — the "
-                "carrier's own underwriting and distribution leads. Regional is the "
+                "carrier's own underwriting and distribution leads. Executive is the "
                 "internal Marsh view, which may weigh placement and pipeline the carrier "
                 "would not see.",
         ),

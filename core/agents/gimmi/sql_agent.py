@@ -110,7 +110,8 @@ def gimmi_execute_sql(state: AgentState) -> AgentState:
             "gimmi_sql_error": True,
         }
 
-    record_recovered_sql_fix(state, route="gimmi", working_sql=sql_query)
+    record_recovered_sql_fix(state, route="gimmi", working_sql=sql_query,
+                             row_count=result.row_count)
 
     logger.debug("GIMMI query fetched %d row(s)", result.row_count)
     return {"gimmi_query_result": result.rows, "gimmi_sql_error": False}

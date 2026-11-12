@@ -263,8 +263,19 @@ def test_a_stated_limitation_satisfies_the_completeness_check():
     """A gap the answer admits to is a complete answer about an incomplete book."""
     assert V.check_completeness(
         ("annual_movement", "quarterly_comparison"), ("annual_movement",),
-        ("2024 stops at Q2.",),
+        ("quarterly_comparison",),
     ) == []
+
+
+def test_an_unrelated_limitation_does_not_clear_a_missing_requirement():
+    """'Survey data unavailable' says nothing about the missing quarters."""
+    failures = V.check_completeness(
+        ("annual_movement", "quarterly_comparison", "survey_movement"),
+        ("annual_movement",),
+        ("survey_movement",),
+    )
+    assert [f.kind for f in failures] == [V.MISSING_INVESTIGATION]
+    assert "quarterly_comparison" in failures[0].detail
 
 
 # --------------------------------------------------------------------------- #

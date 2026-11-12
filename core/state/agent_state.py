@@ -136,3 +136,8 @@ class AgentState(TypedDict):
     # as an inline dashboard card instead of plain commentary.
     boardroom_mode: bool
     boardroom: Optional[Dict]
+
+    # Phase 2 shadow: the turn's single interpretation (`core.turn.TurnSpec`,
+    # stored as its dict form) and the contradictions between the decisions it
+    # was assembled from. Logged, read by nothing yet.
+    turn_spec: Optional[Dict]

@@ -251,17 +251,20 @@ def check_decomposition(
 def check_completeness(
     requirements: Sequence[str],
     satisfied: Sequence[str],
-    limitations: Sequence[str],
+    limited: Sequence[str],
 ) -> List[Failure]:
     """Required evidence that produced neither a finding nor a stated limitation.
 
     The check that makes a thin answer visible. A turn that gathered no quarterly
     comparison and said nothing about quarters reads exactly like one that had
     nothing to say — unless something asks the question.
+
+    `limited` holds the REQUIREMENT KEYS a limitation was stated for. A
+    limitation excuses only its own requirement: "Survey data unavailable" says
+    nothing about a missing quarterly comparison, so it must not clear it.
     """
-    if limitations:
-        return []
-    missing = [key for key in requirements if key not in set(satisfied)]
+    accounted = set(satisfied) | set(limited)
+    missing = [key for key in requirements if key not in accounted]
     return [
         Failure(
             kind=MISSING_INVESTIGATION,
@@ -333,6 +336,8 @@ class VerificationInput:
     requirements: Tuple[str, ...] = ()
     satisfied: Tuple[str, ...] = ()
     limitations: Tuple[str, ...] = ()
+    #: Requirement keys a limitation was stated for (see `check_completeness`).
+    limited: Tuple[str, ...] = ()
     evidence_supports_cause: bool = False
 
 
@@ -348,7 +353,7 @@ def verify_answer(data: VerificationInput) -> Verdict:
             *check_scope(data.evidence),
             *check_subject_binding(data.claims, data.facts),
             *check_units(data.claims, data.facts),
-            *check_completeness(data.requirements, data.satisfied, data.limitations),
+            *check_completeness(data.requirements, data.satisfied, data.limited),
             *check_causation(data.text, evidence_supports_cause=data.evidence_supports_cause),
         ]
     )

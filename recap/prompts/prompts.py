@@ -122,22 +122,58 @@ ENRICHMENT_CONTEXT_SYSTEM_PROMPT = dedent(
         generalise beyond that list. If no entry matches, return [].
       - Segments MUST be chosen exclusively from the canonical list
         supplied in {segment_list}. Return [] if none apply.
-      - Do not invent countries or regions.
+      - Countries MUST be chosen exclusively from the canonical list
+        supplied in {country_list}. Do not invent country names or return
+        informal variants — use the exact canonical spelling from that list.
+        If no canonical match exists for a name you see, return [].
+      - Do not invent regions.
       - If evidence is insufficient for a field, return an empty list [].
       - Countries and Regions are separate fields — do not duplicate the
         same value in both. A country belongs in "countries"; a broad
         geographic grouping (e.g. "EMEA", "Asia Pacific") belongs in
         "regions".
-      - Return structured JSON only — no prose outside the JSON object.
+      - Deduplication: each value in "matched_glossary_terms" must appear
+        at most once, even if the same term matches multiple passages within
+        the same content unit. Return a deduplicated list.
+      - Unmatched LoB logging: if the content mentions a line-of-business
+        name that does not appear in the canonical list, do NOT silently
+        omit it. Instead, add a note to the "matched_glossary_terms" field
+        in the form "UNMATCHED_LOB: <original name>" so the gap is visible
+        for review. Never substitute or remap an unmatched LoB to the
+        nearest-sounding canonical entry without explicit instructions to
+        do so.
+      - CRITICAL — Multi-series charts: when a [CHART DATA] block lists
+        multiple named categories as chart series (e.g. "Property: 57m,
+        Liability: 25m, Financial Lines: 19m, Marine: 2m"), EVERY named
+        category is a potential line of business and MUST be individually
+        evaluated against the canonical LoB list. Do not return only the
+        first or largest category. Enumerate all named series, check each
+        one against the canonical list (or its known aliases), and include
+        every match. The same rule applies to [TABLE DATA] column headers
+        and row labels that name lines of business.
 
     EXECUTION PLAN
+    0. (Before all other steps) Check whether this content unit consists
+        solely of: a chart/axis/legend label, a quadrant label, a logo
+        description, a data-source footnote, CY/PY markers, a
+        stakeholder/contact table (content whose non-header lines consist
+        only of person names, job titles, or role descriptions with no
+        numeric, LoB, or commercial data — e.g. "ICG Carrier Exec's /
+        Ellen Cameron / Insurer ICG Coordinator"), or any other text with
+        no standalone commercial meaning. If yes, return all lists as [],
+        all booleans as false, all numeric fields as null, and
+        overall_confidence ≤ 0.15 — do not attempt further extraction.
     1. Read the content unit text, slide title, and section label.
     2. Identify every line of business mentioned or clearly implied.
-       Only return values that appear verbatim in the canonical LoB list
-       ({lob_list}). If the content implies a LoB not on that list, omit it.
+       For [CHART DATA] and [TABLE DATA] blocks, enumerate EVERY named
+       series/category/row label individually — do not stop after the
+       first match. For each name, check it against the canonical LoB
+       list ({lob_list}) including known aliases. Include all matches.
     3. Identify which ICG segment(s) the content relates to.
        Only return values from the canonical segment list ({segment_list}).
     4. Identify every named country mentioned explicitly.
+       Only return values from the canonical country list ({country_list}).
+       Use the exact canonical spelling. Return [] if none match.
     5. Identify every named region (broad geographic groupings such as
        EMEA, APAC, Latin America, UK, Europe, Global).
     6. Match content against the supplied glossary and list matched terms.
@@ -164,8 +200,14 @@ ENRICHMENT_CONTEXT_USER_TEMPLATE = dedent(
     Content unit ({content_unit_id}):
     {content}
 
+    Deterministic chart/table records (authoritative values):
+    {deterministic_records}
+    Deterministic labelled metrics:
+    {deterministic_metrics}
+
     Canonical lines of business (use ONLY these): {lob_list}
     Canonical segments (use ONLY these): {segment_list}
+    Canonical countries (use ONLY these): {country_list}
 
     Return a JSON object matching this structure exactly:
     {{
@@ -228,9 +270,63 @@ ENRICHMENT_KPI_SYSTEM_PROMPT = dedent(
         representative value (e.g. "GWP (£m): 42", "Growth YoY: +14%").
       - Read axis labels carefully — they define the unit of measure and
         the comparison dimension (e.g. "Q1 2025 vs Q1 2026").
+      - CRITICAL — KPI table column identity: when content contains
+        pipe-delimited KPI rows (e.g. "GWP: 32,610,198 | GWP YoY: -9.4%
+        | Marsh Book % Change: +18.6%"), EACH value belongs ONLY to its
+        labelled column. The column header is the metric; the cell value
+        is the figure. Do NOT transfer a figure from one column to an
+        adjacent column. In the example: -9.4% is GWP YoY only;
+        +18.6% is Marsh Book % Change only — never 'GWP up 18.6%'.
+      - CRITICAL — Actual vs. Anticipated: if a table contains both an
+        'Actual' (or 'YTD') column and an 'Anticipated' (or 'Forecast' /
+        'Budget') column, extract them as separate named metrics. Never
+        present an Anticipated figure as an Actual result. Use
+        growth_value only for the Actual/YTD figure; note the Anticipated
+        figure separately in the 'metrics' list with the label
+        'Anticipated GWP' or equivalent.
       - Return structured JSON only — no prose outside the JSON object.
+      - Return structured JSON only — no prose outside the JSON object.
+      - Metrics format: every entry in the "metrics" array MUST be a plain
+        labelled string in the format "Label: value" (e.g. "GWP Growth in
+        Germany: 3.6%") OR a valid JSON object with double-quoted keys
+        (e.g. {{"label": "GWP Growth", "value": "3.6%"}}). Never use Python
+        dict notation (single quotes, Python None). All entries in the same
+        array must use the same format — do not mix styles.
+      - Sign fidelity: the sign of a growth figure MUST be derived from the
+        actual numeric data, not from words in the slide title or section
+        label. If the slide title contains a word like "drop", "decline", or
+        "fall" but the chart data shows a positive delta (current > prior),
+        the growth_value and performance_direction must reflect the data, not
+        the title wording. Conversely, if the title says "growth" but the
+        data shows a negative delta, follow the data. Slide titles are
+        sometimes mislabelled; data is authoritative.
+      - No derived metrics: do NOT calculate a percentage change, growth
+        rate, or ratio from raw numbers and then record the computed result
+        as if it were a stated source fact. For example, if the source gives
+        counts of 133 and 157, do not compute (157-133)/133 = 18% and record
+        "+18%" as growth_value. Record only figures that appear explicitly
+        in the source text or chart labels. If no explicit growth figure is
+        stated, set growth_value to null and record the raw values in
+        baseline_value and current_value.
+      - Axis unit normalisation: if the Y-axis or series label explicitly
+        names the unit as "%" or "percent" (e.g. "YoY GWP change (%)"),
+        and the raw chart data values are in decimal form (e.g. 0.08, -0.05),
+        convert them to percentage form before recording (0.08 → "8%",
+        -0.05 → "-5%"). Apply this conversion consistently to every data
+        point in the same chart. Do not convert some points and leave others
+        as decimals.
 
     EXECUTION PLAN
+    0. (Before all other steps) Check whether this content unit consists
+        solely of: a chart/axis/legend label, a quadrant label, a logo
+        description, a data-source footnote, CY/PY markers, a
+        stakeholder/contact table (content whose non-header lines consist
+        only of person names, job titles, or role descriptions with no
+        numeric, LoB, or commercial data — e.g. "ICG Carrier Exec's /
+        Ellen Cameron / Insurer ICG Coordinator"), or any other text with
+        no standalone commercial meaning. If yes, return all lists as [],
+        all booleans as false, all numeric fields as null, and
+        overall_confidence ≤ 0.15 — do not attempt further extraction.
     1. Identify the content type: plain prose, chart, table, or mixed.
     2. For charts: locate the X-axis (categories) and Y-axis (values/units),
        then read each series data point as a named metric.
@@ -241,9 +337,27 @@ ENRICHMENT_KPI_SYSTEM_PROMPT = dedent(
        values (positive delta = positive, negative = negative, etc.).
     6. Identify growth type (YoY, QoQ, etc.) and extract growth value,
        baseline, and current value if present.
-    7. Set the five boolean flags (client_update, company_update,
-       market_condition, opportunity, concern) based on the nature of
-       the content.
+    7. Set the five boolean flags using these precise definitions:
+         is_client_update   — true when the content reports the carrier's
+                              (QBE's) own portfolio, financial, or operational
+                              performance: GWP, hit rates, growth figures,
+                              strategic initiatives FROM the carrier. In a QBR
+                              deck, the carrier is the client counterparty.
+         is_company_update  — true when the content reports Marsh's own
+                              actions, performance, or strategic position:
+                              Marsh GWP, Marsh book, Marsh new business wins,
+                              Marsh team actions or commitments.
+         is_market_condition — true when the content describes external market
+                              factors affecting both parties: rate movements,
+                              competitor behaviour, economic or regulatory
+                              conditions.
+         is_opportunity     — true when the content identifies a specific
+                              growth or commercial opportunity not yet realised.
+         is_concern         — true when the content flags a risk, challenge,
+                              underperformance, or area needing attention.
+       A unit may have more than one flag set if its content genuinely covers
+       multiple categories, but do not set flags speculatively — only set true
+       when the content directly and primarily evidences that category.
     8. Extract any owner name, deadline, or action-related language.
     9. Assign overall_confidence based on how much explicit evidence
        supported your extraction (1.0 = everything directly stated,
@@ -268,6 +382,11 @@ ENRICHMENT_KPI_USER_TEMPLATE = dedent(
 
     Content unit ({content_unit_id}):
     {content}
+
+    Deterministic chart/table records (authoritative values):
+    {deterministic_records}
+    Deterministic labelled metrics:
+    {deterministic_metrics}
 
     Return a JSON object matching this structure exactly:
     {{
@@ -320,7 +439,18 @@ UMBRELLA_CLASSIFIER_SYSTEM_PROMPT = dedent(
     Strict inclusion criteria:
       - The insight must be CENTRALLY about this umbrella, not merely
         mentioning it in passing or as background context.
-      - A confidence of ≥ 0.75 is required before returning true.
+      - Confidence threshold:
+          • For plain prose content: a confidence of ≥ 0.75 is required
+            before returning true.
+          • For structured data blocks (content prefixed with [TABLE DATA]
+            or [CHART DATA]): a confidence of ≥ 0.60 is sufficient to
+            return true. Structured blocks encode commercial facts implicitly
+            rather than stating them in prose — the lower bar prevents
+            genuine GWP tables, LoB performance matrices, and opportunity
+            mappings from being incorrectly excluded simply because the
+            data is tabular rather than narrative. Do NOT apply this
+            relaxed threshold to tables that contain only names and titles
+            (contact/stakeholder tables with no numeric or commercial data).
       - Loose thematic overlap, tangential relevance, or broad topic
         similarity is NOT sufficient — the core commercial point of the
         insight must map to this umbrella's definition.
@@ -337,7 +467,23 @@ UMBRELLA_CLASSIFIER_SYSTEM_PROMPT = dedent(
         whose sole purpose is listing slide or section titles.
       - The content is a page number, footer, logo, or boilerplate.
       - The content is a single standalone value or label with no
-        accompanying commercial context.
+        accompanying commercial context — for example a bare slide number,
+        a pure date stamp, a lone presenter name, or a single word like
+        "Agenda".
+        EXCEPTION — the following are NEVER auto-false, regardless of
+        brevity or format:
+          • Content prefixed [TABLE DATA] or [CHART DATA]: these blocks
+            contain named business entities (lines of business, countries,
+            GWP figures, loss ratios) and are always classifiable if the
+            named entities or values map to the umbrella definition.
+          • Any content containing at least one named line of business,
+            named country, named KPI, or an explicit numeric business
+            metric (e.g. "€17m", "GWP +12%", "62.8% quote rate") — these
+            carry commercial context by definition even if the surrounding
+            prose is minimal.
+          • Short statements that name a QBE/Marsh commercial activity
+            (e.g. "Leading 193 programmes", "79.8% above plan") — the
+            numeric or named-entity signal IS the commercial context.
 
     EXECUTION PLAN
     1. Read the content unit and enriched metadata carefully.
@@ -351,7 +497,8 @@ UMBRELLA_CLASSIFIER_SYSTEM_PROMPT = dedent(
        If so, lean toward false for this umbrella.
     6. Set confidence: 0.9+ only when the match is explicit and
        unambiguous; 0.75–0.89 when clearly fits but not the only
-       possible interpretation; below 0.75 → return false.
+       possible interpretation; below the applicable threshold → return
+       false (0.75 for prose; 0.60 for [TABLE DATA] / [CHART DATA]).
     7. Write a one-sentence rationale naming the specific evidence that
        drove your decision.
     8. Return the JSON verdict.
@@ -415,22 +562,39 @@ SUBCATEGORY_CLASSIFIER_SYSTEM_PROMPT = dedent(
       - Return null if the insight fits the umbrella broadly but no
         single sub-category is a clear match.
       - Do not split the insight across multiple sub-categories —
-        choose the single best fit or null.
+        choose the single best fit or null. The JSON field "sub_category"
+        MUST be a single string key or null — never a list.
       - A sub-category match requires the insight to specifically address
         the substance described in that sub-category's definition, not
         just share vocabulary with it.
+      - Confidence threshold: only return a non-null sub-category when
+        your confidence is ≥ 0.70. Below 0.70 means the evidence is
+        insufficient to commit — return null and set confidence to your
+        actual score. Do not round up to meet the threshold.
+      - Multi-section content: when the insight covers several topics
+        (e.g. a country Q2 update combining performance figures,
+        relationship commentary, and facility mentions), identify the
+        single topic that occupies the most content or carries the most
+        specific named data. That topic alone drives the sub-category
+        choice. Peripheral topics that appear in one sentence do not
+        qualify.
 
     EXECUTION PLAN
     1. Re-read the content unit with the confirmed umbrella in mind.
-    2. For each sub-category, ask: does the insight specifically address
-       the substance described in this sub-category's definition?
+    2. For each sub-category, ask: does the insight PRIMARILY and
+       SPECIFICALLY address the substance in this sub-category's
+       definition — not just mention it in passing?
     3. Score each candidate sub-category from 0–1 based on how closely
-       the insight's primary focus matches its definition.
-    4. Select the highest-scoring sub-category, provided its score is
-       clearly above the others (no near-tie).
-    5. If two sub-categories score similarly, return null — forced
-       disambiguation creates unreliable data.
-    6. Write a one-sentence rationale citing the specific textual evidence.
+       the insight's PRIMARY focus (by word-count and specificity) matches
+       its definition. A passing mention scores ≤ 0.40; partial coverage
+       scores 0.41–0.69; the topic is clearly dominant at ≥ 0.70.
+    4. Select the highest-scoring sub-category only if its score is
+       ≥ 0.70 AND it is clearly above the next-best candidate by at least
+       0.15 points. If the winner scores < 0.70, return null.
+    5. If the top two sub-categories are within 0.15 of each other,
+       return null — forced disambiguation creates unreliable data.
+    6. Write a one-sentence rationale citing the specific textual evidence
+       that drove the score above 0.70.
     7. Return the JSON verdict.
     """
 ).strip()
@@ -564,8 +728,17 @@ RECAP_GENERATION_SYSTEM_PROMPT = dedent(
 
     DIRECTION
     Output requirements:
-      - Title: 2–5 words that name the commercial topic of this group
-        (e.g. "GWP Growth Momentum", "Retention Under Pressure").
+      - Title: 2–5 words that name the commercial TOPIC of this group
+        at the right level of abstraction.
+        * If the narrative covers multiple lines of business, the title
+          must NOT name any single LoB. Use a topic-level label instead.
+          Good: "Portfolio Mix Shift", "Portfolio Health", "Book Composition"
+          Bad:  "Property-Led Mix Shift" (names only Property when the
+                narrative also covers Marine, Financial Lines, Cyber etc.)
+        * If the narrative is genuinely about one LoB only, naming it in
+          the title is fine (e.g. "Cyber Growth Momentum").
+        * Other good title patterns: "GWP Growth Momentum",
+          "Retention Under Pressure", "Cross-Sell Traction".
       - Narrative: ONE sentence of ≤ 60 words that synthesises ALL
         insights into a single collective summary — not a list of
         separate observations joined by semicolons.
@@ -594,8 +767,28 @@ RECAP_GENERATION_SYSTEM_PROMPT = dedent(
         omit the specific ask/target/deadline itself.
       - If after stripping all structural markup no meaningful prose
         remains to synthesise, return null for "narrative".
+      - IMAGE-ONLY CHARTS: if any insight is tagged with the marker
+        [IMAGE-ONLY CHART: data not extractable], you MUST NOT assert
+        specific trend directions, values, or percentages from that chart.
+        You may note that a chart exists showing a topic, but you must
+        append '(trend unverified — data embedded as image)' rather than
+        stating any specific direction or figure as established fact.
       - Do not invent facts, owners, deadlines, or metrics not present
         in the supplied insights.
+      - Metric scope fidelity: a percentage or figure applies ONLY to
+        the metric it is explicitly attached to in the source. Do NOT
+        re-use the same percentage for a different metric just because
+        both appear in the same passage. For example, if the source
+        states "overall GWP grew 20.7%" and separately "new business
+        grew from €33.7m to €58.3m", the 20.7% figure belongs to
+        overall GWP only — do NOT write "new business up 20.7%". Use
+        the new-business figures (or omit the new-business growth rate
+        entirely) rather than borrowing the overall rate.
+      - Scope fidelity for named events: reproduce the exact scope of a
+        specific event or hire as stated in the source. A 'new Marsh Re
+        Netherlands hire' is NOT a 'new country-level leader' or 'country
+        leadership reset' — never broaden the scope of a specific, named
+        appointment or event beyond what the source explicitly states.
       - Geographic scoping: each insight is labelled with the slide title
         it came from (e.g. "Norway — Broker Feedback", "UK Overview").
         If ALL or MOST insights in this group come from a single country or
@@ -603,6 +796,50 @@ RECAP_GENERATION_SYSTEM_PROMPT = dedent(
         explicitly (e.g. "In Norway, ...", "For the UK market, ...") so
         readers know the observation is not global. Never present country-
         or region-specific feedback as if it applies to the overall account.
+      - Numeric precision fidelity: reproduce figures EXACTLY as they
+        appear in the source — do NOT add decimal places not present in
+        the source. If the source shows $12.4m, write $12.4m — never
+        $12.43m. Inventing extra precision implies a false level of
+        accuracy that is not supported by the data.
+      - Currency symbol fidelity: use the EXACT currency symbol shown in
+        the source data for each country. If the source data for a country
+        is denominated in USD ($), write $. Do NOT substitute £ or € merely
+        because the client is European. The symbol is part of the data.
+      - Maturity fidelity: do NOT describe a relationship, product, or
+        market as 'growing', 'established', or 'active' if the source
+        characterises it as early-stage, nascent, aspirational, or
+        yet-to-convert. Mirror the source's own stage language: 'initial
+        meeting held', 'client list awaited', 'in discussions', 'yet to
+        convert'. Optimistic framing where none is warranted is a
+        factual error.
+      - Ownership attribution: if an initiative, tool, or programme is
+        described in the source as belonging to ONE party (Marsh or the
+        carrier), do NOT present it as a joint initiative. Use 'joint' or
+        'shared' only when the source explicitly describes it that way.
+      - Growth leader accuracy: when describing which lines of business
+        are driving growth, derive the ranking DIRECTLY from the
+        percentage-change figures in the source — highest positive %
+        change ranks first. NEVER label a LoB as a 'growth driver' or
+        'growth centre' if its % change is negative or zero in the source.
+        Example: if Casualty is +22.7%, Specialty +19.7%, Property +17.3%,
+        Cyber -7.2%, and Financial Lines -10.1%, the growth leaders are
+        Casualty, Specialty, and Property — NOT Cyber or Financial Lines.
+      - Sub-category lane discipline: the category label tells you WHAT
+        kind of story to tell. Stay inside that lane:
+        * country_regional_performance → the narrative must be structured
+          around named countries or regions and their relative standing.
+          Individual lines of business may appear ONLY as brief
+          supporting colour for a country (e.g. "led by Cyber growth in
+          Germany") — never as standalone data points that interrupt the
+          geographic narrative (e.g. do NOT write "Property grew 3.0%,
+          Marine fell 4.1%" in a country bullet — those belong in a
+          line_of_business_performance bullet).
+        * line_of_business_performance → the narrative must be structured
+          around named LoB's and their results. Country breakdowns may
+          appear only as brief supporting colour for an LoB.
+        * overall_trading_performance → aggregate headline metrics only;
+          do NOT list individual country or LoB breakdowns as the main
+          content — use them only to illustrate the aggregate story.
 
     EXECUTION PLAN
     1. Read all supplied insights for this group carefully.
@@ -623,7 +860,17 @@ RECAP_GENERATION_SYSTEM_PROMPT = dedent(
        the Action Items list.
     8. Check: is the sentence ≤ 60 words and publication-ready?
        Tighten if needed.
-    9. Return the JSON output.
+    9. Check: does the title name a single LoB when the narrative covers
+       multiple LoB's? If so, replace the title with a broader topic-level
+       label that reflects all LoB's discussed (e.g. "Portfolio Mix Shift"
+       instead of "Property-Led Mix Shift").
+   10. Check: does the narrative stay in its sub-category lane? For
+       country_regional_performance — are LoB names appearing as
+       standalone data points rather than brief colour? If so, remove
+       them and rephrase to keep the geographic structure. For
+       line_of_business_performance — are country names dominating
+       rather than supporting? Reorder accordingly.
+   11. Return the JSON output.
     """
 ).strip()
 
@@ -631,7 +878,19 @@ RECAP_GENERATION_USER_TEMPLATE = dedent(
     """
     Client: {client_name}
     Period: {period_label}
-    Meeting type: {meeting_type}
+    Meeting type (from source deck): {meeting_type}
+    IMPORTANT: Use this meeting type exactly in all references — do NOT
+    substitute 'QBR' if the meeting type is 'Kick-Off Meeting' or
+    'Governance Meeting' or any other non-QBR type.
+    Deck author / speaker: {deck_speaker}
+    IMPORTANT — PERSPECTIVE: This deck was prepared BY {deck_speaker} and
+    presented TO Marsh. First-person pronouns in the insights ('Our', 'We',
+    'Us') refer to {deck_speaker}, NOT to Marsh. Second-person pronouns
+    ('Your', 'You', 'Your peers') refer to Marsh or Marsh's counterparts.
+    Preserve this perspective exactly when synthesising — do NOT flip the
+    subject. For example, "{deck_speaker}'s quote rates for Marsh are higher
+    than your peers" means {deck_speaker} gives Marsh better rates than it
+    gives to Marsh's peer brokers — NOT that Marsh outperforms its peers.
     Category: {umbrella_label} — {sub_category_label}
 
     Insights ({insight_count} total):
@@ -662,60 +921,103 @@ RECAP_EXEC_SUMMARY_SYSTEM_PROMPT = dedent(
 
     SCOPE (already enforced upstream — respect it, do not widen it)
     The takeaway bullets supplied to you have already been restricted to
-    the Performance & Position umbrella only (overall trading performance,
-    new business performance, and country/regional performance). Bullets
-    from Line of Business Performance, and from any other umbrella
-    (Opportunity & Growth, Market & External Context, Relationship &
-    Collaboration), have been deliberately excluded and will NOT be in your
-    input. Your output must stay consistent with this scope:
+    Performance & Position, Opportunity & Growth, and Relationship &
+    Collaboration (overall trading performance, new business performance,
+    country/regional performance, facilities & portfolio solutions
+    opportunities, relationship health, strategic initiatives, and market
+    engagement quality). Bullets from Line of Business Performance and
+    Segment Focus, and from Market & External Context, have been
+    deliberately excluded and will NOT be in your input. Your output must
+    stay consistent with this scope:
       - Do not name a specific line of business (e.g. property, casualty,
         financial lines, specialty) even if you infer one would fit.
       - Do not name a specific segment (e.g. mid-market, large corporate,
         multinational, specialty sector).
-      - Speak only to the client's overall/aggregate commercial position —
-        never drill into an individual LoB or segment result.
+      - Speak only to the client's overall/aggregate commercial position
+        and relationship story — never drill into an individual LoB or
+        segment result.
 
     OBJECTIVE
-    Produce ONE concise executive summary sentence (≤ 40 words) that
+    Produce ONE concise executive summary sentence (≤ 60 words) that
     captures the most important commercial story across all the key
-    takeaway bullets supplied. This sentence will be printed verbatim
-    on the recap deck and must be publication-ready.
+    takeaway bullets supplied — synthesising performance, growth
+    opportunity, and relationship signals into a single coherent
+    narrative, not just a metric readout. This sentence will be printed
+    verbatim on the recap deck and must be publication-ready.
 
     DIRECTION
     Output requirements:
       - Exactly one sentence — no bullet points, no lists, no line breaks.
-      - ≤ 40 words — brevity is essential; every word must earn its place.
+      - ≤ 60 words — concise but not clipped; use the space to connect a
+        performance signal with a growth or relationship signal where the
+        source material supports it, rather than reporting a single
+        isolated figure.
       - Must name the client and at least one concrete commercial signal
         (a direction, a metric, a risk, or a strategic priority).
-      - Must read as a polished editorial opener, not a summary of summaries.
+      - Must read as a polished editorial opener, not a summary of summaries,
+        and not a bare recitation of one or two numbers.
 
     Content standards:
-      - Synthesise across all takeaways — do not simply restate the first
-        or most prominent bullet.
+      - Synthesise across ALL supplied takeaways — performance, growth
+        opportunity, and relationship signals alike. Do not simply restate
+        the first or most prominent bullet, and do not limit the summary
+        to whichever bullet happens to carry a percentage figure.
       - Do not enumerate the takeaway titles — write through them to the
         single overarching story.
       - Include the headline number or growth direction if one is present
-        and material (e.g. "+24.9% GWP", "retention under pressure").
+        and material (e.g. "+24.9% GWP", "retention under pressure"), but
+        pair it with the qualitative story (partnership momentum, a
+        strategic priority, a risk to future growth) when the source
+        material supports it — a number alone is not a sufficient summary.
+      - Metric-label fidelity: always use the exact metric label that
+        accompanies a figure in the source takeaways. Do not substitute
+        a different metric label even if it appears nearby in the same
+        context. For example, if the source says "€200m GWP", write
+        "€200m GWP" — never "€200m new business" or "€200m revenue".
+        Mixing adjacent metrics is a hallucination.
+      - Temporal accuracy: if a metric or figure in the takeaways is
+        explicitly labelled with its own reporting period (e.g. "FY2025
+        growth of 20.7%", "Q4 2025 GWP"), preserve that period label
+        in the output. Do NOT reassign the figure to the meeting period
+        (e.g. do not say "Q1 2026 growth of 20.7%" if the takeaway says
+        the 20.7% figure is FY2025 performance).
       - Preserve named geographies and company terms exactly.
+      - If a value has a currency sign attached to it, keep it, (e.g Marsh has secured a $2.4 billion book)
       - Do not invent facts not present in the supplied takeaways.
       - Do not introduce any line-of-business or segment name that is not
-        already stated verbatim in the supplied takeaways.
+        already stated verbatim in the supplied takeaways. This rule holds
+        even though Opportunity & Growth and Relationship & Collaboration
+        bullets are now in scope — those bullets have already had
+        LoB/segment-specific sub-categories excluded, so treat any
+        LoB/segment name as out of bounds regardless of which supplied
+        bullet it might resemble.
 
     EXECUTION PLAN
-    1. Read all supplied key takeaway bullets (Performance & Position only).
+    1. Read all supplied key takeaway bullets (Performance & Position,
+       Opportunity & Growth, and Relationship & Collaboration).
     2. Identify the single dominant commercial narrative: what is the
        most important thing that happened this period for this client,
-       at the overall/aggregate level?
+       at the overall/aggregate level — combining how the client
+       performed with how the relationship or growth opportunity is
+       evolving, where both are present in the source material.
     3. Identify the strongest supporting signal: a metric, a direction,
        a risk, or a strategic commitment that makes the story concrete,
        without narrowing to a specific LoB or segment.
     4. Draft a sentence that opens with the client name, states the
        headline story, and closes with the key supporting signal.
-    5. Check: is the sentence ≤ 40 words? Tighten if not.
+    5. Check: is the sentence ≤ 60 words? Tighten if not.
     6. Check: does it name any LoB or segment? If so, remove or generalise it.
-    7. Check: does it sound like a polished executive opener rather
+    7. Check: is every percentage or figure attached to the correct metric?
+       A growth rate stated for overall GWP must not be re-used for new
+       business or any other metric. If two different metrics appear with
+       different magnitudes in the source, use each figure only for its
+       own metric or omit the one you cannot accurately state.
+    8. Check: does the sentence combine a performance signal with a
+       growth/relationship signal where both exist in the source, rather
+       than reporting an isolated number in a vacuum?
+    9. Check: does it sound like a polished executive opener rather
        than a mechanical summary? Revise tone if needed.
-    8. Return the JSON output.
+    10. Return the JSON output.
     """
 ).strip()
 
@@ -723,14 +1025,24 @@ RECAP_EXEC_SUMMARY_USER_TEMPLATE = dedent(
     """
     Client: {client_name}
     Period: {period_label}
-    Meeting type: {meeting_type}
+    Meeting type (from source deck): {meeting_type}
+    IMPORTANT: The executive summary must not describe this as a 'QBR' if
+    the meeting type above is something else (e.g. 'Kick-Off Meeting',
+    'Governance Meeting'). Use the exact meeting type from the source.
+    Deck author / speaker: {deck_speaker}
+    IMPORTANT — PERSPECTIVE: This deck was prepared BY {deck_speaker} and
+    presented TO Marsh. The takeaway bullets below reflect {deck_speaker}'s
+    perspective. First-person language ('Our', 'We') in any bullet refers to
+    {deck_speaker}; second-person language ('Your', 'Your peers') refers to
+    Marsh. Preserve this perspective — do NOT flip the subject when writing
+    the executive summary.
 
     Key takeaway bullets:
     {takeaways_block}
 
     Return JSON exactly:
     {{
-      "executive_summary": "one sentence ≤ 40 words"
+      "executive_summary": "one sentence ≤ 60 words"
     }}
     """
 ).strip()
@@ -744,55 +1056,86 @@ RECAP_OVERLAP_SYSTEM_PROMPT = dedent(
     """
     ROLE
     You are a QBR editorial editor for Marsh ICG. The executive summary
-    sentence for this recap has already been finalised. Your sole job is
-    to make sure the key takeaway bullets underneath it do not simply
-    repeat the same point — the executive summary and the first bullet a
-    reader sees should never say the same thing twice.
+    sentence and the action items list for this recap have already been
+    finalised. Your sole job is to make sure the key takeaway bullets do
+    not repeat claims already covered by the executive summary OR by the
+    action items — a reader should never encounter the same specific point
+    in multiple sections of the same slide.
 
     OBJECTIVE
-    Given the finalised executive summary and the full list of key
-    takeaway bullets, identify any bullet whose core commercial claim is
-    substantially the same as the executive summary's claim (same named
-    metric, same headline direction, same primary story) and revise it so
-    it adds NEW information instead of repeating the executive summary.
-    Bullets that are already distinct from the executive summary must be
-    returned unchanged.
+    Given the finalised executive summary, the action items list, and the
+    full list of key takeaway bullets, identify any bullet whose core
+    commercial claim is substantially the same as a claim in either the
+    executive summary or the action items, and revise it so it adds NEW
+    information instead of repeating content the reader has already seen.
+    Bullets that are already distinct from both must be returned unchanged.
 
     DIRECTION
-    For each bullet, compare it against the executive summary:
-      - If the bullet's narrative is essentially a restatement of the
-        executive summary (same headline metric/direction/story, just
-        reworded), rewrite the bullet's narrative to drop the repeated
-        headline claim and instead surface the next most important,
-        genuinely distinct detail from the same topic that is NOT in the
-        executive summary. Keep the title if it still fits; adjust if not.
+    For each bullet, compare it against BOTH the executive summary AND
+    the action items:
+
+    A. OVERLAP WITH EXECUTIVE SUMMARY
+      - A bullet overlaps if it repeats ANY specific figure, metric, or
+        headline claim already in the executive summary — even if framed
+        differently. The test: "would a reader learn this from the exec
+        summary already?" If yes, remove that claim from the bullet.
+      - Examples:
+          * Exec summary says "20.7% FY2025 growth" → any bullet restating
+            20.7% growth overlaps on that figure.
+          * Exec summary says "€200m GWP" → any bullet using €200m overlaps.
+
+    B. OVERLAP WITH ACTION ITEMS
+      - A bullet overlaps with an action item if it contains a forward-
+        looking target, gap, or imperative that is already expressed as an
+        action item. The test: "is this something the reader is being asked
+        to act on, rather than a fact about what happened?" If yes, and if
+        the same point already appears as an action item, remove it from
+        the bullet.
+      - Examples:
+          * Action item says "Develop the €26m pipeline to around €100m"
+            → any bullet stating the pipeline must scale to €100m or that
+            there is a €74m gap to close overlaps with that action item.
+          * Action item says "Implement segment operating model across Top 6
+            countries" → any bullet restating that imperative overlaps.
+
+    WHAT TO DO WITH AN OVERLAPPING BULLET
+      - If the bullet contains other genuinely distinct, non-overlapping
+        detail (a different metric, a different geography, a different
+        historical fact), rewrite the narrative to lead with that distinct
+        detail and drop the overlapping claim. Keep the title if it still
+        fits; adjust it if not.
       - If, after removing the overlapping claim, no genuinely distinct
-        material remains for that bullet (i.e. the bullet would be empty
-        or vacuous without the repeated claim), omit the bullet entirely
-        from the output rather than keeping a hollow one.
-      - If the bullet is already distinct from the executive summary,
-        return it completely unchanged (same title, same narrative,
-        same umbrella, same sub_category, same source_content_unit_ids).
+        material remains (the bullet would be empty or vacuous), omit the
+        bullet entirely rather than keeping a hollow one.
+      - If the bullet is already distinct from both the executive summary
+        and the action items, return it completely unchanged (same title,
+        same narrative, same umbrella, same sub_category,
+        same source_content_unit_ids).
       - Never introduce new facts not present in the original bullet.
       - Preserve the umbrella, sub_category, and source_content_unit_ids
         of every bullet you keep, whether revised or unchanged.
       - Do not reorder the bullets.
+      - MINIMUM NARRATIVE LENGTH: Every narrative you output — whether
+        kept unchanged, rewritten, or newly split — MUST be at least
+        20 words long.  A one-clause placeholder fragment such as
+        "Finland remains more mixed." is NOT acceptable.  If a bullet
+        cannot be rewritten into a substantive narrative of ≥ 20 words
+        using only information already present in that bullet (no new
+        facts), omit it entirely rather than emitting a stub.
 
     EXECUTION PLAN
-    1. Read the executive summary and note its headline metric,
-       direction, and primary story.
-    2. For each bullet in order, ask: does this bullet's core claim
-       overlap substantially with the executive summary's claim?
-    3. If no overlap, keep the bullet exactly as-is.
-    4. If overlap exists, check whether the bullet contains any other
-       distinct, non-overlapping detail (a different metric, a different
-       geography, a different forward-looking point).
-    5. If distinct detail exists, rewrite the narrative to lead with that
-       distinct detail and drop the repeated headline claim.
-    6. If no distinct detail exists, drop the bullet from the output.
-    7. Verify no two items in your output (including the executive
-       summary) state the same specific fact or figure.
-    8. Return the JSON object.
+    1. Read the executive summary and note its headline figures and claims.
+    2. Read the action items and note every forward-looking target, gap,
+       and imperative they contain.
+    3. For each bullet in order:
+       a. Check for overlap with the executive summary (test A above).
+       b. Check for overlap with the action items (test B above).
+       c. If no overlap on either: keep the bullet exactly as-is.
+       d. If overlap exists: rewrite to surface distinct detail, or drop
+          if no distinct detail remains.
+    4. Verify no two items in your output (including the executive summary
+       and action items) state the same specific fact, figure, or imperative.
+    5. Return the JSON object.
     """
 ).strip()
 
@@ -803,6 +1146,9 @@ RECAP_OVERLAP_USER_TEMPLATE = dedent(
 
     Executive summary (already finalised — do not change):
     {executive_summary}
+
+    Action items (already finalised — do not change):
+    {action_items_block}
 
     Key takeaway bullets ({bullet_count} total):
     {bullets_block}
@@ -868,6 +1214,46 @@ RECAP_ACTION_RANKER_SYSTEM_PROMPT = dedent(
         instruction or commitment, not a label-value list.
       - Do not invent owners, deadlines, LOBs, or geographies not
         present in the source data.
+      - Geography names: use the EXACT country or region name from the
+        source data. Do NOT replace a country name with an informal
+        demonym or adjective (e.g. write "Netherlands", never "Dutch";
+        write "Denmark", never "Danish"; write "Germany", never "German").
+      - Deadline years: if the deadline or year in the source data refers
+        to a period that is past relative to the meeting period, omit
+        that year from the rewritten action. Only include a year if it
+        is clearly a future target deadline.
+      - Stale actions: if a deadline in the source data has already passed
+        relative to the meeting date supplied above, do NOT include that
+        action in the ranked output unless no non-stale actions of
+        equivalent urgency exist. If you must include a stale action,
+        prefix its text with '[PAST DUE]' so reviewers can resolve it.
+        Example: a 'Schedule executive meeting for Q1 2026' action in a
+        May 2026 recap is stale — Q1 2026 has already passed.
+      - No merging of separate actions: do NOT merge two separate action
+        items that relate to different lines of business, geographies, or
+        owners into a single item. Each source action must be kept
+        independent or excluded — never fused with another. Merging
+        destroys accountability. E.g. 'improve e-abs response times
+        (Property)' and 'provide client list (Cyber)' must remain as two
+        separate items if both are selected.
+      - Deadline attribution: a deadline belongs ONLY to the specific
+        initiative it is attached to in the source. Do NOT transfer a
+        deadline from one initiative to a different, adjacent one even
+        if they appear in the same list or on the same slide. For
+        example, if "H2 2026" is the deadline for "Cyber Unity / D&O
+        Unity" and a separate bullet covers "Corporate placement model"
+        with no deadline, do NOT write "implement Corporate placement
+        model by H2 2026".
+      - Geographic scope of targets: when a source states a target
+        figure (e.g. a pipeline or revenue goal) at a pan-regional or
+        Europe-wide level, write it at that same level. Do NOT narrow
+        the scope to a subset of countries that happen to be mentioned
+        nearby. For example, if the source says "grow the €26m pipeline
+        to €100m across Europe" and separately names Germany, Sweden
+        and France as January leaders, do NOT write "grow pipeline to
+        €100m across Germany, Sweden and France" — write "grow pipeline
+        to €100m across Europe" or simply "grow the Europe-wide pipeline
+        to €100m".
       - Keep all other JSON fields (owner, deadline, line_of_business,
         geography, urgency, confidence) populated with their original
         values for data integrity — only the human-readable "action"
@@ -896,6 +1282,7 @@ RECAP_ACTION_RANKER_USER_TEMPLATE = dedent(
     Client: {client_name}
     Period: {period_label}
     Meeting date: {meeting_date}
+    (Use this date to identify actions whose deadlines have already passed.)
 
     Candidate action items ({action_count} total):
     {actions_block}
@@ -962,6 +1349,31 @@ COUNTRY_SUMMARY_SYSTEM_PROMPT = dedent(
         substantive business content attached.
       - All supplied insights are structural markup, table cells, or
         chart data fragments with no interpretable prose sentences.
+      - The insights reference a carrier, client, or organisation that
+        does NOT match the client name supplied in the header. This means
+        the content belongs to a different deck entirely. Return null
+        immediately — do not attempt to write anything from foreign content.
+
+    Geographic attribution — critical rule:
+      A figure or fact may only be attributed to this country in the
+      summary if it is explicitly presented as THIS country's own
+      result in the source text. Do NOT attribute a figure to this
+      country simply because the country is mentioned nearby or listed
+      as one of several contributors to a wider result.
+
+      Examples of what NOT to do:
+        Source: "€11m new business won in January, led by Germany,
+          Sweden and France" → this is a Europe-wide figure;
+          do NOT write "Sweden won €11m new business in January".
+        Source: "20.7% YoY growth across the QBE portfolio" with
+          Sweden mentioned as a contributor → do NOT write
+          "Sweden delivered 20.7% growth".
+
+      If the only figures available for a country come from Europe-wide
+      or multi-country context where the country is merely one of
+      several contributors, omit those figures entirely and focus on
+      country-specific qualitative observations instead. If no
+      country-specific facts remain, return null.
 
     If genuine evidence exists, apply these writing standards:
       - Write exactly the requested number of sentences — no more, no
@@ -1042,70 +1454,104 @@ COUNTRY_SUMMARY_USER_TEMPLATE = dedent(
 TAKEAWAY_DEDUP_SYSTEM_PROMPT = dedent(
     """
     ROLE
-    You are a ruthless QBR editorial editor for Marsh ICG. Your job is to
-    cut a bloated list of draft takeaway bullets down to a tight, slide-ready
-    set of AT MOST 6 distinct points. You merge aggressively — if two bullets
-    cover the same theme, strategy, metric, or commercial situation, they
-    become ONE bullet. A slide with 5 sharp bullets is far better than one
-    with 10 overlapping ones. When in doubt, merge.
+    You are a QBR editorial editor for Marsh ICG. Your job is to merge
+    takeaway bullets that are either exact duplicates OR thematically
+    equivalent — i.e. two bullets that draw on the same underlying data
+    and reach the same commercial conclusion, even if framed from different
+    sub-category angles. A reader should never encounter the same
+    commercial story told twice in slightly different words.
 
     OBJECTIVE
-    Take the input list of draft takeaway bullets and return AT MOST 6
-    bullets. Merge any bullets that overlap in theme, strategy, metric,
-    or commercial narrative. The output must read as a set of genuinely
-    distinct points — a reader must learn something NEW from each bullet
-    that they could not get from any other bullet on the list.
+    Take the input list of draft takeaway bullets and return the minimum
+    set of bullets needed to preserve every genuinely DISTINCT commercial
+    story. Merge aggressively when two bullets are saying the same thing;
+    keep them separate only when they carry different underlying facts,
+    different commercial conclusions, or different geographies/LoBs that
+    would be lost in a merge. As a firm target, aim to reduce to no more
+    than 8 bullets if the input has more than 8 — but never drop a
+    genuinely distinct point just to hit a number.
 
     DIRECTION
-    MERGE RULES — merge bullets whenever ANY of these apply:
-      - They share a specific fact, number, or named metric
-        (e.g. "$15.2bn placed GWP via London" must appear in AT MOST
-        ONE bullet — if it appears in two, merge those two immediately).
-      - They share the same strategic theme or initiative, even under
-        different titles (e.g. "Portfolio Growth Focus", "Specialty Growth
-        Platform", "Portfolio Solutions Growth" are all the same theme —
-        collapse them into ONE bullet).
-      - One is a more detailed or differently angled version of another.
-      - They describe the same problem, opportunity, or action from two
-        perspectives.
-      - UMBRELLA LABELS AND TITLES ARE IRRELEVANT to the merge decision.
-        Judge purely on whether the commercial substance overlaps.
+    MERGE RULES — merge two bullets when ANY of these apply:
+      - EXACT DUPLICATE: They state the exact same specific fact, number,
+        or named metric with no other distinct supporting detail in either
+        bullet.
+      - CONTAINED: One bullet's entire content is fully contained within
+        the other (it adds no fact, name, number, or commercial angle the
+        other doesn't already cover).
+      - NEAR-VERBATIM: They are near-verbatim restatements of the same
+        single commercial claim about the same metric/country/LoB,
+        differing only in phrasing.
+      - SAME DATA / SAME CONCLUSION: They reference the same underlying
+        dataset or trading result AND reach the same directional commercial
+        conclusion — even if one frames it as a country story and the
+        other frames it as an LoB story, or one is labelled
+        "overall_trading_performance" and the other
+        "country_regional_performance". The test: would a reader feel
+        they had already been told this point when they read the second
+        bullet? If yes, merge.
 
-    HARD CAP — the output MUST contain AT MOST 6 bullets. If after merging
-    obvious duplicates you still have more than 6, merge the most thematically
-    similar remaining pair until you reach 6 or fewer. There is NO scenario
-    where more than 6 bullets are acceptable output.
+        Examples of bullets that SHOULD be merged under this rule:
+          • "Europe GWP fell 1.0% YoY, with the Netherlands (+18%) and
+            Germany (+3.6%) growing while France (-3.2%) and Italy
+            (-22.9%) drag the overall figure."
+          • "QBE's European book was down 1.0% overall but uneven by
+            market, with Netherlands and Germany growing and France,
+            Italy, Nordics lagging."
+        These reference the same -1.0% overall GWP figure and the same
+        country split. They should become ONE bullet.
 
-    KEEP SEPARATE only if:
-      - The bullets cover topics so different that merging would produce a
-        confusing or incoherent sentence (e.g. a trading model reset bullet
-        and a regional country performance bullet).
-      - Even then, if you are above 6 bullets total, you must still merge
-        the closest pair.
+    DO NOT MERGE when:
+      - The bullets describe different geographies, different LoBs, or
+        different initiatives where merging would require dropping a
+        specific name, number, country, or LoB that appears in only one.
+      - One bullet is about what HAS happened (performance) and the other
+        is about forward-looking potential (pipeline/opportunity) — these
+        serve different narrative purposes even if they share a geography.
+      - The bullets share a broad theme (e.g. "growth") but the
+        underlying facts are from different time periods, different
+        metrics, or different client segments.
 
-    WRITING STANDARDS for merged bullets:
+    WRITING STANDARDS for any bullet you merge:
       - Lead with the single strongest commercial signal.
-      - Weave in supporting detail (names, numbers, LOBs) naturally.
-      - Maximum 75 words per narrative. Be ruthless with length.
+      - Maximum 65 words per merged narrative. This is a hard cap.
+      - When merging two bullets, you MUST NOT exceed 65 words. If weaving
+        in every individual country result or every individual LoB result
+        would push the narrative past 65 words, deliberately choose
+        aggregate / overall framing instead:
+          * Replace a list of individual country figures with an overall
+            directional signal (e.g. "most markets grew" rather than
+            listing each country's exact percentage).
+          * Replace a list of individual LoB results with a portfolio-level
+            summary (e.g. "Specialty and Property led while Financial Lines
+            softened" rather than enumerating every LoB figure).
+        A shorter, high-level merged sentence is strongly preferred over
+        a long enumeration. Country-level and LoB-level detail will appear
+        on the Country Feedback slide — it does not need to be repeated
+        here.
       - Write a fresh title (3–5 words) that captures the merged theme.
       - Do not use label prefixes or bullet markers inside the narrative.
       - Do not invent any fact not present in the source bullets.
+      - Every bullet you do NOT merge must be passed through with its
+        original title and narrative essentially unchanged.
 
     EXECUTION PLAN
-    1. Read every bullet and write a one-phrase label for its core theme
-       (e.g. "Portfolio/Specialty growth", "London GWP scale",
-       "market engagement gap", "trading model reset").
-    2. Group bullets that share a core theme — these are merge candidates.
-    3. Merge each group into ONE bullet. If a specific fact (number, name,
-       metric) appears in multiple source bullets, include it ONCE in the
-       merged output.
-    4. Count the output bullets. If more than 6, identify the two most
-       thematically similar remaining bullets and merge them. Repeat until
-       at or below 6.
-    5. Write a crisp title for each surviving bullet.
-    6. Verify: does any specific fact or phrase appear in more than one
-       output bullet? If yes, edit to remove the duplication.
-    7. Verify: is every output bullet ≤ 75 words? Tighten if not.
+    1. Read every bullet and note its specific data source, directional
+       conclusion, geographies, LoBs, and metrics.
+    2. For each pair, ask: "Do these two bullets draw on the same
+       underlying data and tell the reader the same commercial story?"
+       If yes → merge candidate.
+    3. For each merge candidate, confirm the merged narrative can be
+       written in ≤ 65 words. If it cannot while preserving only the
+       aggregate signal, that is acceptable — prefer the shorter,
+       higher-level sentence.
+    4. Merge all confirmed candidates. Leave every other bullet unchanged.
+    5. Write a crisp title for each merged bullet.
+    6. Verify: is every remaining bullet telling a story the reader
+       could not already get from another bullet? If two bullets still
+       feel redundant, merge them.
+    7. Verify: is every merged narrative ≤ 65 words? Tighten if not,
+       using aggregate language to cut length.
     8. Return the JSON object.
     """
 ).strip()
@@ -1115,75 +1561,96 @@ TAKEAWAY_DEDUP_USER_TEMPLATE = dedent(
     Client: {client_name}
     Period: {period_label}
 
-    Draft takeaway bullets ({bullet_count} total — target output: AT MOST 6):
+    Draft takeaway bullets ({bullet_count} total):
     {bullets_block}
 
-    IMPORTANT: You MUST return AT MOST 6 bullets. Merge aggressively.
-    Any specific fact or metric that appears in multiple input bullets
-    must appear in AT MOST ONE output bullet.
+    IMPORTANT: Merge any two bullets that draw on the same underlying data
+    and tell the same commercial story — even if they are framed from
+    different angles (e.g. one as a country breakdown, another as an LoB
+    breakdown of the same overall figure). A reader should never encounter
+    the same commercial point twice. Aim for no more than 8 bullets in the
+    output; if you still have more than 8 after merging all genuine
+    equivalents, re-examine the list — you have likely missed a mergeable
+    pair. Do not drop a bullet that carries a genuinely different story
+    just to hit the number.
 
-    Return a JSON object exactly. "source_bullet_numbers" lists the input
-    bullet number(s) each output bullet was built from — one number for a
-    bullet kept as-is, several for a merge. Every input bullet you keep or
-    merge must be referenced.
+    Return a JSON object exactly:
     {{
       "deduped_takeaways": [
         {{
           "title": "string",
           "narrative": "string",
-          "source_bullet_numbers": [1]
+          "source_bullet_numbers": [1, 3]
         }}
       ]
     }}
+
+    REQUIRED: every output bullet must include "source_bullet_numbers"
+    listing which input bullet number(s) it was built from (use a
+    single-element list for unchanged bullets, a multi-element list for
+    merged ones). Do not omit this field.
     """
 ).strip()
 
 
 # ---------------------------------------------------------------------------
-# Recap Generator — takeaway force-compress (hard cap, one merge per call)
-#
-# Stand-in wording: the original business_review_recap prompts for this step and
-# the two fact-checkers below were not part of the Recap_Updated drop. The JSON
-# contracts ARE the ones recap_generator parses; replace the prose freely.
+# Takeaway Force-Compression -- hard cap enforcement after the main dedup pass
 # ---------------------------------------------------------------------------
 
 TAKEAWAY_FORCE_COMPRESS_SYSTEM_PROMPT = dedent(
     """
     ROLE
-    You are a QBR editorial editor for Marsh ICG. The takeaway bullets you
-    receive have already been de-duplicated, but there are still more of
-    them than the recap slide can hold. The slide's hard limit is
-    {max_takeaways} bullets.
+    You are a QBR editorial editor for Marsh ICG. The draft list of
+    takeaway bullets you receive has already been deduplicated once,
+    but still exceeds the hard limit of {max_takeaways} bullets for the
+    final slide. Your sole job is to merge the two (or more) bullets
+    that are MOST SIMILAR to each other -- even if their overlap is
+    below the usual duplicate threshold -- so the list is shortened by
+    exactly one bullet, with zero loss of information.
 
     OBJECTIVE
-    Reduce the list by EXACTLY ONE bullet: find the single pair of bullets
-    that are most similar to each other and merge them into one bullet that
-    keeps every fact from both. Return the full list — every other bullet
-    unchanged, plus the one merged bullet.
+    Identify the single pair (or small cluster) of bullets in the input
+    list that are more similar to each other than any other pair,
+    judged purely on their title/narrative content, and merge ONLY that
+    pair/cluster into one bullet. Every other bullet must be passed
+    through unchanged. The output must contain exactly one fewer bullet
+    than the input.
 
     DIRECTION
-      - Merge exactly one pair. Do not drop, rewrite, or reorder any other
-        bullet; return each of them with its title and narrative verbatim.
-      - Choose the pair whose commercial substance overlaps most (shared
-        metric, geography, theme or initiative), even if the overlap is
-        partial. Titles and wording are irrelevant to the choice.
-      - The merged bullet must preserve every number, name, geography and
-        line of business stated in either source bullet. No information
-        may be lost, and no fact may be invented.
-      - Write a fresh 3–5 word title for the merged bullet. Keep its
-        narrative to at most 75 words, with no label prefixes or bullet
-        markers.
-      - Reference source bullets by their input numbers in
-        "source_bullet_numbers": one number for an unchanged bullet, the
-        two merged numbers for the merged bullet.
+    - Rank every pair of bullets by similarity (shared country/market,
+      shared metric, shared LoB, shared theme, overlapping narrative
+      content) -- even loose thematic similarity counts here, since the
+      goal is now to reach the target count, not just remove duplicates.
+    - Merge only the single most-similar pair (or a slightly larger
+      cluster if several bullets are mutually the closest match).
+    - Maximum 65 words for the merged bullet's narrative. This is a
+      hard cap that takes priority over preserving granular detail.
+    - When merging, if weaving every individual country result or every
+      individual LoB figure would exceed 65 words, you MUST use
+      aggregate / overall framing instead:
+        * Replace a list of individual country figures with an overall
+          directional signal (e.g. "most markets grew" or "Europe-wide
+          growth was uneven").
+        * Replace a list of individual LoB results with a portfolio-level
+          summary (e.g. "Specialty and Property led; Financial Lines
+          softened").
+      A shorter, higher-level merged sentence is strongly preferred over
+      a long enumeration. Country-level and LoB-level granularity will
+      appear on the Country Feedback slide -- it does not need to be
+      repeated in the Key Takeaways.
+    - Every bullet NOT selected for merging must be returned exactly as
+      given (title and narrative unchanged).
+    - Write a fresh title (3-5 words) capturing the merged theme.
 
     EXECUTION PLAN
-    1. Read every bullet and note its core claim.
-    2. Identify the single most similar pair.
-    3. Merge that pair into one bullet containing every fact from both.
-    4. Copy every other bullet unchanged.
-    5. Verify the output has exactly one bullet fewer than the input.
-    6. Return the JSON object.
+    1. Score every pair of bullets on thematic/content similarity.
+    2. Select the single highest-scoring pair (or cluster) to merge.
+    3. Draft the merged narrative in ≤ 65 words, using aggregate language
+       to stay within the cap if individual detail is too voluminous.
+    4. Return every other bullet unchanged, plus the one merged bullet.
+    5. Verify the output has exactly one fewer bullet than the input.
+    6. Verify the merged narrative is ≤ 65 words. Tighten if not.
+    7. Return the JSON object, referencing source bullet numbers.
     """
 ).strip()
 
@@ -1192,11 +1659,16 @@ TAKEAWAY_FORCE_COMPRESS_USER_TEMPLATE = dedent(
     Client: {client_name}
     Period: {period_label}
 
-    Takeaway bullets ({bullet_count} total — the slide holds at most {max_takeaways}):
-    {bullets_block}
+    The list below has {bullet_count} bullets but must be reduced to
+    {max_takeaways} or fewer. Merge ONLY the single most-similar
+    pair/cluster of bullets -- leave every other bullet unchanged.
+    The merged narrative must be ≤ 65 words. If hitting that cap
+    requires dropping individual country or LoB figures, use aggregate
+    language instead (e.g. "most markets grew", "portfolio mix shifted")
+    rather than enumerating every detail.
 
-    Merge the single most similar pair and return every bullet, so the
-    output has exactly one bullet fewer than the {bullet_count} above.
+    Bullets:
+    {bullets_block}
 
     Return a JSON object exactly:
     {{
@@ -1204,104 +1676,248 @@ TAKEAWAY_FORCE_COMPRESS_USER_TEMPLATE = dedent(
         {{
           "title": "string",
           "narrative": "string",
-          "source_bullet_numbers": [1]
+          "source_bullet_numbers": [1, 4]
         }}
       ]
     }}
+
+    The output list must contain exactly one fewer bullet than the
+    input. "source_bullet_numbers" must list the input bullet number(s)
+    merged into each output bullet.
     """
 ).strip()
 
 
 # ---------------------------------------------------------------------------
-# Recap Generator — fact-checker, Slide 1 (executive summary, key takeaways,
-# action items)
+# Fact-Checker — verifies all generated recap content against source insights
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Fact-Checker Pass 1 — Slide 1: exec summary, key takeaways, action items
 # ---------------------------------------------------------------------------
 
 FACT_CHECKER_SLIDE1_SYSTEM_PROMPT = dedent(
     """
     ROLE
-    You are the fact-checker for a Marsh ICG quarterly business review recap.
-    Every sentence on the recap slide will be read by the client and its
-    carrier partners, so nothing may be stated that the source deck does
-    not support.
+    You are a precision fact-checker for Marsh ICG quarterly business review
+    recap presentations. You have access to the raw evidence (extracted source
+    insights from the original PPT deck) and the Slide 1 generated content
+    (executive summary, key takeaway bullets, and action items). Your sole job
+    is to verify every specific claim against the source evidence and correct
+    any that are inaccurate, mis-scoped, or unsupported — and to ensure the
+    executive summary contains no forward-looking action language.
 
     OBJECTIVE
-    Verify the executive summary, the key takeaway bullets and the action
-    items against the source insights, correct anything the source does not
-    support, and return the corrected content in the same structure.
+    Check every specific claim — figures, growth rates, metric labels,
+    geographic scope, deadlines, owners — in the executive summary, takeaway
+    bullets, and action items. Return a corrected version with any inaccurate
+    claims fixed or removed. Additionally, remove from the executive summary
+    any language that is forward-looking, goal-oriented, or action-oriented,
+    since those belong exclusively in the action items section.
 
     DIRECTION
-    A statement is SUPPORTED only if the source insights (including their
-    "Metrics:" lines) state it. Check in particular:
-      - Numbers: every figure, percentage and currency amount must appear
-        in the source with the same value and the same meaning. Do not
-        conflate different metrics (e.g. GWP vs. revenue, growth vs. share).
-      - Scope: a figure must be attributed to the same geography, line of
-        business, segment and period the source gives it.
-      - Direction: growth vs. decline, ahead of vs. behind plan.
-      - Names: clients, carriers, countries and people exactly as sourced.
+    Check for these specific error types:
 
-    When something is unsupported:
-      - Correct it to what the source actually says if the source covers it.
-      - Otherwise remove the unsupported clause, keeping the rest of the
-        sentence. Drop a takeaway entirely only if nothing supported remains.
-      - Never add a fact, number or name that is not in the source.
+    1. METRIC CONFLATION — a percentage or figure has been applied to the
+       wrong metric. The figure must only be used for the metric it is
+       explicitly attached to in the source.
+       Fix: correct the metric label, or remove the figure if its correct
+       label cannot be determined from the source.
+       Example: source says "overall GWP grew 20.7%" — if the recap says
+       "new business up 20.7%", correct it to "overall GWP up 20.7%".
 
-    Preserve everything that is already supported: keep wording, titles,
-    order, and each takeaway's umbrella and sub_category exactly as given.
-    Keep the executive summary to one sentence. Return the action items in
-    the same order and count you received them, with owner, deadline,
-    line_of_business, geography, urgency and confidence carried over
-    unless the source contradicts them. If no action items are supplied,
-    return an empty "action_items" list.
+    2. GEOGRAPHIC SCOPE NARROWING — a pan-regional target or figure has been
+       incorrectly scoped to a subset of countries.
+       Fix: restore the correct scope from the source.
+       Example: source says "€100m pan-European pipeline goal" — if the recap
+       says "€100m goal across Germany, Sweden and France", remove the country
+       restriction.
+
+    3. DEADLINE MISATTRIBUTION — a deadline from one initiative has been
+       attached to a different initiative that carries no deadline in the source.
+       Fix: remove the deadline from the incorrectly labelled initiative.
+       Example: source gives "H2 2026" only for Cyber/D&O Unity — if the recap
+       attaches "H2 2026" to Corporate placement model, remove that date.
+
+    4. PERIOD MISATTRIBUTION — a figure labelled with one reporting period in
+       the source (e.g. "FY2025 GWP of 20.7%") has been re-attributed to the
+       meeting period (e.g. "Q1 2026 growth of 20.7%").
+       Fix: restore the correct period label.
+
+    5. INVENTED DETAIL — a fact, name, geography, LOB, metric, deadline, or
+       owner that does not appear anywhere in the supplied source insights.
+       Fix: remove the invented detail entirely.
+
+    6. ACTION LANGUAGE IN EXECUTIVE SUMMARY — the executive summary must
+       describe what HAS happened (past or current performance), not what
+       MUST or SHOULD happen next. Any forward-looking, goal-oriented, or
+       action-oriented clause in the executive summary is a structural error.
+       Fix: remove the offending clause from the executive summary entirely.
+       Do NOT move it to the action items — it will already be there.
+       The executive summary sentence must still make grammatical sense and
+       read as a complete, polished statement after the removal.
+       Examples of action language to remove from the executive summary:
+         - "...though the €26m pipeline must scale to around €100m to hit
+           the 2026 new business goal."
+         - "...and QBE must now accelerate Cyber and D&O to sustain growth."
+         - "...but the segment operating model still needs to be implemented
+           across all Top 6 countries."
+       The test: if the same claim appears verbatim (or near-verbatim) as
+       an action item, it must be removed from the executive summary.
+
+    7. ACTUAL vs. ANTICIPATED CONFLATION — the source deck distinguishes
+       'Actual' / 'YTD' figures from 'Anticipated' / 'Forecast' / 'Budget'
+       figures (often in separate table columns). If the recap presents an
+       anticipated figure as an achieved actual result, correct it clearly:
+       distinguish 'Actual YTD: X' from 'Anticipated: Y'.
+       Example: source shows Actual YTD GWP = $187.7m (-1.9%) and
+       Anticipated GWP = $202.2m (+7.8%). If recap says '$202.2m YTD GWP
+       rose 7.8%', correct to 'Actual YTD GWP of $187.7m is down -1.9%;
+       anticipated GWP is $202.2m (+7.8%)'.
+
+    8. MATURITY MISREPRESENTATION — a relationship, product, or market that
+       the source describes as early-stage, nascent, aspirational, or
+       yet-to-convert is presented in the recap as established, active, or
+       growing. This is a factual error about the state of the relationship.
+       Fix: replace optimistic stage language with the source's own
+       characterisation (e.g. 'initial meeting held; client list awaited',
+       'in discussions', 'yet to convert', 'pre-pipeline').
+       Example: source says 'Recently meeting held on Cyber — Await a client
+       list'. If recap says 'growing international Cyber programme', correct
+       to 'Cyber: initial meeting held; client list awaited — early-stage'.
+
+    9. FALSE OWNERSHIP ATTRIBUTION — an initiative, tool, or programme that
+       the source describes as belonging to ONE party (Marsh or the carrier)
+       is presented in the recap as jointly owned or owned by the other party.
+       Fix: restore the correct attribution from the source evidence.
+       Example: source lists digital tools (Whitespace, Broker Workbench)
+       under Marsh's own internal 2026 Placement priorities. If recap
+       presents them as a joint Zurich–Marsh programme, correct to
+       'Marsh UK is advancing its own digital capabilities (Whitespace,
+       Broker Workbench ...) — Zurich's digital alignment is aspirational'.
+
+    10. FABRICATED NUMERIC PRECISION — the recap shows more decimal places
+        than the source. If the source states $9.7m, write $9.7m — not
+        $9.66m. If the source states $12.4m, write $12.4m — not $12.43m.
+        Fix: round back to the precision shown in the source.
+
+    11. CURRENCY SYMBOL ERROR — the recap uses the wrong currency symbol
+        for a given country's data. If the source is in USD ($), write $,
+        not £ or €.
+        Fix: replace the incorrect symbol with the one used in the source.
+
+    12. GROWTH LEADER MISIDENTIFICATION — a LoB is named as a growth driver
+        when its actual % change in the source is negative or zero.
+        Fix: replace with the correctly ranked positive-growth LoBs, or
+        remove the growth-driver claim if it cannot be supported.
+
+    13. TAKEAWAY / ACTION DUPLICATION — a key takeaway bullet whose ENTIRE
+        substance is already expressed verbatim or near-verbatim as one of
+        the action items. This means the reader sees the same point twice:
+        once as a "what happened / what is planned" bullet and again as an
+        explicit action. The takeaway adds no information the action item
+        does not already carry.
+        Test: read the takeaway and every action item. If the takeaway's
+        core claim — the entity, the event, and the commercial significance
+        — is wholly contained within a single action item (even if worded
+        slightly differently), the takeaway is redundant.
+        Fix: remove the takeaway bullet entirely. Do NOT remove the action
+        item; it belongs in the actions section.
+        Example: action item says "Marsh MN Leadership to present at QBE
+        Europe Town Hall on 9 July; Richard Sheridan to tour QBE Europe
+        offices in H2." If a takeaway bullet says essentially the same
+        thing (MN leadership presenting at the Town Hall, Sheridan touring
+        offices), drop that takeaway — the action item already covers it.
+
+    WHAT NOT TO CHANGE
+    - Do NOT rewrite content that is factually supported by the source.
+    - Do NOT change style, tone, or wording unless a specific fact is wrong
+      or the action-language rule applies.
+    - Do NOT add new facts — only remove or correct unsupported ones.
+    - Do NOT change the number of bullets or action items unless a bullet
+      becomes factually empty after corrections (in which case, remove it).
+    - If a claim is qualitative (directional language with no specific figure
+      attached) and broadly consistent with the source evidence, leave it.
 
     EXECUTION PLAN
-    1. Read the source insights.
-    2. Check the executive summary claim by claim; correct or trim.
-    3. Check each takeaway claim by claim; correct, trim, or drop.
-    4. Check each action item's text and fields; correct or trim.
-    5. Verify no number, name or scope in your output is absent from the
-       source.
-    6. Return the JSON object.
+    1. Read all source insights — note every specific figure, metric label,
+       geographic scope, deadline, owner, and period label.
+    2. Read the action items list and note every goal, target, and forward-
+       looking commitment they contain.
+    3. Check the executive summary:
+       a. Correct any factual errors (error types 1-6 above).
+       b. Identify any forward-looking / action / goal clause (error type 6).
+          For each: check whether the same claim appears in the action items.
+          If yes — remove it from the executive summary entirely.
+       c. Ensure the result still reads as a complete, polished sentence.
+    4. Check each takeaway bullet:
+       a. Correct any metric, scope, deadline, or period errors (types 1–5,
+          7–12 above). Remove invented detail.
+       b. Apply the takeaway/action duplication check (error type 13):
+          compare this bullet against every action item. If the bullet's
+          entire substance — entity, event, and commercial point — is
+          already fully expressed by a single action item, remove the
+          bullet. A partial overlap (the bullet covers additional distinct
+          ground beyond what the action item says) is NOT sufficient to
+          remove it; only remove when the overlap is total.
+    5. Check each action item. Correct owner, deadline, geography, and
+       description. Remove unsupported detail.
+    6. Return the corrected JSON. Return fields unchanged if no errors found.
     """
 ).strip()
+
 
 FACT_CHECKER_SLIDE1_USER_TEMPLATE = dedent(
     """
     Client: {client_name}
     Period: {period_label}
+    Deck author / speaker: {deck_speaker}
+    IMPORTANT — PERSPECTIVE: This deck was prepared BY {deck_speaker} and
+    presented TO Marsh. First-person pronouns ('Our', 'We') in the source
+    insights refer to {deck_speaker}, NOT to Marsh. Second-person pronouns
+    ('Your', 'Your peers') refer to Marsh or Marsh's counterparts. When
+    fact-checking, flag as an error any takeaway or exec-summary sentence
+    that has flipped this perspective — e.g. attributing {deck_speaker}'s
+    quote rates to Marsh, or describing Marsh as outperforming peers when
+    the source says {deck_speaker} gives Marsh preferential rates.
 
-    SOURCE INSIGHTS (the only ground truth):
+    ── SOURCE INSIGHTS (ground truth) ──────────────────────────────────────
     {source_block}
 
-    EXECUTIVE SUMMARY:
+    ── SLIDE 1 CONTENT TO VERIFY ───────────────────────────────────────────
+
+    Executive summary:
     {executive_summary}
 
-    KEY TAKEAWAYS ({takeaway_count} total):
+    Key takeaway bullets ({takeaway_count} total):
     {takeaways_block}
 
-    ACTION ITEMS ({action_count} total):
+    Action items ({action_count} total):
     {actions_block}
 
-    Return a JSON object exactly:
+    ── INSTRUCTIONS ────────────────────────────────────────────────────────
+    Fact-check every specific claim above. Return a JSON object:
+
     {{
-      "executive_summary": "string",
+      "executive_summary": "corrected sentence or unchanged original",
       "takeaways": [
         {{
           "title": "string",
-          "narrative": "string",
+          "narrative": "corrected or unchanged narrative",
           "umbrella": "string",
           "sub_category": "string or null"
         }}
       ],
       "action_items": [
         {{
-          "action": "string",
+          "action": "corrected or unchanged action sentence",
           "owner": "string or null",
           "deadline": "string or null",
           "line_of_business": "string or null",
           "geography": "string or null",
-          "urgency": "high|medium|low|unknown",
+          "urgency": "string",
+          "source_slide_number": null,
+          "source_content_unit_id": "string or null",
           "confidence": 0.0
         }}
       ]
@@ -1311,64 +1927,141 @@ FACT_CHECKER_SLIDE1_USER_TEMPLATE = dedent(
 
 
 # ---------------------------------------------------------------------------
-# Recap Generator — fact-checker, Slide 2 (country summaries)
+# Fact-Checker Pass 2 — Slide 2: country-wise feedback summaries
 # ---------------------------------------------------------------------------
 
 FACT_CHECKER_SLIDE2_SYSTEM_PROMPT = dedent(
     """
     ROLE
-    You are the fact-checker for the country feedback slide of a Marsh ICG
-    quarterly business review recap.
+    You are a precision fact-checker for Marsh ICG quarterly business review
+    recap presentations. You have access to the raw evidence (extracted source
+    insights from the original PPT deck) and the Slide 2 generated content
+    (per-country feedback summaries). Your sole job is to verify every specific
+    claim in each country summary against the source evidence for that country
+    and correct any that are inaccurate, mis-scoped, or unsupported.
 
     OBJECTIVE
-    Verify each country summary against the source insights tagged to that
-    country, correct anything the source does not support, and return the
-    corrected summaries.
+    For each country summary, check every specific claim — figures, growth
+    rates, metric labels, LOBs, wins/losses, geographic scope — against the
+    source insights tagged to that country. Return a corrected version with
+    any inaccurate claims fixed or removed.
 
     DIRECTION
-    A statement is SUPPORTED only if that country's source insights
-    (including their "Metrics:" lines) state it. Check in particular:
-      - Attribution: every fact must belong to THIS country. A figure the
-        source gives for another country, a region, or the whole portfolio
-        must not appear in this country's summary.
-      - Numbers: same value and same metric as the source.
-      - Direction: growth vs. decline, ahead of vs. behind plan.
+    Check for these specific error types:
 
-    When something is unsupported:
-      - Correct it to what the source says if the source covers it.
-      - Otherwise remove the unsupported sentence or clause.
-      - If nothing supported remains for a country, return its summary as
-        null — the country is then left off the slide.
-      - Never add a fact, number or name that is not in the source.
+    1. COUNTRY SPECIFICITY ERROR — a Europe-wide or multi-country figure has
+       been presented as if it belongs to a single country because the country
+       was mentioned nearby in the source.
+       Fix: remove the figure from the country summary, or restate it with
+       the correct multi-country scope if that is still useful.
+       Example: source says "€11m new business won in January, led by Germany,
+       Sweden and France" — if the Sweden summary says "Sweden won €11m new
+       business", remove that figure entirely.
 
-    Keep supported sentences as written. Keep the countries in the order
-    given and spell each country name exactly as supplied.
+    2. METRIC CONFLATION — a percentage or figure has been applied to the
+       wrong metric within a country's evidence.
+       Fix: correct the metric label or remove the figure.
+
+    3. PERIOD MISATTRIBUTION — a figure is labelled with the wrong reporting
+       period (e.g. a FY2025 figure presented as a Q1 2026 result).
+       Fix: restore the correct period label.
+
+    4. INVENTED DETAIL — a fact, LOB, win, loss, metric, or name that does
+       not appear in the source insights for this specific country.
+       Fix: remove it entirely.
+
+    5. WRONG COUNTRY ATTRIBUTION — a fact from one country's source evidence
+       has been included in a different country's summary.
+       Fix: remove it from the wrong country's summary.
+
+    6. CLIENT/CARRIER IDENTITY ERROR — the country summary references a
+       carrier, client, or organisation that does NOT match the client named
+       in the header above. This indicates content from an entirely different
+       deck was included in this recap (e.g. QBE content appearing in a Swiss
+       Re deck, or another insurer's content appearing in a Zurich recap).
+       This is the most severe error type — the entire country block is
+       foreign content and must not appear in this recap at all.
+       Fix: set the summary to null immediately — do NOT attempt to rewrite
+       or salvage the content. Return null so the country is excluded.
+
+    7. CROSS-SLIDE ATTRIBUTION — a claim that appears in the source evidence
+       for Country A has been placed in the summary for Country B.
+       This is the slide-level equivalent of error type 5 and covers any
+       specific fact, partner name, LOB strength, client name, or opportunity
+       that is only present in a different country's source slides.
+       Fix: remove the claim from the wrong country's summary entirely.
+       If the summary becomes empty after removal, set it to null.
+       Key examples to catch:
+         - 'AIG top partner for D&O' sourced from an Italy slide must NOT
+           appear in a Spain summary.
+         - Issues described on a Germany slide (slow claims handling, cyber
+           info requirements, long FINPRO response times) must NOT appear
+           in a France summary.
+         - A 'shown as lost but confirmed retained/timing' note for a Swedish
+           account (BEKKEN INVEST AS) must NOT appear in a Portugal summary.
+         - 'Strong in FinPro and Marine' sourced from a Netherlands slide
+           must NOT appear in a Sweden/Nordics summary.
+         - A '$500k Cyber opportunity' tied to a Spain/Millicom source slide
+           must NOT appear in a Sweden summary.
+
+    8. FABRICATED NUMERIC PRECISION — the recap shows more decimal places
+       than the source. If the source states $9.7m, write $9.7m — not
+       $9.66m. If the source states $12.4m, write $12.4m — not $12.43m.
+       Fix: round back to the precision shown in the source.
+
+    9. CURRENCY SYMBOL ERROR — the recap uses the wrong currency symbol.
+       If the source data is denominated in USD ($), write $, not £ or €.
+       Fix: replace the incorrect symbol with the one used in the source.
+
+    10. GROWTH LEADER MISIDENTIFICATION — the recap names a line of business
+        as a 'growth driver' or 'growth centre' when its actual % change in
+        the source is negative. Growth leaders must be derived from the
+        actual % change figures, ranked highest-positive first.
+        Fix: replace with the correct positive-growth LoBs, or remove the
+        growth-driver claim entirely if it cannot be corrected from the source.
+
+    WHAT NOT TO CHANGE
+    - Do NOT rewrite content that is factually supported by the country's
+      own source evidence.
+    - Do NOT change style, tone, or sentence count unless a fact is wrong.
+    - Do NOT add new facts.
+    - If a summary becomes factually empty after corrections, set it to null
+      so it can be excluded from the slide.
 
     EXECUTION PLAN
-    1. For each country, read its source insights.
-    2. Check its summary sentence by sentence; correct, trim, or null it.
-    3. Verify no figure is attributed to the wrong country.
-    4. Return the JSON object.
+    1. For each country summary in turn:
+       a. Identify the source insights tagged to that country.
+       b. Check every specific claim against those insights only.
+       c. Cross-check every named carrier/partner, LOB strength, and
+          opportunity against the slide provenance — if the source slide
+          is tagged to a DIFFERENT country, apply error type 7.
+       d. Apply corrections for any of the 10 error types found.
+       e. If no errors, return the summary unchanged.
+    2. Return the corrected JSON array.
     """
 ).strip()
+
 
 FACT_CHECKER_SLIDE2_USER_TEMPLATE = dedent(
     """
     Client: {client_name}
     Period: {period_label}
 
-    SOURCE INSIGHTS BY COUNTRY (the only ground truth):
+    ── SOURCE INSIGHTS BY COUNTRY (ground truth) ────────────────────────────
     {source_block}
 
-    COUNTRY SUMMARIES ({country_count} total):
+    ── SLIDE 2 COUNTRY SUMMARIES TO VERIFY ({country_count} total) ──────────
     {countries_block}
 
-    Return a JSON object exactly:
+    ── INSTRUCTIONS ────────────────────────────────────────────────────────
+    Fact-check each country summary against the source insights for that
+    country only. Return a JSON object:
+
     {{
       "country_summaries": [
         {{
-          "country": "string",
-          "summary": "string or null"
+          "country": "exact country name",
+          "summary": "corrected or unchanged summary, or null if empty"
         }}
       ]
     }}

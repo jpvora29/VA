@@ -121,9 +121,11 @@ class ClassificationBundle(BaseModel):
     def active_umbrellas(self) -> List[UmbrellaLabel]:
         """Returns list of umbrella labels where value=True.
 
-        Hard cap: at most 3 umbrellas per insight.  If the LLM returns
-        more than 3 trues, keep only the highest-confidence ones so that
-        over-eager multi-labelling is silently corrected at the schema level.
+        Hard cap: at most 2 umbrellas per insight, per prompt instruction
+        ("An insight should belong to AT MOST one or two umbrellas").
+        If the LLM returns more than 2 trues, keep only the two highest-
+        confidence ones so that over-inclusive multi-labelling is corrected
+        at the schema level before the record is written.
         """
         results = [
             self.performance_and_position,
@@ -132,7 +134,7 @@ class ClassificationBundle(BaseModel):
             self.relationship_and_collaboration,
         ]
         active = [r for r in results if r.value]
-        if len(active) > 3:
-            # Sort descending by confidence, keep top 3
-            active = sorted(active, key=lambda r: r.confidence, reverse=True)[:3]
+        if len(active) > 2:
+            # Sort descending by confidence, keep top 2
+            active = sorted(active, key=lambda r: r.confidence, reverse=True)[:2]
         return [r.umbrella for r in active]

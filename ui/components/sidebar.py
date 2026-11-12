@@ -289,7 +289,7 @@ def app_sidebar(conversations: list[dict[str, Any]] | None, username: str) -> ht
     signed-in user is NOT here any more: it lives once, in the navbar.
     """
     return rail_frame(
-        "Chatbot",
+        "Ask ICG",
         [
             html.Div(
                 dbc.Button(
