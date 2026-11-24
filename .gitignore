@@ -57,4 +57,4 @@ config/
 .playwright-mcp/
 
 # Per-user usage workbooks (core.usage_metrics) — shared via OneDrive, not git
-usage_metrics/
+/usage_metrics/
