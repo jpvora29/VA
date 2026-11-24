@@ -1,11 +1,12 @@
 """The turn's single interpretation, as a frozen data contract."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, Tuple
+from typing import Any
 
 #: Scope as ordered (column, values) pairs, so the spec stays hashable.
-Scope = Tuple[Tuple[str, Tuple[str, ...]], ...]
+Scope = tuple[tuple[str, tuple[str, ...]], ...]
 
 
 @dataclass(frozen=True)
@@ -27,19 +28,19 @@ class TurnSpec:
     operation: str
     shape: str
     presentation: str
-    sources: Tuple[str, ...] = ()
-    requirements: Tuple[str, ...] = ()
-    deferred: Tuple[str, ...] = ()
+    sources: tuple[str, ...] = ()
+    requirements: tuple[str, ...] = ()
+    deferred: tuple[str, ...] = ()
     scope: Scope = ()
-    inherited: Tuple[Tuple[str, str], ...] = ()
-    unresolved: Tuple[str, ...] = ()
+    inherited: tuple[tuple[str, str], ...] = ()
+    unresolved: tuple[str, ...] = ()
     period_named: bool = False
-    disagreements: Tuple[Dict[str, str], ...] = field(default_factory=tuple)
+    disagreements: tuple[dict[str, str], ...] = field(default_factory=tuple)
 
-    def scope_dict(self) -> Dict[str, Tuple[str, ...]]:
+    def scope_dict(self) -> dict[str, tuple[str, ...]]:
         return dict(self.scope)
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         """Plain JSON-safe form, for state and logs (the checkpoint stores dicts)."""
         data = asdict(self)
         data["scope"] = {column: list(values) for column, values in self.scope}

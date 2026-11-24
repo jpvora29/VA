@@ -8,13 +8,21 @@ The rail is the shared ``va-rail`` frame (``ui.shell.rail``); collapsing is app-
 and owned by ``ui.shell.collapse``, so nothing here knows the rail's width."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
 from dash import dcc, html
 import dash_bootstrap_components as dbc
 
-from ui.components.chat_history import ChatGroup, ChatRow, group_conversations, row_meta
+from ui.components.chat_history import (
+    ChatGroup,
+    ChatRow,
+    group_conversations,
+    row_line,
+    row_meta,
+    status_tone,
+)
 from ui.shell.rail import rail_frame, rail_section
 
 
@@ -166,15 +174,30 @@ def _row_menu(row: ChatRow) -> html.Div:
     )
 
 
-def _conversation_item(row: ChatRow, active_id: str | None, now: datetime) -> html.Div:
-    """A single sidebar row: icon, title over its time line, and a "..." menu.
+def _row_second_line(row: ChatRow, now: datetime) -> Any:
+    """What the chat found (or is waiting on), else when it happened.
 
-    A pinned row drops the time line — it is in Pinned because WHEN no longer
-    matters — and wears a pin instead of a speech bubble.
+    A pinned row drops it: it is in Pinned because WHEN no longer matters.
+    """
+    if row.pinned:
+        return None
+    line = row_line(row)
+    if line:
+        return html.Span(line, className="conv-item-preview")
+    return _row_meta(row, now)
+
+
+def _conversation_item(row: ChatRow, active_id: str | None, now: datetime) -> html.Div:
+    """A single sidebar row: icon, status dot and title over its preview, a "..." menu.
+
+    The icon is what a collapsed rail shows; expanded, a client's rows show the
+    dot instead (``va_shell.css``).
     """
     state = (" conv-item-active" if row.id == active_id else "") + (
-        " conv-item-pinned" if row.pinned else "")
+        " conv-item-pinned" if row.pinned else ""
+    )
     icon = "bi bi-pin-angle" if row.pinned else "bi bi-chat-left-text"
+    tone = status_tone(row, now)
     return html.Div(
         [
             html.Button(
@@ -182,8 +205,14 @@ def _conversation_item(row: ChatRow, active_id: str | None, now: datetime) -> ht
                     html.I(className=f"{icon} conv-item-icon"),
                     html.Span(
                         [
-                            html.Span(row.title, className="conv-item-title"),
-                            None if row.pinned else _row_meta(row, now),
+                            html.Span(
+                                [
+                                    html.Span(className=f"conv-dot is-{tone}"),
+                                    html.Span(row.title, className="conv-item-name"),
+                                ],
+                                className="conv-item-title",
+                            ),
+                            _row_second_line(row, now),
                         ],
                         className="conv-item-text",
                     ),
@@ -196,12 +225,14 @@ def _conversation_item(row: ChatRow, active_id: str | None, now: datetime) -> ht
             _row_menu(row),
         ],
         className="conv-item" + state,
-        **{"data-title": row.title.lower()},
+        # Search reads this: a chat is found by its title, its client or what
+        # it found (assets/chat_sidebar.js).
+        **{"data-title": " ".join([row.title, row.client, row.preview]).lower()},
     )
 
 
 def _group_block(group: ChatGroup, active_id: str | None, now: datetime) -> html.Div:
-    """One labelled group — "TODAY  OCT 6, 2026" over its rows."""
+    """One labelled group: "TODAY  OCT 6, 2026" over its rows."""
     head = [html.Span(group.label, className="conv-group-name")]
     if group.date_label:
         head.append(html.Span(group.date_label, className="conv-group-date"))
@@ -212,6 +243,61 @@ def _group_block(group: ChatGroup, active_id: str | None, now: datetime) -> html
         ],
         className="conv-group" + (" conv-group-pinned" if group.key == "pinned" else ""),
     )
+
+
+def _client_block(
+    group: ChatGroup, active_id: str | None, now: datetime, *, is_open: bool
+) -> html.Details:
+    """One client, "Zurich · Singapore  3", folding its chats away.
+
+    A native ``<details>``: it opens and closes with no callback and no motion,
+    and the browser keeps it keyboard-operable.
+    """
+    return html.Details(
+        [
+            html.Summary(
+                [
+                    html.I(className="bi bi-chevron-right conv-client-chevron"),
+                    html.Span(group.label, className="conv-client-name"),
+                    html.Span(str(len(group.rows)), className="conv-client-count"),
+                ],
+                className="conv-client-head",
+                title=group.label,
+            ),
+            *[_conversation_item(row, active_id, now) for row in group.rows],
+        ],
+        open=is_open,
+        className="conv-group conv-group-client",
+    )
+
+
+def _open_client(groups: Sequence[ChatGroup], active_id: str | None) -> str:
+    """The client group shown open: the one holding the open chat, else the newest."""
+    clients = [g for g in groups if g.kind == "client"]
+    for group in clients:
+        if any(row.id == active_id for row in group.rows):
+            return group.key
+    return clients[0].key if clients else ""
+
+
+def _list_blocks(
+    groups: Sequence[ChatGroup], active_id: str | None, now: datetime
+) -> list[Any]:
+    """The groups in order, with a CLIENTS label before the first client."""
+    open_key = _open_client(groups, active_id)
+    blocks: list[Any] = []
+    labelled = False
+    for group in groups:
+        if group.kind != "client":
+            blocks.append(_group_block(group, active_id, now))
+            continue
+        if not labelled:
+            blocks.append(html.Div("Clients", className="conv-section-label"))
+            labelled = True
+        blocks.append(
+            _client_block(group, active_id, now, is_open=group.key == open_key)
+        )
+    return blocks
 
 
 def _search_box() -> html.Div:
@@ -228,7 +314,7 @@ def _search_box() -> html.Div:
             dcc.Input(
                 id="conv-search",
                 type="search",
-                placeholder="Search conversations",
+                placeholder="Search chats",
                 autoComplete="off",
                 className="conv-search-input",
             ),
@@ -345,5 +431,4 @@ def conversation_list_children(
     if not conversations:
         return [html.Div("No chats yet", className="sidebar-empty")]
     now = now or datetime.now()
-    return [_group_block(group, active_id, now)
-            for group in group_conversations(conversations, now)]
+    return _list_blocks(group_conversations(conversations, now), active_id, now)

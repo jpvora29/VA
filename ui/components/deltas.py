@@ -43,9 +43,20 @@ def _signed(match: "re.Match[str]") -> str:
     return delta_span("up" if match.group(1) in _UP else "down", match.group(2))
 
 
+#: A Markdown link with no web address ("[$4.2M](#f3)", "[$4.2M](fact:3)"). The
+#: writer sometimes cites a figure this way; the browser then draws the figure
+#: underlined, as a link that goes nowhere. Only the text is kept.
+_DEAD_LINK = re.compile(r"\[([^\]\n]+)\]\((?!https?://)[^)\n]*\)")
+
+
+def unlink(line: str) -> str:
+    """Drop links that lead nowhere, keeping their text."""
+    return _DEAD_LINK.sub(r"\1", line)
+
+
 def mark_line(line: str) -> str:
     """One line of prose with its changes marked (no Markdown structure handling)."""
-    line = _ARROWED.sub(_arrowed, line)
+    line = _ARROWED.sub(_arrowed, unlink(line))
     return _SIGNED.sub(_signed, line)
 
 

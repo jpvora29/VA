@@ -36,6 +36,15 @@ _CONFIDENTIALITY = """[CONFIDENTIALITY — non-negotiable]
   carrier you may name or describe one by one. Roll such rows into one aggregate
   ("the peer average", "the peer set")."""
 
+# Applies to every shape. The answer card sets the reply's first sentence as its
+# Summary; a reply that opens with a heading or a bullet leaves the card without
+# one. Figures wrapped in links render underlined, which reads as a defect.
+_OPENING = """[FIRST LINE AND FIGURES]
+- The reply's first line is ONE plain sentence of under 30 words that states the
+  conclusion and its headline number. No heading, bullet, bold or table before it.
+- Write figures as plain text or **bold**. Never put a figure inside a link, an
+  underline, HTML tags or a footnote marker."""
+
 # Also applies to every shape. The reader sees many answers in a session; the
 # fastest way to sound like a form letter is to open all of them the same way.
 _VARIETY = """[DO NOT SOUND LIKE A TEMPLATE]
@@ -471,7 +480,7 @@ def shape_contract(key: Optional[str]) -> str:
     if shape.is_scannable:
         blocks.append(_SCANNABLE)
         blocks.append(_BY_LINE)
-    blocks += [_MEASURES, _VARIETY, _CONFIDENTIALITY]
+    blocks += [_OPENING, _MEASURES, _VARIETY, _CONFIDENTIALITY]
     return "\n\n".join(blocks)
 
 

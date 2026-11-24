@@ -71,6 +71,9 @@ class EvidenceView:
     #: inside the plot, so the title, its subtitle and the Chart/Table switch
     #: read as one row (and a chart no longer spends its top margin on a title).
     title: str = ""
+    #: Why this chart type, in one plain line (``core.answers.chart_rules``).
+    #: Empty for a chart whose spec does not say.
+    reason: str = ""
 
     @property
     def has_chart(self) -> bool:
@@ -155,6 +158,7 @@ def build_view(
         column_kinds=dict(column_kinds or {}),
         unit=unit,
         title=(title or "").strip(),
+        reason=str((chart_data or {}).get("reason") or "").strip() if figure is not None else "",
     )
 
 

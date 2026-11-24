@@ -1,0 +1,1123 @@
+/* Chat v6 polish: composer, question bubble, context ring, answer, evidence panel.
+ *
+ * Loads after va_shell_chat_v3.css (Dash serves /assets alphabetically). It
+ * restyles the chat workspace only; the rail and sidebar live in va_shell.css
+ * (tests/test_app_shell.py keeps shell chrome out of these layers).
+ *
+ * Motion: short, eased, and only on what changed: an answer arriving, the panel
+ * opening, a tab switching, a hover. Everything is switched off for readers who
+ * ask their system for reduced motion (the block at the end).
+ */
+
+.chatbot-area {
+    --va-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --va-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+    --va-dur-fast: 140ms;
+    --va-dur-med: 260ms;
+    --va-dur-slow: 420ms;
+    --va-card-shadow: 0 1px 2px rgba(10, 22, 54, 0.04), 0 6px 20px -8px rgba(10, 22, 54, 0.12);
+    --va-lift-shadow: 0 2px 4px rgba(10, 22, 54, 0.06), 0 14px 32px -12px rgba(10, 22, 54, 0.22);
+}
+
+@keyframes vaRiseIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+}
+@keyframes vaFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* ── Composer: the question gets the full width ──────────────────────────
+   The box you type in used to share one row with Tools and Peers and was left
+   about 165px wide on a 1440px screen. Now it is a block: the question on top,
+   full width, and the controls in a row beneath it, send on the right. */
+.chatbot-area .type-area {
+    max-width: 840px;
+    margin-left: auto;
+    margin-right: auto;
+    width: 100%;
+}
+.chatbot-area .composer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 12px 12px 10px 16px;
+    border: 1px solid var(--va-border-mid);
+    border-radius: 22px;
+    background: var(--va-surface-0);
+    box-shadow: var(--va-card-shadow);
+    transition: border-color var(--va-dur-fast) ease, box-shadow var(--va-dur-med) var(--va-ease-out);
+}
+.chatbot-area .composer:focus-within {
+    border-color: rgba(11, 75, 255, 0.45);
+    box-shadow: 0 0 0 4px rgba(11, 75, 255, 0.10), var(--va-lift-shadow);
+}
+.chatbot-area .composer-input-row {
+    order: 0;
+    flex: 1 1 auto;
+    width: 100%;
+    align-items: flex-end;
+}
+.chatbot-area .composer-input-row .dash-textarea,
+.chatbot-area .composer textarea {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 52px;
+    font-size: 15px;
+    line-height: 1.5;
+}
+.chatbot-area .composer-toolbar {
+    order: 1;
+    padding-bottom: 0;
+    padding-right: 52px; /* room for send, which sits level with this row */
+    gap: 6px;
+}
+.chatbot-area .composer { position: relative; }
+.chatbot-area .composer-actions {
+    position: absolute;
+    right: 10px;
+    bottom: 9px;
+}
+.chatbot-area .send-btn {
+    transition: transform var(--va-dur-fast) var(--va-ease-out), box-shadow var(--va-dur-fast) ease,
+        background-color var(--va-dur-fast) ease;
+}
+.chatbot-area .send-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px -6px rgba(11, 75, 255, 0.55);
+}
+.chatbot-area .send-btn:active:not(:disabled) { transform: translateY(0) scale(0.96); }
+
+/* ── The question bubble: room for a real question ───────────────────── */
+/* The turn is centred with auto margins, which in this column shrank it to its
+   content; the bubble's percentage cap then wrapped a short question onto two
+   lines inside ~200px. The turn takes the reading column's full width and the
+   bubble sizes to its text, up to 680px. */
+.chatbot-area .turn-user {
+    width: 100%;
+    max-width: 840px;
+    align-self: center;
+}
+.chatbot-area .turn-user .user-message {
+    width: fit-content;
+    max-width: min(80%, 680px);
+    padding: 12px 18px;
+    border-radius: 20px 20px 6px 20px;
+    font-size: 15px;
+    line-height: 1.55;
+    box-shadow: 0 6px 18px -10px rgba(0, 15, 71, 0.55);
+}
+
+/* ── Arrival: the newest turn rises in once ──────────────────────────── */
+.chatbot-area #chat-box > .turn:last-child,
+.chatbot-area #chat-box > .turn-assistant:last-of-type {
+    animation: vaRiseIn var(--va-dur-slow) var(--va-ease-out) both;
+}
+
+/* ── The answer ──────────────────────────────────────────────────────── */
+.chatbot-area .answer-v4 .answer-headline {
+    letter-spacing: -0.01em;
+    line-height: 1.28;
+}
+.chatbot-area .answer-v4 .sum-stat {
+    border: 1px solid var(--va-border-soft);
+    border-radius: 16px;
+    background: linear-gradient(180deg, #ffffff 0%, #fafbfe 100%);
+    box-shadow: var(--va-card-shadow);
+    transition: transform var(--va-dur-med) var(--va-ease-out), box-shadow var(--va-dur-med) var(--va-ease-out),
+        border-color var(--va-dur-fast) ease;
+}
+.chatbot-area .answer-v4 .sum-stat:hover {
+    transform: translateY(-2px);
+    border-color: rgba(11, 75, 255, 0.22);
+    box-shadow: var(--va-lift-shadow);
+}
+.chatbot-area .answer-v4 .sum-stat-value { font-variant-numeric: tabular-nums; letter-spacing: -0.015em; }
+.chatbot-area .answer-v4 .takeaway-num {
+    background: var(--va-blue-soft);
+    color: var(--va-blue);
+}
+.chatbot-area .answer-v4 .answer-next-step {
+    border: 1px solid rgba(11, 75, 255, 0.14);
+}
+.chatbot-area .answer-v4 .answer-action-btn,
+.chatbot-area .answer-v4 .answer-next-chip,
+.chatbot-area .answer-evidence-chip {
+    transition: background-color var(--va-dur-fast) ease, color var(--va-dur-fast) ease,
+        border-color var(--va-dur-fast) ease, transform var(--va-dur-fast) var(--va-ease-out),
+        box-shadow var(--va-dur-fast) ease;
+}
+.chatbot-area .answer-v4 .answer-next-chip:hover,
+.chatbot-area .answer-evidence-chip:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 14px -8px rgba(11, 75, 255, 0.45);
+}
+
+/* ── Evidence: cards, segmented tabs, a soft switch between views ────── */
+/* A card needs inner space: the border without padding ran every chart and
+   table straight into its own frame. */
+.chatbot-area .ev-panel {
+    padding: 16px 18px 14px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: 18px;
+    background: var(--va-surface-0);
+    box-shadow: var(--va-card-shadow);
+}
+.chatbot-area .ev-panel .ev-tabs { margin-bottom: 14px; }
+.chatbot-area .ev-panel .ev-view-head { margin-bottom: 8px; }
+.chatbot-area .ev-panel .gpt-chart-display,
+.chatbot-area .ev-panel .ev-lazy-chart { margin: 4px 0 6px; }
+.chatbot-area .ev-panel .ev-table {
+    margin-top: 6px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: 12px;
+    overflow: hidden;
+}
+.chatbot-area .ev-panel .ev-chart-reason { margin-top: 10px; }
+/* In the side panel the column is already framed; a second frame inside it is
+   noise, so the card keeps its padding and drops the border. */
+.chatbot-area .dock-body .ev-panel {
+    padding: 4px 2px 8px;
+    border: none;
+    background: transparent;
+}
+.chatbot-area .ev-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 12px;
+    background: var(--va-surface-1);
+}
+.chatbot-area .ev-tab {
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--va-ink-600);
+    transition: background-color var(--va-dur-fast) ease, color var(--va-dur-fast) ease,
+        box-shadow var(--va-dur-med) var(--va-ease-out);
+}
+.chatbot-area .ev-tab:hover { color: var(--va-navy); }
+.chatbot-area .ev-tab.active {
+    background: var(--va-surface-0);
+    color: var(--va-navy);
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.08), 0 2px 8px -4px rgba(10, 22, 54, 0.18);
+}
+.chatbot-area .ev-pane,
+.chatbot-area .gpt-chart-display,
+.chatbot-area .ev-table {
+    animation: vaFadeIn var(--va-dur-med) var(--va-ease-out) both;
+}
+.chatbot-area .chart-view-switch {
+    border-radius: 10px;
+    background: var(--va-surface-1);
+    padding: 3px;
+}
+.chatbot-area .chart-view-btn {
+    border-radius: 8px;
+    transition: background-color var(--va-dur-fast) ease, color var(--va-dur-fast) ease;
+}
+.chatbot-area .ev-view-title { letter-spacing: -0.005em; }
+.chatbot-area .ev-chart-reason {
+    display: flex;
+    gap: 6px;
+    align-items: flex-start;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: var(--va-surface-1);
+}
+.chatbot-area .ev-chart-reason::before {
+    content: "Why this chart";
+    flex: 0 0 auto;
+    color: var(--va-navy);
+    font-weight: 700;
+}
+
+/* ── The evidence panel: it glides open, and its content fades in ─────── */
+.chatbot-area .analysis-dock {
+    flex-basis: clamp(380px, 29vw, 460px);
+    width: clamp(380px, 29vw, 460px);
+    background: linear-gradient(180deg, #fbfcff 0%, var(--va-surface-0) 160px);
+    transition: flex-basis var(--va-dur-slow) var(--va-ease-in-out), width var(--va-dur-slow) var(--va-ease-in-out),
+        opacity var(--va-dur-med) ease;
+}
+.chatbot-area .chat-workspace.dock-hidden .analysis-dock,
+.chatbot-area .analysis-dock.is-empty {
+    opacity: 0;
+}
+.chatbot-area .dock-head {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: rgba(251, 252, 255, 0.86);
+    backdrop-filter: saturate(1.4) blur(10px);
+}
+.chatbot-area .dock-target {
+    animation: vaRiseIn var(--va-dur-med) var(--va-ease-out) both;
+}
+.chatbot-area .dock-question {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--va-navy);
+    line-height: 1.4;
+}
+.chatbot-area .dock-collapse,
+.chatbot-area .dock-reopen,
+.chatbot-area .dock-pin {
+    transition: background-color var(--va-dur-fast) ease, color var(--va-dur-fast) ease,
+        border-color var(--va-dur-fast) ease;
+}
+
+/* ── Context ring: a gauge with its number, filling smoothly ─────────── */
+@property --ctx-fill {
+    syntax: "<angle>";
+    inherits: true;
+    initial-value: 0deg;
+}
+.chatbot-area .ctx-indicator-btn {
+    width: auto;
+    height: 30px;
+    gap: 7px;
+    padding: 0 10px 0 6px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: 999px;
+    background: var(--va-surface-0);
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.05);
+    cursor: default;
+    transition: border-color var(--va-dur-fast) ease, box-shadow var(--va-dur-med) var(--va-ease-out),
+        background-color var(--va-dur-fast) ease;
+}
+.chatbot-area .ctx-indicator:hover .ctx-indicator-btn,
+.chatbot-area .ctx-indicator-btn:focus-visible {
+    background: var(--va-surface-0);
+    border-color: rgba(11, 75, 255, 0.3);
+    box-shadow: 0 6px 16px -8px rgba(11, 75, 255, 0.45);
+}
+.chatbot-area .ctx-ring {
+    --ctx-ring-c: var(--va-blue);
+    --ctx-ring-c2: #5b8cff;
+    --ctx-track: rgba(12, 25, 58, 0.1);
+    width: 20px;
+    height: 20px;
+    background:
+        conic-gradient(from -90deg, var(--ctx-ring-c2) 0deg, var(--ctx-ring-c) var(--ctx-fill, 0deg),
+            var(--ctx-track) var(--ctx-fill, 0deg));
+    -webkit-mask: radial-gradient(circle, transparent 6px, #000 6.5px);
+    mask: radial-gradient(circle, transparent 6px, #000 6.5px);
+    transition: --ctx-fill var(--va-dur-slow) var(--va-ease-out);
+}
+.chatbot-area .ctx-ring.is-warn { --ctx-ring-c: #d97706; --ctx-ring-c2: #fbbf24; }
+.chatbot-area .ctx-ring.is-full { --ctx-ring-c: #c62828; --ctx-ring-c2: #f87171; }
+.chatbot-area .ctx-ring.is-empty { background: var(--ctx-track); }
+.chatbot-area .ctx-pct {
+    color: var(--va-ink-700);
+    font-size: 12px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+}
+.chatbot-area .ctx-pct.is-warn { color: #b45309; }
+.chatbot-area .ctx-pct.is-full { color: #c62828; }
+.chatbot-area .ctx-pct.is-empty { color: var(--va-ink-400); }
+
+/* The breakdown fades and rises in rather than snapping on. */
+.chatbot-area .ctx-panel {
+    display: block;
+    visibility: hidden;
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+    transform-origin: bottom right;
+    border-radius: 16px;
+    box-shadow: 0 24px 48px -16px rgba(10, 22, 54, 0.28), 0 2px 6px rgba(10, 22, 54, 0.06);
+    transition: opacity var(--va-dur-med) var(--va-ease-out), transform var(--va-dur-med) var(--va-ease-out),
+        visibility 0s linear var(--va-dur-med);
+}
+.chatbot-area .ctx-indicator:hover .ctx-panel,
+.chatbot-area .ctx-indicator:focus-within .ctx-panel {
+    visibility: visible;
+    opacity: 1;
+    transform: none;
+    transition: opacity var(--va-dur-med) var(--va-ease-out), transform var(--va-dur-med) var(--va-ease-out),
+        visibility 0s;
+}
+.chatbot-area .ctx-bar { height: 10px; border-radius: 6px; }
+.chatbot-area .ctx-seg { transition: flex-basis var(--va-dur-slow) var(--va-ease-out); }
+
+/* ── Reduced motion: still, and nothing hidden behind an animation ───── */
+@media (prefers-reduced-motion: reduce) {
+    .chatbot-area *,
+    .chatbot-area *::before,
+    .chatbot-area *::after {
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 1ms !important;
+    }
+}
+
+/* ── Room for the answer when the evidence panel is open ─────────────────
+   Rail 264 + panel 460 left the answer about 540px at 1440. Narrower, the
+   panel gives width back first: it is a reference column, the answer is the
+   page. */
+@media (max-width: 1599.98px) {
+    .chatbot-area .analysis-dock {
+        flex-basis: clamp(340px, 25vw, 400px);
+        width: clamp(340px, 25vw, 400px);
+    }
+    .chatbot-area .chat-workspace:not(.dock-hidden) #chat-box,
+    .chatbot-area .chat-workspace:not(.dock-hidden) .input-area {
+        padding-left: 24px;
+        padding-right: 24px;
+    }
+}
+
+/* ── The composer never crowds the answer ────────────────────────────────
+   The last line used to end 24px above the composer and text was cut by a
+   hard edge as it scrolled under. Now the transcript ends with room to spare
+   and dissolves into the edge instead of being chopped. */
+.chatbot-area .chat-viewport {
+    padding-bottom: 56px;
+    scroll-padding-bottom: 56px;
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+}
+
+/* ── Plot and table frames: air between the data and the line around it ──
+   An older layer framed every chart with a border and 10px of padding, and
+   Plotly's own 8px margin put axis labels right against that border. */
+.chatbot-area .gpt-chart-display {
+    padding: 18px 18px 12px 14px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: 14px;
+    background: #ffffff;
+}
+.chatbot-area .ev-table .dash-spreadsheet-container {
+    border-radius: 12px;
+}
+.chatbot-area .ev-table .dash-cell,
+.chatbot-area .ev-table .dash-header {
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+}
+
+/* ── Answer actions: one toolbar, one clear primary ──────────────────────
+   Create decision is the action the answer is for: a gradient pill. The rest
+   are white pills whose icon sits in a tinted tile, so each reads as a distinct
+   tool. Copy / edit / thumbs live together in one segmented pill on the right,
+   with speed and tokens as a quiet chip beside them. */
+.chatbot-area .answer-v4 .answer-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px 16px;
+    margin-top: 18px;
+    padding: 14px 0 4px;
+    border-top: 1px solid var(--va-border-soft);
+}
+.chatbot-area .answer-v4 .answer-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.chatbot-area .answer-v4 .answer-action-btn,
+.chatbot-area .answer-v4 .answer-action-btn:not(.is-primary) {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 38px;
+    padding: 0 14px 0 5px;
+    border: 1px solid var(--va-border-mid);
+    border-radius: 999px;
+    background: var(--va-surface-0);
+    color: var(--va-ink-800);
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.05);
+}
+.chatbot-area .answer-v4 .answer-action-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    background: var(--va-blue-soft);
+    color: var(--va-blue);
+    font-size: 14px;
+    transition: transform var(--va-dur-fast) var(--va-ease-out), background-color var(--va-dur-fast) ease;
+}
+.chatbot-area .answer-v4 .answer-action-btn:not(.is-primary):hover {
+    border-color: rgba(11, 75, 255, 0.35);
+    background: var(--va-surface-0);
+    color: var(--va-navy);
+    transform: translateY(-1px);
+    box-shadow: 0 8px 18px -10px rgba(11, 75, 255, 0.5);
+}
+.chatbot-area .answer-v4 .answer-action-btn:hover .answer-action-icon { transform: scale(1.06); }
+.chatbot-area .answer-v4 .answer-action-btn.is-primary {
+    border: none;
+    background: linear-gradient(135deg, #000f47 0%, #0b3bd6 100%);
+    color: #ffffff;
+    box-shadow: 0 8px 20px -10px rgba(11, 59, 214, 0.8);
+}
+.chatbot-area .answer-v4 .answer-action-btn.is-primary .answer-action-icon {
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+}
+.chatbot-area .answer-v4 .answer-action-btn.is-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 26px -10px rgba(11, 59, 214, 0.9);
+}
+.chatbot-area .answer-v4 .answer-action-btn:active { transform: translateY(0) scale(0.98); }
+
+.chatbot-area .answer-v4 .answer-rating {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: 999px;
+    background: var(--va-surface-1);
+}
+.chatbot-area .answer-v4 .answer-copy,
+.chatbot-area .answer-v4 .answer-edit-toggle,
+.chatbot-area .answer-v4 .msg-feedback-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--va-ink-500);
+    cursor: pointer;
+    transition: background-color var(--va-dur-fast) ease, color var(--va-dur-fast) ease,
+        transform var(--va-dur-fast) var(--va-ease-out);
+}
+.chatbot-area .answer-v4 .answer-copy:hover,
+.chatbot-area .answer-v4 .answer-edit-toggle:hover,
+.chatbot-area .answer-v4 .msg-feedback-btn:hover {
+    background: var(--va-surface-0);
+    color: var(--va-navy);
+    box-shadow: 0 1px 3px rgba(10, 22, 54, 0.12);
+}
+.chatbot-area .answer-v4 .msg-feedback-btn:active { transform: scale(0.9); }
+
+/* Speed and tokens: a chip, its own segment of the pill. */
+.chatbot-area .answer-v4 .run-meta { margin-right: 4px; }
+.chatbot-area .answer-v4 .run-meta-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: var(--va-surface-0);
+    color: var(--va-ink-600);
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    list-style: none;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.06);
+    transition: color var(--va-dur-fast) ease, box-shadow var(--va-dur-fast) ease;
+}
+.chatbot-area .answer-v4 .run-meta-summary::-webkit-details-marker { display: none; }
+.chatbot-area .answer-v4 .run-meta-summary:hover { color: var(--va-navy); box-shadow: 0 2px 8px -2px rgba(10, 22, 54, 0.18); }
+.chatbot-area .answer-v4 .run-meta-icon { color: #d97706; }
+.chatbot-area .answer-v4 .run-meta-sep { color: var(--va-ink-300); }
+
+/* ── Ask next: questions as cards ────────────────────────────────────────
+   Two columns of tappable questions; the first (the suggested lead) is tinted.
+   The arrow sits in a circle and slides as the card is hovered. */
+.chatbot-area .answer-v4 .answer-next {
+    margin-top: 18px;
+    padding: 16px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #f7f9ff 0%, #fbfcfe 100%);
+    border: 1px solid rgba(11, 75, 255, 0.10);
+}
+.chatbot-area .answer-v4 .answer-next-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    color: var(--va-navy);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.chatbot-area .answer-v4 .answer-next-label::before {
+    content: "";
+    width: 18px;
+    height: 2px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--va-blue), #5b8cff);
+}
+.chatbot-area .answer-v4 .answer-next-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 10px;
+}
+.chatbot-area .answer-v4 .answer-next-chip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    min-height: 52px;
+    padding: 10px 10px 10px 16px;
+    border: 1px solid var(--va-border-soft);
+    border-radius: 12px;
+    background: var(--va-surface-0);
+    color: var(--va-ink-800);
+    font-size: 13.5px;
+    font-weight: 600;
+    line-height: 1.4;
+    text-align: left;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.04);
+}
+.chatbot-area .answer-v4 .answer-next-chip.is-lead {
+    border-color: rgba(11, 75, 255, 0.3);
+    background: #ffffff;
+    color: var(--va-navy);
+}
+.chatbot-area .answer-v4 .answer-next-text { flex: 1 1 auto; min-width: 0; }
+.chatbot-area .answer-v4 .answer-next-go {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    background: var(--va-blue-soft);
+    color: var(--va-blue);
+    font-size: 18px;
+    opacity: 1;
+    transition: transform var(--va-dur-med) var(--va-ease-out), background-color var(--va-dur-fast) ease,
+        color var(--va-dur-fast) ease;
+}
+.chatbot-area .answer-v4 .answer-next-chip:hover {
+    border-color: rgba(11, 75, 255, 0.4);
+    color: var(--va-navy);
+    transform: translateY(-1px);
+    box-shadow: 0 10px 22px -12px rgba(11, 75, 255, 0.55);
+}
+.chatbot-area .answer-v4 .answer-next-chip:hover .answer-next-go {
+    background: var(--va-blue);
+    color: #ffffff;
+    transform: translateX(3px);
+}
+
+@media (max-width: 600px) {
+    .chatbot-area .answer-v4 .answer-footer { flex-direction: column; align-items: stretch; }
+    .chatbot-area .answer-v4 .answer-rating { align-self: flex-start; }
+    .chatbot-area .answer-v4 .answer-next-row { grid-template-columns: 1fr; }
+}
+
+/* ── Working card: what the analyst is doing, and how far along ──────────
+   A gradient frame, a halo turning around the avatar, a progress bar that
+   advances with each stage, a timeline of the steps with the live one lit,
+   and a preview shaped like the answer that is coming. */
+.chatbot-area .va-work {
+    position: relative;
+    width: min(680px, 100%);
+    padding: 18px 20px 16px;
+    border: 1px solid transparent;
+    border-radius: 20px;
+    background:
+        linear-gradient(180deg, #ffffff 0%, #fafbff 100%) padding-box,
+        linear-gradient(135deg, rgba(11, 75, 255, 0.45), rgba(124, 92, 255, 0.35) 45%, rgba(11, 75, 255, 0.12)) border-box;
+    box-shadow: 0 18px 40px -22px rgba(11, 59, 214, 0.45), 0 2px 6px rgba(10, 22, 54, 0.05);
+    overflow: hidden;
+}
+.chatbot-area .va-work::before {
+    /* A faint wash of light drifting across the card while it works. */
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(420px 120px at var(--va-glow-x, 20%) 0%, rgba(11, 75, 255, 0.07), transparent 70%);
+    animation: vaGlowDrift 6s var(--va-ease-in-out) infinite alternate;
+    pointer-events: none;
+}
+@keyframes vaGlowDrift {
+    from { --va-glow-x: 10%; }
+    to { --va-glow-x: 90%; }
+}
+@property --va-glow-x {
+    syntax: "<percentage>";
+    inherits: false;
+    initial-value: 20%;
+}
+
+.chatbot-area .va-work-head { position: relative; gap: 14px; }
+.chatbot-area .va-work-halo {
+    position: relative;
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 999px;
+    background: conic-gradient(from 0deg, #0b4bff, #7c5cff, #22c3ee, #0b4bff);
+    animation: vaHaloSpin 2.4s linear infinite;
+}
+.chatbot-area .va-work-halo .va-work-avatar {
+    width: 38px;
+    height: 38px;
+    border: 2px solid #ffffff;
+    animation: vaHaloSpin 2.4s linear infinite reverse; /* the letters stay upright */
+}
+@keyframes vaHaloSpin { to { transform: rotate(360deg); } }
+
+.chatbot-area .va-work-kicker { font-size: 10.5px; letter-spacing: 0.09em; }
+.chatbot-area .va-work-title {
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+}
+.chatbot-area .va-work-title.is-new { animation: vaTitleIn var(--va-dur-med) var(--va-ease-out); }
+@keyframes vaTitleIn {
+    from { opacity: 0; transform: translateY(5px); filter: blur(2px); }
+    to { opacity: 1; transform: none; filter: none; }
+}
+.chatbot-area .va-work-clock {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 11px;
+    border: 1px solid var(--va-border-soft);
+    background: #ffffff;
+    color: var(--va-ink-600);
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.05);
+}
+.chatbot-area .va-work-clock .bi { color: var(--va-blue); font-size: 12px; }
+
+/* The bar: fills by stage, with a light sweep so it never looks stalled. */
+.chatbot-area .va-work-progress {
+    position: relative;
+    height: 6px;
+    margin: 16px 0 6px;
+    border-radius: 999px;
+    background: rgba(11, 75, 255, 0.08);
+    overflow: hidden;
+}
+.chatbot-area .va-work-progress-fill {
+    position: relative;
+    display: block;
+    width: 8%;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #0b4bff, #7c5cff);
+    box-shadow: 0 0 12px rgba(11, 75, 255, 0.45);
+    transition: width 700ms var(--va-ease-out);
+    overflow: hidden;
+}
+.chatbot-area .va-work-progress-fill::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+    transform: translateX(-100%);
+    animation: vaSweep 1.4s var(--va-ease-in-out) infinite;
+}
+@keyframes vaSweep { to { transform: translateX(100%); } }
+
+/* The steps: a timeline. Done steps are green checks, the live one is lit. */
+.chatbot-area .va-work-steps {
+    position: relative;
+    margin: 12px 0 0 14px;
+    padding-left: 22px;
+    border-left: 2px solid rgba(11, 75, 255, 0.12);
+}
+.chatbot-area .va-step {
+    padding: 6px 10px;
+    margin: 2px 0;
+    border-radius: 10px;
+    animation: vaRiseIn var(--va-dur-med) var(--va-ease-out) both;
+}
+.chatbot-area .va-step-mark {
+    left: -33px;
+    width: 20px;
+    height: 20px;
+    box-shadow: 0 0 0 3px #ffffff;
+}
+.chatbot-area .va-step.is-done .va-step-mark {
+    background: #15803d;
+    color: #ffffff;
+    font-size: 11px;
+}
+.chatbot-area .va-step.is-live {
+    background: linear-gradient(90deg, rgba(11, 75, 255, 0.08), rgba(11, 75, 255, 0));
+}
+.chatbot-area .va-step.is-live .va-step-mark {
+    background: #ffffff;
+    box-shadow: 0 0 0 3px #ffffff, 0 0 0 6px rgba(11, 75, 255, 0.14);
+}
+.chatbot-area .va-step.is-done .va-step-label { color: var(--va-ink-600); }
+.chatbot-area .va-step-time {
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--va-surface-1);
+    color: var(--va-ink-500);
+    font-weight: 600;
+}
+
+/* The preview: the shape of the answer, not three grey bars. */
+.chatbot-area .va-work-shimmer {
+    display: grid;
+    gap: 9px;
+    margin: 16px 0 2px;
+    padding-top: 14px;
+    border-top: 1px dashed rgba(11, 75, 255, 0.14);
+}
+.chatbot-area .va-work-shimmer .va-sk-line { height: 10px; }
+.chatbot-area .va-work-shimmer .w55 { width: 55%; height: 14px; }
+.chatbot-area .va-work-shimmer .w90 { width: 90%; }
+.chatbot-area .va-work-shimmer .w75 { width: 75%; }
+.chatbot-area .va-sk-tiles {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+}
+.chatbot-area .va-sk-tiles span {
+    display: block;
+    height: 46px;
+    border-radius: 12px;
+    background: linear-gradient(90deg, #eef2fb 0%, #f8faff 40%, #eef2fb 80%);
+    background-size: 220% 100%;
+    animation: vaShimmer 1.3s linear infinite;
+}
+
+/* While the panel slides, its content keeps its final width and is revealed,
+   rather than reflowing word by word through every width on the way. */
+.chatbot-area .analysis-dock { overflow: hidden; }
+.chatbot-area .analysis-dock > .dock-head,
+.chatbot-area .analysis-dock > .dock-body {
+    min-width: 340px;
+}
+
+/* ══ Landing view ═════════════════════════════════════════════════════════
+   The greeting, the picks and the six starters must FIT above the composer at
+   a normal laptop height; at 1440x900 they ran ~50px past it and the last row
+   of cards disappeared under it. So: a tighter greeting, starters that say the
+   job and its value (the example question shows on hover, as a tooltip-like
+   line), and the composer brought up close under them. */
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .chat-viewport {
+    padding-bottom: 8px;
+    -webkit-mask-image: none;
+    mask-image: none;
+}
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .input-area {
+    padding-top: 14px;
+    padding-bottom: 22px;
+}
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) > .container-fluid {
+    background:
+        radial-gradient(900px 380px at 50% -10%, rgba(11, 75, 255, 0.09), transparent 70%),
+        radial-gradient(600px 280px at 90% 100%, rgba(124, 92, 255, 0.06), transparent 70%),
+        linear-gradient(180deg, #fbfcff 0%, #ffffff 60%);
+}
+.chatbot-area .welcome-hero,
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .type-area {
+    max-width: 860px;
+}
+.chatbot-area .welcome-hero { padding: 0; gap: 0; }
+
+.chatbot-area .welcome-eyebrow {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px;
+    border: 1px solid rgba(11, 75, 255, 0.16);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.85);
+    color: var(--va-ink-600);
+    font-size: 12px;
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.05);
+}
+.chatbot-area .welcome-title {
+    margin: 14px 0 6px;
+    color: var(--va-navy);
+    font-family: var(--va-font, Inter, system-ui, sans-serif);
+    font-size: clamp(30px, 3vw, 40px);
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+}
+.chatbot-area .welcome-accent {
+    background: linear-gradient(90deg, #0b4bff, #7c5cff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+.chatbot-area .welcome-subtitle {
+    max-width: 62ch;
+    margin: 0 0 18px;
+    color: var(--va-ink-600);
+    font-size: 15px;
+    line-height: 1.55;
+}
+.chatbot-area .welcome-section-label {
+    margin: 0 0 8px;
+    color: var(--va-ink-500);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.chatbot-area .welcome-memory { margin: 0 0 16px; }
+.chatbot-area .memory-chip {
+    height: 34px;
+    padding: 0 14px;
+    border: 1px solid var(--va-border-mid);
+    border-radius: 999px;
+    background: #ffffff;
+    color: var(--va-ink-800);
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.04);
+    transition: border-color var(--va-dur-fast) ease, transform var(--va-dur-fast) var(--va-ease-out),
+        box-shadow var(--va-dur-fast) ease;
+}
+.chatbot-area .memory-chip:hover {
+    border-color: rgba(11, 75, 255, 0.4);
+    transform: translateY(-1px);
+    box-shadow: 0 8px 18px -10px rgba(11, 75, 255, 0.5);
+}
+
+/* Starters: compact cards — the job, what it gets you, and the example
+   question revealed on hover. */
+.chatbot-area .suggestion-grid { gap: 10px; }
+.chatbot-area .starter-chip {
+    align-items: center;
+    min-height: 0;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.04), 0 6px 16px -12px rgba(10, 22, 54, 0.18);
+}
+.chatbot-area .starter-chip-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #eef3ff, #f3efff);
+}
+.chatbot-area .starter-chip:hover .starter-chip-icon {
+    background: linear-gradient(135deg, #0b4bff, #7c5cff);
+}
+.chatbot-area .starter-chip-outcome { font-size: 14px; letter-spacing: -0.005em; }
+.chatbot-area .starter-chip-value {
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.chatbot-area .starter-chip-question {
+    max-height: 0;
+    margin-top: 0;
+    opacity: 0;
+    transition: max-height var(--va-dur-med) var(--va-ease-out), opacity var(--va-dur-fast) ease,
+        margin-top var(--va-dur-med) var(--va-ease-out);
+}
+.chatbot-area .starter-chip:hover .starter-chip-question,
+.chatbot-area .starter-chip:focus-visible .starter-chip-question {
+    max-height: 40px;
+    margin-top: 4px;
+    opacity: 1;
+}
+
+/* ══ Composer ═════════════════════════════════════════════════════════════ */
+.chatbot-area .composer {
+    border-radius: 24px;
+    padding: 14px 14px 12px 18px;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.05), 0 16px 36px -20px rgba(10, 22, 54, 0.35);
+}
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .composer textarea { min-height: 64px; }
+.chatbot-area .composer textarea::placeholder { color: var(--va-ink-400); }
+
+/* Toolbar pills: Tools and Peers look like the controls they are. */
+.chatbot-area .composer-toolbar > * > button,
+.chatbot-area .composer-toolbar .custom-peers-cue,
+.chatbot-area .composer-toolbar .dropdown-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--va-border-mid);
+    border-radius: 999px;
+    background: var(--va-surface-1);
+    color: var(--va-ink-700);
+    font-size: 12.5px;
+    font-weight: 600;
+    transition: background-color var(--va-dur-fast) ease, border-color var(--va-dur-fast) ease,
+        color var(--va-dur-fast) ease;
+}
+.chatbot-area .composer-toolbar > * > button:hover,
+.chatbot-area .composer-toolbar .custom-peers-cue:hover,
+.chatbot-area .composer-toolbar .dropdown-toggle:hover {
+    border-color: rgba(11, 75, 255, 0.35);
+    background: #ffffff;
+    color: var(--va-navy);
+}
+
+/* Send: a gradient circle that wakes up once there is something to send. */
+.chatbot-area .send-btn {
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #0b4bff, #7c5cff);
+    color: #ffffff;
+    box-shadow: 0 8px 18px -8px rgba(11, 75, 255, 0.7);
+}
+.chatbot-area .send-btn:disabled {
+    background: var(--va-surface-2);
+    color: var(--va-ink-400);
+    box-shadow: none;
+}
+
+/* The key hints are help, not content: quieter until the composer is in use. */
+.chatbot-area .composer-hints { opacity: 0.7; transition: opacity var(--va-dur-med) ease; }
+.chatbot-area .type-area:focus-within .composer-hints { opacity: 1; }
+
+@media (max-width: 600px) {
+    .chatbot-area .welcome-title { font-size: 28px; }
+    .chatbot-area .starter-chip-question { display: none; }
+}
+
+/* Landing fit, measured at 1440x900: these trims leave a clear gap between the
+   last row of starters and the composer instead of running 16px under it. */
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .chat-viewport { padding-top: 8px; padding-bottom: 24px; }
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .input-area { padding-top: 10px; }
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .composer textarea { min-height: 56px; }
+.chatbot-area .welcome-title { margin: 10px 0 4px; }
+.chatbot-area .welcome-subtitle { margin-bottom: 14px; }
+.chatbot-area .welcome-memory { margin-bottom: 12px; }
+
+/* ── Landing header: one centred block ──────────────────────────────────
+   The title was centred and the paragraph under it left-aligned, which read as
+   two unrelated pieces. The eyebrow, title, subtitle and the section labels now
+   share the centre line; the starter grid below stays a grid. */
+.chatbot-area .welcome-hero { align-items: center; text-align: center; }
+.chatbot-area .welcome-eyebrow { align-self: center; }
+.chatbot-area .welcome-subtitle {
+    margin-left: auto;
+    margin-right: auto;
+    text-align: center;
+    text-wrap: balance;
+}
+.chatbot-area .welcome-memory,
+.chatbot-area .welcome-hero > .welcome-section-label,
+.chatbot-area .suggestion-grid { width: 100%; }
+.chatbot-area .welcome-section-label { justify-content: center; text-align: center; }
+.chatbot-area .welcome-memory .welcome-section-label { display: flex; }
+.chatbot-area .welcome-memory-row { justify-content: center; }
+.chatbot-area .starter-chip { text-align: left; }
+
+/* ── Composer fixes ──────────────────────────────────────────────────────
+   Peers was three nested boxes (cue, pill, button), each with a border, so it
+   drew a pill inside a pill. Only the button is the control now. */
+.chatbot-area .composer-toolbar .custom-peers-cue,
+.chatbot-area .composer-toolbar .custom-peers-cue-pill {
+    height: auto;
+    padding: 0;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+}
+.chatbot-area .composer-toolbar .custom-peers-cue-body,
+.chatbot-area .composer-toolbar .composer-tool-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--va-border-mid);
+    border-radius: 999px;
+    background: var(--va-surface-1);
+    color: var(--va-ink-700);
+    font-size: 12.5px;
+    font-weight: 600;
+    box-shadow: none;
+}
+.chatbot-area .composer-toolbar .custom-peers-cue-body:hover,
+.chatbot-area .composer-toolbar .composer-tool-btn:hover,
+.chatbot-area .composer-toolbar .composer-tool-btn:focus,
+.chatbot-area .composer-toolbar .composer-tool-btn.show {
+    border-color: rgba(11, 75, 255, 0.35);
+    background: #ffffff;
+    color: var(--va-navy);
+}
+.chatbot-area .composer-toolbar .custom-peers-cue-key { color: var(--va-ink-500); font-weight: 600; }
+.chatbot-area .composer-toolbar .custom-peers-cue-text { color: var(--va-navy); font-weight: 700; }
+
+/* Send: style.css sets its background with !important (and again on hover),
+   so the gradient has to answer in kind or it never shows. */
+.chatbot-area .composer #send-btn.btn {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: none;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #0b4bff, #7c5cff) !important;
+    color: #ffffff;
+    box-shadow: 0 8px 18px -8px rgba(11, 75, 255, 0.7);
+}
+.chatbot-area .composer #send-btn.btn:hover {
+    background: linear-gradient(135deg, #0a3fe0, #6a48f5) !important;
+    box-shadow: 0 10px 22px -8px rgba(11, 75, 255, 0.8) !important;
+}
+.chatbot-area .composer #send-btn.btn:disabled {
+    background: var(--va-surface-2) !important;
+    color: var(--va-ink-400) !important;
+    box-shadow: none !important;
+}
+
+/* Hints: the keys and the context pill on one centred line, the caveat under
+   it. The pill used to float on its own at the far right. */
+.chatbot-area .composer-hints {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 6px 14px;
+    margin-top: 10px;
+}
+.chatbot-area .composer-hints > .ctx-indicator {
+    position: relative;
+    right: auto;
+    top: auto;
+    transform: none;
+    order: 1;
+}
+.chatbot-area .composer-hints-keys { order: 0; }
+.chatbot-area .composer-hints-note { order: 2; flex-basis: 100%; text-align: center; }
+
+/* The hint line as an explicit grid: keys and the context pill side by side,
+   the caveat centred under both. (A flex version lost to older width rules.) */
+.chatbot-area .type-area .composer-hints {
+    display: grid;
+    grid-template-columns: auto auto;
+    justify-content: center;
+    align-items: center;
+    column-gap: 14px;
+    row-gap: 4px;
+}
+.chatbot-area .type-area .composer-hints > .composer-hints-keys { grid-column: 1; grid-row: 1; margin: 0; }
+.chatbot-area .type-area .composer-hints > .ctx-indicator { grid-column: 2; grid-row: 1; margin: 0; }
+.chatbot-area .type-area .composer-hints > .composer-hints-note {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: auto;
+    max-width: none;
+    margin: 0;
+    text-align: center;
+}

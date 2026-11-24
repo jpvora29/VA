@@ -11,11 +11,13 @@ graph never asked before — "does the evidence this turn will gather cover the
 story its shape promises?" — so a missing section can be stated rather than
 silently dropped.
 """
+
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional, Tuple
+from typing import Any
 
 import yaml
 
@@ -32,9 +34,9 @@ _STORY_PATH = Path(__file__).parent / "story_sections.yaml"
 DEFAULT_SHAPE = "analyst"
 
 #: Section statuses.
-FILLABLE = "fillable"      # the contract gathers evidence for it
-DEFERRED = "deferred"      # the intent declares it, this turn's conditions excluded it
-NOT_OWED = "not_owed"      # the shape promises it, the contract never asks for it
+FILLABLE = "fillable"  # the contract gathers evidence for it
+DEFERRED = "deferred"  # the intent declares it, this turn's conditions excluded it
+NOT_OWED = "not_owed"  # the shape promises it, the contract never asks for it
 UNSUPPORTED = "unsupported"  # synthesis with nothing fillable to build on
 
 
@@ -44,8 +46,8 @@ class StorySection:
 
     key: str
     label: str
-    requirements: Tuple[str, ...] = ()
-    builds_on: Tuple[str, ...] = ()
+    requirements: tuple[str, ...] = ()
+    builds_on: tuple[str, ...] = ()
     required: bool = True
 
     @property
@@ -62,7 +64,7 @@ class PlannedSection:
     label: str
     status: str
     required: bool = True
-    requirements: Tuple[str, ...] = ()
+    requirements: tuple[str, ...] = ()
     reason: str = ""
 
     @property
@@ -83,16 +85,20 @@ class StoryPlan:
     """Every section of the turn's shape, in reading order."""
 
     shape: str
-    sections: Tuple[PlannedSection, ...] = ()
+    sections: tuple[PlannedSection, ...] = ()
 
-    def requirements(self) -> Tuple[str, ...]:
+    def requirements(self) -> tuple[str, ...]:
         """Requirement keys the fillable sections draw on, in section order."""
-        return tuple(dict.fromkeys(
-            key for section in self.sections if section.fillable
-            for key in section.requirements
-        ))
+        return tuple(
+            dict.fromkeys(
+                key
+                for section in self.sections
+                if section.fillable
+                for key in section.requirements
+            )
+        )
 
-    def unfillable(self) -> Tuple[PlannedSection, ...]:
+    def unfillable(self) -> tuple[PlannedSection, ...]:
         """Required sections this turn cannot fill, each with its reason."""
         return tuple(s for s in self.sections if s.required and not s.fillable)
 
@@ -104,13 +110,13 @@ class StoryPlan:
 class StoryLibrary:
     """Parsed `story_sections.yaml`."""
 
-    shapes: Mapping[str, Tuple[StorySection, ...]] = field(default_factory=dict)
+    shapes: Mapping[str, tuple[StorySection, ...]] = field(default_factory=dict)
 
-    def resolve(self, shape: Optional[str]) -> str:
+    def resolve(self, shape: str | None) -> str:
         """The shape actually used: the named one, else the default."""
         return shape if shape in self.shapes else DEFAULT_SHAPE
 
-    def sections_for(self, shape: Optional[str]) -> Tuple[StorySection, ...]:
+    def sections_for(self, shape: str | None) -> tuple[StorySection, ...]:
         return self.shapes.get(self.resolve(shape), ())
 
 
@@ -130,22 +136,28 @@ def parse_section(raw: Mapping[str, Any]) -> StorySection:
 
 
 def section_problems(
-    shape: str, sections: Tuple[StorySection, ...], known_requirements: Iterable[str]
-) -> Tuple[str, ...]:
+    shape: str, sections: tuple[StorySection, ...], known_requirements: Iterable[str]
+) -> tuple[str, ...]:
     """Config mistakes that would make a section silently never fill."""
     known = set(known_requirements)
     keys = {s.key for s in sections}
     problems = []
     for section in sections:
-        problems += [f"{shape}.{section.key}: unknown requirement {key!r}"
-                     for key in section.requirements if key not in known]
-        problems += [f"{shape}.{section.key}: builds_on unknown section {key!r}"
-                     for key in section.builds_on if key not in keys]
+        problems += [
+            f"{shape}.{section.key}: unknown requirement {key!r}"
+            for key in section.requirements
+            if key not in known
+        ]
+        problems += [
+            f"{shape}.{section.key}: builds_on unknown section {key!r}"
+            for key in section.builds_on
+            if key not in keys
+        ]
     return tuple(problems)
 
 
 def load_story_library(
-    path: Path = _STORY_PATH, known_requirements: Optional[Iterable[str]] = None
+    path: Path = _STORY_PATH, known_requirements: Iterable[str] | None = None
 ) -> StoryLibrary:
     """Parse the YAML. A missing or broken file yields an empty library."""
     try:
@@ -153,8 +165,11 @@ def load_story_library(
     except (OSError, yaml.YAMLError) as exc:  # noqa: BLE001 - config must not crash a turn
         logger.error("could not load %s: %s", path, exc)
         return StoryLibrary()
-    known = tuple(known_requirements if known_requirements is not None
-                  else get_requirements().requirements)
+    known = tuple(
+        known_requirements
+        if known_requirements is not None
+        else get_requirements().requirements
+    )
     shapes = {}
     for shape, items in (raw.get("shapes") or {}).items():
         sections = tuple(parse_section(item or {}) for item in items or ())
@@ -164,7 +179,7 @@ def load_story_library(
     return StoryLibrary(shapes)
 
 
-_library: Optional[StoryLibrary] = None
+_library: StoryLibrary | None = None
 
 
 def get_story_library() -> StoryLibrary:
@@ -181,10 +196,10 @@ def get_story_library() -> StoryLibrary:
 
 
 def build_story_plan(
-    shape: Optional[str],
+    shape: str | None,
     contract: EvidenceContract,
     *,
-    library: Optional[StoryLibrary] = None,
+    library: StoryLibrary | None = None,
 ) -> StoryPlan:
     """The turn's story: each section of its shape, fillable or with a reason.
 
@@ -194,25 +209,35 @@ def build_story_plan(
     """
     library = library or get_story_library()
     sections = library.sections_for(shape)
-    evidence = {s.key: plan_evidence_section(s, contract)
-                for s in sections if not s.is_synthesis}
+    evidence = {
+        s.key: plan_evidence_section(s, contract)
+        for s in sections
+        if not s.is_synthesis
+    }
     filled = {key for key, planned in evidence.items() if planned.fillable}
-    planned = tuple(evidence.get(s.key) or plan_synthesis_section(s, filled)
-                    for s in sections)
+    planned = tuple(
+        evidence.get(s.key) or plan_synthesis_section(s, filled) for s in sections
+    )
     return StoryPlan(shape=library.resolve(shape), sections=planned)
 
 
-def plan_evidence_section(section: StorySection, contract: EvidenceContract) -> PlannedSection:
+def plan_evidence_section(
+    section: StorySection, contract: EvidenceContract
+) -> PlannedSection:
     """Fillable when the contract selects any of the section's requirements."""
     selected = tuple(key for key in section.requirements if contract.requires(key))
     if selected:
         return _planned(section, FILLABLE, selected)
-    deferred = next((r for r in contract.deferred if r.key in section.requirements), None)
+    deferred = next(
+        (r for r in contract.deferred if r.key in section.requirements), None
+    )
     if deferred is not None:
         return _planned(section, DEFERRED, (deferred.key,), deferred.limitation)
     intent = contract.intent or "this question's"
     return _planned(
-        section, NOT_OWED, section.requirements,
+        section,
+        NOT_OWED,
+        section.requirements,
         f"The {intent} contract gathers none of: {', '.join(section.requirements)}.",
     )
 
@@ -222,12 +247,13 @@ def plan_synthesis_section(section: StorySection, filled: set) -> PlannedSection
     if not section.builds_on or filled.intersection(section.builds_on):
         return _planned(section, FILLABLE)
     return _planned(
-        section, UNSUPPORTED,
+        section,
+        UNSUPPORTED,
         reason=f"Nothing to build on: {', '.join(section.builds_on)} cannot be filled.",
     )
 
 
-def sections_left_open(story: StoryPlan, reached: Iterable[str]) -> Tuple[str, ...]:
+def sections_left_open(story: StoryPlan, reached: Iterable[str]) -> tuple[str, ...]:
     """Fillable evidence sections that none of the `reached` requirements covers.
 
     `reached` is what a later stage actually has: the requirements the plan's
@@ -235,14 +261,23 @@ def sections_left_open(story: StoryPlan, reached: Iterable[str]) -> Tuple[str, .
     """
     have = set(reached)
     return tuple(
-        s.key for s in story.sections
+        s.key
+        for s in story.sections
         if s.fillable and s.is_evidence and not have.intersection(s.requirements)
     )
 
 
-def _planned(section: StorySection, status: str, requirements: Tuple[str, ...] = (),
-             reason: str = "") -> PlannedSection:
+def _planned(
+    section: StorySection,
+    status: str,
+    requirements: tuple[str, ...] = (),
+    reason: str = "",
+) -> PlannedSection:
     return PlannedSection(
-        key=section.key, label=section.label, status=status,
-        required=section.required, requirements=requirements, reason=reason,
+        key=section.key,
+        label=section.label,
+        status=status,
+        required=section.required,
+        requirements=requirements,
+        reason=reason,
     )

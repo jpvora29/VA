@@ -27,6 +27,9 @@
                 if (hit) { visible += 1; }
             });
             group.hidden = visible === 0;
+            // A folded client group holding a match opens, or the match is
+            // found and still out of sight.
+            if (query && visible > 0 && group.tagName === "DETAILS") { group.open = true; }
             shown += visible;
         });
         var rail = list.closest(".app-sidebar");

@@ -4,16 +4,22 @@ Pure: reads the routing context and the question, calls only deterministic
 helpers (operation detector, requirement library, directive readers). No model
 call, so shadow mode costs nothing per turn.
 """
+
 from __future__ import annotations
 
-from typing import Any, Optional, Tuple
+from typing import Any
 
 from core.agents.common.contract import resolved_filters_of, unresolved_terms_of
 from core.agents.common.directives import answer_shape, presentation_mode
 from core.analysis.alignment import QUARTER, available_grains
 from core.analysis.operation import detect_operation, detect_source_restriction
 from core.analysis.requirements import (
-    GPR, SURVEY, EvidenceContract, Requirement, RequirementLibrary, build_contract,
+    GPR,
+    SURVEY,
+    EvidenceContract,
+    Requirement,
+    RequirementLibrary,
+    build_contract,
     get_requirements,
 )
 from core.turn.spec import Scope, TurnSpec
@@ -35,8 +41,9 @@ def build_turn_spec(question: str, routing_context: Any) -> TurnSpec:
     depth = _field(routing_context, "analysis_depth", "lookup")
     operation = detect_operation(question, depth=depth)
     sources = turn_sources(question, family)
-    contract = build_contract(operation, conditions=turn_conditions(family, sources),
-                              allowed_sources=sources)
+    contract = build_contract(
+        operation, conditions=turn_conditions(family, sources), allowed_sources=sources
+    )
     scope = scope_of(routing_context)
     return TurnSpec(
         question=question,
@@ -55,18 +62,25 @@ def build_turn_spec(question: str, routing_context: Any) -> TurnSpec:
     )
 
 
-def spec_contract(spec: TurnSpec, library: Optional[RequirementLibrary] = None) -> EvidenceContract:
+def spec_contract(
+    spec: TurnSpec, library: RequirementLibrary | None = None
+) -> EvidenceContract:
     """The evidence contract the spec recorded, rebuilt from its keys."""
     library = library or get_requirements()
-    return EvidenceContract(spec.operation, requirements_of(library, spec.requirements),
-                            requirements_of(library, spec.deferred))
+    return EvidenceContract(
+        spec.operation,
+        requirements_of(library, spec.requirements),
+        requirements_of(library, spec.deferred),
+    )
 
 
-def requirements_of(library: RequirementLibrary, keys: Tuple[str, ...]) -> Tuple[Requirement, ...]:
+def requirements_of(
+    library: RequirementLibrary, keys: tuple[str, ...]
+) -> tuple[Requirement, ...]:
     return tuple(r for r in map(library.requirement, keys) if r is not None)
 
 
-def turn_sources(question: str, family: str) -> Tuple[str, ...]:
+def turn_sources(question: str, family: str) -> tuple[str, ...]:
     """The family's datasets, narrowed by an explicit "premium only"."""
     allowed = FAMILY_SOURCES.get(family, ())
     restricted = detect_source_restriction(question)
@@ -75,7 +89,7 @@ def turn_sources(question: str, family: str) -> Tuple[str, ...]:
     return allowed
 
 
-def turn_conditions(family: str, sources: Tuple[str, ...]) -> Tuple[str, ...]:
+def turn_conditions(family: str, sources: tuple[str, ...]) -> tuple[str, ...]:
     """Conditions knowable before retrieval (mirrors the analyst's own rule)."""
     conditions = []
     if SURVEY in sources and family in {"both", "survey"}:
@@ -87,11 +101,14 @@ def turn_conditions(family: str, sources: Tuple[str, ...]) -> Tuple[str, ...]:
 
 def scope_of(routing_context: Any) -> Scope:
     filters = resolved_filters_of(routing_context)
-    return tuple(sorted((str(k), tuple(str(v) for v in (vals or ())))
-                        for k, vals in filters.items()))
+    return tuple(
+        sorted(
+            (str(k), tuple(str(v) for v in (vals or ()))) for k, vals in filters.items()
+        )
+    )
 
 
-def inherited_of(routing_context: Any) -> Tuple[Tuple[str, str], ...]:
+def inherited_of(routing_context: Any) -> tuple[tuple[str, str], ...]:
     pairs = []
     for name in ("carrier", "country", "year", "metric"):
         value = _field(routing_context, f"inherited_{name}", None)
@@ -100,10 +117,12 @@ def inherited_of(routing_context: Any) -> Tuple[Tuple[str, str], ...]:
     return tuple(pairs)
 
 
-def unresolved_of(routing_context: Any) -> Tuple[str, ...]:
+def unresolved_of(routing_context: Any) -> tuple[str, ...]:
     terms = []
     for term in unresolved_terms_of(routing_context):
-        text = term.get("term") if isinstance(term, dict) else getattr(term, "term", term)
+        text = (
+            term.get("term") if isinstance(term, dict) else getattr(term, "term", term)
+        )
         if text:
             terms.append(str(text))
     return tuple(terms)

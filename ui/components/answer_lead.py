@@ -100,6 +100,63 @@ def split_lead(markdown: str) -> Lead:
     return Lead(headline=headline, standfirst=_clean(remainder), body=rest.strip())
 
 
+# A heading that only announces the summary. Once its sentence is set in the
+# Summary band, the heading has nothing left to label, so it is dropped.
+_SUMMARY_HEADING = re.compile(
+    r"^#{1,6}\s*(executive (summary|insight)|summary|in short|bottom line|"
+    r"the answer|headline|key finding)s?\s*:?\s*$",
+    re.IGNORECASE,
+)
+_HEADING = re.compile(r"^#{1,6}\s")
+_BULLET = re.compile(r"^[-*+]\s+")
+
+
+def lift_lead(markdown: str) -> Lead:
+    """`split_lead`, plus a fallback so the card always has a summary.
+
+    The writer is asked to open with one plain sentence, but a model sometimes
+    opens with a heading or a bullet. `split_lead` then finds no headline and the
+    Summary band disappears. Here the first sentence under the opening heading,
+    or the first bullet, is lifted instead. It is moved, not copied: the body
+    loses that sentence, so the answer never says it twice.
+    """
+    lead = split_lead(markdown)
+    if lead.has_headline or not (markdown or "").strip():
+        return lead
+    lines = markdown.strip().split("\n")
+    if _HEADING.match(lines[0]):
+        return _lead_under_heading(lines) or lead
+    if _BULLET.match(lines[0]):
+        return _lead_from_bullet(lines) or lead
+    return lead
+
+
+def _lead_under_heading(lines: list[str]) -> Lead | None:
+    """The first sentence of the prose under an opening heading."""
+    heading, rest = lines[0], "\n".join(lines[1:]).lstrip("\n")
+    inner = split_lead(rest)
+    if not inner.has_headline:
+        return None
+    # The heading stays only while something is still under it: a summary
+    # heading, or one whose whole paragraph moved up, would label nothing.
+    left_under = bool(inner.body) and not _HEADING.match(inner.body)
+    keep_heading = left_under and not _SUMMARY_HEADING.match(heading.strip())
+    body = f"{heading}\n{inner.body}" if keep_heading else inner.body
+    return Lead(headline=inner.headline, standfirst=inner.standfirst, body=body.strip())
+
+
+def _lead_from_bullet(lines: list[str]) -> Lead | None:
+    """The opening bullet, when it reads as a sentence-length finding."""
+    first = _BULLET.sub("", lines[0])
+    match = _SENTENCE_END.search(first)
+    sentence = first[: match.end()] if match else first
+    headline = _clean(sentence)
+    if not _HEADLINE_MIN <= len(headline) <= _HEADLINE_MAX:
+        return None
+    remainder = _clean(first[match.end():]) if match else ""
+    return Lead(headline=headline, standfirst=remainder, body="\n".join(lines[1:]).strip())
+
+
 @dataclass(frozen=True)
 class KeyFigure:
     """One number the answer turns on, and what it measures."""

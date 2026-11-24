@@ -1991,8 +1991,6 @@ body {
 .insight-card-body strong {
     color: var(--ink-900);
     font-weight: 700;
-    background: linear-gradient(180deg, transparent 60%, rgba(197, 53, 50, 0.15) 60%);
-    padding: 0 2px;
 }
 
 .insight-card-body em {

@@ -29,6 +29,29 @@ Avoid:
 - Framework magic when plain Python is enough.
 - Premature generalization.
 
+## Modern Python and Ruff Formatting
+
+The project targets Python 3.12+ and is formatted with the **ruff formatter**.
+Write new and edited code in that style from the start:
+
+- Built-in generics: `dict[str, int]`, `list[str]`, `tuple[str, ...]`, `set[str]`,
+  `type[X]`. Never import `Dict`, `List`, `Tuple`, `Set`, `FrozenSet` or `Type`
+  from `typing`.
+- Unions with `|`: `str | None`, `int | float`. Never `Optional[...]` or
+  `Union[...]`.
+- Abstract collection types come from `collections.abc`: `Iterable`, `Mapping`,
+  `Sequence`, `Callable`, `Iterator`. Not from `typing`.
+- `typing` is still right for `Any`, `Protocol`, `TypeAlias`, `Literal`,
+  `TypedDict`, `TYPE_CHECKING`, `cast` and `overload`.
+- Ruff formatter layout: double quotes, 4-space indents, magic trailing commas
+  (one argument per line once a call wraps), and no hand-aligned continuation
+  lines.
+- Run `uvx ruff format <files>` and `uvx ruff check --select UP,F,I <files>` on
+  the files you touched before finishing.
+- When you touch an existing file that still uses the old forms, convert only the
+  code you are changing. Don't reformat the whole file unless asked, so the diff
+  stays readable.
+
 ## Core Rule
 
 One function should do one job.
@@ -462,6 +485,7 @@ Before finishing a change, check:
 - Is the code testable without calling the LLM?
 - Did we run or define an end-to-end test path, not only unit tests?
 - Did we avoid adding abstractions that are not needed yet?
+- Is new code on built-in generics and `X | None`, and ruff-formatted?
 - Did we preserve existing Studio behavior unless the task explicitly changes it?
 
 ## Testing Expectation

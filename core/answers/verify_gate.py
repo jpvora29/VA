@@ -6,11 +6,11 @@ nothing else. This is the shared step both now call: run the checks, apply the
 one deterministic repair (removing an unhedged causal claim), and turn every
 other failure into a limitation the reader sees.
 """
+
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 from core.answers.verification import (
     UNSUPPORTED_CAUSATION,
@@ -32,24 +32,38 @@ class GateResult:
     """The answer after the gate. `record` is None when nothing changed."""
 
     text: str
-    record: Optional[dict]
+    record: dict | None
     verdict: Verdict
 
 
-def run_verify_gate(data: VerificationInput, record: dict, *, node: str, route: str = "") -> GateResult:
+def run_verify_gate(
+    data: VerificationInput, record: dict, *, node: str, route: str = ""
+) -> GateResult:
     """Verify one answer; repair or annotate its record when a check fails."""
     result = verify_answer(data)
     if result.passed:
         return GateResult(data.text, None, result)
     repaired, removed = strip_unsupported_causation(data.text, result.failures)
     remaining = verdict(f for f in result.failures if f.kind != UNSUPPORTED_CAUSATION)
-    limitations = tuple(dict.fromkeys(
-        (*(record.get("limitations") or ()), *limitations_for(remaining))
-    ))
+    limitations = tuple(
+        dict.fromkeys((*(record.get("limitations") or ()), *limitations_for(remaining)))
+    )
     text = repaired or data.text
-    updated = dict(record, content=text, limitations=list(limitations),
-                   verification=result.as_dicts())
-    log_event(logger, "answer_verified", logging.WARNING, node=node, route=route,
-              stage=result.stage, failures=[f.kind for f in result.failures],
-              causal_sentences_removed=removed, limitations=len(limitations))
+    updated = dict(
+        record,
+        content=text,
+        limitations=list(limitations),
+        verification=result.as_dicts(),
+    )
+    log_event(
+        logger,
+        "answer_verified",
+        logging.WARNING,
+        node=node,
+        route=route,
+        stage=result.stage,
+        failures=[f.kind for f in result.failures],
+        causal_sentences_removed=removed,
+        limitations=len(limitations),
+    )
     return GateResult(text, updated, result)

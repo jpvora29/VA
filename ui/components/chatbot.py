@@ -12,7 +12,12 @@ from ui.components.answer_actions import (
     feedback_panel,
     next_questions,
 )
-from ui.components.answer_lead import Lead, split_lead
+from ui.components.analysis_dock import (
+    analysis_dock,
+    dock_reopen_button,
+    evidence_chip,
+)
+from ui.components.answer_lead import Lead, lift_lead
 from ui.components.context_meter import context_indicator
 from ui.components.contribution import contribution_panel
 from ui.answer_layout import scorecards, split_sections
@@ -565,9 +570,10 @@ def ai_message(
 
     *The chart is in the card.* It used to be a separate message below the
     answer, at a different width, which read as two unrelated things and made the
-    card look broken. It is one card because it is one answer. (It is also in
-    the analysis panel, which is the copy that does not scroll away —
-    :mod:`ui.components.analysis_dock`.)
+    card look broken. It is one card because it is one answer. On a wide screen
+    the evidence panel shows it instead and the card keeps a chip that brings
+    it there; CSS decides which, so it is never on screen twice
+    (:mod:`ui.components.analysis_dock`).
 
     Copy, the pin, the next steps and the thumbs live in ONE row at the foot —
     see :mod:`ui.components.answer_actions`. The feedback panel is mounted hidden
@@ -600,7 +606,7 @@ def ai_message(
     panel = feedback_panel(idx)
     # While the prose is being rewritten it must be ONE editable region, or the
     # serialiser saves the body and silently drops the headline above it.
-    lead = Lead(body=content) if editing else split_lead(content)
+    lead = Lead(body=content) if editing else lift_lead(content)
     # The reading order a business reader wants, top to bottom and full width:
     #   SUMMARY            the answer, its three numbers beside it (or one card
     #                      per market), computed from the position tables below
@@ -615,12 +621,18 @@ def ai_message(
     body_class = "insight-card-body" if is_insight else ""
     prose = _answer_body(lead.body, idx, editing, className=body_class)
     evidence_block = html.Div(views, className="answer-evidence") if views is not None else None
+    chip = (
+        evidence_chip(idx, evidence or [], drivers is not None)
+        if (views is not None or drivers is not None) and not editing
+        else None
+    )
     next_step = None if editing else next_step_band(split_sections(lead.body)[1], body_class)
     card = html.Div(
         [
             pills,
             summary,
             prose,
+            chip,
             evidence_block,
             drivers,
             next_step,
@@ -759,10 +771,9 @@ def chatbot_page(username: str = "", starters: list[str] | None = None, *,
             # in chunky ~third-second bursts — the read is in-memory, so the cost
             # of polling more often is negligible.
             dcc.Interval(id="job-poll", interval=350, n_intervals=0, disabled=True),
-            # Which answer the analysis panel is holding open (None means it
-            # follows the newest), and how the two columns are arranged.
-            # Below the split breakpoint the two columns cannot both fit, so they
-            # become two views of one workspace. Hidden above it.
+            # Which answer the evidence panel is holding (None means it follows
+            # the newest); see ui.analysis.live_pin.
+            dcc.Store(id="analysis-pin", data=None),
             html.Div(
                 [
                     html.Div(
@@ -966,9 +977,12 @@ def chatbot_page(username: str = "", starters: list[str] | None = None, *,
                         className="chat-column",
                     ),
                     # The evidence, kept in view while the conversation moves on.
+                    # Drawn only on wide screens; narrower, the card holds it.
+                    analysis_dock(),
+                    dock_reopen_button(),
                 ],
                 id="chat-workspace",
-                className="chat-workspace show-chat",
+                className="chat-workspace",
             ),
         ],
         className="chatbot-area",

@@ -13,6 +13,7 @@ The wiring is all this file does:
     studio callbacks studio.authoring.register_*(app)
     recap callbacks  ui.recap.callbacks.register_recap
     mom callbacks    ui.mom.callbacks.register_mom
+    usage metrics    ui.usage_tracking.register_usage_tracking (per-user .xlsx)
 
 Everything else lives in the package that owns it.
 
@@ -74,6 +75,7 @@ from studio.authoring.export import register_export  # noqa: E402
 from studio.authoring.navigation import register_navigation  # noqa: E402
 from studio.authoring.present import register_present  # noqa: E402
 from studio.authoring.setup import register_setup  # noqa: E402
+from ui.usage_tracking import register_usage_tracking  # noqa: E402
 
 register_router(app)       # move between the four workspaces
 register_collapse(app)     # one collapse toggle width for every left rail
@@ -85,6 +87,7 @@ register_export(app)       # Studio: fill/assemble the template and download the
 register_present(app)      # Studio: the full-screen slideshow of the delivered deck
 register_recap(app)        # Recap: upload QBR decks, run the pipeline, download the .pptx
 register_mom(app)          # MoM: upload a note + deck, run the pipeline, download the .docx
+register_usage_tracking(app)  # usage_metrics/<user>.xlsx: tabs, Studio, Recap, MoM
 
 
 if __name__ == "__main__":

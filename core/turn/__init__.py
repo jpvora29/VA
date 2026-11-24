@@ -12,6 +12,7 @@ log of disagreements is the evidence for which decisions to unify first.
 Step 2 adds the story shadow (`core.analysis.story`, `story_shadow`): which
 sections of the answer's shape the turn's evidence can and cannot fill.
 """
+
 from core.turn.build import build_turn_spec
 from core.turn.disagreements import Disagreement, find_disagreements
 from core.turn.spec import TurnSpec

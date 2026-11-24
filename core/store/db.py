@@ -90,6 +90,11 @@ conversations = Table(
     Column("data", Text, nullable=False, default="{}"),  # JSON chat-store blob
     # 0/1: kept at the top of the sidebar, out of the date groups.
     Column("pinned", Integer, nullable=False, server_default="0"),
+    # What the sidebar shows without opening the chat (core.store.chat_summary).
+    # NULL means "never summarised" and is backfilled on the next listing.
+    Column("client", String, nullable=True),
+    Column("preview", String, nullable=True),
+    Column("status", String, nullable=True),
     Column("created_at", DateTime, server_default=func.now()),
     Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
 )
@@ -208,7 +213,12 @@ turn_traces = Table(
 #: theoretical one. SQLite's ADD COLUMN is cheap and idempotent here.
 _COLUMNS_ADDED = {
     "users": (("display_name", "TEXT"), ("subject", "TEXT")),
-    "conversations": (("pinned", "INTEGER NOT NULL DEFAULT 0"),),
+    "conversations": (
+        ("pinned", "INTEGER NOT NULL DEFAULT 0"),
+        ("client", "TEXT"),
+        ("preview", "TEXT"),
+        ("status", "TEXT"),
+    ),
 }
 
 

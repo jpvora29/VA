@@ -32,6 +32,8 @@ and get a chart headed "How did Zurich do?" over a plot of four quarters.
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -43,6 +45,7 @@ from core.analysis.operation import (
     POSITION,
 )
 from core.analytics.positioning import CARRIER_PREMIUM, MARSH_PREMIUM, PositioningPack
+from core.answers.chart_rules import mix_chart_type
 
 #: At most this many charts. Three is what fits a column beside the prose without
 #: the reader scrolling the panel; a fourth is always the least useful one.
@@ -85,6 +88,10 @@ class ChartSpec:
     #: Bubble charts only: the column sizing each bubble and the one labelling it.
     size: str = ""
     text: str = ""
+    #: Why this chart type, one line under the plot (see ``chart_rules``).
+    reason: str = ""
+    #: "h" for a ranking drawn sideways.
+    orientation: str = ""
 
     def as_view(self) -> Dict[str, Any]:
         """The shape `ui.evidence.build_views` already consumes."""
@@ -104,6 +111,8 @@ class ChartSpec:
                 "planned": True,
                 **({"size": self.size} if self.size else {}),
                 **({"text": self.text} if self.text else {}),
+                **({"reason": self.reason} if self.reason else {}),
+                **({"orientation": self.orientation} if self.orientation else {}),
             },
         }
 
@@ -237,6 +246,8 @@ def quarterly_chart(
         return None
     return ChartSpec(
         key="quarterly",
+        reason="Grouped bars, because the question compares quarters: each "
+        "quarter's bars sit side by side, prior year beside this year.",
         tab="Quarterly",
         title=f"Quarterly premium, {years[0]} vs {years[-1]}{_where(scope)}",
         rows=tuple(usable),
@@ -274,6 +285,8 @@ def contribution_chart(
     period = _period_label(scope)
     return ChartSpec(
         key="contribution",
+        reason="Waterfall, because the question is what drove the change: each "
+        "bar adds to or takes away from the total.",
         tab="What moved",
         title=f"Premium movement by {label.lower()}"
               + (f", {period} vs prior year" if period else "")
@@ -377,11 +390,18 @@ def position_map(inputs: "ChartInputs") -> Optional[ChartSpec]:
     )
 
 
+def _mix_reason(parts: int) -> str:
+    if mix_chart_type(parts) == "donut":
+        return "Donut, because the parts make up one whole and there are few enough to read as slices."
+    return "Sorted bars, because more than four parts of a whole are easier to compare as bars than as slices."
+
+
 def mix_chart(inputs: "ChartInputs") -> Optional[ChartSpec]:
     """The carrier's book by line, as parts of a whole (one market only).
 
-    A donut only when it is honest: three to eight parts of ONE total. More parts
-    than that, or several markets, and bars say it better.
+    A donut only when it is honest: up to four parts of ONE total
+    (`chart_rules.MAX_SLICES`). Five to eight parts are sorted bars; more than
+    that, or several markets, and there is no mix chart at all.
     """
     pack = inputs.pack
     if pack is None or inputs.markets or pack.is_market_view:
@@ -397,7 +417,9 @@ def mix_chart(inputs: "ChartInputs") -> Optional[ChartSpec]:
         title=f"{pack.subject} premium mix by {label.lower()}"
               + (f", {period}" if period else "") + _where(inputs.scope),
         rows=tuple({label: p.slice, CARRIER_PREMIUM: p.carrier_premium} for p in sized),
-        chart_type="donut",
+        chart_type=mix_chart_type(len(sized)),
+        orientation="" if mix_chart_type(len(sized)) == "donut" else "h",
+        reason=_mix_reason(len(sized)),
         x=label,
         y=(CARRIER_PREMIUM,),
         x_title=label,
@@ -517,7 +539,10 @@ def region_mix(inputs: "ChartInputs") -> Optional[ChartSpec]:
                      title=f"{pack.subject or 'Marsh book'} premium by region"
                            + (f", {_period_label(inputs.scope)}" if _period_label(inputs.scope) else ""),
                      rows=tuple({"Region": p.slice, PREMIUM_AXIS: value(p)} for p in sized),
-                     chart_type="donut", x="Region", y=(PREMIUM_AXIS,),
+                     chart_type=mix_chart_type(len(sized)),
+                     orientation="" if mix_chart_type(len(sized)) == "donut" else "h",
+                     reason=_mix_reason(len(sized)),
+                     x="Region", y=(PREMIUM_AXIS,),
                      x_title="Region", y_title=PREMIUM_AXIS)
 
 
@@ -609,6 +634,53 @@ def chart_order(operation: str) -> Tuple[str, ...]:
     return _ORDER.get((operation or "").strip().lower(), _DEFAULT_ORDER)
 
 
+#: What a question has to say for a chart to be ASKED for, not just allowed.
+#: "Premium by product" is the position table's own picture, so it needs words
+#: about size or the book; every other chart answers one kind of question.
+_ASKED_FOR: Mapping[str, "re.Pattern[str]"] = {
+    "quarterly": re.compile(r"(?i)\bquarter|\bqoq\b|\bq[1-4]\b|seasonal|\bqtr"),
+    "contribution": re.compile(
+        r"(?i)\bwhy\b|drove|driver|drive|moved|movement|explain|contribut|bridge|"
+        r"\bgrow|growth|declin|\bfell\b|\bfall|\bdrop|increase|decrease"
+    ),
+    "wallet": re.compile(r"(?i)wallet|penetrat|headroom|\bshare of\b|white\s?space"),
+    "mix": re.compile(r"(?i)\bmix\b|breakdown|split|composition|made up|portfolio"),
+    "position_map": re.compile(r"(?i)\bposition|standing|stand\b|quadrant|\bmap\b|where .* stand"),
+    "premium": re.compile(r"(?i)\bsize|biggest|largest|by (line|product)|\bbook\b|premium by"),
+}
+
+#: Charts an unspecific question gets: enough to answer it, not the whole catalogue.
+UNASKED_CHARTS = 2
+
+
+def asked_for(question: str) -> Tuple[str, ...]:
+    """The chart keys the question's own words ask for."""
+    return tuple(key for key, pattern in _ASKED_FOR.items() if pattern.search(question or ""))
+
+
+def chart_keys_for(
+    order: Sequence[str], question: str, *, limit: int = MAX_CHARTS
+) -> Tuple[Tuple[str, ...], int]:
+    """Which charts to try, in order: what the question asked for, then the
+    operation's leaders.
+
+    A question that names a reading ("why did it fall", "by quarter") leads with
+    that chart and gets one more to support it; a question that names none gets
+    the operation's top :data:`UNASKED_CHARTS`. This is what stops every answer
+    carrying the same four charts. Keys whose data is missing are skipped by the
+    caller, so the list carries spares beyond the cap.
+    """
+    if not question:
+        return tuple(order), limit
+    asked = [key for key in asked_for(question) if key in order or key in _CATALOGUE]
+    # The size chart is the generic one: a specific reading the question also
+    # names (the mix, the quarters) leads it.
+    asked.sort(key=lambda k: (k == "premium", order.index(k) if k in order else len(order)))
+    rest = [key for key in order if key not in asked]
+    wanted = min(limit, len(asked) + 1) if asked else min(limit, UNASKED_CHARTS)
+    return tuple(asked + rest), wanted
+
+
 def build_chart_plan(
     pack: Optional[PositioningPack] = None,
     *,
@@ -620,6 +692,7 @@ def build_chart_plan(
     market_quarterly_rows: Sequence[Mapping[str, Any]] = (),
     by_country: Optional[PositioningPack] = None,
     by_region: Optional[PositioningPack] = None,
+    question: str = "",
 ) -> List[ChartSpec]:
     """The charts this answer should carry, most informative first.
 
@@ -637,6 +710,8 @@ def build_chart_plan(
     if by_country is not None and not markets:
         # No country named: WHERE the book is comes first.
         order = ("country_premium", "region_mix", *order)
+    if question and not markets:
+        order, limit = chart_keys_for(order, question, limit=limit)
     drawn = (
         _CATALOGUE[key](inputs) for key in order if key in _CATALOGUE
     )

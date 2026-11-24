@@ -62,7 +62,14 @@ from core.agents.analyst.peer_solver import solve_peer
 from core.agents.analyst.schema_identifier import identify_schema
 from core.agents.analyst.common import digest_evidence
 from core.analysis import build_contract, plan_analysis
+from core.agents.analyst.lookup_tools import lookup_primitive_evidence
 from core.analysis.evidence_ledger import build_evidence, merge_evidence
+from core.analysis.lookup_plan import (
+    LOOKUP_LENS,
+    is_lookup_plan,
+    is_lookup_turn,
+    lookup_plan,
+)
 from core.analysis.operation import detect_operation, detect_source_restriction
 from core.analysis.progress import (
     Budget,
@@ -87,6 +94,7 @@ from core.observability import log_event
 from core.schemas.analysis import AnalysisPlan, DerivedAnalysis
 from core.schemas.analyst_subgraph import Evidence, SchemaSlice
 from core.schemas.routing import RoutingContext
+from core.turn.pipeline import unified_pipeline_enabled
 from core.turn.story_shadow import record_story_coverage
 from logger import get_logger
 
@@ -195,7 +203,7 @@ def turn_conditions(state: AnalystState, allowed: tuple) -> tuple:
 def planner_node(state: AnalystState) -> dict:
     """Select and order the analytical lenses, bounded by the turn's contract."""
     contract = build_turn_contract(state)
-    plan = plan_analysis(state["question"], state.get("routing_context"), mode="chat")
+    plan = choose_plan(state)
     # Re-bound the plan against the contract: a performance question needs more
     # steps than the flat default, and the planner's own cap is deliberately
     # generous rather than requirement-aware.
@@ -212,6 +220,7 @@ def planner_node(state: AnalystState) -> dict:
         route=state["route"],
         flow=state["flow"],
         lenses=[d.lens for d in plan.derived],
+        plan_source="lookup" if is_lookup_plan(plan) else "planner",
         derived_count=len(plan.derived),
         intent=contract.intent,
         requirements=list(contract.keys()),
@@ -229,6 +238,49 @@ def planner_node(state: AnalystState) -> dict:
         "progress": PlanProgress(contract=contract, budget=Budget(max_steps=plan_limit(contract))),
         "primary_lens": plan.derived[0].lens if plan.derived else "",
     }
+
+
+def choose_plan(state: AnalystState) -> AnalysisPlan:
+    """A lookup's one-step plan, or the planner's lenses for anything deeper.
+
+    Gated on the switch as well as the depth, so with `UNIFIED_PIPELINE=off`
+    this always takes the planner, exactly as before — whatever depth a caller
+    happens to pass.
+    """
+    if unified_pipeline_enabled() and is_lookup_turn(state.get("routing_context")):
+        return lookup_plan(state["question"])
+    return plan_analysis(state["question"], state.get("routing_context"), mode="chat")
+
+
+def lookup_primitives_node(state: AnalystState) -> dict:
+    """Primitives first: answer a lookup from the analytics library if it can.
+
+    Owns "not in scope": a planned (multi-step) turn returns unchanged, and so
+    does a lookup the library does not cover, which then takes the solver.
+    """
+    plan: AnalysisPlan = state["plan"]
+    if not is_lookup_plan(plan):
+        return {}
+    step = plan.derived[0]
+    raw = lookup_primitive_evidence(
+        question=state["question"],
+        flow=step.source or state["flow"],
+        lens=step.lens,
+        resolved_filters=resolved_filters_of(state.get("routing_context")),
+        custom_peers=state.get("custom_peers"),
+        custom_peers_active=state.get("custom_peers_active", False),
+        engine=Initialization.engine,
+    )
+    if not raw:
+        return {}
+    return {"evidence": [stamp_step(row, step, step.scope) for row in raw]}
+
+
+def after_lookup_primitives(state: AnalystState) -> str:
+    """A lookup the library answered skips schema identification and the solver."""
+    if is_lookup_plan(state.get("plan")) and state.get("evidence"):
+        return "join_node"
+    return "schema_identifier_node"
 
 
 def schema_identifier_node(state: AnalystState) -> dict:
@@ -365,6 +417,10 @@ def stamp_step(row: Evidence, step, scope=None) -> Evidence:
     from core.analysis.evidence_ledger import identity_of, now_iso
 
     stamped: Evidence = dict(row)  # type: ignore[assignment]
+    if step.lens == LOOKUP_LENS:
+        # The UI names evidence by its lens, and "lookup" names no data source:
+        # take the flow, so it reads "Premium data" as on the old rails.
+        stamped["lens"] = row.get("flow") or step.source or LOOKUP_LENS
     stamped.setdefault("scope", dict(scope or step.scope or {}))
     stamped.setdefault("actual_scope", dict(stamped.get("scope") or {}))
     stamped.setdefault("tool", "run_sql" if row.get("sql") else "")
@@ -636,6 +692,15 @@ def positioning_node(state: AnalystState) -> dict:
     out (see `core.analytics.positioning`), and a failure here never costs the
     turn its answer.
     """
+    if is_lookup_plan(state.get("plan")):
+        log_event(
+            logger,
+            "positioning_skipped",
+            node="analyst_positioning",
+            route=state["route"],
+            reason="a lookup owes one value or one breakdown, not a position table",
+        )
+        return {}
     contract = state.get("contract")
     required = set(contract.keys()) if contract else set()
     if not serves_positioning(contract, state.get("flow")):
@@ -730,7 +795,7 @@ def positioning_node(state: AnalystState) -> dict:
     return update
 
 
-def positioning_outcome(records: List[Evidence]) -> StepOutcome:
+def positioning_outcome(records: list[Evidence]) -> StepOutcome:
     """The position table as a satisfied `positioning` step.
 
     The table is gathered here, outside the plan, so without this record the
@@ -824,6 +889,7 @@ def chart_views_for(packs: List[tuple], scope: dict, *, question: str, route: st
             market_quarterly_rows=market_rows,
             by_country=by_country,
             by_region=by_region,
+            question=question,
         )
     ]
     # The positioning table is a VIEW, not only an input to the commentary. It
@@ -992,17 +1058,20 @@ def verify_node(state: AnalystState) -> dict:
     return {"answer": gate.text, "answer_record": gate.record}
 
 
-def serves_positioning(contract: Optional[EvidenceContract], flow: Optional[str]) -> bool:
+def serves_positioning(contract: EvidenceContract | None, flow: str | None) -> bool:
     """Whether `positioning_node` will try to build the position table this turn."""
     required = set(contract.keys()) if contract else set()
     return flow == "gpr" and bool(required & _POSITIONING_REQUIREMENTS)
 
 
-def planned_requirements(plan: AnalysisPlan, contract: EvidenceContract,
-                         flow: Optional[str]) -> tuple:
+def planned_requirements(
+    plan: AnalysisPlan,
+    contract: EvidenceContract,
+    flow: str | None,
+) -> tuple[str, ...]:
     """Requirements the plan's steps were assigned, plus the position table's."""
     keys = [getattr(step, "requirement", "") for step in plan.derived]
-    if serves_positioning(contract, flow):
+    if serves_positioning(contract, flow) and not is_lookup_plan(plan):
         keys.append("positioning")
     return tuple(dict.fromkeys(key for key in keys if key))
 
@@ -1115,6 +1184,7 @@ def build_analyst_subgraph():
     graph = StateGraph(AnalystState)
 
     graph.add_node("planner_node", planner_node)
+    graph.add_node("lookup_primitives_node", lookup_primitives_node)
     graph.add_node("schema_identifier_node", schema_identifier_node)
     graph.add_node("peer_solver_node", peer_solver_node)
     graph.add_node("generic_solver_node", generic_solver_node)
@@ -1125,7 +1195,12 @@ def build_analyst_subgraph():
     graph.add_node("chart_picker_node", chart_picker_node)
 
     graph.add_edge(START, "planner_node")
-    graph.add_edge("planner_node", "schema_identifier_node")
+    graph.add_edge("planner_node", "lookup_primitives_node")
+    graph.add_conditional_edges(
+        "lookup_primitives_node",
+        after_lookup_primitives,
+        ["schema_identifier_node", "join_node"],
+    )
     graph.add_conditional_edges(
         "schema_identifier_node",
         dispatch,

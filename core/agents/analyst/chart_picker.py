@@ -4,17 +4,16 @@ The analyst gathers evidence as several executed queries across analytical lense
 (peer benchmark, trend, segment mix, …). Unlike the deterministic rails — which
 have exactly one SQL result to chart — the analyst has MANY candidate datasets.
 
-`pick_charts` scores those candidates for relevance and chartability, then asks
-the SAME chart node the deterministic path uses (`chart_node_for`, driven by the
-shared chart skill catalog) to produce a `ChartOutput` spec, returning each as a
-`{title, rows, chart_data}` entry.
+`pick_charts` scores those candidates for relevance and chartability, then lets
+the rule table in `core.answers.chart_rules` decide each one's chart from the
+shape of its rows (no model call), returning each as a `{title, rows,
+chart_data}` entry. A result set no rule fits stays a table.
 
 This is the FALLBACK path. An analytical premium turn's charts are decided from
 the data by `core.answers.chart_plan` and never reach here; the picker serves the
 turns that produce evidence with no positioning pack behind it.
 
-Best-effort by construction: any failure (bad rows, LLM error) is logged and
-skipped, and the function returns `[]` rather than raising, so charting can never
+Best-effort by construction: any failure (bad rows) is logged and skipped, and the function returns `[]` rather than raising, so charting can never
 crash an analyst turn.
 """
 from __future__ import annotations
@@ -24,23 +23,20 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from core.agents.common.chart_node import chart_node_for
-from core.agents.common.chart_spec import normalize_chart_spec
+from core.answers.chart_rules import choose_chart
 from core.observability import log_event
 from core.schemas.analyst_subgraph import Evidence
 from logger import get_logger
 
 logger = get_logger(__name__)
 
-# How many charts an analyst answer may carry, and how many rows we hand the LLM
-# when asking for a spec (the full rows are still used to render).
+# How many charts an analyst answer may carry.
 #
 # Three, matching `core.answers.chart_plan.MAX_CHARTS`: an analytical turn gathers
 # several lenses, and showing one of them made the other lenses invisible — the
 # reader got a single picture of a multi-part answer. The two ceilings are equal on
 # purpose, so which path built the charts does not change how many the reader gets.
 MAX_CHARTS = 4
-_LLM_ROW_CAP = 60
 
 # Column-name hints that make a dataset more worth charting (time series, peer
 # comparison, segment/product mix, growth/rate movement).
@@ -213,8 +209,7 @@ def pick_charts(question: str, evidence: List[Evidence],
     if not ranked:
         return []
 
-    # Cache one chart node per flow (rules are flow-wide for the turn).
-    nodes: Dict[str, Any] = {}
+    subjects = tuple(str(value) for _key, value in focus.subject if value)
     charts: List[Dict[str, Any]] = []
     # Distinct *rendered* charts only. Deduping by SQL text (the old key) keeps two
     # different-SQL lenses that nonetheless draw the SAME chart — same type/axes,
@@ -233,22 +228,12 @@ def pick_charts(question: str, evidence: List[Evidence],
         flow = ev.get("flow") or "gpr"
         rows = ev.get("rows") or []
         try:
-            if flow not in nodes:
-                nodes[flow] = chart_node_for(flow, question)
-            # Always coerce to a plain dict: the model can hand back a ChartOutput
-            # MODEL (or a list of specs), which the old `isinstance(dict)` check
-            # silently skipped — so the analyst produced charts that never
-            # rendered. normalize_chart_spec flattens model/list/dict to one dict.
-            chart_data = normalize_chart_spec(
-                nodes[flow](user_query=question, sql_output=rows[:_LLM_ROW_CAP])
-            )
-            # Use the SAME falsy-aware normalization the renderer uses
-            # (`chart_functions._sanitize_spec`): an empty string / None /
-            # whitespace chart_type is "none". A bare `== "none"` check let those
-            # through, so the chart was appended here but then rejected downstream
-            # as "data is scalar" — surfacing a scalar flag for a real dataset.
-            if str(chart_data.get("chart_type") or "none").strip().lower() == "none":
+            # The chart follows from the rows (`core.answers.chart_rules`); a
+            # result set no rule fits is not drawn at all rather than guessed.
+            choice = choose_chart(rows, subjects=subjects)
+            if not choice.has_chart:
                 continue
+            chart_data = choice.as_chart_data()
             signature = _chart_signature(chart_data)
             if signature in seen_signatures:
                 continue

@@ -380,7 +380,10 @@ def _view_body(view: EvidenceView, pane_idx: Any, *, lazy: bool = False) -> List
         return [_view_head(view.title or view.label, view.note), table]
     return [
         _view_head(view.title, "", _mode_switch(pane_idx)),
-        html.Div(_graph(view, lazy=lazy), id={"type": "chart-fig", "idx": pane_idx}),
+        html.Div(
+            [_graph(view, lazy=lazy), chart_reason(view)],
+            id={"type": "chart-fig", "idx": pane_idx},
+        ),
         html.Div(table, id={"type": "chart-table", "idx": pane_idx}, style={"display": "none"}),
     ]
 
@@ -417,9 +420,16 @@ def _panel_head(label: str, switch: Any = None) -> Optional[Any]:
     )
 
 
+def chart_reason(view: EvidenceView) -> html.Div | None:
+    """One quiet line saying why the chart is this type, when the spec says."""
+    if not view.reason:
+        return None
+    return html.Div(view.reason, className="ev-chart-reason")
+
+
 def _chart_pane(view: EvidenceView, idx: Any, i: int, *, lazy: bool) -> Any:
     return html.Div(
-        [_view_head(view.title or view.label), _graph(view, lazy=lazy)],
+        [_view_head(view.title or view.label), _graph(view, lazy=lazy), chart_reason(view)],
         id={"type": "ev-pane", "idx": idx, "view": i},
         className="ev-pane",
         style={} if i == 0 else {"display": "none"},

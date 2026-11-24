@@ -439,10 +439,23 @@ def test_answers_do_not_offer_a_pin_to_a_removed_sidebar():
     ]
 
 
-def test_chat_page_has_one_transcript_and_no_duplicate_analysis_surface():
+def test_chat_page_has_one_transcript_and_one_evidence_panel():
+    """The panel is back, without the old narrow-screen view switch."""
     page = chatbot_page("jash")
     assert {"chat-workspace", "chat-box", "chat-loading", "chat-cursor"} <= ids(page)
-    assert not {"analysis-dock", "analysis-dock-body", "chat-view-switch", "analysis-pin", "analysis-view"} & ids(page)
+    assert {"analysis-dock", "analysis-dock-body", "analysis-pin"} <= ids(page)
+    assert not {"chat-view-switch", "analysis-view"} & ids(page)
+
+
+def test_evidence_is_shown_in_one_place_at_every_width():
+    """Wide with the panel open: the panel, and the card hides its copy. Narrower,
+    or collapsed: the card, and the panel is not drawn. Never both."""
+    v3 = Path("assets/va_shell_chat_v3.css").read_text(encoding="utf-8")
+    wide = re.search(r"@media \(min-width: 1280px\) \{(.*?)\n\}", v3, re.S).group(1)
+    narrow = re.search(r"@media \(max-width: 1279\.98px\) \{(.*?)\n\}", v3, re.S).group(1)
+    assert ":not(.dock-hidden) .answer-v4 .answer-evidence" in wide
+    assert ":not(.dock-hidden) .answer-evidence-chip" in wide
+    assert ".analysis-dock" in narrow and "display: none !important" in narrow
 
 
 def narrow_block(css: str, width: int) -> str:

@@ -12,10 +12,13 @@ small multi-agent system with context isolation:
 
 This node only adapts the global `AgentState` to the subgraph and maps the result
 back onto the same fields the UI and follow-up node already read for
-`current_route`, so no downstream node or UI code changes. Lookups never reach
-here — the router keeps those on the cheap deterministic subgraphs. The agents
+`current_route`, so no downstream node or UI code changes. Lookups reach here
+only with `UNIFIED_PIPELINE=on` (see `core.turn.pipeline`), as a one-step plan
+answered from the analytics library first; otherwise the router keeps them on
+their own subgraphs. The agents
 only ever read data; writes/DDL are rejected server-side by `execute_sql`.
 """
+
 from __future__ import annotations
 
 import logging
@@ -24,6 +27,7 @@ from typing import Any, List
 from langgraph.errors import GraphInterrupt
 
 from core.agents.analyst.answer_table import select_answer_rows
+from core.agents.analyst.lookup_tools import answer_analytics
 from core.agents.common.directives import prose_suppressed
 from core.graph.analyst_subgraph import AnalystSubGraph
 from core.observability import latency_timer, log_event
@@ -126,6 +130,9 @@ def analyst_agent_node(state: AgentState) -> AgentState:
             "survey_response": answer,
             "survey_response_record": answer_record,
             "survey_query_result": _rows_for("survey"),
+            "survey_analytics": answer_analytics(
+                evidence, "survey", primary_lens=primary_lens
+            ),
             "analyst_charts": charts,
             "analyst_evidence": non_empty_evidence,
         }
@@ -135,6 +142,12 @@ def analyst_agent_node(state: AgentState) -> AgentState:
             "combined_response_record": answer_record,
             "survey_query_result": _rows_for("survey"),
             "gpr_query_result": _rows_for("gpr"),
+            "survey_analytics": answer_analytics(
+                evidence, "survey", primary_lens=primary_lens
+            ),
+            "gpr_analytics": answer_analytics(
+                evidence, "gpr", primary_lens=primary_lens
+            ),
             "analyst_charts": charts,
             "analyst_evidence": non_empty_evidence,
         }
@@ -143,6 +156,7 @@ def analyst_agent_node(state: AgentState) -> AgentState:
         "gpr_response": answer,
         "gpr_response_record": answer_record,
         "gpr_query_result": _rows_for("gpr"),
+        "gpr_analytics": answer_analytics(evidence, "gpr", primary_lens=primary_lens),
         "analyst_charts": charts,
         "analyst_evidence": non_empty_evidence,
     }

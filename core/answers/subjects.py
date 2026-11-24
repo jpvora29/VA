@@ -14,28 +14,68 @@ a short acronym), and carrier names that are ordinary English words ("Dual",
 "Axis", "Liberty") are left out, because a check that fires on prose is worse
 than one that misses a rare case.
 """
+
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Iterable, Sequence
 
 #: Carrier names that are also everyday words in an analyst's prose. Matching
 #: them would drop correct sentences ("a dual focus", "on the axis").
-AMBIGUOUS_NAMES = frozenset({
-    "aegis", "amp", "arch", "ascot", "aspen", "axis", "continental", "dual",
-    "ergo", "fusion", "gard", "geo", "hamilton", "hanover", "liberty", "liva",
-    "luma", "mosaic", "nexus", "not defined", "orion", "pioneer", "protector",
-    "sentry",
-})
+AMBIGUOUS_NAMES = frozenset(
+    {
+        "aegis",
+        "amp",
+        "arch",
+        "ascot",
+        "aspen",
+        "axis",
+        "continental",
+        "dual",
+        "ergo",
+        "fusion",
+        "gard",
+        "geo",
+        "hamilton",
+        "hanover",
+        "liberty",
+        "liva",
+        "luma",
+        "mosaic",
+        "nexus",
+        "not defined",
+        "orion",
+        "pioneer",
+        "protector",
+        "sentry",
+    }
+)
 
 #: Words that say what kind of company a name is, not which one.
-_GENERIC = frozenset({
-    "the", "insurance", "group", "company", "co", "ltd", "limited", "inc",
-    "plc", "berhad", "reinsurance", "retail", "wholesale", "general",
-    "new", "south", "north", "united",
-})
+_GENERIC = frozenset(
+    {
+        "the",
+        "insurance",
+        "group",
+        "company",
+        "co",
+        "ltd",
+        "limited",
+        "inc",
+        "plc",
+        "berhad",
+        "reinsurance",
+        "retail",
+        "wholesale",
+        "general",
+        "new",
+        "south",
+        "north",
+        "united",
+    }
+)
 
 _YEAR = re.compile(r"\b(20\d\d)\b")
 _ACRONYM_MAX = 3
@@ -45,7 +85,7 @@ _ACRONYM_MAX = 3
 class SubjectCheck:
     """What one answer may name, built once from its brief."""
 
-    pattern: "re.Pattern[str] | None"
+    pattern: re.Pattern[str] | None
     allowed_words: frozenset[str]
     allowed_years: frozenset[str]
 
@@ -56,9 +96,12 @@ class SubjectCheck:
     def _names(self, sentence: str) -> list[str]:
         if self.pattern is None:
             return []
-        return [m.group(0) for m in self.pattern.finditer(sentence)
-                if _written_as_name(m.group(0))
-                and _key_word(m.group(0)) not in self.allowed_words]
+        return [
+            m.group(0)
+            for m in self.pattern.finditer(sentence)
+            if _written_as_name(m.group(0))
+            and _key_word(m.group(0)) not in self.allowed_words
+        ]
 
     def _years(self, sentence: str) -> list[str]:
         if not self.allowed_years:
@@ -66,7 +109,9 @@ class SubjectCheck:
         return [y for y in _YEAR.findall(sentence) if y not in self.allowed_years]
 
 
-def build_subject_check(vocabulary: Iterable[str], allowed_texts: Iterable[str]) -> SubjectCheck:
+def build_subject_check(
+    vocabulary: Iterable[str], allowed_texts: Iterable[str]
+) -> SubjectCheck:
     """A check for one answer: `vocabulary` is every known name, `allowed_texts`
     everything the answer was built from (question, scope, facts, claims)."""
     texts = [str(t) for t in allowed_texts if t not in (None, "")]
@@ -77,8 +122,13 @@ def build_subject_check(vocabulary: Iterable[str], allowed_texts: Iterable[str])
     )
 
 
-def allowed_texts_of(question: str, scope: Sequence, facts: Sequence, claims: Sequence,
-                     defaulted_period: str = "") -> list[str]:
+def allowed_texts_of(
+    question: str,
+    scope: Sequence,
+    facts: Sequence,
+    claims: Sequence,
+    defaulted_period: str = "",
+) -> list[str]:
     """Every piece of text an answer is entitled to name things from."""
     texts = [question, defaulted_period]
     texts += [str(v) for _, v in scope]
@@ -97,17 +147,25 @@ def warehouse_vocabulary() -> frozenset[str]:
     except Exception:  # noqa: BLE001 - no vocabulary means no name check, never a crash
         return frozenset()
     names: set[str] = set()
-    for attr in ("valid_carriers", "valid_groups_gpr", "valid_countries", "valid_countries_gpr"):
+    for attr in (
+        "valid_carriers",
+        "valid_groups_gpr",
+        "valid_countries",
+        "valid_countries_gpr",
+    ):
         names |= {str(n).strip() for n in getattr(values, attr, ()) or ()}
     return frozenset(n for n in names if n)
 
 
 def _usable(vocabulary: Iterable[str]) -> list[str]:
-    return [n for n in {str(v).strip() for v in vocabulary}
-            if n and n.lower() not in AMBIGUOUS_NAMES and _key_word(n)]
+    return [
+        n
+        for n in {str(v).strip() for v in vocabulary}
+        if n and n.lower() not in AMBIGUOUS_NAMES and _key_word(n)
+    ]
 
 
-def _pattern(names: Sequence[str]) -> "re.Pattern[str] | None":
+def _pattern(names: Sequence[str]) -> re.Pattern[str] | None:
     if not names:
         return None
     body = "|".join(re.escape(n) for n in names)

@@ -1,0 +1,438 @@
+/* Ask ICG landing (the empty chat): one layer, loaded after va_shell_chat_v4.
+   ──────────────────────────────────────────────────────────────────────────
+   What this fixes and why it is its own file:
+
+   1. ONE centre line. The starter grid was centred in the transcript column
+      and the composer in the input row, and the two rows had different gutters
+      (the grid ran 322-1182px, the composer 322-1158px at 1440 wide). Both now
+      take their width from --lp-width inside the same gutter.
+   2. A backdrop with depth: a slow aurora and a dot grid that fades out from
+      the title, instead of a near-white wash.
+   3. Starters that read in full. The value line was clamped to one line in a
+      202px column and truncated on every card; a card is now a header row
+      (icon, job, arrow) over a two-line value. The example question takes the
+      value's place on hover, so nothing changes height and the composer under
+      the grid never moves.
+   4. The composer is the focal point: a slow gradient ring and a tinted lift.
+
+   Everything is scoped to the landing (`:has(#chat-box .welcome-hero)`) or to
+   the hero's own classes, so a conversation in progress is untouched. Motion
+   sits behind prefers-reduced-motion at the foot of the file. */
+
+.chatbot-area {
+    --lp-width: 880px;
+    --lp-blue: var(--va-blue, #0b4bff);
+    --lp-violet: #7c5cff;
+    --lp-cyan: #00a8e0;
+    --lp-ease: var(--va-ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+@property --lp-angle {
+    syntax: "<angle>";
+    inherits: false;
+    initial-value: 0deg;
+}
+
+@keyframes lpAurora {
+    0% { transform: translate3d(-1.5%, -1%, 0) scale(1); }
+    100% { transform: translate3d(1.5%, 1%, 0) scale(1.06); }
+}
+@keyframes lpRing {
+    to { --lp-angle: 360deg; }
+}
+@keyframes lpSheen {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+}
+
+/* ── Backdrop ─────────────────────────────────────────────────────────────
+   `isolation` (not `position`) keeps the two layers behind the content without
+   changing the containing block of anything inside it; the layers position
+   against .chat-workspace, which has the same box here. The chat pane is inset
+   in the page and clips at its own edge, so the container stays transparent
+   and the aurora is masked to nothing before it reaches that edge: a colour
+   that stopped dead 24px from the window read as a tinted box. */
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) > .container-fluid {
+    isolation: isolate;
+    background: none;
+}
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) > .container-fluid::before,
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) > .container-fluid::after {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    pointer-events: none;
+}
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) > .container-fluid::before {
+    inset: 0;
+    background:
+        radial-gradient(38% 40% at 50% 14%, rgba(11, 75, 255, 0.22), transparent 72%),
+        radial-gradient(28% 34% at 22% 40%, rgba(0, 168, 224, 0.16), transparent 72%),
+        radial-gradient(30% 38% at 78% 32%, rgba(124, 92, 255, 0.21), transparent 72%),
+        radial-gradient(40% 30% at 50% 84%, rgba(124, 92, 255, 0.13), transparent 72%);
+    -webkit-mask-image: radial-gradient(58% 60% at 50% 46%, #000 30%, transparent 100%);
+    mask-image: radial-gradient(58% 60% at 50% 46%, #000 30%, transparent 100%);
+    animation: lpAurora 16s ease-in-out infinite alternate;
+    will-change: transform;
+}
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) > .container-fluid::after {
+    inset: 0;
+    background-image: radial-gradient(rgba(11, 31, 90, 0.20) 1px, transparent 1.4px);
+    background-size: 22px 22px;
+    -webkit-mask-image: radial-gradient(62% 58% at 50% 34%, #000 0%, transparent 76%);
+    mask-image: radial-gradient(62% 58% at 50% 34%, #000 0%, transparent 76%);
+}
+
+/* ── One centre line ──────────────────────────────────────────────────────
+   Both rows lose their own gutters and take the same 24px one, then the hero
+   and the composer share --lp-width. */
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .chat-row,
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .input-area {
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+}
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .chat-row > [class*="col"] {
+    padding-left: 0;
+    padding-right: 0;
+}
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) #chat-box,
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .input-area {
+    padding-left: 24px;
+    padding-right: 24px;
+}
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .welcome-hero,
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .type-area {
+    width: 100%;
+    max-width: var(--lp-width);
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 0;
+    padding-right: 0;
+}
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .chat-viewport {
+    padding-top: 4px;
+    padding-bottom: 4px;
+    /* On a short screen the hero scrolls, and a scrollbar would take its width
+       from one side only and push the hero off the composer's centre line. The
+       wheel, touch and keyboard still scroll it. */
+    scrollbar-width: none;
+}
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .chat-viewport::-webkit-scrollbar { display: none; }
+/* The gap above the composer lives INSIDE the hero. The entrance slides each
+   part up from a few pixels below; with the gap outside, the last row slid
+   past the transcript's box, a scrollbar flashed in and the page jumped 5px
+   sideways for the length of the animation. */
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .welcome-hero { padding-bottom: 14px; }
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .input-area {
+    padding-top: 0;
+    padding-bottom: 18px;
+}
+
+/* ── Greeting ───────────────────────────────────────────────────────────── */
+.chatbot-area .welcome-eyebrow {
+    white-space: nowrap;
+    padding: 6px 14px;
+    border: 1px solid rgba(11, 75, 255, 0.18);
+    background: rgba(255, 255, 255, 0.72);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    color: var(--va-ink-600);
+    font-size: 12px;
+    letter-spacing: 0.01em;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.05), 0 10px 24px -16px rgba(11, 75, 255, 0.55);
+}
+.chatbot-area .welcome-title {
+    margin: 14px 0 8px;
+    font-size: clamp(36px, 3.7vw, 52px) !important;
+    letter-spacing: -0.03em;
+    line-height: 1.04;
+    text-wrap: balance;
+}
+.chatbot-area .welcome-accent {
+    background: linear-gradient(100deg, var(--lp-blue) 0%, var(--lp-violet) 45%, var(--lp-cyan) 100%);
+    background-size: 220% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: lpSheen 9s ease-in-out infinite;
+}
+.chatbot-area .welcome-subtitle {
+    max-width: 74ch;
+    margin-bottom: 18px;
+    color: var(--va-ink-600);
+    font-size: 15.5px;
+    line-height: 1.55;
+}
+
+/* Section labels: the words on the centre line, a hairline to either side. */
+.chatbot-area .welcome-hero .welcome-section-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    margin: 0 0 10px;
+    white-space: nowrap;
+    color: var(--va-ink-500);
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+}
+.chatbot-area .welcome-hero .welcome-section-label::before,
+.chatbot-area .welcome-hero .welcome-section-label::after {
+    content: "";
+    flex: 1 1 0;
+    height: 1px;
+}
+.chatbot-area .welcome-hero .welcome-section-label::before {
+    margin-right: 8px;
+    background: linear-gradient(90deg, transparent, var(--va-border-mid));
+}
+.chatbot-area .welcome-hero .welcome-section-label::after {
+    margin-left: 8px;
+    background: linear-gradient(90deg, var(--va-border-mid), transparent);
+}
+
+/* ── Pick up where you left off ─────────────────────────────────────────── */
+.chatbot-area .welcome-memory { margin-bottom: 14px; }
+.chatbot-area .welcome-memory-row { gap: 8px; }
+.chatbot-area .welcome-hero .memory-chip {
+    height: 36px;
+    padding: 0 15px;
+    border-color: rgba(12, 25, 58, 0.10);
+    background: rgba(255, 255, 255, 0.78);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.05), 0 8px 18px -14px rgba(10, 22, 54, 0.35);
+}
+.chatbot-area .welcome-hero .memory-chip .memory-chip-icon { color: var(--lp-blue); }
+.chatbot-area .welcome-hero .memory-chip:hover {
+    border-color: rgba(11, 75, 255, 0.45);
+    background: #ffffff;
+    transform: translateY(-2px);
+    box-shadow: 0 12px 24px -14px rgba(11, 75, 255, 0.6);
+}
+
+/* ── Starters ─────────────────────────────────────────────────────────────
+   A card is a grid: [icon | job] over the value line, the arrow in its corner. The text wrapper
+   is `display: contents`, so the job and the value place themselves in the
+   card's grid without a markup change. Each card carries its own tone. */
+.chatbot-area .welcome-hero .suggestion-grid { gap: 12px; }
+.chatbot-area .welcome-hero .starter-chip:nth-child(6n + 1) { --lp-tone: 11, 75, 255; }
+.chatbot-area .welcome-hero .starter-chip:nth-child(6n + 2) { --lp-tone: 124, 92, 255; }
+.chatbot-area .welcome-hero .starter-chip:nth-child(6n + 3) { --lp-tone: 0, 152, 204; }
+.chatbot-area .welcome-hero .starter-chip:nth-child(6n + 4) { --lp-tone: 13, 148, 136; }
+.chatbot-area .welcome-hero .starter-chip:nth-child(6n + 5) { --lp-tone: 219, 62, 122; }
+.chatbot-area .welcome-hero .starter-chip:nth-child(6n + 6) { --lp-tone: 217, 119, 6; }
+
+.chatbot-area .welcome-hero .starter-chip {
+    --lp-tone: 11, 75, 255;
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    grid-template-areas:
+        "icon job"
+        "value value";
+    align-items: center;
+    column-gap: 10px;
+    row-gap: 8px;
+    min-height: 0;
+    padding: 14px;
+    border: 1px solid rgba(12, 25, 58, 0.09);
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.82));
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    text-align: left;
+    box-shadow: 0 1px 2px rgba(10, 22, 54, 0.05), 0 14px 28px -22px rgba(10, 22, 54, 0.45);
+    transition: transform 220ms var(--lp-ease), box-shadow 220ms var(--lp-ease),
+        border-color 160ms ease, background-color 160ms ease;
+}
+.chatbot-area .welcome-hero .starter-chip:hover,
+.chatbot-area .welcome-hero .starter-chip:focus-visible {
+    transform: translateY(-3px);
+    border-color: rgba(var(--lp-tone), 0.5);
+    background: #ffffff;
+    box-shadow: 0 0 0 3px rgba(var(--lp-tone), 0.09), 0 22px 36px -22px rgba(var(--lp-tone), 0.6);
+}
+.chatbot-area .welcome-hero .starter-chip:active { transform: translateY(-1px); }
+
+.chatbot-area .welcome-hero .starter-chip-icon {
+    grid-area: icon;
+    width: 34px;
+    height: 34px;
+    border-radius: 11px;
+    background: rgba(var(--lp-tone), 0.11);
+    color: rgb(var(--lp-tone));
+    font-size: 16px;
+    transition: background-color 180ms ease, color 180ms ease, transform 220ms var(--lp-ease);
+}
+.chatbot-area .welcome-hero .starter-chip:hover .starter-chip-icon,
+.chatbot-area .welcome-hero .starter-chip:focus-visible .starter-chip-icon {
+    background: rgb(var(--lp-tone));
+    color: #ffffff;
+    transform: scale(1.05);
+}
+.chatbot-area .welcome-hero .starter-chip-text { display: contents; }
+.chatbot-area .welcome-hero .starter-chip-outcome {
+    grid-area: job;
+    padding-right: 14px;
+    overflow: hidden;
+    color: var(--va-navy);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13.5px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    line-height: 1.25;
+}
+/* The value and the example question share one cell and one fixed height. */
+.chatbot-area .welcome-hero .starter-chip-value,
+.chatbot-area .welcome-hero .starter-chip-question {
+    grid-area: value;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    align-self: start;
+    height: 2.9em;
+    max-height: none;
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.45;
+    white-space: normal;
+    transition: opacity 180ms ease, transform 220ms var(--lp-ease);
+}
+.chatbot-area .welcome-hero .starter-chip-value { color: var(--va-ink-600); opacity: 1; }
+.chatbot-area .welcome-hero .starter-chip-question {
+    color: rgb(var(--lp-tone));
+    font-weight: 600;
+    opacity: 0;
+    transform: translateY(4px);
+}
+.chatbot-area .welcome-hero .starter-chip:hover .starter-chip-value,
+.chatbot-area .welcome-hero .starter-chip:focus-visible .starter-chip-value {
+    opacity: 0;
+    transform: translateY(-4px);
+}
+.chatbot-area .welcome-hero .starter-chip:hover .starter-chip-question,
+.chatbot-area .welcome-hero .starter-chip:focus-visible .starter-chip-question {
+    max-height: none;
+    margin: 0;
+    opacity: 1;
+    transform: none;
+}
+.chatbot-area .welcome-hero .starter-chip-go {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    color: var(--va-ink-400);
+    font-size: 13px;
+    opacity: 0.5;
+    transform: none;
+    transition: opacity 160ms ease, color 160ms ease, transform 220ms var(--lp-ease);
+}
+.chatbot-area .welcome-hero .starter-chip:hover .starter-chip-go,
+.chatbot-area .welcome-hero .starter-chip:focus-visible .starter-chip-go {
+    color: rgb(var(--lp-tone));
+    opacity: 1;
+    transform: translate(2px, -2px);
+}
+
+/* ── Composer: the focal point ──────────────────────────────────────────── */
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .composer {
+    border-color: transparent;
+    border-radius: 26px;
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow:
+        0 1px 2px rgba(10, 22, 54, 0.06),
+        0 26px 50px -30px rgba(11, 75, 255, 0.55),
+        0 18px 40px -28px rgba(124, 92, 255, 0.5);
+    transition: box-shadow 260ms var(--lp-ease);
+}
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .composer::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    padding: 1.5px;
+    border-radius: inherit;
+    background: conic-gradient(
+        from var(--lp-angle),
+        rgba(11, 75, 255, 0.85),
+        rgba(124, 92, 255, 0.85),
+        rgba(0, 168, 224, 0.75),
+        rgba(11, 75, 255, 0.15),
+        rgba(11, 75, 255, 0.85)
+    );
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+    opacity: 0.6;
+    pointer-events: none;
+    animation: lpRing 12s linear infinite;
+    transition: opacity 260ms ease;
+}
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .composer:focus-within {
+    border-color: transparent;
+    box-shadow:
+        0 1px 2px rgba(10, 22, 54, 0.06),
+        0 0 0 5px rgba(11, 75, 255, 0.08),
+        0 30px 56px -28px rgba(11, 75, 255, 0.7),
+        0 20px 44px -26px rgba(124, 92, 255, 0.6);
+}
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .composer:focus-within::before { opacity: 1; }
+.chatbot-area .chat-column:has(#chat-box .welcome-hero) .composer textarea {
+    min-height: 50px;
+    font-size: 15.5px;
+}
+
+/* ── Fit ──────────────────────────────────────────────────────────────────
+   Short screens (a 768px-high laptop leaves ~660px here): the paragraph goes
+   and the spacing tightens, so the composer stays on screen with the cards
+   still reading in full. Below that the value drops to one line. */
+@media (max-height: 820px) {
+    .chatbot-area .welcome-title { margin: 10px 0 12px; font-size: clamp(30px, 3.3vw, 42px) !important; }
+    .chatbot-area .welcome-subtitle { display: none; }
+    .chatbot-area .welcome-memory { margin-bottom: 10px; }
+    .chatbot-area .welcome-hero .suggestion-grid { gap: 10px; }
+    .chatbot-area .welcome-hero .starter-chip { padding: 11px 14px; row-gap: 6px; }
+    .chatbot-area .chat-column:has(#chat-box .welcome-hero) .composer textarea { min-height: 44px; }
+}
+@media (max-height: 740px) {
+    .chatbot-area .welcome-hero .starter-chip-value,
+    .chatbot-area .welcome-hero .starter-chip-question { -webkit-line-clamp: 1; height: 1.45em; }
+}
+/* Two columns: a card is wide enough for its value on one line. */
+@media (max-width: 1100px) and (min-width: 601px) {
+    .chatbot-area .welcome-hero .starter-chip-value,
+    .chatbot-area .welcome-hero .starter-chip-question { -webkit-line-clamp: 1; height: 1.45em; }
+}
+@media (max-width: 600px) {
+    .chatbot-area .chat-column:has(#chat-box .welcome-hero) #chat-box,
+    .chatbot-area .chat-column:has(#chat-box .welcome-hero) .input-area {
+        padding-left: 14px;
+        padding-right: 14px;
+    }
+    /* The pill keeps the live dot and the date; the product name is in the bar. */
+    .chatbot-area .welcome-eyebrow > span:nth-child(2),
+    .chatbot-area .welcome-eyebrow > .welcome-eyebrow-sep { display: none; }
+    .chatbot-area .welcome-title { font-size: 32px !important; }
+    .chatbot-area .welcome-subtitle { font-size: 14.5px; }
+    .chatbot-area .welcome-hero .welcome-section-label { letter-spacing: 0.1em; }
+    /* No hover on a phone: the value stays, the example stays in the tooltip. */
+    .chatbot-area .welcome-hero .starter-chip-question,
+    .chatbot-area .welcome-hero .starter-chip-go { display: none; }
+    .chatbot-area .welcome-hero .starter-chip-outcome { padding-right: 0; }
+    .chatbot-area .welcome-hero .starter-chip:hover .starter-chip-value { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .chatbot-area .chat-column:has(#chat-box .welcome-hero) > .container-fluid::before,
+    .chatbot-area .chat-column:has(#chat-box .welcome-hero) .composer::before,
+    .chatbot-area .welcome-accent { animation: none; }
+    .chatbot-area .welcome-hero .starter-chip,
+    .chatbot-area .welcome-hero .starter-chip *,
+    .chatbot-area .welcome-hero .memory-chip { transition: none; }
+    .chatbot-area .welcome-hero .starter-chip:hover,
+    .chatbot-area .welcome-hero .memory-chip:hover { transform: none; }
+}

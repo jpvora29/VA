@@ -100,6 +100,11 @@ class _Spec:
     #: Drawn as horizontal bars: a long ranking of named categories reads down a
     #: page, not across it (see `_wants_horizontal`). Decided after sanitizing.
     horizontal: bool = False
+    #: The category the answer is about, drawn in the accent colour while the
+    #: rest go grey (``core.answers.chart_rules``). Empty: no highlight.
+    highlight: str = ""
+    #: "h" when the spec asked for a horizontal ranking outright.
+    orientation: str = ""
 
 
 def _as_dict(spec: Any) -> Dict[str, Any]:
@@ -291,6 +296,8 @@ def _sanitize_spec(
         intent=str(raw.get("intent") or ""),
         x_title=str(raw.get("x_title") or ""),
         y_title=str(raw.get("y_title") or ""),
+        highlight=str(raw.get("highlight") or "").strip(),
+        orientation=str(raw.get("orientation") or "").strip().lower(),
     )
 
     df = _prepare_frame(df, spec)
@@ -425,10 +432,12 @@ def _build_bar(fig: go.Figure, df: pd.DataFrame, spec: _Spec, color_map: Dict) -
     key = _series_key(df, spec.series)
     if spec.horizontal and key is None and len(spec.y) == 1:
         ordered = df.sort_values(spec.y[0], ascending=True)
+        labels = ordered[spec.x].astype(str)
         fig.add_trace(
             go.Bar(
-                y=ordered[spec.x].astype(str), x=ordered[spec.y[0]], orientation="h",
-                name=_pretty(spec.y[0]), marker_color=CURRENT_COLOR,
+                y=labels, x=ordered[spec.y[0]], orientation="h",
+                name=_pretty(spec.y[0]),
+                marker_color=highlight_colors(list(labels), spec.highlight) or CURRENT_COLOR,
             )
         )
         fig.update_layout(barmode="group")
@@ -446,11 +455,12 @@ def _build_bar(fig: go.Figure, df: pd.DataFrame, spec: _Spec, color_map: Dict) -
             )
     else:
         colors = semantic_colors(list(spec.y))
+        accents = highlight_colors([str(v) for v in df[spec.x]], spec.highlight)
         for i, ycol in enumerate(spec.y):
             fig.add_trace(
                 go.Bar(
                     x=df[spec.x], y=df[ycol], name=_pretty(ycol),
-                    marker_color=colors[i],
+                    marker_color=accents if accents and len(spec.y) == 1 else colors[i],
                 )
             )
     fig.update_layout(barmode="stack" if stacked else "group")
@@ -487,6 +497,34 @@ def _build_line(fig: go.Figure, df: pd.DataFrame, spec: _Spec, color_map: Dict) 
                     fillcolor="rgba(11, 75, 255, 0.07)" if len(spec.y) == 1 else None,
                 )
             )
+        if len(spec.y) == 1:
+            _label_latest_change(fig, list(df[spec.x]), list(df[spec.y[0]]))
+
+
+def latest_change_text(x_values: list[Any], y_values: list[Any]) -> str:
+    """"+4.2% vs Q3" for the last step of a series, or "" when it has none. Pure."""
+    points = [(x, _number_or(y, float("nan"))) for x, y in zip(x_values, y_values)]
+    points = [(x, y) for x, y in points if y == y]
+    if len(points) < 2:
+        return ""
+    (prev_x, prev), (_x, last) = points[-2], points[-1]
+    if prev == 0:
+        return ""
+    change = (last - prev) / abs(prev) * 100
+    return f"{change:+.1f}% vs {prev_x}"
+
+
+def _label_latest_change(fig: go.Figure, x_values: list[Any], y_values: list[Any]) -> None:
+    """Write the latest change beside the last point, where the eye ends up."""
+    text = latest_change_text(x_values, y_values)
+    if not text:
+        return
+    color = UP_COLOR if text.startswith("+") else DOWN_COLOR
+    fig.add_annotation(
+        x=x_values[-1], y=y_values[-1], text=f"<b>{text}</b>",
+        showarrow=False, yshift=18, xanchor="right",
+        font=dict(size=11.5, color=color),
+    )
 
 
 @chart_type("scatter")
@@ -574,15 +612,46 @@ def _build_waterfall(fig: go.Figure, df: pd.DataFrame, spec: _Spec, color_map: D
         go.Waterfall(
             x=labels, y=values, measure=measures,
             connector=dict(line=dict(color="#C7CFDB", width=1, dash="dot")),
-            increasing=dict(marker=dict(color=GOOD_COLOR)),
-            decreasing=dict(marker=dict(color=BAD_COLOR)),
-            totals=dict(marker=dict(color=CURRENT_COLOR)),
+            increasing=dict(marker=dict(color=UP_COLOR)),
+            decreasing=dict(marker=dict(color=DOWN_COLOR)),
+            totals=dict(marker=dict(color=TOTAL_COLOR)),
             text=text, textposition="outside", cliponaxis=False,
             textfont=dict(size=11, color=_INK),
             hovertemplate="<b>%{x}</b><br>%{text}<extra></extra>",
         )
     )
     fig.update_layout(showlegend=False)
+
+
+@chart_type("dot")
+def _build_dot(fig: go.Figure, df: pd.DataFrame, spec: _Spec, color_map: Dict) -> None:
+    """Client beside benchmark per category: two dots and the gap between them.
+
+    The client is the accent colour and the benchmark grey (``semantic_colors``),
+    so the reader sees which dot is theirs before reading the legend.
+    """
+    labels = [str(v) for v in df[spec.x]]
+    measures = spec.y[:2]
+    gap_x: list[Any] = []
+    gap_y: list[Any] = []
+    for i, label in enumerate(labels):
+        values = [_number_or(df[m].iloc[i], float("nan")) for m in measures]
+        gap_x += [label, label, None]
+        gap_y += [values[0], values[-1], None]
+    fig.add_trace(
+        go.Scatter(
+            x=gap_x, y=gap_y, mode="lines", hoverinfo="skip", showlegend=False,
+            line=dict(color="#D5DEEA", width=3),
+        )
+    )
+    colors = semantic_colors(list(measures))
+    for i, measure in enumerate(measures):
+        fig.add_trace(
+            go.Scatter(
+                x=labels, y=df[measure], mode="markers", name=_pretty(measure),
+                marker=dict(size=13, color=colors[i], line=dict(color="white", width=1.5)),
+            )
+        )
 
 
 @chart_type("combo")
@@ -765,6 +834,11 @@ PRIOR_COLORS = ("#9FB3CF", "#C5D3E6", "#DCE5F1")
 BENCHMARK_COLOR = "#B7C6DB"
 GOOD_COLOR = "#1F9D55"
 BAD_COLOR = "#D64545"
+#: Direction on a bridge and on a labelled change: green up, red down, navy for
+#: the total. The green is the darker of the two, so they also differ in lightness.
+UP_COLOR = "#15803D"
+DOWN_COLOR = "#C62828"
+TOTAL_COLOR = "#000F47"
 _YEAR_RX = re.compile(r"^(19|20)\d{2}$")
 _BENCHMARK_RX = re.compile(r"marsh|market|peer|book|average|benchmark|total", re.I)
 
@@ -786,6 +860,27 @@ def semantic_colors(names: List[str]) -> List[str]:
         if bench.count(True) == 1:
             return [BENCHMARK_COLOR if b else CURRENT_COLOR for b in bench]
     return [ColorPalette.color_for(i) for i in range(len(names))]
+
+
+def highlight_colors(labels: list[str], highlight: str) -> list[str] | None:
+    """Accent for the subject, grey for the rest; ``None`` when it is absent. Pure."""
+    wanted = str(highlight or "").strip().lower()
+    if not wanted or wanted not in {str(v).strip().lower() for v in labels}:
+        return None
+    return [
+        CURRENT_COLOR if str(v).strip().lower() == wanted else BENCHMARK_COLOR
+        for v in labels
+    ]
+
+
+def _asks_horizontal(spec: "_Spec") -> bool:
+    """A spec that asked for a horizontal ranking and can be drawn as one."""
+    return (
+        spec.orientation == "h"
+        and spec.chart_type == "bar"
+        and not spec.series
+        and len(spec.y) == 1
+    )
 
 
 def _wants_horizontal(df: pd.DataFrame, spec: "_Spec") -> bool:
@@ -966,10 +1061,34 @@ def _apply_theme(fig: go.Figure, spec: _Spec, df: pd.DataFrame) -> None:
                     ColorPalette.negative if _number_or(v, 0.0) < 0 else ColorPalette.positive
                     for v in values
                 ]
+        elif spec.chart_type == "bar" and 1 < len(fig.data) <= 3:
+            _label_grouped_bars(fig, measure_unit(spec))
 
         if spec.chart_type not in ("scatter",):
             fig.update_layout(hovermode="x unified")
 
+
+
+#: Grouped bars carry value labels up to this many bars; past it they collide.
+MAX_LABELLED_BARS = 12
+
+
+def _label_grouped_bars(fig: go.Figure, unit: str) -> None:
+    """Value labels on a small grouped bar chart (a quarter beside its prior year).
+
+    The comparison is the point of the chart, so the reader should not have to
+    hover each bar to read it.
+    """
+    bars = [t for t in fig.data if t.type == "bar"]
+    count = sum(0 if t.y is None else len(t.y) for t in bars)
+    if not bars or count > MAX_LABELLED_BARS:
+        return
+    for trace in bars:
+        values = [] if trace.y is None else list(trace.y)
+        trace.text = [format_value(v, unit) for v in values]
+        trace.textposition = "outside"
+        trace.cliponaxis = False
+        trace.textfont = dict(size=10, color=_INK)
 
 
 def _bar_gap(df: pd.DataFrame, spec: "_Spec") -> float:
@@ -1185,7 +1304,7 @@ def generate_chart(
             return None, message
 
         prepared, overrides = _prepare_axis_ticks(prepared, spec)
-        spec.horizontal = _wants_horizontal(prepared, spec)
+        spec.horizontal = _asks_horizontal(spec) or _wants_horizontal(prepared, spec)
         if overrides:
             log_event(
                 logger,

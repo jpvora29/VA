@@ -94,12 +94,23 @@
         var list = steps.map(function (s, i) { return stepRow(s, i, i === steps.length - 1); }).join("");
         var current = steps.length ? steps[steps.length - 1].label : "Reading your question";
         pending.card.querySelector(".va-work-steps").innerHTML = list;
-        pending.card.querySelector(".va-work-title").textContent = current;
+        var title = pending.card.querySelector(".va-work-title");
+        if (title.textContent !== current) {
+            title.textContent = current;
+            // Restart the crossfade so each new stage is noticed.
+            title.classList.remove("is-new");
+            void title.offsetWidth;
+            title.classList.add("is-new");
+        }
+        // A turn reports about five stages (ui/progress.py ranks); the bar fills
+        // by stage and never reaches the end until the answer replaces it.
+        var fill = pending.card.querySelector(".va-work-progress-fill");
+        if (fill) { fill.style.width = Math.min(92, 8 + steps.length * 17) + "%"; }
     }
 
     function tick() {
         if (!pending) { return; }
-        var clock = pending.card.querySelector(".va-work-clock");
+        var clock = pending.card.querySelector(".va-work-clock-t");
         if (clock) { clock.textContent = fmtClock(performance.now() - pending.t0); }
     }
 
@@ -128,15 +139,20 @@
         wrap.innerHTML = bubble +
             '<div class="va-work">' +
             '  <div class="va-work-head">' +
-            '    <div class="turn-avatar turn-avatar-va va-work-avatar">VA</div>' +
+            '    <div class="va-work-halo"><div class="turn-avatar turn-avatar-va va-work-avatar">VA</div></div>' +
             '    <div class="va-work-main">' +
             '      <div class="va-work-kicker">Virtual Analyst is working<span class="va-dots"><i></i><i></i><i></i></span></div>' +
             '      <div class="va-work-title">Reading your question</div>' +
             "    </div>" +
-            '    <span class="va-work-clock">0.0s</span>' +
+            '    <span class="va-work-clock"><i class="bi bi-stopwatch"></i><span class="va-work-clock-t">0.0s</span></span>' +
             "  </div>" +
+            '  <div class="va-work-progress" role="progressbar" aria-label="Progress"><span class="va-work-progress-fill"></span></div>' +
             '  <ol class="va-work-steps"></ol>' +
-            '  <div class="va-work-shimmer"><span></span><span></span><span></span></div>' +
+            '  <div class="va-work-shimmer">' +
+            '    <span class="va-sk-line w55"></span>' +
+            '    <div class="va-sk-tiles"><span></span><span></span><span></span></div>' +
+            '    <span class="va-sk-line w90"></span><span class="va-sk-line w75"></span>' +
+            "  </div>" +
             "</div>";
         if (draft && draft.parentNode === viewport) {
             viewport.insertBefore(wrap, draft);

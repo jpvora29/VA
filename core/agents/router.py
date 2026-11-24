@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import logging
 
+from core.agents.gimmi.response import check_if_gimmi_required
 from core.observability import log_event
 from core.state.agent_state import AgentState
+from core.turn.pipeline import takes_unified_pipeline, unified_pipeline_enabled
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -62,6 +64,13 @@ class RouterNode:
         # factual lookups stay on the cheap deterministic rails.
         routing_context = state.get("routing_context")
         logger.debug(f"Routing context in relevance_router: {routing_context}")
+        # The switch is read first so that, when it is off, the router does
+        # exactly what it did before and never runs the GIMMI check here.
+        if unified_pipeline_enabled() and takes_unified_pipeline(
+            current_route, needs_gimmi=needs_gimmi(state)
+        ):
+            log_event(logger, "route_unified", node="router", route=current_route)
+            return "analyst_agent"
         depth = getattr(routing_context, "analysis_depth", "lookup")
         logger.debug(f"Analysis depth in relevance_router: {depth}")
         if depth == "analytical" and current_route in {"survey", "premium", "both"}:
@@ -74,3 +83,12 @@ class RouterNode:
         elif current_route == "both":
             return "combiner_agent"
         return "fallback"
+
+
+def needs_gimmi(state: AgentState) -> bool:
+    """Whether the old premium rail would add GIMMI evidence to this turn."""
+    if (state.get("current_route") or "").lower() != "premium":
+        return False
+    if not state.get("messages"):
+        return False
+    return check_if_gimmi_required(state) == "gimmi_sqlagent_node"

@@ -94,6 +94,11 @@ def split_tool_evidence(engine):
     return evidence
 
 
+def _resolved(scope):
+    """A fixture scope as the resolver's {column: [values]} filters."""
+    return {k: list(v) if isinstance(v, (list, tuple)) else [v] for k, v in scope.items()}
+
+
 def positioning_turn(engine, query):
     """A turn that runs the REAL positioning path against the fixture warehouse.
 
@@ -122,7 +127,7 @@ def positioning_turn(engine, query):
     views = [_positioning_view(pack, scope), *(
         s.as_view() for s in build_chart_plan(
             pack, quarterly_rows=aligned_rows(scope, engine), scope=scope,
-            operation=detect_operation(query))
+            operation=detect_operation(query), question=query)
     )]
 
     answer = compose_answer(AnswerRequest(
@@ -136,6 +141,9 @@ def positioning_turn(engine, query):
         "gpr_query_result": pack.rows(),
         "analyst_charts": views,
         "analyst_evidence": [],
+        # What a live turn's resolver leaves behind, so the answer carries the
+        # scope chips the sidebar files the chat under (Chubb · Canada).
+        "routing_context": {"resolved_filters": _resolved(scope)},
     }
 
 
@@ -179,6 +187,7 @@ def markets_turn(engine, query):
         "gpr_query_result": packs[0][1].rows() if packs else [],
         "analyst_charts": views,
         "analyst_evidence": [],
+        "routing_context": {"resolved_filters": _resolved(scope)},
     }
 
 

@@ -79,6 +79,12 @@ from ui.components.run_meta import conversation_usage
 from core.store.run_traces import recent_traces, save_trace, usage_summary
 from ui.components.usage_panel import usage_body
 from core.store.users import get_or_create_user
+from core.usage_metrics import (
+    actor_from_user_id,
+    chat_turn_event,
+    last_question_and_reply,
+    record_usage,
+)
 from core.store.conversations import (
     list_conversations,
     save_conversation,
@@ -146,6 +152,7 @@ from ui.jobs import Job, start_job, get_job, cancel_job, discard_job
 from ui.chat_turn import TurnRequest, finalize_turn, provisional_transcript
 from ui import chat_navigation  # noqa: F401  (registers scoped event reducers)
 from ui import context_indicator  # noqa: F401  (registers the composer's context ring)
+from ui import analysis  # noqa: F401  (registers the evidence panel)
 from core.streaming import TokenStreamHandler, JobCancelled
 
 #  ── Logger ────────────────────────────────────────────────────────────────────────────────────────
@@ -2061,6 +2068,7 @@ def _prepare_turn(request: TurnRequest, job: Job) -> None:
 def _finish_job(request: TurnRequest, job: Job) -> None:
     finalize_turn(request, job, commit=_commit_turn, persist=save_conversation)
     _save_turn_trace(request, job)
+    _record_turn_usage(request, job)
     if request.user_id is None or job.error or job.cancelled or job.interrupt is not None:
         return
     question = next((m.get("content") for m in reversed(job.transcript.get("messages", []))
@@ -2077,6 +2085,34 @@ def _finish_job(request: TurnRequest, job: Job) -> None:
             invalidate_suggestions(request.user_id)
         except Exception:
             logger.exception("Could not record memory for completed job %s", job.id)
+
+
+def _record_turn_usage(request: TurnRequest, job: Job) -> None:
+    """Add this turn's question and reply to the user's usage workbook."""
+    if request.user_id is None or job.cancelled:
+        return
+    messages = (job.transcript or {}).get("messages") or request.transcript.get("messages", [])
+    try:
+        question, reply = last_question_and_reply(messages)
+    except Exception:  # noqa: BLE001 - usage logging never costs the turn
+        logger.exception("Could not read the turn for usage metrics (%s)", job.id)
+        return
+    if not question:
+        return
+    if job.error:
+        status, reply = "error", str(job.error)
+    elif job.interrupt is not None:
+        status = "clarification"
+    else:
+        status = "ok"
+    event = chat_turn_event(
+        question,
+        reply,
+        status=status,
+        thread_id=request.thread_id,
+        route=(job.state or {}).get("current_route") or "",
+    )
+    record_usage(actor_from_user_id(request.user_id), event)
 
 
 def _save_turn_trace(request: TurnRequest, job: Job) -> None:

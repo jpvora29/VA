@@ -10,9 +10,10 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from core.store.chat_summary import summarize_chat
 from core.store.db import app_engine, conversations
 from logger import get_logger
 
@@ -33,16 +34,57 @@ def _derive_title(chat_history: dict[str, Any]) -> str:
     return "New chat"
 
 
+def _summary_values(chat_history: dict[str, Any]) -> dict[str, str]:
+    """The sidebar columns for one chat (``core.store.chat_summary``)."""
+    summary = summarize_chat(chat_history)
+    return {
+        "client": summary.client,
+        "preview": summary.preview,
+        "status": summary.status,
+    }
+
+
+def backfill_summaries(user_id: int | str) -> int:
+    """Summarise a user's chats saved before the sidebar columns existed.
+
+    Only rows whose ``status`` is NULL are read, and each is written once, so
+    after the first listing this is one empty query. Returns the rows filled.
+    """
+    try:
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        return 0
+    unsummarised = (conversations.c.user_id == uid) & conversations.c.status.is_(None)
+    with app_engine.begin() as conn:
+        rows = conn.execute(
+            select(conversations.c.id, conversations.c.data).where(unsummarised)
+        ).all()
+        for row in rows:
+            try:
+                chat = json.loads(row.data or "{}")
+            except (TypeError, ValueError):
+                chat = {}
+            # updated_at is written back to itself: summarising is not activity,
+            # and the column's onupdate would move every old chat to "Today".
+            conn.execute(
+                update(conversations)
+                .where(conversations.c.id == row.id)
+                .values(**_summary_values(chat), updated_at=conversations.c.updated_at)
+            )
+    return len(rows)
+
+
 def list_conversations(user_id: int | str) -> list[dict[str, Any]]:
     """Conversations for a user, newest-updated first.
 
-    ``[{id, title, updated_at, pinned}]`` — ``updated_at`` is SQLite's
-    ``CURRENT_TIMESTAMP``, i.e. UTC with no offset written on it.
+    ``[{id, title, updated_at, pinned, client, preview, status}]``;
+    ``updated_at`` is SQLite's ``CURRENT_TIMESTAMP``, i.e. UTC with no offset.
     """
     try:
         uid = int(user_id)
     except (TypeError, ValueError):
         return []
+    backfill_summaries(uid)
     with app_engine.connect() as conn:
         rows = conn.execute(
             select(
@@ -50,13 +92,23 @@ def list_conversations(user_id: int | str) -> list[dict[str, Any]]:
                 conversations.c.title,
                 conversations.c.updated_at,
                 conversations.c.pinned,
+                conversations.c.client,
+                conversations.c.preview,
+                conversations.c.status,
             )
             .where(conversations.c.user_id == uid)
             .order_by(conversations.c.updated_at.desc())
         ).all()
     return [
-        {"id": r.id, "title": r.title or "New chat", "updated_at": str(r.updated_at),
-         "pinned": bool(r.pinned)}
+        {
+            "id": r.id,
+            "title": r.title or "New chat",
+            "updated_at": str(r.updated_at),
+            "pinned": bool(r.pinned),
+            "client": r.client or "",
+            "preview": r.preview or "",
+            "status": r.status or "",
+        }
         for r in rows
     ]
 
@@ -99,13 +151,14 @@ def save_conversation(
 
     title = _derive_title(chat_history)
     data = json.dumps(chat_history, default=str)
+    summary = _summary_values(chat_history)
     stmt = sqlite_insert(conversations).values(
-        id=conv_id, user_id=uid, title=title, data=data
+        id=conv_id, user_id=uid, title=title, data=data, **summary
     )
-    # On conflict, refresh title/data/updated_at (SQLite ON CONFLICT upsert).
+    # On conflict, refresh title/data/summary/updated_at (SQLite ON CONFLICT upsert).
     stmt = stmt.on_conflict_do_update(
         index_elements=[conversations.c.id],
-        set_={"title": title, "data": data, "updated_at": func.now()},
+        set_={"title": title, "data": data, **summary, "updated_at": func.now()},
         where=conversations.c.user_id == uid,
     )
     try:
@@ -139,7 +192,7 @@ def save_chat_edit(user_id: int | str, conv_id: str, chat: dict, *, recovering: 
             # reorders the sidebar) was pure cost on every open.
             return True
         result = conn.execute(update(conversations).where(where & (conversations.c.data == previous)).values(
-            data=data, title=_derive_title(chat), updated_at=func.now()))
+            data=data, title=_derive_title(chat), **_summary_values(chat), updated_at=func.now()))
         return result.rowcount == 1
 
 

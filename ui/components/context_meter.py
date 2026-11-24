@@ -138,11 +138,19 @@ def context_indicator(messages: Sequence[Dict[str, Any]]) -> List[Any]:
              else "Context: nothing used yet")
     return [
         html.Span(
-            html.Span(
-                className=f"ctx-ring is-{level}",
-                # Never a bare 0°: a hairline says "measured, and nearly empty".
-                style={"--ctx-fill": f"{max(fill, 0.015) * 360:.1f}deg" if window else "0deg"},
-            ),
+            [
+                html.Span(
+                    className=f"ctx-ring is-{level}",
+                    # Never a bare 0°: a hairline says "measured, and nearly empty".
+                    style={"--ctx-fill": f"{max(fill, 0.015) * 360:.1f}deg" if window else "0deg"},
+                ),
+                # The share, readable without a hover: the ring alone made the
+                # reader guess what a quarter-filled circle meant.
+                html.Span(
+                    f"{fill * 100:.0f}%" if window else "0%",
+                    className=f"ctx-pct is-{level}",
+                ),
+            ],
             className="ctx-indicator-btn",
             tabIndex=0,
             role="button",

@@ -55,3 +55,6 @@ config/
 
 # Playwright MCP scratch (snapshots, console logs) from browser-driven checks.
 .playwright-mcp/
+
+# Per-user usage workbooks (core.usage_metrics) — shared via OneDrive, not git
+usage_metrics/
