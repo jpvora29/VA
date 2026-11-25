@@ -219,11 +219,14 @@ def test_no_column_is_asked_for_padding():
     assert ask_lines(4) == 4
 
 
-def test_the_prompt_explicitly_allows_fewer_findings():
+def test_the_prompt_asks_for_the_box_and_allows_fewer_only_when_evidence_is_short():
+    """The ask matches the acceptance gate (``target_lines``): a column is done at the box's
+    capacity. "Use fewer" invited the one-line answers that shipped as one-line boxes."""
     from studio.template_fill.commentary import _bullet_rules
 
     rules = _bullet_rules(_CELL_BULLETS)
-    assert f"one and {_CELL_BULLETS}" in rules
+    assert f"Write {_CELL_BULLETS} independent bullets" in rules
+    assert "fewer only when the evidence holds fewer" in rules
     assert "Do not add filler" in rules
 
 

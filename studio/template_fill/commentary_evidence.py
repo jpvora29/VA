@@ -240,6 +240,119 @@ def _country_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
     return out
 
 
+def _rank_move(row: Mapping[str, Any]) -> str:
+    """``", up 5 places from #6"`` — empty when the line has no prior rank or did not move."""
+    now, before = row.get("rank"), row.get("prior_rank")
+    if not now or not before or now == before:
+        return ""
+    places = abs(int(before) - int(now))
+    way = "up" if before > now else "down"
+    return f", {way} {places} place{'s' if places != 1 else ''} from #{int(before)}"
+
+
+def _line_items(f: Mapping[str, Any], subject: str) -> list[Evidence]:
+    """One compound fact per PRODUCT LINE — ``line.<line>`` — and where the lines stand together.
+
+    Compound for the same reason the market facts are: a line's premium, growth, share of
+    wallet and rank travel in one citation, so a sentence about Cyber can quote any of them
+    and ``check_numbers`` finds them all in what it cited. This is the family that lets the
+    overall page answer "which lines?" — the portfolio stance already said it in the draft,
+    and until the figures were evidence the writer could not repeat it.
+    """
+    rows = [r for r in f.get("lines") or [] if r.get("name") and _num(r, "current") is not None]
+    out: list[Evidence] = []
+    for row in rows:
+        name = str(row["name"])
+        parts = [f"{subject} wrote {_money(row['current'])} with Marsh"]
+        if _num(row, "pct") is not None:
+            parts[0] += f", {_direction(row['pct'])} {abs(row['pct']):.1f}% on the prior period"
+        sow, prior = _num(row, "sow"), _num(row, "sow_prior")
+        if sow is not None:
+            parts.append(
+                f"share of Marsh placements in {name} {sow:.1f}%"
+                + (f" (from {prior:.1f}%)" if prior is not None else "")
+            )
+        if row.get("rank"):
+            field = f" of {int(row['of_n'])}" if row.get("of_n") else ""
+            parts.append(f"rank #{int(row['rank'])}{field} in the Marsh book{_rank_move(row)}")
+        pool = _num(row, "pool")
+        if pool is not None:
+            moved = (
+                f" ({_direction(row['pool_pct'])} {abs(row['pool_pct']):.1f}%)"
+                if _num(row, "pool_pct") is not None
+                else ""
+            )
+            parts.append(f"total Marsh-placed premium in {name} {_money(pool)}{moved}")
+        _add(
+            out,
+            f"line.{_slug(name)}",
+            f"{name}: {subject}'s premium, growth, share of wallet and rank in this line",
+            "; ".join(parts),
+            "share_of_wallet",
+            # The share MOVE, so a column can tell a line that gained ground from one that
+            # gave it up without parsing the rendered text.
+            value=(sow - prior) if sow is not None and prior is not None else row.get("delta"),
+            unit="percentage_point_change" if sow is not None and prior is not None else "currency_change",
+            entity=name,
+        )
+    out += _portfolio_items(rows, subject)
+    return out
+
+
+def _portfolio_items(rows: list[Mapping[str, Any]], subject: str) -> list[Evidence]:
+    """Claims that need every line at once: top-5 standing, share range, rank movement."""
+    out: list[Evidence] = []
+    ranked = [r for r in rows if r.get("rank")]
+    if len(ranked) >= 3:
+        inside = [str(r["name"]) for r in ranked if int(r["rank"]) <= 5]
+        named = f" ({', '.join(inside)})" if inside else ""
+        _add(
+            out,
+            "portfolio.top5",
+            f"Lines of business where {subject} ranks inside the top 5 carriers in the Marsh book",
+            f"{len(inside)} of {len(ranked)} lines{named}",
+            "rank",
+        )
+    shares = [r for r in rows if _num(r, "sow") is not None]
+    if len(shares) >= 2:
+        deep = max(shares, key=lambda r: r["sow"])
+        thin = min(shares, key=lambda r: r["sow"])
+        if deep["name"] != thin["name"]:
+            _add(
+                out,
+                "portfolio.share_range",
+                f"Where {subject}'s share of Marsh placements is deepest and thinnest across its lines",
+                f"deepest in {deep['name']} at {deep['sow']:.1f}%, "
+                f"thinnest in {thin['name']} at {thin['sow']:.1f}%",
+                "share_of_wallet",
+            )
+    moved = [r for r in ranked if r.get("prior_rank") and r["prior_rank"] != r["rank"]]
+    if moved:
+        up = [r for r in moved if r["prior_rank"] > r["rank"]]
+        down = [r for r in moved if r["prior_rank"] < r["rank"]]
+        parts = []
+        if up:
+            best = max(up, key=lambda r: r["prior_rank"] - r["rank"])
+            parts.append(
+                f"rank improved in {len(up)} of {len(ranked)} lines "
+                f"(furthest in {best['name']}{_rank_move(best)} to #{int(best['rank'])})"
+            )
+        if down:
+            worst = max(down, key=lambda r: r["rank"] - r["prior_rank"])
+            parts.append(
+                f"slipped in {len(down)} (furthest in {worst['name']}{_rank_move(worst)} "
+                f"to #{int(worst['rank'])})"
+            )
+        _add(
+            out,
+            "portfolio.rank_moves",
+            f"How {subject}'s rank moved across its lines of business",
+            "; ".join(parts),
+            "rank",
+        )
+    return out
+
+
 def _standing_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
     out: List[Evidence] = []
     r, s, peer = f.get("rank") or {}, f.get("sow") or {}, f.get("peer") or {}
@@ -622,6 +735,7 @@ _BUILDERS = (
     lambda f, subject: _market_items(f),
     _country_items,
     lambda f, subject: _standing_items(f, subject),
+    _line_items,
     lambda f, subject: _gap_items(f),
     lambda f, subject: _mover_items(f, subject),
     _driver_items,

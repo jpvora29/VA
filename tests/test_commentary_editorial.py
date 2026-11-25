@@ -185,9 +185,15 @@ def test_the_allocation_is_deterministic():
            {k: v.owns for k, v in second.fields.items()}
 
 
-def test_a_page_with_one_field_gets_no_plan_because_it_cannot_repeat_itself():
+def test_a_page_with_one_field_is_a_home_but_gets_no_ban_list():
+    """It cannot repeat itself, so nothing is banned — but it OWNS what it leads from.
+
+    With no plan the headline box owned nothing, and the section-wide gate handed every
+    claim it shared with a later page (premium, share, rank) to that page.
+    """
     plan = E.plan_deck([_columns(("thesis",))])
-    assert plan.is_empty()
+    field = plan.fields["1.thesis"]
+    assert field.owns and not field.elsewhere and not field.synthesis
 
 
 def test_a_field_left_without_a_home_is_given_the_synthesis_job():
@@ -500,7 +506,10 @@ def test_every_field_is_told_its_editorial_job_in_the_prompt(repeating_model):
     B.write_deck([_value_set(_facts())])
     author = next(c for c in repeating_model if c["phase"] == "author")
     assert "MATERIAL AVAILABLE TO THIS SECTION" in author["user"]
-    assert "section relevance takes priority over variety" in author["user"]
+    # The allocation the repetition gate enforces is in the prompt too, so the writer can
+    # avoid the repeats the gate would otherwise delete.
+    assert "THIS FIELD IS THE HOME FOR" in author["user"]
+    assert "ANOTHER FIELD ON THIS PAGE IS THE HOME FOR THESE" in author["user"]
 
 
 def test_a_deck_whose_writer_repeats_one_finding_ships_it_once(repeating_model):

@@ -2,7 +2,9 @@
 
 Nothing here changes what the app does. Each callback has no outputs; it reads a store
 the workspace sets anyway (the active tab, the Studio selection, the staged Recap
-decks, the started MoM job) and queues one row in that user's usage workbook.
+decks, the started MoM job) and queues one row on that workspace's sheet of the
+user's ``<user id>.xlsx``. The user id and email come from the machine
+(``core.usage_metrics.identity``); the ``user-store`` only says someone signed in.
 
 Ask ICG is recorded where its turn finishes (``ui.callbacks._finish_job``), because
 the reply only exists on the worker thread that produced it.
@@ -16,11 +18,12 @@ from typing import Any
 from dash import Input, State
 
 from core.usage_metrics import (
-    actor_from_store,
+    actor_for_store,
+    mom_generate_event,
+    recap_upload_event,
     record_usage,
     studio_generate_event,
     tab_visit_event,
-    upload_event,
 )
 from mom.modes import resolve_mode
 from ui.shell.tabs import TABS, resolve_tab
@@ -40,19 +43,18 @@ def staged_names(files: Sequence[Mapping[str, Any]] | None) -> list[str]:
 
 
 def record_tab_visit(tab_id: str | None, user_store: dict | None) -> None:
-    record_usage(actor_from_store(user_store), tab_visit_event(tab_label(tab_id)))
+    record_usage(actor_for_store(user_store), tab_visit_event(tab_label(tab_id)))
 
 
 def record_studio_generate(selection: dict | None, user_store: dict | None) -> None:
     if selection:
-        record_usage(actor_from_store(user_store), studio_generate_event(selection))
+        record_usage(actor_for_store(user_store), studio_generate_event(selection))
 
 
 def record_recap_upload(files: list | None, user_store: dict | None) -> None:
     names = staged_names(files)
     if names:
-        event = upload_event("Recap", names, action="Uploaded QBR decks")
-        record_usage(actor_from_store(user_store), event)
+        record_usage(actor_for_store(user_store), recap_upload_event(names))
 
 
 def record_mom_generate(
@@ -64,9 +66,10 @@ def record_mom_generate(
 ) -> None:
     if not job_id:
         return
-    action = f"Generate ({resolve_mode(mode_id).label})"
-    event = upload_event("MoM", staged_names([note or {}, deck or {}]), action=action)
-    record_usage(actor_from_store(user_store), event)
+    note_name = str((note or {}).get("name") or "")
+    deck_name = str((deck or {}).get("name") or "")
+    event = mom_generate_event(resolve_mode(mode_id).label, note_name, deck_name)
+    record_usage(actor_for_store(user_store), event)
 
 
 def register_usage_tracking(app) -> None:

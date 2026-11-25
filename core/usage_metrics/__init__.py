@@ -1,43 +1,56 @@
-"""Per-user usage metrics: one Excel workbook per person under ``usage_metrics/``.
+"""Per-user usage metrics: ``usage_metrics/<user id>.xlsx``, one sheet per workspace.
 
-Each row is who (user id, email), where (tab) and what (Studio selections, the Ask
-ICG question and reply, the Recap/MoM files uploaded). See ``recorder`` for settings.
+The user id and email come from the machine (``identity``). Sheets: Studio (Generate
+selections), Recap (uploaded QBR decks), MoM (note + deck), Ask ICG (question and
+reply), Tab visits. See ``recorder`` for settings.
 """
 
 from core.usage_metrics.events import (
-    COLUMNS,
+    ASK_ICG,
+    MOM,
+    RECAP,
+    SHEET_COLUMNS,
+    STUDIO,
+    TAB_VISITS,
     UsageActor,
     UsageEvent,
-    actor_from_store,
     chat_turn_event,
-    format_studio_selection,
     last_question_and_reply,
-    make_actor,
+    mom_generate_event,
+    recap_upload_event,
+    sheet_columns,
+    studio_columns,
     studio_generate_event,
     tab_visit_event,
-    upload_event,
 )
-from core.usage_metrics.recorder import (
-    actor_from_user_id,
-    record_usage,
-    usage_dir,
-    usage_enabled,
+from core.usage_metrics.identity import (
+    actor_for_app_user,
+    actor_for_store,
+    current_actor,
 )
+from core.usage_metrics.recorder import record_usage, usage_dir, usage_enabled
 
 __all__ = [
-    "COLUMNS",
+    "ASK_ICG",
+    "MOM",
+    "RECAP",
+    "SHEET_COLUMNS",
+    "STUDIO",
+    "TAB_VISITS",
     "UsageActor",
     "UsageEvent",
-    "actor_from_store",
-    "actor_from_user_id",
+    "actor_for_app_user",
+    "actor_for_store",
     "chat_turn_event",
-    "format_studio_selection",
+    "current_actor",
     "last_question_and_reply",
-    "make_actor",
+    "mom_generate_event",
+    "recap_upload_event",
     "record_usage",
+    "sheet_columns",
+    "studio_columns",
     "studio_generate_event",
     "tab_visit_event",
-    "upload_event",
     "usage_dir",
     "usage_enabled",
 ]

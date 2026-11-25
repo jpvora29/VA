@@ -76,7 +76,13 @@ def ask_lines(wanted: int) -> int:
     return wanted
 
 
-def _bullet_rules(wanted: int) -> str:
+def _bullet_rules(wanted: int, topic: str = "thesis") -> str:
+    if wanted <= 1 and topic != "thesis":
+        # A narrow one-line panel (a country page's Challenges or Opportunities box) is not
+        # the page's thesis. Briefing it "tie this page together" asked a short panel for a
+        # page-wide paragraph that contradicted its own topic brief.
+        return ("Write ONE bullet: the most material finding for this column, in one or two "
+                "short sentences. Do not prefix it with a bullet character. ")
     if wanted <= 1:
         # A one-paragraph box is not a one-bullet list. The template author gave it a
         # single paragraph beside the page's KPI tiles, so it is the page's THESIS, and
@@ -89,15 +95,31 @@ def _bullet_rules(wanted: int) -> str:
                 "carrier. It is the page's argument in one breath, so cover the figures the "
                 "page actually displays rather than picking one of them. No line breaks, no "
                 "bullet characters. ")
-    return (f"Write between one and {max(wanted, 1)} independent bullets in priority order, "
-            "ONE BULLET PER LINE. Use fewer when evidence supports fewer useful findings. "
-            "Do not add filler or split a single finding to fill the column. "
+    # The ask matches the acceptance gate. A column is only DONE at the box's capacity
+    # (``target_lines``), so a prompt that said "use fewer" invited a one-line answer that
+    # the gate then sent to repair, and a repair that could not top it up shipped one line.
+    return (f"Write {wanted} independent bullets in priority order, ONE BULLET PER LINE — the "
+            f"box on the slide is laid out for {wanted}. Write fewer only when the evidence "
+            "holds fewer distinct, material findings for this column. "
+            "Do not add filler, and do not split a single finding to fill the column. "
             "Do not prefix lines with bullet characters or numbers; the slide adds them. ")
 
 
 _TOPIC_BRIEF: Dict[str, str] = {
-    "thesis": "THIS COLUMN: the principal finding about this carrier's performance with Marsh. "
-              "State the most material result and its comparison; explain a tradeoff only if evidenced. ",
+    # The top of the deck's funnel: the account in one box. Product pages carry each line's
+    # industries and peers, and the country pages carry the market — so this box stays at
+    # the altitude of the KPI tiles beside it and must not stop at one finding.
+    "thesis": "THIS COLUMN: the account headline — the top of the deck, read beside KPI tiles "
+              "for the carrier's Marsh premium and its change, the Marsh book and its change, "
+              "share of Marsh premium and overall rank. One finding per bullet, in this order "
+              "where the evidence carries it: (1) premium written with Marsh and its "
+              "year-on-year move, set against the Marsh book's move over the same period; "
+              "(2) share of wallet now against a year ago, with rank and the field size; "
+              "(3) which lines of business carry the premium and where share of wallet is "
+              "deepest or thinnest (name the lines and their share); (4) one further material "
+              "point — the line that drove the change, or the latest comparable quarter against "
+              "the same quarter last year. Stay high level: the peer gap, and line-by-line peer and "
+              "industry analysis, belong to the pages that follow. ",
     "key_messages": "THIS COLUMN: the two or three findings leadership should remember. "
                     "Prioritize the material performance result, competitive position or specific next step. ",
     "challenges": "KEEP EACH BULLET SHORT — one sentence, and prefer fewer words to more; this is a narrow panel read at a glance, not a paragraph. "
@@ -136,7 +158,8 @@ _TOPIC_QUESTIONS: Dict[str, Tuple[str, ...]] = {
                "Where does share trail the largest-carrier benchmark?", "What needs validation before pursuing the gap?"),
     "key_messages": ("Which findings matter most to leadership?",),
     "priorities": ("What specific review or action follows from the material findings?",),
-    "thesis": ("What is the most important supported conclusion?",),
+    "thesis": ("Where does the account stand with Marsh this year?",
+               "Which lines of business carry it, and what moved it?"),
     "performance": ("What changed over comparable periods?", "Which measured contributors explain the movement?"),
     "reflections": ("What did the reported results establish, and what remains uncertain?",),
 }
@@ -149,14 +172,16 @@ _TOPIC_EVIDENCE: Dict[str, Tuple[str, ...]] = {
     # Premium first. ``thesis`` is the headline page's only prose box, and that page prints
     # premium and premium YoY as its largest tiles — a lead that opened on share of wallet
     # was arguing beside the numbers rather than about them.
-    "thesis": ("carrier.", "marsh.", "sow.", "rank.", "peer."),
-    "key_messages": ("carrier.", "market.", "marsh.", "sow.", "peer.", "segment."),
+    # The per-line family (``line.``/``portfolio.``) is what the tiles' "which lines?" needs;
+    # the peer gap moved down the funnel to Priorities and the product pages.
+    "thesis": ("carrier.", "marsh.", "sow.", "rank.", "portfolio.", "line."),
+    "key_messages": ("carrier.", "market.", "marsh.", "sow.", "peer.", "segment.", "portfolio."),
     "performance": ("mover.", "pool.", "trend.", "carrier.", "marsh."),
-    "working": ("mover.", "market.", "sow.", "segment.", "carrier.", "marsh."),
-    "challenges": ("carrier.", "market.", "marsh.", "sow.", "peer.", "segment.", "mover."),
-    "growth": ("segment.", "market.", "headroom", "peer.gap", "share.point_value"),
+    "working": ("mover.", "market.", "sow.", "segment.", "line.", "carrier.", "marsh."),
+    "challenges": ("carrier.", "market.", "marsh.", "sow.", "peer.", "segment.", "line.", "mover."),
+    "growth": ("segment.", "market.", "headroom", "peer.gap", "line.", "share.point_value"),
     "priorities": ("segment.", "market.", "peer.gap", "mover.", "share.point_value"),
-    "reflections": ("trend.", "mover.", "sow.", "carrier."),
+    "reflections": ("trend.", "portfolio.", "mover.", "sow.", "carrier."),
 }
 _EVIDENCE_ALIAS = {"strengths": "working", "weaknesses": "challenges",
                    "opportunities": "growth", "threats": "challenges"}
@@ -356,7 +381,7 @@ def deck_voice(style: Optional[str], subject: str = "") -> str:
 
 
 def column_rules(topic: str, wanted: int) -> str:
-    return (_bullet_rules(wanted) + _TOPIC_BRIEF.get(topic, "")
+    return (_bullet_rules(wanted, topic) + _TOPIC_BRIEF.get(topic, "")
             + _voice_rule(topic) + _questions_rule(topic))
 
 

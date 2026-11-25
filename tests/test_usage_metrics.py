@@ -1,4 +1,4 @@
-"""Per-user usage workbooks: row shape, file per user, locked-file recovery, wiring."""
+"""Per-user usage workbooks: machine identity, one sheet per workspace, wiring."""
 
 from __future__ import annotations
 
@@ -9,19 +9,29 @@ import pytest
 from openpyxl import load_workbook
 
 from core.usage_metrics import (
-    COLUMNS,
-    actor_from_store,
+    ASK_ICG,
+    MOM,
+    RECAP,
+    SHEET_COLUMNS,
+    STUDIO,
+    TAB_VISITS,
+    UsageActor,
     chat_turn_event,
-    format_studio_selection,
+    identity,
     last_question_and_reply,
-    make_actor,
+    mom_generate_event,
+    recap_upload_event,
     record_usage,
+    sheet_columns,
+    studio_columns,
     studio_generate_event,
     tab_visit_event,
-    upload_event,
 )
 from core.usage_metrics import workbook as wb
 from ui import usage_tracking
+
+ALICE = UsageActor(user_id="alice01", email="alice@icg.com")
+BOB = UsageActor(user_id="bob02", email="bob@icg.com")
 
 
 @pytest.fixture
@@ -31,11 +41,23 @@ def usage_folder(tmp_path, monkeypatch) -> Path:
     return tmp_path
 
 
-def read_rows(path: Path) -> list[dict]:
-    sheet = load_workbook(path)[wb.SHEET]
-    header = [cell.value for cell in sheet[1]]
+@pytest.fixture
+def machine(monkeypatch):
+    """Pretend the machine login is ``jdoe`` with the given (default: no) email."""
+
+    def set_machine(email: str = "") -> None:
+        monkeypatch.setattr(identity, "system_user_id", lambda: "jdoe")
+        monkeypatch.setattr(identity, "system_email", lambda: email)
+
+    set_machine()
+    return set_machine
+
+
+def read_sheet(path: Path, sheet: str) -> list[dict]:
+    rows = load_workbook(path)[sheet]
+    header = [cell.value for cell in rows[1]]
     return [
-        dict(zip(header, row)) for row in sheet.iter_rows(min_row=2, values_only=True)
+        dict(zip(header, row)) for row in rows.iter_rows(min_row=2, values_only=True)
     ]
 
 
@@ -45,47 +67,78 @@ def record_and_wait(actor, event) -> None:
     future.result(timeout=30)
 
 
-# ── pure pieces ───────────────────────────────────────────────────────────────
+# ── identity ──────────────────────────────────────────────────────────────────
 
 
-def test_sso_username_is_the_email():
-    actor = make_actor(7, "Jane.Doe@Example.com")
-    assert actor.email == "jane.doe@example.com"
-    assert actor.file_key == "jane.doe@example.com"
+def test_user_id_is_the_machine_login_not_the_app_id(machine):
+    machine("j.doe@icg.com")
+    actor = identity.actor_for_store({"id": 3, "username": "someone-else"})
+    assert actor == UsageActor(user_id="jdoe", email="j.doe@icg.com")
 
 
-def test_local_username_has_no_email_and_names_the_file():
-    actor = actor_from_store({"id": 3, "username": "jash"})
-    assert actor is not None
-    assert (actor.user_id, actor.email, actor.file_key) == ("3", "", "jash")
+def test_app_sso_email_fills_in_when_the_machine_has_none(machine):
+    actor = identity.actor_for_store({"id": 3, "username": "J.Doe@ICG.com"})
+    assert actor == UsageActor(user_id="jdoe", email="j.doe@icg.com")
 
 
-def test_no_signed_in_user_records_nothing(usage_folder):
-    assert actor_from_store(None) is None
-    assert actor_from_store({}) is None
+def test_machine_email_wins_over_the_app_username(machine):
+    machine("real@icg.com")
+    assert identity.current_actor("other@icg.com").email == "real@icg.com"
+
+
+def test_no_signed_in_user_records_nothing(machine, usage_folder):
+    assert identity.actor_for_store(None) is None
+    assert identity.actor_for_store({}) is None
+    assert identity.actor_for_app_user(None) is None
     assert record_usage(None, tab_visit_event("Studio")) is None
 
 
-def test_studio_selection_keeps_choices_and_drops_plumbing():
-    text = format_studio_selection(
+def test_real_machine_lookups_return_strings():
+    assert isinstance(identity.system_user_id(), str)
+    assert identity.system_user_id()
+    email = identity.system_email()
+    assert email == "" or "@" in email
+
+
+# ── pure pieces ───────────────────────────────────────────────────────────────
+
+
+def test_studio_selection_spreads_over_its_columns():
+    columns = studio_columns(
         {
             "report": "qbr",
             "filters": {"Country": ["Singapore", "Japan"], "Year": [2025]},
             "peers_by_country": {"SG": ["A", "B"]},
             "audience": "executive",
+            "date_from": "2025-01-01",
+            "date_to": "2025-09-30",
+            "brand_new_control": "x",
             "ai": True,
             "template_path": "x.pptx",
-            "slides": {"premium": [1]},
             "survey_carrier": None,
-            "cuts": [],
         }
     )
-    assert text.splitlines() == [
-        "Report: qbr",
-        "Filters: Country=Singapore, Japan; Year=2025",
-        "Peers by country: SG=A, B",
-        "Audience: executive",
+    assert columns["Deliverable"] == "qbr"
+    assert columns["Filters"] == "Country=Singapore, Japan; Year=2025"
+    assert columns["Peers by country"] == "SG=A, B"
+    assert columns["Audience"] == "executive"
+    assert columns["Period"] == "calendar: 2025-01-01 to 2025-09-30"
+    assert columns["Other selections"] == "Brand new control: x"
+    assert "Survey carrier" not in columns
+
+
+def test_every_event_fits_its_sheet():
+    events = [
+        studio_generate_event({"report": "qbr"}),
+        recap_upload_event(["a.pptx"]),
+        mom_generate_event("Client meeting", "n.docx", "d.pptx"),
+        chat_turn_event("q", "a"),
+        tab_visit_event("Studio"),
     ]
+    assert [e.sheet for e in events] == [STUDIO, RECAP, MOM, ASK_ICG, TAB_VISITS]
+    for event in events:
+        assert len(event.as_row(ALICE)) == len(sheet_columns(event.sheet))
+        assert set(event.values) <= set(SHEET_COLUMNS[event.sheet])
 
 
 def test_question_and_reply_never_borrows_an_older_answer():
@@ -96,54 +149,65 @@ def test_question_and_reply_never_borrows_an_older_answer():
         {"type": "AIMessage", "content": [{"type": "text", "text": "new a"}]},
     ]
     assert last_question_and_reply(answered) == ("new q", "new a")
-    unanswered = answered[:3]
-    assert last_question_and_reply(unanswered) == ("new q", "")
+    assert last_question_and_reply(answered[:3]) == ("new q", "")
     assert last_question_and_reply([]) == ("", "")
 
 
-def test_unsafe_characters_never_reach_the_filename(tmp_path):
-    path = wb.workbook_path(tmp_path, "..\\evil/name:x")
+def test_filename_is_the_user_id_and_never_a_path(tmp_path):
+    assert wb.workbook_path(tmp_path, "jdoe").name == "jdoe.xlsx"
+    path = wb.workbook_path(tmp_path, "..\\CORP\\jdoe")
     assert path.parent == tmp_path
-    assert path.name == "evil_name_x.xlsx"
+    assert path.name == "CORP_jdoe.xlsx"
 
 
 # ── writing ───────────────────────────────────────────────────────────────────
 
 
-def test_each_user_gets_their_own_workbook(usage_folder):
-    alice = make_actor(1, "alice@icg.com")
-    bob = make_actor(2, "bob@icg.com")
-    record_and_wait(alice, tab_visit_event("Studio"))
-    record_and_wait(bob, chat_turn_event("What is GWP?", "GWP is $5M.", thread_id="t1"))
-    record_and_wait(alice, studio_generate_event({"report": "qbr", "audience": "exec"}))
+def test_workbook_has_one_sheet_per_workspace(usage_folder):
+    record_and_wait(ALICE, tab_visit_event("Recap"))
+    book = load_workbook(usage_folder / "alice01.xlsx")
+    assert book.sheetnames == [STUDIO, RECAP, MOM, ASK_ICG, TAB_VISITS]
+    for name in book.sheetnames:
+        assert tuple(cell.value for cell in book[name][1]) == sheet_columns(name)
+
+
+def test_rows_land_on_their_sheet_in_their_users_file(usage_folder):
+    record_and_wait(ALICE, studio_generate_event({"report": "qbr", "audience": "exec"}))
+    record_and_wait(ALICE, recap_upload_event(["Q3 QBR.pptx", "Q2 QBR.pptx"]))
+    record_and_wait(BOB, chat_turn_event("What is GWP?", "$5M.", thread_id="t1"))
+    record_and_wait(ALICE, mom_generate_event("Client meeting", "n.docx", "d.pptx"))
 
     assert sorted(p.name for p in usage_folder.glob("*.xlsx")) == [
-        "alice@icg.com.xlsx",
-        "bob@icg.com.xlsx",
+        "alice01.xlsx",
+        "bob02.xlsx",
     ]
-    alice_rows = read_rows(usage_folder / "alice@icg.com.xlsx")
-    assert [r["Action"] for r in alice_rows] == ["Opened tab", "Generate deck"]
-    assert alice_rows[1]["Studio selections"] == "Report: qbr\nAudience: exec"
-    assert isinstance(alice_rows[0]["Timestamp"], datetime)
+    alice = usage_folder / "alice01.xlsx"
+    (studio,) = read_sheet(alice, STUDIO)
+    assert (studio["User ID"], studio["Email"]) == ("alice01", "alice@icg.com")
+    assert (studio["Deliverable"], studio["Audience"]) == ("qbr", "exec")
+    assert isinstance(studio["Timestamp"], datetime)
+    (recap,) = read_sheet(alice, RECAP)
+    assert (recap["Uploaded files"], recap["File count"]) == (
+        "Q3 QBR.pptx\nQ2 QBR.pptx",
+        2,
+    )
+    (mom,) = read_sheet(alice, MOM)
+    assert (mom["Note file"], mom["Deck file"]) == ("n.docx", "d.pptx")
+    assert read_sheet(alice, ASK_ICG) == []
 
-    (bob_row,) = read_rows(usage_folder / "bob@icg.com.xlsx")
-    assert bob_row["Tab"] == "Ask ICG"
-    assert bob_row["Email"] == "bob@icg.com"
-    assert (bob_row["Question"], bob_row["Reply"]) == ("What is GWP?", "GWP is $5M.")
-    assert bob_row["Notes"] == "conversation t1"
-
-
-def test_header_matches_columns(usage_folder):
-    record_and_wait(make_actor(1, "a@b.com"), tab_visit_event("Recap"))
-    sheet = load_workbook(usage_folder / "a@b.com.xlsx")[wb.SHEET]
-    assert tuple(cell.value for cell in sheet[1]) == COLUMNS
+    (chat,) = read_sheet(usage_folder / "bob02.xlsx", ASK_ICG)
+    assert (chat["Question"], chat["Reply"], chat["Conversation"]) == (
+        "What is GWP?",
+        "$5M.",
+        "t1",
+    )
 
 
 def test_formula_like_and_control_text_is_stored_as_plain_text(usage_folder):
     question = '=HYPERLINK("http://x")\x07 why?'
-    record_and_wait(make_actor(1, "a@b.com"), chat_turn_event(question, "ok"))
-    sheet = load_workbook(usage_folder / "a@b.com.xlsx")[wb.SHEET]
-    cell = sheet.cell(row=2, column=COLUMNS.index("Question") + 1)
+    record_and_wait(ALICE, chat_turn_event(question, "ok"))
+    sheet = load_workbook(usage_folder / "alice01.xlsx")[ASK_ICG]
+    cell = sheet.cell(row=2, column=sheet_columns(ASK_ICG).index("Question") + 1)
     assert cell.data_type == "s"
     assert cell.value == '=HYPERLINK("http://x") why?'
 
@@ -156,30 +220,34 @@ def test_a_locked_workbook_keeps_rows_pending_until_it_frees(tmp_path, monkeypat
         raise PermissionError("open in Excel")
 
     monkeypatch.setattr(wb, "write_rows", locked)
-    actor = make_actor(1, "u")
+    first = studio_generate_event({"report": "qbr"})
     with pytest.raises(PermissionError):
-        wb.append_rows(path, [tab_visit_event("Studio").as_row(actor)])
+        wb.append_rows(path, [(first.sheet, first.as_row(ALICE))])
     assert wb.pending_path(path).exists()
 
     monkeypatch.setattr(wb, "write_rows", real_write)
-    wb.append_rows(path, [tab_visit_event("MoM").as_row(actor)])
+    second = tab_visit_event("MoM")
+    wb.append_rows(path, [(second.sheet, second.as_row(ALICE))])
     assert not wb.pending_path(path).exists()
-    assert [r["Tab"] for r in read_rows(path)] == ["Studio", "MoM"]
-    assert isinstance(read_rows(path)[0]["Timestamp"], datetime)
+    (studio,) = read_sheet(path, STUDIO)
+    assert isinstance(studio["Timestamp"], datetime)
+    assert [r["Tab"] for r in read_sheet(path, TAB_VISITS)] == ["MoM"]
 
 
 def test_switched_off_records_nothing(tmp_path, monkeypatch):
     monkeypatch.setenv("USAGE_METRICS", "off")
     monkeypatch.setenv("USAGE_METRICS_DIR", str(tmp_path))
-    assert record_usage(make_actor(1, "a@b.com"), tab_visit_event("Studio")) is None
+    assert record_usage(ALICE, tab_visit_event("Studio")) is None
     assert not list(tmp_path.iterdir())
 
 
 # ── UI wiring (the callback bodies, called directly) ──────────────────────────
 
+SIGNED_IN = {"id": 4, "username": "x@y.com"}
+
 
 @pytest.fixture
-def captured(monkeypatch) -> list:
+def captured(monkeypatch, machine) -> list:
     calls: list = []
     monkeypatch.setattr(
         usage_tracking,
@@ -190,13 +258,10 @@ def captured(monkeypatch) -> list:
 
 
 def test_tab_visit_uses_the_navbar_label(captured):
-    usage_tracking.record_tab_visit("chat", {"id": 4, "username": "x@y.com"})
+    usage_tracking.record_tab_visit("chat", SIGNED_IN)
     actor, event = captured[0]
-    assert (actor.email, event.tab, event.action) == (
-        "x@y.com",
-        "Ask ICG",
-        "Opened tab",
-    )
+    assert actor.user_id == "jdoe"
+    assert (event.sheet, event.values["Tab"]) == (TAB_VISITS, "Ask ICG")
 
 
 def test_recap_upload_lists_the_deck_names(captured):
@@ -204,16 +269,16 @@ def test_recap_upload_lists_the_deck_names(captured):
         {"name": "Q3 QBR.pptx", "path": "p1"},
         {"name": "Q2 QBR.pptx", "path": "p2"},
     ]
-    usage_tracking.record_recap_upload(files, {"id": 4, "username": "x@y.com"})
-    usage_tracking.record_recap_upload([], {"id": 4, "username": "x@y.com"})
+    usage_tracking.record_recap_upload(files, SIGNED_IN)
+    usage_tracking.record_recap_upload([], SIGNED_IN)
     assert len(captured) == 1
-    assert captured[0][1].uploaded_files == "Q3 QBR.pptx\nQ2 QBR.pptx"
+    assert captured[0][1].values["Uploaded files"] == "Q3 QBR.pptx\nQ2 QBR.pptx"
 
 
 def test_studio_generate_records_the_selection(captured):
-    usage_tracking.record_studio_generate(None, {"id": 1, "username": "a"})
-    usage_tracking.record_studio_generate({"report": "qbr"}, {"id": 1, "username": "a"})
-    assert [e.studio_selections for _a, e in captured] == ["Report: qbr"]
+    usage_tracking.record_studio_generate(None, SIGNED_IN)
+    usage_tracking.record_studio_generate({"report": "qbr"}, SIGNED_IN)
+    assert [e.values["Deliverable"] for _a, e in captured] == ["qbr"]
 
 
 def test_mom_generate_records_both_uploads(captured):
@@ -222,16 +287,13 @@ def test_mom_generate_records_both_uploads(captured):
         None,
         {"name": "notes.docx"},
         {"name": "deck.pptx"},
-        {"id": 1, "username": "a"},
+        SIGNED_IN,
     )
-    usage_tracking.record_mom_generate(None, None, {}, {}, {"id": 1, "username": "a"})
-    assert len(captured) == 1
-    assert captured[0][1].uploaded_files == "notes.docx\ndeck.pptx"
-    assert captured[0][1].action.startswith("Generate (")
-
-
-def test_upload_event_skips_blank_names():
-    assert (
-        upload_event("Recap", ["a.pptx", "", "b.pptx"], "x").uploaded_files
-        == "a.pptx\nb.pptx"
+    usage_tracking.record_mom_generate(
+        "job2", None, None, {"name": "d.pptx"}, SIGNED_IN
     )
+    usage_tracking.record_mom_generate(None, None, {}, {}, SIGNED_IN)
+    assert len(captured) == 2
+    first, second = (event.values for _a, event in captured)
+    assert (first["Note file"], first["Deck file"]) == ("notes.docx", "deck.pptx")
+    assert (second["Note file"], second["Deck file"]) == ("", "d.pptx")

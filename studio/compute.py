@@ -534,37 +534,74 @@ _COUNTRY_COL = "Country"
 
 
 @memoized
-def sow_by_market(flow, filters, engine, subject) -> Dict[str, Dict[str, Optional[float]]]:
-    """``{country: {"current": sow %, "prior": sow %}}`` — the subject's share per market."""
+def sow_by_dim(flow, dim, filters, engine, subject) -> dict[str, dict[str, float | None]]:
+    """``{value: {"current": sow %, "prior": sow %}}`` — the subject's share per ``dim`` value."""
     cur = _current_year(filters)
     if cur is None or not subject:
         return {}
 
     def at(year):
-        return {str(f.dims.get(_COUNTRY_COL)): f.value for f in compute_share_of_wallet(
-            PrimitiveArgs(flow=flow, metric="premium", group_by=(_COUNTRY_COL,),
-                          filters={**filters, _YEAR_COL: year}, subject=subject),
-            engine=engine)}
+        return {
+            str(f.dims.get(dim)): f.value
+            for f in compute_share_of_wallet(
+                PrimitiveArgs(
+                    flow=flow,
+                    metric="premium",
+                    group_by=(dim,),
+                    filters={**filters, _YEAR_COL: year},
+                    subject=subject,
+                ),
+                engine=engine,
+            )
+        }
 
     now, before = at(cur), at(cur - 1)
     return {c: {"current": now.get(c), "prior": before.get(c)} for c in set(now) | set(before)}
 
 
+def sow_by_market(flow, filters, engine, subject) -> dict[str, dict[str, float | None]]:
+    """``{country: {"current": sow %, "prior": sow %}}`` — the subject's share per market."""
+    return sow_by_dim(flow, _COUNTRY_COL, filters, engine, subject)
+
+
+def _ranks_in(flow, dim, filters, engine, subject, year) -> dict[str, dict[str, int]]:
+    """``{value: {"rank": n, "of_n": m}}`` for the subject in one year."""
+    base = {k: v for k, v in filters.items() if k != _CARRIER_COL}
+    out: dict[str, dict[str, int]] = {}
+    args = PrimitiveArgs(
+        flow=flow,
+        metric="premium",
+        group_by=(dim,),
+        filters={**base, _YEAR_COL: year},
+    )
+    for f in compute_rank(args, engine=engine):
+        if str(f.dims.get("entity", "")).lower() == subject.lower():
+            of_n = f.support[0].get("of_n") if f.support else None
+            out[str(f.dims.get(dim))] = {"rank": int(f.value), "of_n": int(of_n) if of_n else 0}
+    return out
+
+
 @memoized
-def rank_by_market(flow, filters, engine, subject) -> Dict[str, Dict[str, int]]:
-    """``{country: {"rank": n, "of_n": m}}`` — the subject's rank in each market."""
+def rank_by_dim(flow, dim, filters, engine, subject) -> dict[str, dict[str, int]]:
+    """``{value: {"rank": n, "of_n": m, "prior_rank": p}}`` — the subject's rank per value.
+
+    ``prior_rank`` is the same rank a year earlier, absent when the subject did not write
+    that value then — so a page can say "up 5 places to #1" from cited figures.
+    """
     cur = _current_year(filters)
     if cur is None or not subject:
         return {}
-    base = {k: v for k, v in filters.items() if k != _CARRIER_COL}
-    out: Dict[str, Dict[str, int]] = {}
-    for f in compute_rank(PrimitiveArgs(flow=flow, metric="premium", group_by=(_COUNTRY_COL,),
-                                        filters={**base, _YEAR_COL: cur}), engine=engine):
-        if str(f.dims.get("entity", "")).lower() == subject.lower():
-            of_n = f.support[0].get("of_n") if f.support else None
-            out[str(f.dims.get(_COUNTRY_COL))] = {"rank": int(f.value),
-                                                  "of_n": int(of_n) if of_n else 0}
-    return out
+    now = _ranks_in(flow, dim, filters, engine, subject, cur)
+    before = _ranks_in(flow, dim, filters, engine, subject, cur - 1)
+    for name, row in now.items():
+        if name in before:
+            row["prior_rank"] = before[name]["rank"]
+    return now
+
+
+def rank_by_market(flow, filters, engine, subject) -> dict[str, dict[str, int]]:
+    """``{country: {"rank": n, "of_n": m}}`` — the subject's rank in each market."""
+    return rank_by_dim(flow, _COUNTRY_COL, filters, engine, subject)
 
 
 @memoized

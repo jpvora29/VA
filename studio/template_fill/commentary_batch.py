@@ -48,7 +48,7 @@ logger = get_logger(__name__)
 #: Bumped when the prompt below changes in a way that should invalidate cached commentary.
 #: Read by :mod:`studio.template_fill.commentary_cache` — a better prompt must not be
 #: shadowed by yesterday's answer.
-PROMPT_VERSION = "icg-skills-v8"
+PROMPT_VERSION = "icg-funnel-v9"
 
 #: How many repair rounds a section gets.
 #:
@@ -330,7 +330,7 @@ def section_payload(section: Section, pack, glossary_brief: str, *,
                     keep: Optional[Mapping[str, Sequence[str]]] = None,
                     plan=None) -> str:
     """The user message: the evidence once, the definitions once, then each field's ask."""
-    from studio.template_fill import editorial, commentary_findings
+    from studio.template_fill import editorial
 
     blocks = [f"CARRIER: {section.subject}", "",
               "EVIDENCE — the only facts you may use across every field below. Every "
@@ -355,10 +355,26 @@ def section_payload(section: Section, pack, glossary_brief: str, *,
     blocks += [_column_block(c, show_draft=show_draft,
                              rejected=(rejected or {}).get(c.field_id, ()),
                              keep=(keep or {}).get(c.field_id, ()),
-                             editorial_brief=commentary_findings.brief(pack, c.topic)
-                             + "\nAvoid repeating another field's finding; section relevance takes priority over variety.")
+                             editorial_brief=_editorial_brief(pack, c, plan))
                for c in section.columns]
     return "\n".join(blocks)
+
+
+def _editorial_brief(pack, column: Column, plan) -> str:
+    """What this field may spend (the findings) AND whose finding is whose (the plan).
+
+    The plan's half went missing from the prompt while the repetition gate kept enforcing
+    it, so the writer could not see which field owned the peer gap or the rank — it wrote
+    overlapping lines and the gate deleted every copy but the owner's. Fields came back a
+    line or two short, repair could not find them anything new, and the page shipped thin.
+    The writer is now told the same allocation the gate will apply.
+    """
+    from studio.template_fill import commentary_findings
+
+    findings = commentary_findings.brief(pack, column.topic)
+    ownership = plan.brief(column.field_id)
+    fallback = "Avoid repeating another field's finding; section relevance takes priority over variety."
+    return "\n".join(part for part in (findings, ownership or fallback) if part)
 
 
 # ── writing one section ──────────────────────────────────────────────────────

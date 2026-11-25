@@ -80,7 +80,7 @@ from core.store.run_traces import recent_traces, save_trace, usage_summary
 from ui.components.usage_panel import usage_body
 from core.store.users import get_or_create_user
 from core.usage_metrics import (
-    actor_from_user_id,
+    actor_for_app_user,
     chat_turn_event,
     last_question_and_reply,
     record_usage,
@@ -2112,7 +2112,7 @@ def _record_turn_usage(request: TurnRequest, job: Job) -> None:
         thread_id=request.thread_id,
         route=(job.state or {}).get("current_route") or "",
     )
-    record_usage(actor_from_user_id(request.user_id), event)
+    record_usage(actor_for_app_user(request.user_id), event)
 
 
 def _save_turn_trace(request: TurnRequest, job: Job) -> None:

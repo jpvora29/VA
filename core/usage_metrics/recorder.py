@@ -17,7 +17,7 @@ import os
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
-from core.usage_metrics.events import UsageActor, UsageEvent, make_actor
+from core.usage_metrics.events import UsageActor, UsageEvent
 from core.usage_metrics.workbook import append_rows, workbook_path
 from logger import get_logger
 
@@ -48,38 +48,20 @@ def record_usage(actor: UsageActor | None, event: UsageEvent) -> Future | None:
     if actor is None or not usage_enabled():
         return None
     try:
-        path = workbook_path(usage_dir(), actor.file_key)
+        path = workbook_path(usage_dir(), actor.user_id)
         return _WRITER.submit(write_event, path, actor, event)
     except Exception:  # noqa: BLE001 — e.g. the executor is shut down at exit
-        log.exception("usage metrics: could not queue a %s event", event.tab)
+        log.exception("usage metrics: could not queue a %s event", event.sheet)
         return None
 
 
 def write_event(path: Path, actor: UsageActor, event: UsageEvent) -> None:
     """Append one row; failures are logged, not raised (runs on the writer thread)."""
     try:
-        append_rows(path, [event.as_row(actor)])
+        append_rows(path, [(event.sheet, event.as_row(actor))])
     except PermissionError:
         log.warning(
             "usage metrics: %s is locked (open in Excel?); row kept pending", path
         )
     except Exception:  # noqa: BLE001
         log.exception("usage metrics: could not write %s", path)
-
-
-def actor_from_user_id(user_id: int | str | None) -> UsageActor | None:
-    """The actor for a stored user id — for code with no browser store to read.
-
-    A chat turn finishes on a worker thread, where the ``user-store`` is not at hand
-    but the user id is.
-    """
-    if user_id is None:
-        return None
-    try:
-        from core.store.users import get_user
-
-        user = get_user(user_id) or {}
-    except Exception:  # noqa: BLE001 — still record the row, under the bare id
-        log.exception("usage metrics: could not look up user %s", user_id)
-        user = {}
-    return make_actor(user_id, user.get("username"))

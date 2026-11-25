@@ -380,7 +380,7 @@ def _segment_facts(result, filters: Dict[str, Any]) -> Dict[str, Any]:
     year = C._current_year(filters)
     found = _safe(SEG.find_all, flow=result.flow, filters=filters, engine=result.engine,
                   subject=result.subject, dims=dims, year=year) or {}
-    above = _parent_filters(filters)
+    above = _parent_filters(filters, tuple(getattr(result, "scope_countries", ()) or ()))
     if not found or above is None:
         return found
     parent = _safe(SEG.find_all, flow=result.flow, filters=above, engine=result.engine,
@@ -417,16 +417,31 @@ def _filters_signature(filters: Dict[str, Any]) -> Tuple[Tuple[str, Any], ...]:
 _SEGMENT_TRACKS: Dict[Tuple[Any, ...], bool] = {}
 
 
-def _parent_filters(filters: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """The scope one level up: this cut without its narrowest entity pin.
+def _parent_filters(
+    filters: Dict[str, Any], run_countries: tuple[str, ...] = ()
+) -> Dict[str, Any] | None:
+    """The scope one level up IN THIS DECK: this cut without its narrowest entity pin.
 
-    A product page's country row sits under that product across every market; a country
-    page sits under the whole portfolio. Comparing a scope with its own parent is what
-    decides whether a finding belongs to this page or to the one above it.
+    A product page's country row sits under that product across the run's markets; a
+    country page sits under the run's overall page. Comparing a scope with its own parent
+    is what decides whether a finding belongs to this page or to the one above it.
+
+    The parent has to be a page the reader will actually see. On a single-country run the
+    country IS the deck's top level: comparing it with the carrier's book across every
+    market (which no page shows) deleted each industry finding that happened to look the
+    same globally, and left the overall and country pages with nothing to say about where
+    inside the market the book sits. So with ``run_countries`` known, the country level
+    widens to the run's own selection, and is skipped when the run is that one country.
+    Unknown (``()``) keeps the old reading — the dataset's whole book.
     """
-    for col in (_COUNTRY_COL, _PRODUCT_COL):
-        if _is_pinned(filters, col):
-            return {k: v for k, v in filters.items() if k != col}
+    countries = tuple(str(c) for c in run_countries)
+    if _is_pinned(filters, _COUNTRY_COL):
+        if len(countries) > 1:
+            return {**filters, _COUNTRY_COL: list(countries)}
+        if not countries:
+            return {k: v for k, v in filters.items() if k != _COUNTRY_COL}
+    if _is_pinned(filters, _PRODUCT_COL):
+        return {k: v for k, v in filters.items() if k != _PRODUCT_COL}
     return None
 
 
@@ -476,6 +491,9 @@ def _facts(result, filters: Dict[str, Any]) -> Dict[str, Any]:
             # reached for the same headline; with a country each, they can say different
             # things (see ``editorial.EditorialPlanBuilder`` — it hands each field a market).
             "markets": _market_facts(result, filters),
+            # One row per PRODUCT LINE when the scope spans several — the overall page's
+            # "which lines?" (product share of wallet, rank, growth). See ``_line_facts``.
+            "lines": _line_facts(result, filters),
             # Which PRODUCT each named segment is really about. Empty on a product page,
             # where the scope already pins it (:mod:`studio.segment_drivers`).
             "segment_drivers": _segment_driver_facts(result, filters, segments)}
@@ -496,22 +514,60 @@ def _market_facts(result, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
     markets = _scope_markets(filters)
     if len(markets) < 2 or not result.subject:
         return []
+    return _breakdown_rows(result, filters, _COUNTRY_COL, top=len(markets))
+
+
+#: More lines than a summary page can name; enough that a scope's real portfolio fits.
+_MAX_LINES = 10
+
+
+def _line_facts(result, filters: dict[str, Any]) -> list[dict[str, Any]]:
+    """The same rows as :func:`_market_facts`, one per PRODUCT LINE the carrier writes now.
+
+    The overall page's KPI tiles are portfolio numbers, and the question a reader asks of
+    them is "which lines?" — where share of wallet is deep, where it is thin, where the
+    carrier ranks near the top. Without these rows the drafts said it (from the portfolio
+    stance) and the writer could not cite it, so the number check removed the very lines
+    that made the page more than a restatement of its tiles. Empty on a one-product scope:
+    a product page IS one line.
+    """
+    if _is_pinned(filters, _PRODUCT_COL) or not result.subject:
+        return []
+    rows = [
+        row
+        for row in _breakdown_rows(result, filters, _PRODUCT_COL, top=_MAX_LINES)
+        if (row.get("current") or 0) > 0
+    ]
+    return rows if len(rows) >= 2 else []
+
+
+def _breakdown_rows(result, filters: dict[str, Any], dim: str, *, top: int) -> list[dict[str, Any]]:
+    """``[{name, current, prior, delta, pct, sow, sow_prior, pool, pool_pct, rank, of_n,
+    prior_rank}]`` per value of ``dim`` — biggest carrier premium first."""
     base = {k: v for k, v in filters.items() if k != _CARRIER_COL}
-    mine = _safe(C.movement_by_dim, result.flow, _COUNTRY_COL, filters, result.engine,
-                 top=len(markets)) or []
-    pool = {r["name"]: r for r in (_safe(C.movement_by_dim, result.flow, _COUNTRY_COL, base,
-                                         result.engine, top=len(markets)) or [])}
-    shares = _safe(C.sow_by_market, result.flow, filters, result.engine, result.subject) or {}
-    ranks = _safe(C.rank_by_market, result.flow, filters, result.engine, result.subject) or {}
+    mine = _safe(C.movement_by_dim, result.flow, dim, filters, result.engine, top=top) or []
+    pool_rows = _safe(C.movement_by_dim, result.flow, dim, base, result.engine, top=top) or []
+    pool = {r["name"]: r for r in pool_rows}
+    shares = _safe(C.sow_by_dim, result.flow, dim, filters, result.engine, result.subject) or {}
+    ranks = _safe(C.rank_by_dim, result.flow, dim, filters, result.engine, result.subject) or {}
     rows = []
     for row in mine:
         name = row["name"]
         market = pool.get(name) or {}
-        rows.append({**row, "sow": (shares.get(name) or {}).get("current"),
-                     "sow_prior": (shares.get(name) or {}).get("prior"),
-                     "pool": market.get("current"), "pool_pct": market.get("pct"),
-                     "rank": (ranks.get(name) or {}).get("rank"),
-                     "of_n": (ranks.get(name) or {}).get("of_n")})
+        share = shares.get(name) or {}
+        rank = ranks.get(name) or {}
+        rows.append(
+            {
+                **row,
+                "sow": share.get("current"),
+                "sow_prior": share.get("prior"),
+                "pool": market.get("current"),
+                "pool_pct": market.get("pct"),
+                "rank": rank.get("rank"),
+                "of_n": rank.get("of_n"),
+                "prior_rank": rank.get("prior_rank"),
+            }
+        )
     rows.sort(key=lambda r: r.get("current") or 0.0, reverse=True)
     return rows
 
@@ -1197,7 +1253,7 @@ def _countries_in_scope(result) -> List[str]:
 
 
 def _polish(text: str, kind: str, style: Optional[str], subject: str = "",
-            facts: Optional[Dict[str, Any]] = None) -> str:
+            facts: Optional[Dict[str, Any]] = None, capacity: int = 0) -> str:
     """LLM re-write behind the faithfulness verifier; KPI cells stay deterministic.
 
     The cell's ``kind`` IS its commentary topic, so it selects the same per-column brief the
@@ -1208,8 +1264,11 @@ def _polish(text: str, kind: str, style: Optional[str], subject: str = "",
         return text
     from studio.template_fill.commentary import plan_rewrite
 
+    # ``capacity`` is the cell's room, not the draft's length. The draft has been through
+    # the claim ledger, which removes what earlier pages said, so a three-bullet Challenges
+    # panel was routinely asked for one line.
     return plan_rewrite(text, node=f"feedback-{kind}", style=style, topic=kind,
-                        subject=subject, facts=facts)
+                        subject=subject, facts=facts, capacity=capacity)
 
 
 def _extras(result):
@@ -1279,7 +1338,7 @@ def values(template: Template, result, *, ledger=None, extras=None,
                             extras if extras is not None else _extras(result))
             text_cache[key] = _polish(text, t["kind"], style,
                                       str(getattr(result, "subject", "") or ""),
-                                      facts_for(country))
+                                      facts_for(country), capacity=limit)
         # KPI callouts always write (a blank beats a stale "$xx.xM" placeholder);
         # an empty commentary keeps the template's ellipsis as a visible fill-me cue.
         if text_cache[key] or t["kind"] not in _COMPOSERS:

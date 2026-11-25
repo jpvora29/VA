@@ -82,6 +82,11 @@ _TOPIC_OF_PREFIX: Tuple[Tuple[str, ClaimTopic], ...] = (
     ("segment.", "headroom"),
     ("headroom", "headroom"),
     ("mix.", "concentration"),
+    # Per-line standing (``line.cyber``) and the claims across all lines
+    # (``portfolio.top5``). A topic of their own, not ``standing``: the overall headline's
+    # share of wallet and Cyber's share of wallet are different findings.
+    ("line.", "lines"),
+    ("portfolio.", "lines"),
     ("carrier.", "scale"),
     ("marsh.", "scale"),
 )
@@ -98,6 +103,8 @@ _TOPIC_LABEL: Dict[ClaimTopic, str] = {
                 "would be worth",
     "concentration": "how concentrated the carrier's premium is, and in what",
     "scale": "the size of the carrier's premium and of the Marsh book around it",
+    "lines": "where the carrier stands line by line — each line's premium, share of "
+             "wallet and rank, and which lines it ranks near the top in",
 }
 
 #: The same topics, named briefly — for the list of what a field may NOT say, which is as
@@ -115,6 +122,7 @@ _TOPIC_SHORT: Dict[ClaimTopic, str] = {
     "headroom": "headroom and what taking it is worth",
     "concentration": "how concentrated the carrier is",
     "scale": "the size of the carrier's premium",
+    "lines": "line-by-line share of wallet and rank",
 }
 
 
@@ -261,7 +269,7 @@ def _entity(text: str) -> str:
 #: four-part one whose driver is the last part (see ``commentary_evidence._fact_id``).
 #: Every other family — the peer gap, rank, share of wallet, the mix, the trend — is about
 #: the whole book and names no driver.
-_ENTITY_AT: Dict[str, int] = {"mover": 1, "pool": 1, "segment": -1, "market": 1}
+_ENTITY_AT: Dict[str, int] = {"mover": 1, "pool": 1, "segment": -1, "market": 1, "line": 1}
 
 
 def entity_of_fact(fact_id: str) -> str:
@@ -524,9 +532,14 @@ class EditorialPlanBuilder:
                   markets: Sequence[ClaimTopic] = ()) -> "EditorialPlanBuilder":
         """One slide's worth of fields: allocate its topics, then write each field's job."""
         if len(columns) < 2:
-            # One field cannot repeat another, and a plan for it would only narrow what a
-            # lone column may say. The recap memory is still fed, so a later page knows.
-            self._remember(columns)
+            # One field cannot repeat another on its own page, so it gets no ban list. It
+            # DOES get a home: the gate dedupes a whole SECTION, and on a single-country run
+            # the overall and country pages are one section. With no plan, the headline
+            # box owned nothing and lost every shared claim (premium, share, rank) to a
+            # field on a LATER page that happened to own it — the top of the funnel ceded
+            # its own KPIs and shipped one line. Owned topics are matched in deck order,
+            # so the first page to own a topic keeps it.
+            self._add_lone_field(columns)
             return self
         preferences = with_markets({c.field_id: _preferences(c) for c in columns}, markets)
         owner = _allocate(preferences)
@@ -550,6 +563,21 @@ class EditorialPlanBuilder:
             )
         self._remember(columns, owner)
         return self
+
+    def _add_lone_field(self, columns: Sequence[PlannedColumn]) -> None:
+        """A one-field page: it is the home for every topic it leads from."""
+        for column in columns:
+            owns = _preferences(column)
+            if owns:
+                self._fields[column.field_id] = FieldPlan(
+                    field_id=column.field_id,
+                    node=column.node,
+                    owns=owns,
+                    recaps=tuple(
+                        (t, self._first_home[t]) for t in owns if t in self._first_home
+                    ),
+                )
+        self._remember(columns)
 
     def _remember(self, columns: Sequence[PlannedColumn],
                   owner: Optional[Mapping[ClaimTopic, str]] = None) -> None:

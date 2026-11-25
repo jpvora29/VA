@@ -1,8 +1,11 @@
-"""What a usage row says: who did it, in which tab, and what they did.
+"""What a usage row says, and which sheet of the user's workbook it goes on.
 
-Everything here is pure — building a row never touches a file, a session or the
-database — so the shape of the workbook is testable on its own. ``recorder`` decides
-when a row is written and ``workbook`` how.
+One sheet per workspace — Studio, Recap, MoM, Ask ICG — each with its own columns,
+plus a Tab visits sheet. Every row starts with Timestamp, User ID and Email.
+
+Everything here is pure — building a row never touches a file or the machine — so the
+shape of the workbook is testable on its own. ``recorder`` decides when a row is
+written and ``workbook`` how.
 """
 
 from __future__ import annotations
@@ -12,24 +15,54 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-ANONYMOUS = "anonymous"
+STUDIO = "Studio"
+RECAP = "Recap"
+MOM = "MoM"
+ASK_ICG = "Ask ICG"
+TAB_VISITS = "Tab visits"
 
-# Workbook columns, in order. ``UsageEvent.as_row`` fills them.
-COLUMNS: tuple[str, ...] = (
-    "Timestamp",
-    "User ID",
-    "Email",
-    "Username",
-    "Tab",
-    "Action",
-    "Studio selections",
-    "Question",
-    "Reply",
-    "Uploaded files",
-    "Status",
-    "Notes",
-)
+COMMON_COLUMNS: tuple[str, ...] = ("Timestamp", "User ID", "Email")
 
+# Sheet name -> its columns after the common three. Order here is sheet order.
+SHEET_COLUMNS: dict[str, tuple[str, ...]] = {
+    STUDIO: (
+        "Action",
+        "Deliverable",
+        "Filters",
+        "Cuts",
+        "Peers",
+        "Peers by country",
+        "Audience",
+        "Style",
+        "Data basis",
+        "Period",
+        "Survey carrier",
+        "Survey peers",
+        "Dataset",
+        "Other selections",
+    ),
+    RECAP: ("Action", "Uploaded files", "File count"),
+    MOM: ("Action", "Mode", "Note file", "Deck file"),
+    ASK_ICG: ("Question", "Reply", "Status", "Conversation", "Route"),
+    TAB_VISITS: ("Tab",),
+}
+
+# Studio selection key -> its column. Keys not listed (and not plumbing) land in
+# "Other selections", so a new Setup control is never silently dropped.
+_STUDIO_KEY_COLUMNS = {
+    "report": "Deliverable",
+    "filters": "Filters",
+    "cuts": "Cuts",
+    "peers": "Peers",
+    "peers_by_country": "Peers by country",
+    "audience": "Audience",
+    "style": "Style",
+    "data_basis": "Data basis",
+    "survey_carrier": "Survey carrier",
+    "survey_peers_by_country": "Survey peers",
+    "dataset_id": "Dataset",
+}
+_STUDIO_PERIOD_KEYS = ("period_basis", "date_from", "date_to")
 # Selection keys that are plumbing, not choices the user made on the Setup form.
 _STUDIO_INTERNAL_KEYS = frozenset(
     {
@@ -39,6 +72,7 @@ _STUDIO_INTERNAL_KEYS = frozenset(
         "dataset_rev",
         "meeting_length",
         "slides",
+        "survey_peers",  # the flat copy of survey_peers_by_country
         "template_path",
     }
 )
@@ -46,72 +80,28 @@ _STUDIO_INTERNAL_KEYS = frozenset(
 
 @dataclass(frozen=True)
 class UsageActor:
-    """The signed-in person a row belongs to."""
+    """The person a row belongs to: their OS login and work email."""
 
     user_id: str
-    username: str
     email: str
-
-    @property
-    def file_key(self) -> str:
-        """What names this person's workbook: their email, else username, else id."""
-        return self.email or self.username or self.user_id or ANONYMOUS
 
 
 @dataclass(frozen=True)
 class UsageEvent:
-    """One thing a user did, before it is stamped with who and when."""
+    """One thing a user did: the sheet it belongs on and its column values."""
 
-    tab: str
-    action: str
-    studio_selections: str = ""
-    question: str = ""
-    reply: str = ""
-    uploaded_files: str = ""
-    status: str = "ok"
-    notes: str = ""
+    sheet: str
+    values: Mapping[str, Any]
     at: datetime = field(default_factory=datetime.now)
 
     def as_row(self, actor: UsageActor) -> list[Any]:
-        """The workbook row, in ``COLUMNS`` order."""
-        return [
-            self.at.replace(microsecond=0),
-            actor.user_id,
-            actor.email,
-            actor.username,
-            self.tab,
-            self.action,
-            self.studio_selections,
-            self.question,
-            self.reply,
-            self.uploaded_files,
-            self.status,
-            self.notes,
-        ]
+        """The row for ``sheet``, in ``sheet_columns(sheet)`` order."""
+        specific = [self.values.get(name, "") for name in SHEET_COLUMNS[self.sheet]]
+        return [self.at.replace(microsecond=0), actor.user_id, actor.email, *specific]
 
 
-# ── actors ────────────────────────────────────────────────────────────────────
-
-
-def make_actor(user_id: Any, username: Any) -> UsageActor:
-    """An actor from a user id and username; the email is the username when it is one.
-
-    Under SSO the account key — the username — is the email address
-    (``core.store.users.get_or_create_sso_user``); a local sign-in has none.
-    """
-    name = str(username or "").strip()
-    uid = "" if user_id is None else str(user_id).strip()
-    email = name.lower() if "@" in name else ""
-    if not uid and not name:
-        return UsageActor(user_id="", username=ANONYMOUS, email="")
-    return UsageActor(user_id=uid, username=name, email=email)
-
-
-def actor_from_store(user_store: Mapping[str, Any] | None) -> UsageActor | None:
-    """The actor in the browser ``user-store``, or ``None`` when nobody is signed in."""
-    if not user_store or user_store.get("id") is None:
-        return None
-    return make_actor(user_store.get("id"), user_store.get("username"))
+def sheet_columns(sheet: str) -> tuple[str, ...]:
+    return (*COMMON_COLUMNS, *SHEET_COLUMNS[sheet])
 
 
 # ── events ────────────────────────────────────────────────────────────────────
@@ -119,16 +109,12 @@ def actor_from_store(user_store: Mapping[str, Any] | None) -> UsageActor | None:
 
 def tab_visit_event(tab_label: str) -> UsageEvent:
     """The user opened a workspace tab."""
-    return UsageEvent(tab=tab_label, action="Opened tab")
+    return UsageEvent(TAB_VISITS, {"Tab": tab_label})
 
 
 def studio_generate_event(selection: Mapping[str, Any]) -> UsageEvent:
     """The user pressed Generate on Studio Setup with these selections."""
-    return UsageEvent(
-        tab="Studio",
-        action="Generate deck",
-        studio_selections=format_studio_selection(selection),
-    )
+    return UsageEvent(STUDIO, {"Action": "Generate deck", **studio_columns(selection)})
 
 
 def chat_turn_event(
@@ -140,21 +126,41 @@ def chat_turn_event(
     route: str = "",
 ) -> UsageEvent:
     """One Ask ICG question and the reply it got."""
-    notes = "; ".join(
-        part
-        for part in (
-            f"conversation {thread_id}" if thread_id else "",
-            f"route {route}" if route else "",
-        )
-        if part
-    )
     return UsageEvent(
-        tab="Ask ICG",
-        action="Asked question",
-        question=question,
-        reply=reply,
-        status=status,
-        notes=notes,
+        ASK_ICG,
+        {
+            "Question": question,
+            "Reply": reply,
+            "Status": status,
+            "Conversation": thread_id,
+            "Route": route,
+        },
+    )
+
+
+def recap_upload_event(filenames: Iterable[str]) -> UsageEvent:
+    """The QBR decks the user uploaded to Recap."""
+    names = [name for name in filenames if name]
+    return UsageEvent(
+        RECAP,
+        {
+            "Action": "Uploaded QBR decks",
+            "Uploaded files": "\n".join(names),
+            "File count": len(names),
+        },
+    )
+
+
+def mom_generate_event(mode_label: str, note_file: str, deck_file: str) -> UsageEvent:
+    """The user started a MoM run on this note and deck."""
+    return UsageEvent(
+        MOM,
+        {
+            "Action": "Generate",
+            "Mode": mode_label,
+            "Note file": note_file,
+            "Deck file": deck_file,
+        },
     )
 
 
@@ -174,23 +180,36 @@ def last_question_and_reply(messages: Sequence[Mapping[str, Any]]) -> tuple[str,
     return "", ""
 
 
-def upload_event(tab_label: str, filenames: Iterable[str], action: str) -> UsageEvent:
-    """Files the user uploaded (Recap decks, MoM note and deck)."""
-    names = [name for name in filenames if name]
-    return UsageEvent(tab=tab_label, action=action, uploaded_files="\n".join(names))
+# ── Studio selection -> columns ───────────────────────────────────────────────
 
 
-# ── formatting ────────────────────────────────────────────────────────────────
-
-
-def format_studio_selection(selection: Mapping[str, Any]) -> str:
-    """One readable line per Setup choice, skipping plumbing keys and empty values."""
-    lines = []
+def studio_columns(selection: Mapping[str, Any]) -> dict[str, str]:
+    """The Studio sheet's selection columns for one Generate."""
+    columns: dict[str, str] = {}
+    other: list[str] = []
     for key, value in selection.items():
-        if key in _STUDIO_INTERNAL_KEYS or _is_empty(value):
+        if (
+            key in _STUDIO_INTERNAL_KEYS
+            or key in _STUDIO_PERIOD_KEYS
+            or _is_empty(value)
+        ):
             continue
-        lines.append(f"{_label(key)}: {format_value(value)}")
-    return "\n".join(lines)
+        if key in _STUDIO_KEY_COLUMNS:
+            columns[_STUDIO_KEY_COLUMNS[key]] = format_value(value)
+        else:
+            other.append(f"{_label(key)}: {format_value(value)}")
+    columns["Period"] = format_period(selection)
+    columns["Other selections"] = "\n".join(other)
+    return columns
+
+
+def format_period(selection: Mapping[str, Any]) -> str:
+    """The reporting period: calendar unless Setup chose another basis or dates."""
+    basis = str(selection.get("period_basis") or "calendar")
+    start, end = selection.get("date_from"), selection.get("date_to")
+    if start or end:
+        return f"{basis}: {start or '…'} to {end or '…'}"
+    return basis
 
 
 def format_value(value: Any) -> str:

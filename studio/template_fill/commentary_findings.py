@@ -22,6 +22,12 @@ _ALIASES = {"strengths": "working", "weaknesses": "challenges", "opportunities":
             "threats": "challenges"}
 
 
+def _line_side(item) -> str:
+    """A line that gained share is a success, one that lost it a challenge."""
+    value = item.value or 0
+    return "working" if value > 0 else "challenges" if value < 0 else "performance"
+
+
 def catalogue(pack) -> Tuple[Finding, ...]:
     out = []
 
@@ -69,6 +75,32 @@ def catalogue(pack) -> Tuple[Finding, ...]:
                     "Use the current/prior or benchmark comparison that matters; do not recite every figure. "
                     "Do not claim an operational cause or an achievable premium target.",
                     (*_GENERAL, *topics), abs(item.value or 0))
+    driver = next((e for e in pack.items if e.fact_id.startswith("driver.")), None)
+    if driver is not None:
+        side = "working" if (driver.value or 0) > 0 else "challenges"
+        add((driver.fact_id,),
+            "The line or segment behind most of the year's change, and its share of it.",
+            (*_GENERAL, side), 85)
+    lines = [e for e in pack.items if e.fact_id.startswith("line.")]
+    if pack.get("portfolio.share_range") or pack.get("portfolio.top5"):
+        biggest = tuple(e.fact_id for e in lines[:2])
+        add(("portfolio.share_range", "portfolio.top5", *biggest),
+            "Which lines of business carry the carrier's premium, where its share of Marsh "
+            "placements is deepest and thinnest, and in how many lines it ranks inside the "
+            "top 5. Name the lines; leave line-level peer analysis to the product pages.",
+            _GENERAL, 70)
+    if pack.get("portfolio.rank_moves"):
+        add(("portfolio.rank_moves",),
+            "How the carrier's rank moved across its lines of business — name the line that "
+            "moved furthest.", ("performance", "reflections", "key_messages", "working"), 45)
+    for item in lines:
+        # Biggest lines first (the rows are sorted by premium), so a column choosing among
+        # them meets the lines that matter to the account before the small ones.
+        add((item.fact_id,),
+            f"{item.entity or item.fact_id}: the carrier's premium, growth, share of Marsh "
+            "placements and rank in this line. Say what is distinctive about it — a share "
+            "gain or loss, a top-5 rank, or a share well below the carrier's overall level.",
+            (_line_side(item), "growth", "priorities"), 30)
     quarter = pack.get("trend.quarter")
     if quarter:
         side = "working" if (quarter.value or 0) > 0 else "challenges" if (quarter.value or 0) < 0 else "performance"
@@ -84,6 +116,19 @@ def catalogue(pack) -> Tuple[Finding, ...]:
     return tuple(out)
 
 
+#: The overall headline box's reading order: what the KPI tiles beside it print, then
+#: which lines carry it, then what moved it. Families not listed sort last, in pack order.
+_HEADLINE_FAMILIES = ("carrier.", "sow.", "rank.", "portfolio.", "driver.", "peer.", "mover.",
+                      "trend.", "mix.")
+_HEADLINE_LIMIT = 6
+
+
+def _headline_rank(finding: Finding) -> int:
+    first = finding.fact_ids[0] if finding.fact_ids else ""
+    return next((i for i, prefix in enumerate(_HEADLINE_FAMILIES) if first.startswith(prefix)),
+                len(_HEADLINE_FAMILIES))
+
+
 def for_topic(pack, topic: str, limit: int = 5) -> Tuple[Finding, ...]:
     if topic == "threats":
         # Observed declines are not forward-looking evidence by themselves.
@@ -92,7 +137,13 @@ def for_topic(pack, topic: str, limit: int = 5) -> Tuple[Finding, ...]:
     candidates = [f for f in catalogue(pack) if resolved in f.topics]
     # Start with the overall comparison on summary pages; segment pages prioritize
     # the monetary contribution. Both orderings remain stable across identical runs.
-    if resolved in ("thesis", "key_messages"):
+    if resolved == "thesis":
+        # The headline page: its tiles print premium, the Marsh book, share of wallet and
+        # rank, so the box is offered those first and then the lines behind them. Ordered
+        # by family, not by size — rank is a small number and the page still prints it.
+        ordered = sorted(candidates, key=_headline_rank)
+        return tuple(ordered[:max(limit, _HEADLINE_LIMIT)])
+    if resolved == "key_messages":
         return tuple(candidates[:limit])
     return tuple(sorted(candidates, key=lambda f: f.importance, reverse=True)[:limit])
 
