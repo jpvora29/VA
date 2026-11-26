@@ -343,6 +343,56 @@ def test_materialized_premium_kpi_has_one_decimal():
     assert re.search(r"812\.4M$", texts["marsh_gwp"])
 
 
+def _headline_facts() -> dict:
+    return {
+        "subject": "Zurich",
+        "carrier": {
+            "current": 410_100_000.0,
+            "prior": 324_400_000.0,
+            "pct": 26.4,
+            "delta": 85_700_000.0,
+            "current_year": 2025,
+        },
+        "marsh": {"current": 812_400_000.0, "prior": 737_100_000.0, "pct": 10.2},
+    }
+
+
+def test_commentary_headline_premium_matches_the_one_decimal_kpi():
+    """The Highlights page's commentary sat beside a "$410.1M" tile and said "$410M"."""
+    from studio.template_fill import commentary_evidence as E
+
+    pack = E.build_pack(_headline_facts())
+    rendered = {e.fact_id: e.rendered for e in pack.items}
+
+    assert rendered["carrier.premium"].endswith("410.1M")
+    assert rendered["carrier.prior"].endswith("324.4M")
+    assert rendered["carrier.delta"].endswith("85.7M")
+    assert rendered["marsh.premium"].endswith("812.4M")
+    assert rendered["marsh.prior"].endswith("737.1M")
+
+
+def test_a_one_decimal_premium_sentence_passes_the_number_check():
+    from studio.template_fill import commentary_evidence as E
+    from studio.template_fill.commentary_verify import Judged, check_numbers
+
+    pack = E.build_pack(_headline_facts())
+    sentence = "Zurich's Marsh-placed premium grew 26.4% to $410.1M."
+    verdict = check_numbers(
+        [Judged(sentence, fact_ids=("carrier.premium", "carrier.yoy"))], pack
+    )
+
+    assert verdict.kept == (sentence,)
+
+
+def test_fallback_commentary_says_the_headline_premium_to_one_decimal():
+    from studio.template_fill.feedback import _thesis_points
+
+    facts = _headline_facts()
+    facts["period"] = {}
+
+    assert "$410.1M" in _thesis_points(facts)[0]
+
+
 # ── GWP page: colour by sign ─────────────────────────────────────────────────
 
 

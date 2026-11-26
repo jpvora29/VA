@@ -425,13 +425,18 @@ def _positioning_lines(inputs: List[PostureInput]) -> List[str]:
         best = max(up, key=lambda x: x.rank_change)
         lines.append(
             f"Rank improved in {len(up)} of {len(inputs)} lines, furthest in {best.name}, "
-            f"up {best.rank_change} places to #{int(best.rank)}.")
+            f"up {_places(best.rank_change)} to #{int(best.rank)}.")
     if down:
         worst = min(down, key=lambda x: x.rank_change)
         lines.append(
             f"Rank slipped in {len(down)} of {len(inputs)} lines, furthest in {worst.name}, "
-            f"down {abs(worst.rank_change)} places to #{int(worst.rank)}.")
+            f"down {_places(worst.rank_change)} to #{int(worst.rank)}.")
     return lines
+
+
+def _places(n: int) -> str:
+    """"1 place" / "3 places" — the size of a rank move, singular when it is one."""
+    return "1 place" if abs(n) == 1 else f"{abs(n)} places"
 
 
 def _penetration_lines(inputs: List[PostureInput]) -> List[str]:

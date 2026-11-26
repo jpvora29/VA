@@ -195,8 +195,8 @@ def test_the_carrier_is_named_where_the_facts_carry_its_name():
     # A partner names the account. "The account" is only the fallback for a fact set that
     # does not know the subject (the composers are called with synthetic facts in tests).
     named = " ".join(F.points("key_messages", {**_GROWING, "subject": "Zurich"}))
-    assert "Zurich wrote $48M with Marsh" in named and "The account" not in named
-    assert "The account wrote $48M with Marsh" in " ".join(F.points("key_messages", _GROWING))
+    assert "Zurich wrote $48.0M with Marsh" in named and "The account" not in named
+    assert "The account wrote $48.0M with Marsh" in " ".join(F.points("key_messages", _GROWING))
 
 
 def test_the_peer_average_benchmarks_the_share_not_the_rank():
@@ -502,7 +502,7 @@ def _stub_model(monkeypatch, column, *, verdicts=None):
 
 
 def test_the_model_writes_the_column_from_the_evidence(monkeypatch):
-    written = ("The carrier outgrew the Marsh book by nearly nineteen points, taking $46M more "
+    written = ("The carrier outgrew the Marsh book by nearly nineteen points, taking $46.0M more "
                "premium in a market that grew 9.9%.",
                "At 9.1% of the wallet it still sits behind a largest-carrier average of 10.8%.")
     _stub_model(monkeypatch, _column(*written))
@@ -513,10 +513,10 @@ def test_the_model_writes_the_column_from_the_evidence(monkeypatch):
 def test_an_invented_figure_is_dropped_before_the_judge_ever_sees_it(monkeypatch):
     """The numeric verifier runs FIRST — cheap, exact, and it removes the worst failure."""
     _stub_model(monkeypatch, _column(
-        "The carrier grew to $208M with Marsh, taking share as it went.",
+        "The carrier grew to $208.0M with Marsh, taking share as it went.",
         "Share of wallet reached 44.4%, well clear of the field."))          # invented
     out = CM._rewrite(_draft(2), node="t", subject="Zurich", facts=_facts())
-    assert out == "The carrier grew to $208M with Marsh, taking share as it went."
+    assert out == "The carrier grew to $208.0M with Marsh, taking share as it went."
 
 
 def test_the_claim_judge_drops_an_unsupported_claim(monkeypatch):
@@ -524,7 +524,7 @@ def test_the_claim_judge_drops_an_unsupported_claim(monkeypatch):
     the deterministic verifier cannot see and the model verifier exists for."""
     from studio.ai.models import CommentaryVerdict, CommentaryVerdicts
 
-    kept = ("The carrier outgrew the Marsh book and took $46M more premium than a year ago.",
+    kept = ("The carrier outgrew the Marsh book and took $46.0M more premium than a year ago.",
             "Cyber carried $22M of that, so the renewal there is what to defend first.",
             "At 9.1% of the wallet the carrier still trails a largest-carrier average of 10.8%.")
     _stub_model(
@@ -542,7 +542,7 @@ def test_the_claim_judge_drops_an_unsupported_claim(monkeypatch):
 
 def test_a_misaligned_judge_cannot_approve_the_column(monkeypatch):
     from studio.ai.models import CommentaryVerdict, CommentaryVerdicts
-    written = ("Zurich's Marsh-placed premium increased by $46M.",
+    written = ("Zurich's Marsh-placed premium increased by $46.0M.",
                "Its share of Marsh placements reached 9.1%.")
     _stub_model(monkeypatch, _column(*written),
                 verdicts=CommentaryVerdicts(verdicts=[CommentaryVerdict(keep=True)]))

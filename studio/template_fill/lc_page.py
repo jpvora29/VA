@@ -43,7 +43,17 @@ _PRODUCT_COL = "Product_Line"
 
 # More points than a panel can carry without its labels colliding. The author drew four;
 # a full-page single-country panel can hold more, but the 2x2 grid sets the ceiling.
+# The ceiling only trims the lines OUTSIDE the top 5: a line the carrier ranks top 5 in is
+# what the page exists to show, so it is never cut (see :func:`select_lines`).
 _MAX_POINTS = 6
+
+# The deepest rank the panel's own scale draws. The author's rank axis runs 0–11 with a
+# tick per rank, and their painted band boundary sits on the top-5 line of THAT scale — so
+# the axis never stretches. A deeper rank sits on the floor row and says its real rank in
+# its label ("Marine (#23)"), instead of widening the axis to 24 ticks that crush every
+# other point into the top of the panel and slide the bands off their ranks.
+DEEPEST_DRAWN_RANK = 10
+FLOOR_ROW = DEEPEST_DRAWN_RANK + 0.5
 
 # Rank → the band its point falls in. Ordered best first; the split at 5 is the same top-5
 # the deck benchmarks every carrier against ("Peer average GWP 1-5"), and the same split the
@@ -53,6 +63,7 @@ STRONG = "strong"        # #3–5  — inside the top 5
 CHASING = "chasing"      # #6–8  — outside it, within reach
 BEHIND = "behind"        # #9+   — the ground to make up
 _BANDS: Tuple[Tuple[int, str], ...] = ((2, LEAD), (5, STRONG), (8, CHASING))
+_TOP_RANK = 5
 
 
 def band_of(rank: int) -> str:
@@ -94,8 +105,19 @@ class RankPoint:
     rank: int
     band: str
 
+    @property
+    def row(self) -> float:
+        """Where the point sits on the rank axis — its rank, or the floor row past the scale."""
+        return float(self.rank) if self.rank <= DEEPEST_DRAWN_RANK else FLOOR_ROW
+
+    @property
+    def label(self) -> str:
+        """The point's name; a point on the floor row also states the rank it stands for."""
+        return self.name if self.rank <= DEEPEST_DRAWN_RANK else f"{self.name} (#{self.rank})"
+
     def to_dict(self) -> Dict[str, Any]:
-        return {"name": self.name, "size": self.size, "rank": self.rank, "band": self.band}
+        return {"name": self.name, "size": self.size, "rank": self.rank, "band": self.band,
+                "row": self.row, "label": self.label}
 
 
 # ── page anatomy ─────────────────────────────────────────────────────────────
@@ -192,17 +214,35 @@ def _marsh_pool(result, filters: Dict[str, Any]) -> Dict[str, float]:
             for f in facts if f.dims.get(_PRODUCT_COL)}
 
 
+def select_lines(rows: Sequence[dict[str, Any]], *, cap: int = _MAX_POINTS) -> list[dict[str, Any]]:
+    """The lines a panel plots: EVERY line the carrier ranks top 5 in, then its biggest
+    other lines up to ``cap``.
+
+    ``rows`` arrive biggest carrier premium first (``product_breakdown_rows``) and carry
+    a rank. Taking the first ``cap`` of them used to drop a line the carrier ranks #2 in
+    whenever six bigger lines of its own came first — the very point the green corner of
+    the page exists to show. Lines with no rank have no height to plot and are skipped.
+    """
+    ranked = [r for r in rows if r.get("rank") is not None]
+    top = [r for r in ranked if int(r["rank"]) <= _TOP_RANK]
+    room = max(cap - len(top), 0)
+    rest = [r for r in ranked if int(r["rank"]) > _TOP_RANK][:room]
+    keep = {id(r) for r in (*top, *rest)}
+    return [r for r in ranked if id(r) in keep]
+
+
 def rank_points(result, filters: Dict[str, Any]) -> List[RankPoint]:
     """One country's lines of business, biggest Marsh pool first.
 
     Ranked lines only: a point with no rank has no height to plot, and the page is about
-    where the carrier stands.
+    where the carrier stands. Every top-5 line is kept (:func:`select_lines`).
     """
     rows = _safe(C.product_breakdown_rows, result.flow, filters, result.engine,
-                 result.subject, top=_MAX_POINTS) or []
+                 result.subject, top=None) or []
     pool = _marsh_pool(result, filters)
-    placed = [(str(r["name"]), pool.get(str(r["name"])), r.get("rank")) for r in rows]
-    placed = [(n, s, int(k)) for n, s, k in placed if s and k is not None]
+    chosen = select_lines(rows)
+    placed = [(str(r["name"]), pool.get(str(r["name"])), int(r["rank"])) for r in chosen]
+    placed = [(n, s, k) for n, s, k in placed if s]
     placed.sort(key=lambda row: row[1], reverse=True)
     return [RankPoint(n, s, k, band_of(k)) for n, s, k in placed]
 

@@ -109,14 +109,32 @@ def augment(template: Template, bindings: List[R.Binding]) -> List[R.Binding]:
             existing = by_key.get(Slot(slide.index, shape_id, where, "", "text", "").key)
             if existing is not None:
                 existing.role, existing.placeholder = role, False
+                existing.slot.token = share_token(role, existing.slot.token)
                 continue
+            token = _cell_text(template, slide.index, shape_id, where)
             extra.append(R.Binding(
-                slot=Slot(slide.index, shape_id, where,
-                          _cell_text(template, slide.index, shape_id, where), "text", ""),
+                slot=Slot(slide.index, shape_id, where, share_token(role, token), "text", ""),
                 role=role, placeholder=False))
         if cells:
             logger.info("kpi_band: slide %d KPI band -> %d cell(s)", slide.index, len(cells))
     return bindings + extra
+
+
+# The share-of-wallet change is a percentage, whatever shape the author typed for it.
+_SHARE_DELTA_ROLES = frozenset({R.ROLE_SOW_YOY, R.ROLE_PEER_SOW_YOY})
+_BARE_DIGITS = re.compile(r"(?<![\w.])x+(?![\w.%])", re.I)
+
+
+def share_token(role: str, token: str) -> str:
+    """The token a share-change cell renders into, made a percentage when it is not one.
+
+    The overall band's SoW cell was authored "PY (+x▲)" — a rank's shape — so a 0.4-point
+    rise rendered as "PY (+0▲)". Rewriting the bare digit placeholder to ``x.x%`` keeps the
+    author's prefix and arrow and shows "PY (+0.4%▲)", as every other band does.
+    """
+    if role not in _SHARE_DELTA_ROLES or "%" in str(token or ""):
+        return token
+    return _BARE_DIGITS.sub("x.x%", str(token or ""), count=1)
 
 
 def _cell_text(template: Template, slide_idx: int, shape_id: int, where: List) -> str:

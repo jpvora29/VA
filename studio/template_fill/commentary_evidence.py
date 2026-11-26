@@ -173,16 +173,16 @@ def _carrier_items(f: Mapping[str, Any], subject: str) -> List[Evidence]:
              str(int(year) - 1), "reporting_year")
     if _num(c, "current") is not None:
         _add(out, "carrier.premium", f"Premium {subject} placed with Marsh{when}",
-             _money(c["current"]), "premium", value=c["current"], unit="currency", entity=subject)
+             U.money_headline(c["current"]), "premium", value=c["current"], unit="currency", entity=subject)
     if _num(c, "prior") is not None:
         _add(out, "carrier.prior", f"{subject}'s Marsh-placed premium in the comparison year",
-             _money(c["prior"]), "premium", value=c["prior"], unit="currency", entity=subject)
+             U.money_headline(c["prior"]), "premium", value=c["prior"], unit="currency", entity=subject)
     if _num(c, "pct") is not None:
         _add(out, "carrier.yoy", f"{subject}'s Marsh-placed premium {_direction(c['pct'])} year on year",
              f"{abs(c['pct']):.1f}%", "yoy", value=c["pct"], unit="percent_change", entity=subject)
     if _num(c, "delta") is not None:
         _add(out, "carrier.delta", f"{subject}'s Marsh-placed premium {_direction(c['delta'])} by",
-             _money(abs(c["delta"])), "premium", value=c["delta"], unit="currency_change", entity=subject)
+             U.money_headline(abs(c["delta"])), "premium", value=c["delta"], unit="currency_change", entity=subject)
     return out
 
 
@@ -191,17 +191,17 @@ def _market_items(f: Mapping[str, Any]) -> List[Evidence]:
     m = f.get("marsh") or {}
     if _num(m, "current") is not None:
         _add(out, "marsh.premium", "Total premium Marsh placed in this scope, all carriers",
-             _money(m["current"]), "marsh_book")
+             U.money_headline(m["current"]), "marsh_book")
     if _num(m, "prior") is not None:
         _add(out, "marsh.prior", "Total Marsh-placed premium in the comparison year, all carriers",
-             _money(m["prior"]), "marsh_book")
+             U.money_headline(m["prior"]), "marsh_book")
     if _num(m, "pct") is not None:
         _add(out, "marsh.yoy", f"Total Marsh-placed premium {_direction(m['pct'])} year on year",
              f"{abs(m['pct']):.1f}%", "yoy", value=m["pct"], unit="percent_change", entity="Marsh")
     carrier, market = _num(f.get("carrier") or {}, "current"), _num(m, "current")
     if carrier is not None and market is not None and market > carrier:
         _add(out, "headroom", "Marsh premium in this scope placed with OTHER carriers",
-             _money(market - carrier), "headroom")
+             U.money_headline(market - carrier), "headroom")
     return out
 
 

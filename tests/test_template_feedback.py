@@ -127,8 +127,8 @@ def test_values_commentary_carries_figures(_stub_compute):
     # The prose says the direction in its verb ("grew 52.5%"), so the figure is unsigned —
     # the KPI cells above still carry the signed form (see the test two above).
     vals = F.values(_template(), _result())
-    assert "52.5%" in vals["fbnote:0:2:1:1"] and "$48M" in vals["fbnote:0:2:1:1"]   # working well
-    assert "$363M" in vals["fbnote:0:2:1:3"]                                        # headroom
+    assert "52.5%" in vals["fbnote:0:2:1:1"] and "$48.0M" in vals["fbnote:0:2:1:1"]   # working well
+    assert "$363.0M" in vals["fbnote:0:2:1:3"]                                        # headroom
     assert vals["fbnote:1:3:0:0"].startswith("Key Highlights:")
     # The rank is said once, where it is first said; Key Messages on the next page used to
     # restate it with the growth and share already given (studio/template_fill/repeat_prune).
@@ -675,7 +675,7 @@ def test_every_commentary_kind_answers_for_a_strong_and_a_weak_book():
 def test_a_bare_premium_total_does_not_invent_section_findings():
     bare = {"carrier": {"current": 19e6}, "marsh": {}, "rank": {}, "sow": {}}
     for kind in ("growth", "key_messages", "thesis"):
-        assert "19M" in " ".join(F.points(kind, bare))
+        assert "19.0M" in " ".join(F.points(kind, bare))
     for kind in ("working", "challenges"):
         assert "no qualifying" in " ".join(F.points(kind, bare))
 
@@ -738,7 +738,7 @@ def _thesis(**over) -> str:
 
 def test_the_thesis_states_a_clear_carrier_and_marsh_comparison():
     said = _thesis()
-    assert "Marsh-placed premium grew 28.6% to $208M" in said
+    assert "Marsh-placed premium grew 28.6% to $207.9M" in said
     assert "total Marsh-placed premium grew 9.9%" in said
     assert "relevance" not in said
 
@@ -767,7 +767,7 @@ def test_without_a_peer_benchmark_the_thesis_still_states_the_direction():
 def test_the_thesis_never_ships_blank():
     """No growth figures at all — the column still says the one thing that is true."""
     said = F.points("thesis", {"carrier": {"current": 19e6}, "marsh": {}, "sow": {}})
-    assert said and "19M" in said[0]
+    assert said and "19.0M" in said[0]
 
 
 def test_the_summary_page_carries_the_thesis(tmp_path):

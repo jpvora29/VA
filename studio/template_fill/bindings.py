@@ -264,9 +264,11 @@ def resolve_roles(result) -> Dict[str, Any]:
     # survey book and gated on the run's data basis, so it belongs to the module that owns
     # the tile (:mod:`studio.template_fill.survey.kpi`).
 
-    # Confidential peer benchmark: the top-5 carriers' AVERAGE premium and share of wallet.
-    # Never a named competitor — the templates head these "Peer GWP" / "Peer SoW".
-    peer = _safe(C.peer_average_totals, result.flow, fy, result.engine) or {}
+    # Confidential peer benchmark: the PEER SET's average premium and share of wallet —
+    # the Setup's Custom peers, else the carrier's Existing group. Never a named competitor.
+    # No peer set → no value, so the "Peer GWP" / "Peer SoW" tiles stay blank.
+    peer = _safe(C.peer_set_totals, result.flow, fy, result.engine, subject,
+                 peer_pin(result)) or {}
     for role, key in (("peer_gwp", "current"), ("peer_gwp_yoy", "pct"),
                       ("peer_sow", "sow"), ("peer_sow_yoy", "sow_delta")):
         if peer.get(key) is not None:
@@ -365,6 +367,12 @@ def _pin_market_peers(result, country: str):
     return replace(result, **updates) if updates else result
 
 
+def peer_pin(result) -> tuple[str, ...] | None:
+    """The run's pinned peer set as a hashable tuple, or None (resolve the Peers table)."""
+    peers = tuple(str(p) for p in (getattr(result, "peers", None) or ()) if str(p).strip())
+    return peers or None
+
+
 def resolve_roles_for_product(result, product: Any) -> Dict[str, Any]:
     """Role → value map scoped to a single product line (for one ``product`` sub-deck).
 
@@ -421,3 +429,32 @@ def product_vocab(result) -> Tuple[str, ...]:
         engine=result.engine,
     ) or []
     return tuple(str(f.dims.get(_PRODUCT_COL)) for f in facts if f.dims.get(_PRODUCT_COL))
+
+
+# The example lines of business the product template was DRAWN with ("Marine Feedback" on
+# every feedback page). They are template words, not data: they must be rewritten whether
+# or not this carrier — or this book — happens to write a line by that name.
+AUTHORED_EXAMPLE_PRODUCTS: tuple[str, ...] = ("Marine", "Energy")
+
+
+def product_label_vocab(result) -> tuple[str, ...]:
+    """The words a per-product deck rewrites to its own product name.
+
+    The template's authored example products, plus every line of business in the book
+    under the run's market and period — WITHOUT the carrier pin. The carrier-scoped
+    :func:`product_vocab` (which still decides which product pages to build) missed the
+    template's "Marine" whenever the subject writes no Marine, so for those carriers every
+    product page kept the title "Marine Feedback".
+    """
+    from core.analytics.library import compute_breakdown
+    from core.analytics.types import PrimitiveArgs
+
+    base = {k: v for k, v in (getattr(result, "resolved_filters", None) or {}).items()
+            if k not in (_PRODUCT_COL, _CARRIER_COL)}
+    facts = _safe(
+        compute_breakdown,
+        PrimitiveArgs(flow=result.flow, metric="premium", group_by=(_PRODUCT_COL,), filters=base),
+        engine=result.engine,
+    ) or []
+    book = (str(f.dims.get(_PRODUCT_COL)) for f in facts if f.dims.get(_PRODUCT_COL))
+    return tuple(dict.fromkeys((*AUTHORED_EXAMPLE_PRODUCTS, *book)))

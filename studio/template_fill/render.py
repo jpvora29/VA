@@ -109,6 +109,7 @@ def render_token(
         body = _money(abs(value), dollar="$" in sub, decimals=decimals)
     else:
         body = _format_number(abs(value) if value < 0 else value, sub)
+    value = 0 if shows_zero(body) else value        # "+0.0%▲" is flat once rounded
     if value < 0 and not body.startswith("-"):
         body = "-" + body
     elif forced_sign and value > 0:
@@ -119,6 +120,12 @@ def render_token(
         arrow = "▲" if value > 0 else ("▼" if value < 0 else "►")
         result = re.sub(f"[{_ARROWS}]", arrow, result)
     return result
+
+
+def shows_zero(text: str) -> bool:
+    """True when a formatted figure reads as zero ("0.0%", "$0M") — a change that rounds
+    to nothing is FLAT, so it carries no sign and the ► arrow, not "+0.0%▲" / "-0.0%▼"."""
+    return not re.search(r"[1-9]", str(text or ""))
 
 
 # A REAL example number the author typed rather than an x-placeholder: an optional sign,
@@ -158,6 +165,7 @@ def render_example(token: str, value: Any) -> str:
 
     grouped = "," in m.group("num")
     digits = f"{abs(val):,.{decimals}f}" if grouped else f"{abs(val):.{decimals}f}"
+    val = 0.0 if shows_zero(digits) else val        # rounds to nothing → flat
     sign = "-" if val < 0 else ("+" if m.group("sign") == "+" else "")
     body = sign + digits + scale + ("%" if pct else "")
 

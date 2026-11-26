@@ -47,7 +47,7 @@ def test_every_fact_family_reaches_the_pack(pack):
 
 
 def test_a_fact_is_rendered_the_way_the_deck_says_it(pack):
-    assert pack.get("carrier.premium").rendered == "$208M"
+    assert pack.get("carrier.premium").rendered == "$208.0M"
     assert pack.get("rank.current").rendered == "#5 of 12"
     assert pack.get("sow.current").rendered == "9.1%"
 
@@ -99,7 +99,7 @@ def test_a_flat_share_movement_is_not_offered_as_a_finding():
 
 def test_the_brief_cites_ids_the_model_can_quote_back(pack):
     brief = pack.as_brief()
-    assert "[carrier.premium]" in brief and "$208M" in brief
+    assert "[carrier.premium]" in brief and "$208.0M" in brief
 
 
 # ── the deterministic verifier ───────────────────────────────────────────────
@@ -110,9 +110,9 @@ def _judged(text, *fact_ids):
 
 
 def test_a_figure_from_the_cited_fact_is_kept(pack):
-    verdict = V.check_numbers(_judged("The book wrote $208M with Marsh.", "carrier.premium"),
+    verdict = V.check_numbers(_judged("The book wrote $208.0M with Marsh.", "carrier.premium"),
                               pack)
-    assert verdict.kept == ("The book wrote $208M with Marsh.",)
+    assert verdict.kept == ("The book wrote $208.0M with Marsh.",)
 
 
 def test_an_invented_figure_is_dropped(pack):
@@ -183,9 +183,9 @@ def test_the_numbers_run_first_so_the_judge_never_sees_a_bad_figure(monkeypatch,
     monkeypatch.setattr(client, "llm_available", lambda: True)
     monkeypatch.setattr(client, "structured", structured)
 
-    V.verify([V.Judged("The book wrote $208M with Marsh.", ("carrier.premium",)),
+    V.verify([V.Judged("The book wrote $208.0M with Marsh.", ("carrier.premium",)),
               V.Judged("The book wrote $999M with Marsh.", ("carrier.premium",))], pack)
-    assert "$999M" not in seen["payload"] and "$208M" in seen["payload"]
+    assert "$999M" not in seen["payload"] and "$208.0M" in seen["payload"]
 
 
 def test_the_judge_is_skipped_when_the_numbers_took_everything(monkeypatch, pack):

@@ -39,6 +39,7 @@ from studio.template_fill.deck_slides import DeckSlides
 from studio.template_fill.bindings import (
     carrier_countries,
     carrier_vocab,
+    product_label_vocab,
     product_vocab,
     resolve_roles,
     resolve_roles_for_country,
@@ -421,7 +422,7 @@ class SubDeckPlanBuilder:
         # that answers it, so what Setup previewed is what this builds.
         shape = deck_shape(result, slides=self._slides, data_basis=data_basis)
         self._axes = shape.axes
-        self._vocab = product_vocab(result) if PRODUCT in self._names else ()
+        self._vocab = product_label_vocab(result) if PRODUCT in self._names else ()
         self._products = shape.products
         self._countries = shape.countries
         self._wants_survey = shape.with_survey

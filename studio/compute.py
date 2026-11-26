@@ -663,13 +663,14 @@ def peer_gap(flow, filters, engine, peers=None) -> Optional[Dict[str, Any]]:
 
 @memoized
 def product_breakdown_rows(
-    flow, filters, engine, subject, *, dim: str = "Product_Line", top: int = 7,
+    flow, filters, engine, subject, *, dim: str = "Product_Line", top: int | None = 7,
     peers: Optional[Tuple[str, ...]] = None,
 ) -> List[Dict[str, Any]]:
     """Per-product-line breakdown for the 'Carrier breakdown' slide.
 
-    One row per product line (biggest GWP first) for the subject carrier, in the
-    latest selected year, carrying everything the slide's columns need:
+    One row per product line (biggest GWP first; ``top=None`` keeps every line) for the
+    subject carrier, in the latest selected year, carrying everything the slide's columns
+    need:
       • ``gwp``         — the carrier's premium in that product line;
       • ``var``         — YoY % change of that premium (None without a prior year);
       • ``sow``         — the carrier's share of wallet in that product line;
@@ -839,6 +840,56 @@ def peer_average_totals(flow, filters, engine, *, top: int = _PEER_TOP_N) -> Opt
         "n_carriers": n, "benchmark_count": min(n, top),
         "prior_benchmark_count": min(prior_n, top),
         "benchmark_basis": "largest_carriers_in_scope_subject_eligible",
+    }
+
+
+@memoized
+def peer_set_totals(flow, filters, engine, subject,
+                    peers: tuple[str, ...] | None = None) -> dict[str, Any] | None:
+    """The carrier's PEER SET average premium in scope, current vs prior year.
+
+    What every "Peer GWP" / "Peer SoW" figure on the deck prints: the mean of each peer's
+    total premium (``compute_peer_average_total``) over the set the author chose in Setup —
+    ``peers`` when the run pins them (Custom peers), else the carrier's group in the Peers
+    table (Existing peers). ``sow`` is that average as a share of the whole Marsh book in
+    the same scope, on the same basis as the carrier's own share.
+
+    ``None`` when there is no peer set to average — no group in the Peers table for this
+    carrier and market, and none pinned — so the page leaves the figure BLANK. It used to
+    print the average of the five largest carriers instead (``peer_average_totals``), which
+    read as a peer benchmark the author never chose.
+    """
+    cur = _current_year(filters)
+    if cur is None or not subject:
+        return None
+    base = {k: v for k, v in filters.items() if k != _CARRIER_COL}
+
+    def avg_at(year: int) -> tuple[float | None, int]:
+        facts = compute_peer_average_total(
+            PrimitiveArgs(flow=flow, metric="premium", group_by=(),
+                          filters={**base, _YEAR_COL: year}, subject=subject,
+                          peers=tuple(peers) if peers else None),
+            engine=engine,
+        )
+        if not facts:
+            return None, 0
+        return facts[0].value, int(facts[0].dims.get("peers") or 0)
+
+    current, n_peers = avg_at(cur)
+    if current is None:
+        return None
+    prior, _ = avg_at(cur - 1)
+    total = _total(flow, {**base, _YEAR_COL: cur}, engine)
+    prior_total = _total(flow, {**base, _YEAR_COL: cur - 1}, engine)
+    sow = (current / total * 100) if total else None
+    sow_prior = (prior / prior_total * 100) if (prior is not None and prior_total) else None
+    return {
+        "current_year": cur, "prior_year": cur - 1, "current": current, "prior": prior,
+        "delta": None if prior is None else current - prior,
+        "pct": ((current - prior) / prior * 100) if prior else None,
+        "sow": sow, "sow_prior": sow_prior,
+        "sow_delta": None if (sow is None or sow_prior is None) else (sow - sow_prior),
+        "n_peers": n_peers,
     }
 
 

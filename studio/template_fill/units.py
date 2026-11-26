@@ -10,6 +10,7 @@ The unit rules live in ``core/definitions/terms.yaml`` under ``percentage_point`
 the rendering that obeys them. Pure functions over numbers — no state, no formatting
 policy beyond the words.
 """
+
 from __future__ import annotations
 
 from typing import Optional
@@ -19,10 +20,22 @@ from typing import Optional
 _FLAT_BELOW = 0.05
 
 
-def money_level(value: float) -> str:
+#: Places on a headline premium total. Matches the KPI tiles on the "Positive Growth and
+#: Market Leadership Highlights" page (overall.json ``decimals: 1``), so the commentary
+#: beside a "$410.1M" tile never says "$410M".
+HEADLINE_DECIMALS = 1
+
+
+def money_level(value: float, *, decimals: int | None = None) -> str:
     """A premium level preserves its sign; movement magnitudes pass abs(value)."""
     from studio.template_fill.render import _money
-    return ("-" if value < 0 else "") + _money(value)
+
+    return ("-" if value < 0 else "") + _money(value, decimals=decimals)
+
+
+def money_headline(value: float) -> str:
+    """A carrier or Marsh headline premium total, at the KPI tiles' decimal places."""
+    return money_level(value, decimals=HEADLINE_DECIMALS)
 
 
 def points(value: Optional[float], *, decimals: int = 1) -> str:
@@ -33,7 +46,9 @@ def points(value: Optional[float], *, decimals: int = 1) -> str:
     if value is None:
         return ""
     magnitude = abs(float(value))
-    noun = "percentage point" if round(magnitude, decimals) == 1.0 else "percentage points"
+    noun = (
+        "percentage point" if round(magnitude, decimals) == 1.0 else "percentage points"
+    )
     return f"{magnitude:.{decimals}f} {noun}"
 
 
@@ -50,7 +65,9 @@ def points_of_share(value: Optional[float], *, decimals: int = 1) -> str:
     return f"{magnitude:.{decimals}f} {noun}"
 
 
-def shift(current: Optional[float], delta: Optional[float], *, decimals: int = 1) -> str:
+def shift(
+    current: Optional[float], delta: Optional[float], *, decimals: int = 1
+) -> str:
     """A share movement as its two LEVELS: ``(9.1, 1.3)`` → ``"to 9.1% from 7.8%"``.
 
     The form a partner actually writes, and the one this deck should prefer.

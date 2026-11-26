@@ -382,7 +382,7 @@ def _rank_quadrant(panel, cue) -> Any:
     if not points:
         return html.Div(className="qs-tf-lcempty")
     x_max = (max(float(p["size"]) for p in points) * _LC_SIZE_HEADROOM) or 1.0
-    y_max = max(_LC_RANK_AXIS_MAX, max(float(p["rank"]) for p in points) + 1.0)
+    y_max = _LC_RANK_AXIS_MAX                       # never widened, as in the export
     split_pct = _LC_TOP_RANK / y_max * 100.0        # the top-5 line, as the bands draw it
     bands = [
         html.Div(className="qs-tf-lcband is-tl", style={"height": f"{split_pct:.1f}%"}),
@@ -395,11 +395,13 @@ def _rank_quadrant(panel, cue) -> Any:
         # Mirrors the exported panel: a name past the inset share is written to the left of
         # its point, so it stays inside the plot instead of running off the edge.
         inset = float(p["size"]) > _LC_INSET_SHARE * x_max
+        row = float(p.get("row") or min(float(p["rank"]), y_max - 0.5))
+        label = str(p.get("label") or p["name"])
         dots.append(html.Div(
-            html.Span(str(p["name"]), className="qs-tf-lclabel" + (" is-left" if inset else "")),
+            html.Span(label, className="qs-tf-lclabel" + (" is-left" if inset else "")),
             className="qs-tf-lcdot", title=f"{p['name']} · #{p['rank']}",
             style={"left": f"{float(p['size']) / x_max * 100:.1f}%",
-                   "top": f"{float(p['rank']) / y_max * 100:.1f}%"}))
+                   "top": f"{row / y_max * 100:.1f}%"}))
     return html.Div([*bands, *dots, *cue], className="qs-tf-lcpanel")
 
 

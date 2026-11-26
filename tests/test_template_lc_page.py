@@ -147,11 +147,34 @@ def test_labels_stay_inside_the_plot_and_off_each_other():
     from pptx.enum.chart import XL_LABEL_POSITION as POS
 
     points = [{"name": "Property", "size": 900.0, "rank": 6},   # near the right edge
-              {"name": "Casualty", "size": 800.0, "rank": 6},   # …sharing its row
-              {"name": "Marine", "size": 300.0, "rank": 6},     # …and a third
+              {"name": "Casualty", "size": 800.0, "rank": 6},   # …sharing its row, close by
+              {"name": "Marine", "size": 300.0, "rank": 6},     # …and a third, well clear
               {"name": "Cyber", "size": 200.0, "rank": 1}]
     assert L.band_of(1) == L.LEAD                # sanity: the fixture is a real ranking
-    assert _sides(points) == [POS.LEFT, POS.ABOVE, POS.BELOW, POS.RIGHT]
+    # Property sits at the right edge (no room RIGHT) and a LEFT name would cover Casualty's
+    # point, so it stacks; Casualty then has room on its left; Marine is far enough along
+    # the row to keep its name beside it rather than being stacked just for sharing a rank.
+    assert _sides(points) == [POS.ABOVE, POS.LEFT, POS.RIGHT, POS.RIGHT]
+
+
+def test_a_carrier_leading_many_lines_keeps_its_names_beside_their_points():
+    """Regression: ranking #1 in a dozen lines stacked every second name, so the top row
+    became a column of overlapping labels."""
+    from pptx.enum.chart import XL_LABEL_POSITION as POS
+
+    points = [{"name": n, "size": s, "rank": 1}
+              for n, s in (("Property", 950.0), ("Casualty", 700.0), ("Cyber", 450.0),
+                           ("Marine", 200.0))]
+    sides = _sides(points)
+    assert sides.count(POS.ABOVE) + sides.count(POS.BELOW) == 0
+
+
+def test_a_name_never_covers_another_point_on_its_row():
+    from pptx.enum.chart import XL_LABEL_POSITION as POS
+
+    points = [{"name": "Financial Lines", "size": 300.0, "rank": 4},
+              {"name": "Cyber", "size": 350.0, "rank": 4}]   # inside a RIGHT label's reach
+    assert _sides(points)[0] != POS.RIGHT
 
 
 def _sides(points):

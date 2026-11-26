@@ -107,7 +107,7 @@ def test_the_reporting_year_is_quotable():
     pack = build_pack({"subject": "Zurich", "carrier": {"current": 1e6, "current_year": 2025},
                        "marsh": {}, "rank": {}, "sow": {}})
     allowed = allowed_numbers(*pack.rendered_values())
-    assert not _violations("Zurich wrote $1M with Marsh in 2025.", allowed, ())
+    assert not _violations("Zurich wrote $1.0M with Marsh in 2025.", allowed, ())
 
 
 # ── the prose gates (commentary._accept) ────────────────────────────────────

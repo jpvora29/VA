@@ -345,7 +345,7 @@ _EXAMPLES = (
     "STYLE EXAMPLES ONLY. Copy the SHAPE, never the label in front of it and never the "
     "figures, which are invented: "
     "An opening bullet carrying two facts as one point — 'The carrier's Marsh-placed Services "
-    "premium fell 16.7% to $10M while Marsh's Services premium grew 25%, taking its share from "
+    "premium fell 16.7% to $10.0M while Marsh's Services premium grew 25%, taking its share from "
     "15.0% to 10.0%.' "
     "A bullet that reads meaning into that — 'At 10.0% the carrier now sits 8.5 points below the "
     "18.5% average of the three largest carriers in this scope, where each point of share is "
@@ -354,7 +354,7 @@ _EXAMPLES = (
     "placements fell $4M of the $5M decline.' "
     "A proposed priority — 'Review placement outcomes in Services to establish where share was "
     "lost and whether those accounts remain within appetite.' "
-    "Poor, a number with no comparison: 'Marsh-placed premium was $10M in 2025.' "
+    "Poor, a number with no comparison: 'Marsh-placed premium was $10.0M in 2025.' "
     "Poor, an unmeasurable cause asserted: 'The decline reflects a narrowing risk appetite.' "
     "Poor: 'The carrier should capture all premium placed elsewhere.' "
 )

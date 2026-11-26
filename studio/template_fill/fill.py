@@ -468,6 +468,23 @@ def _write_commentary(shape, where: List[Any], text: str, ink=None) -> None:
 # ── literal label substitution (Country (n) / Region (n) / xyz) ──────────────
 
 
+def _product_rule(vocab: Sequence[Any], product: str) -> re.Pattern | None:
+    """ONE pattern matching any product name in ``vocab`` — or the deck's own product.
+
+    A single alternation, so the rewrite is one pass: one rule per name re-scanned the text
+    the previous rule had just written, and "Marine Feedback" on an "Energy & Power" deck
+    became "Energy & Power & Power Feedback" once the "Energy" rule ran over it. The deck's
+    own product is an alternative too (rewritten to itself), so text already naming it is
+    left alone. Longest names first, so a multi-word name is not half-matched; the word
+    edges are look-arounds rather than ``\\b`` so a name ending in punctuation still matches.
+    """
+    names = {str(p).strip() for p in vocab if str(p).strip()}
+    if not names - {product}:
+        return None
+    ordered = sorted(names | {product}, key=len, reverse=True)
+    return re.compile(r"(?<!\w)(?:" + "|".join(re.escape(n) for n in ordered) + r")(?!\w)")
+
+
 def _label_subs(values: Dict[str, Any]) -> List[Any]:
     """Literal placeholder substitutions applied to every run (label text), in order.
 
@@ -497,14 +514,12 @@ def _label_subs(values: Dict[str, Any]) -> List[Any]:
         subs.append((re.compile(r"\bxyz\b", re.I), spotlight))
 
     # Product deck: rewrite the template's authored example products (e.g. "Marine
-    # Feedback", "Energy") to the single product this deck is for. Longest names first so a
-    # multi-word product isn't half-matched by a shorter one.
+    # Feedback", "Energy") to the single product this deck is for.
     product = str(values.get("product_name", "")).strip()
     if product:
-        vocab = [str(p).strip() for p in (values.get("product_vocab") or []) if str(p).strip()]
-        for authored in sorted(set(vocab), key=len, reverse=True):
-            if authored.casefold() != product.casefold():
-                subs.append((re.compile(rf"\b{re.escape(authored)}\b"), product))
+        rule = _product_rule(values.get("product_vocab") or [], product)
+        if rule is not None:
+            subs.append((rule, product))
 
     carrier = str(values.get("subject_name", "")).strip()
     if carrier:
@@ -1014,19 +1029,23 @@ def _fill_rank_scatter(chart, points: List[Dict[str, Any]], country: str) -> Non
     carrier's rank in it), labelled with the line's name — the labels the author hand-placed
     for their example points come off in :func:`_strip_quadrant_furniture`.
 
-    Both axes are re-scaled to the country's own numbers: the money axis to the largest pool
-    (its ticks now shown, since the hand-drawn broken axis goes), the rank axis to the
-    author's own 0–11 — which is what puts their band boundary on the top-5 line — widened
-    only if the carrier ranks deeper than that. The author's gridlines (drawn ``noFill``)
+    The money axis is re-scaled to the country's largest pool (its ticks now shown, since
+    the hand-drawn broken axis goes). The rank axis stays the author's own 0–11 — which is
+    what puts their band boundary on the top-5 line — and is NEVER widened: it has a tick
+    per rank, so stretching it to a #40 line printed 41 cramped tick labels and squeezed
+    every other point into the top of the panel. A rank past the scale sits on the floor
+    row and names its rank in its label (``lc_page.RankPoint.row`` / ``label``). The
+    author's gridlines (drawn ``noFill``)
     are left as authored: the painted priority bands are the panel's backdrop, and a grid
     over them competes with the reading they exist to give.
     """
     from pptx.chart.data import XyChartData
     from pptx.util import Pt
 
+    shown = [{**p, "rank": _rank_row(p)} for p in points]
     data = XyChartData()
     series = data.add_series(str(country or ""))
-    for p in points:
+    for p in shown:
         series.add_data_point(float(p["size"]), float(p["rank"]))
     _replace_chart_data(chart, data)
 
@@ -1040,42 +1059,86 @@ def _fill_rank_scatter(chart, points: List[Dict[str, Any]], country: str) -> Non
 
     rank_axis = chart.value_axis                    # the y axis: rank 1 at the top (maxMin)
     rank_axis.minimum_scale = 0.0
-    rank_axis.maximum_scale = max(_LC_RANK_AXIS_MAX,
-                                  max(float(p["rank"]) for p in points) + 1.0)
+    rank_axis.maximum_scale = _LC_RANK_AXIS_MAX
 
     for point, row, side in zip(chart.plots[0].series[0].points, points,
-                                _label_sides(points, size_axis.maximum_scale)):
-        _name_point(point, str(row["name"]), side)
+                                _label_sides(shown, size_axis.maximum_scale)):
+        _name_point(point, str(row.get("label") or row["name"]), side)
     chart.has_legend = False
     chart.has_title = False                         # the panel's own title names the country
+
+
+def _rank_row(point: dict[str, Any]) -> float:
+    """The height a point is drawn at — its ``row`` (rank, or the floor row past the
+    scale), falling back to the rank clamped onto the author's 0–11 axis."""
+    if point.get("row") is not None:
+        return float(point["row"])
+    return min(float(point["rank"]), _LC_RANK_AXIS_MAX - 0.5)
 
 
 # A point past this share of the money axis gets its name to the LEFT — a right-hand label
 # would run off the plot. Lines of business sharing a rank stack their names instead.
 _LC_INSET_SHARE = 0.6
+# How much of the money axis one character of an 8pt label spans on a quarter-page panel —
+# generous, so two names judged clear of each other really are.
+_LC_CHAR_SHARE = 0.016
 
 
-def _label_sides(points: List[Dict[str, Any]], x_max: float) -> List[Any]:
+def _label_sides(points: list[dict[str, Any]], x_max: float) -> list[Any]:
     """Where each point's name sits, so no two names land on each other or off the plot.
 
-    Rank is an integer, so several lines of business routinely share one row: the biggest
-    pool of a row keeps the side its position calls for, and the rest stack above and below
-    it. Deterministic — ``points`` arrive biggest pool first.
+    Rank is an integer, so several lines of business routinely share one row. Each name
+    takes the side its position calls for (LEFT past the inset share, else RIGHT); if that
+    would run into a name already on its row it tries the other side, and only a name with
+    no room on either side stacks above or below. Names far apart on one row therefore stay
+    beside their points — stacking EVERY second name made a carrier that ranks #1 in a dozen
+    lines a column of overlapping labels. Deterministic — ``points`` arrive biggest pool first.
     """
     from pptx.enum.chart import XL_LABEL_POSITION as POS
 
-    at_rank: Dict[int, int] = {}
+    taken: dict[tuple[float, Any], list[tuple[float, float]]] = {}
+    for p in points:                                # every marker is in the way of a name
+        x = float(p["size"])
+        taken.setdefault((float(p["rank"]), "beside"), []).append((x, x))
     sides = []
     for p in points:
-        rank = int(p["rank"])
-        nth = at_rank[rank] = at_rank.get(rank, -1) + 1
-        if nth:                                     # a line is already labelled on this row
-            sides.append(POS.ABOVE if nth % 2 else POS.BELOW)
-        elif float(p["size"]) > _LC_INSET_SHARE * x_max:
-            sides.append(POS.LEFT)
-        else:
-            sides.append(POS.RIGHT)
+        row, x = float(p["rank"]), float(p["size"])
+        width = len(str(p.get("label") or p.get("name") or "")) * _LC_CHAR_SHARE * x_max
+        spans = {POS.LEFT: (x - width, x), POS.RIGHT: (x, x + width),
+                 POS.ABOVE: (x - width / 2, x + width / 2),
+                 POS.BELOW: (x - width / 2, x + width / 2)}
+        first = POS.LEFT if x > _LC_INSET_SHARE * x_max else POS.RIGHT
+        second = POS.RIGHT if first == POS.LEFT else POS.LEFT
+        side = next((s for s in (first, second, POS.ABOVE, POS.BELOW)
+                     if _label_fits(spans[s], taken.get((row, _lane(s))), x_max)), None)
+        side = side or _least_stacked(taken, row)
+        taken.setdefault((row, _lane(side)), []).append(spans[side])
+        sides.append(side)
     return sides
+
+
+def _lane(side) -> Any:
+    """Which line of text a label occupies on its row: beside the point, above or below."""
+    from pptx.enum.chart import XL_LABEL_POSITION as POS
+
+    return side if side in (POS.ABOVE, POS.BELOW) else "beside"
+
+
+def _label_fits(span: tuple[float, float], others: list[tuple[float, float]] | None,
+                x_max: float) -> bool:
+    """A label span inside the plot and clear of every span already in its lane."""
+    lo, hi = span
+    if lo < 0 or hi > x_max:
+        return False
+    return all(hi <= o_lo or lo >= o_hi for o_lo, o_hi in (others or ()))
+
+
+def _least_stacked(taken: dict[tuple[float, Any], list[tuple[float, float]]], row: float) -> Any:
+    """No clear room anywhere: the stacked lane on ``row`` holding fewer names."""
+    from pptx.enum.chart import XL_LABEL_POSITION as POS
+
+    above, below = (len(taken.get((row, s), ())) for s in (POS.ABOVE, POS.BELOW))
+    return POS.ABOVE if above <= below else POS.BELOW
 
 
 def _show_tick_labels(axis) -> None:
@@ -1785,6 +1848,30 @@ class FillContext:
         return self.doc.get("added", {}).get(str(slide_idx), [])
 
 
+# The value kinds of a NUMERIC placeholder (``slots.classify``) — the author's dummy
+# figures: "$xxx.xm", "x.x%", "PY (+x.x%▲)", "xx".
+_NUMERIC_KINDS = frozenset({"money", "pct", "rank", "int"})
+
+
+def _ships_blank(fld: dict[str, Any]) -> bool:
+    """A data slot whose value did not resolve — written EMPTY rather than left as the
+    author's dummy figure.
+
+    A slot is only ever placeholder text, so an unresolved one still reads "$xxx.xm" — and
+    on a page about a real carrier that reads as a figure nobody can find. The common case
+    is a benchmark the run does not have (no peer set → no Peer GWP); a missing prior year
+    is another. The token decides as well as the kind: the KPI band registers its cells as
+    "text" while they hold "xxxM". Text slots (``……`` prose, ``Country (n)`` labels) have
+    their own handling.
+    """
+    from studio.template_fill.slots import classify
+
+    if not fld.get("role"):
+        return False
+    return (fld.get("value_kind") in _NUMERIC_KINDS
+            or classify(str(fld.get("token") or "")) in _NUMERIC_KINDS)
+
+
 def build_fill_context(doc: Dict[str, Any], out_path: str) -> FillContext:
     """Open the template and resolve the doc into what the stages need."""
     from pptx import Presentation
@@ -1794,6 +1881,8 @@ def build_fill_context(doc: Dict[str, Any], out_path: str) -> FillContext:
     for fld in materialize_fields(doc).values():
         if fld["filled"]:
             by_slide.setdefault(fld["slide_idx"], []).append(fld)
+        elif _ships_blank(fld):
+            by_slide.setdefault(fld["slide_idx"], []).append({**fld, "text": ""})
     values = doc.get("values", {})
     return FillContext(
         prs=prs,

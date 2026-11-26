@@ -29,6 +29,7 @@ from studio.template_fill import facts_driver, facts_mix, facts_survey_lines, fa
 from studio.template_fill import rewrites
 from studio.template_fill import roles as R
 from studio.template_fill.analyze import Shape, Template
+from studio.template_fill.bindings import peer_pin
 from studio.template_fill import units as U
 from studio.template_fill.render import _money
 from studio.template_fill.slots import Slot
@@ -464,7 +465,13 @@ def _facts(result, filters: Dict[str, Any]) -> Dict[str, Any]:
     marsh = _safe(C.period_totals, result.flow, base, result.engine) or {}
     rank = _safe(C.rank_movement, result.flow, filters, result.engine, subject) or {}
     sow = _safe(C.sow_movement, result.flow, filters, result.engine, subject) or {}
+    # Two different benchmarks, kept apart on purpose. ``peer`` is the commentary's: the
+    # average of the largest carriers in scope, which the prose names as exactly that.
+    # ``peer_set`` is what the "Peer GWP" / "Peer SoW" callouts print — the Setup's peer
+    # set, and nothing at all when the run has none.
     peer = _safe(C.peer_average_totals, result.flow, filters, result.engine) or {}
+    peer_set = _safe(C.peer_set_totals, result.flow, filters, result.engine, subject,
+                     peer_pin(result)) or {}
     movers = _safe(C.movement_by_dim, result.flow, dim, filters, result.engine, top=8) or []
     pool = _safe(C.movement_by_dim, result.flow, dim, base, result.engine, top=8) or []
     segments = _segment_facts(result, filters)
@@ -472,7 +479,7 @@ def _facts(result, filters: Dict[str, Any]) -> Dict[str, Any]:
             # What the reporting year MEANS on this run — "TTM Aug 2026" on the R12M basis.
             # Without it the pack says "in 2026" and the writer claims a calendar year.
             "period": _period_names(result, carrier),
-            "sow": sow, "peer": peer, "movers": movers, "pool": pool,
+            "sow": sow, "peer": peer, "peer_set": peer_set, "movers": movers, "pool": pool,
             # What the movers are broken down BY on this scope ("line", "country",
             # "industry"), so the driver fact can name the kind of thing that drove it.
             "mover_dim": _DIM_NOUN.get(dim, "segment"),
@@ -619,33 +626,42 @@ _MONEY_KPIS: Dict[str, Tuple[str, str, str, str]] = {
     #  kind          fact       current    delta   caption
     "marsh": ("marsh", "current", "pct", "Marsh GWP"),
     "carrier": ("carrier", "current", "pct", "Carrier GWP"),
-    "peer": ("peer", "current", "pct", "Peer\n GWP"),
+    "peer": ("peer_set", "current", "pct", "Peer\n GWP"),
 }
 _SHARE_KPIS: Dict[str, Tuple[str, str, str, str]] = {
     "sow": ("sow", "current", "delta", "Carrier SoW"),
-    "peer_sow": ("peer", "sow", "sow_delta", "Peer\n SoW"),
+    "peer_sow": ("peer_set", "sow", "sow_delta", "Peer\n SoW"),
 }
 
 
 def _delta_tail(delta: Optional[float]) -> str:
-    return "" if delta is None else f" ({delta:+.1f}%{_arrow(delta)})"
+    """" (+1.2%▲)" — and a change that rounds to nothing reads " (0.0%►)", not "-0.0%▼"."""
+    if delta is None:
+        return ""
+    if round(delta, 1) == 0:
+        return " (0.0%►)"
+    return f" ({delta:+.1f}%{_arrow(delta)})"
 
 
 def _kpi_cell(kind: str, f: Dict[str, Any]) -> str:
-    """One callout cell in the template's own style: value (delta arrow) + caption."""
+    """One callout cell in the template's own style: value (delta arrow) + caption.
+
+    A peer callout with no peer set keeps its caption over an EMPTY value line, so the
+    tile reads "no peer benchmark" rather than vanishing or showing another number.
+    """
     spec = _MONEY_KPIS.get(kind)
     if spec is not None:
         fact, cur_key, delta_key, caption = spec
-        t = f[fact]
+        t = f.get(fact) or {}
         if t.get(cur_key) is None:
-            return ""
+            return _empty_kpi(fact, caption)
         return f"{_money(t[cur_key])}{_delta_tail(t.get(delta_key))}\n{caption}"
     spec = _SHARE_KPIS.get(kind)
     if spec is not None:
         fact, cur_key, delta_key, caption = spec
-        t = f[fact]
+        t = f.get(fact) or {}
         if t.get(cur_key) is None:
-            return ""
+            return _empty_kpi(fact, caption)
         return f"{t[cur_key]:.1f}%{_delta_tail(t.get(delta_key))}\n{caption}"
     if kind == "rank":
         t = f["rank"]
@@ -655,6 +671,11 @@ def _kpi_cell(kind: str, f: Dict[str, Any]) -> str:
         chg = "" if d is None else (f" (+{d}▲)" if d > 0 else (f" ({d}▼)" if d < 0 else " (=0►)"))
         return f"{int(t['current'])}{chg}\nCarrier Rank"
     return ""
+
+
+def _empty_kpi(fact: str, caption: str) -> str:
+    """A callout with no value: a peer tile keeps its caption, any other cell is blank."""
+    return f"\n{caption}" if fact == "peer_set" else ""
 
 
 # Commentary cells are BULLET LISTS: each composer returns its points MOST MATERIAL FIRST,
@@ -865,7 +886,7 @@ def _working_points(f: Dict[str, Any]) -> List[str]:
     market = _market_point(f, "working")
     if (c.get("pct") or 0) > 0:
         line = (f"{_subject(f, opening=True)} grew its Marsh-placed premium {_mag(c['pct'])} "
-                f"year on year to {_money(c['current'])}")
+                f"year on year to {U.money_headline(c['current'])}")
         if m.get("pct") is not None and m["pct"] < c["pct"]:
             line += f", compared with total Marsh-placed premium that {_moved(m['pct'])}"
         elif m.get("pct") is not None:
@@ -895,7 +916,7 @@ def _working_points(f: Dict[str, Any]) -> List[str]:
 
     if not parts and c.get("current") and c.get("pct") == 0:
         parts.append(f"{_subject(f, opening=True)} held its Marsh-placed premium at "
-                     f"{_money(c['current'])}.")
+                     f"{U.money_headline(c['current'])}.")
     return parts
 
 
@@ -910,7 +931,7 @@ def _challenges_points(f: Dict[str, Any]) -> List[str]:
     parts: List[str] = []
     if (c.get("pct") or 0) < 0:
         line = (f"{_subject(f, opening=True)}'s Marsh-placed premium fell {_mag(c['pct'])} "
-                f"year on year to {_money(c['current'])}")
+                f"year on year to {U.money_headline(c['current'])}")
         if m.get("pct") is not None and m["pct"] > c["pct"]:
             line += f", while the wider Marsh book {_moved(m['pct'])}, so this is lost share"
         parts.append(line + ".")
@@ -1034,7 +1055,7 @@ def _key_messages_points(f: Dict[str, Any]) -> List[str]:
         year = (f" in {named}" if named else
                 f" in {int(c['current_year'])}" if c.get("current_year") else "")
         change = f", {_up_down(c['pct'])} year on year" if c.get("pct") is not None else ""
-        parts.append(f"{_subject(f, opening=True)} wrote {_money(c['current'])} with Marsh{year}{change}.")
+        parts.append(f"{_subject(f, opening=True)} wrote {U.money_headline(c['current'])} with Marsh{year}{change}.")
     if s.get("current") is not None:
         movement = U.shift(s['current'], s['delta']) if s.get("delta") else f"at {s['current']:.1f}%"
         verb = "rose" if (s.get("delta") or 0) > 0 else "fell" if (s.get("delta") or 0) < 0 else "stood"
@@ -1056,7 +1077,7 @@ def _thesis_points(f: Dict[str, Any]) -> List[str]:
     if c.get("current") is None or c.get("pct") is None:
         return []
     lead = (f"{_subject(f, opening=True)}'s Marsh-placed premium {_moved(c['pct'])} "
-            f"to {_money(c['current'])}")
+            f"to {U.money_headline(c['current'])}")
     if m.get("pct") is not None:
         lead += f", while total Marsh-placed premium {_moved(m['pct'])}"
     return [lead + "."]
@@ -1102,8 +1123,8 @@ def _unplaced_headroom(f: Dict[str, Any]) -> Optional[str]:
     headroom = m["current"] - c["current"]
     if headroom <= 0:
         return None
-    return (f"Marsh placed {_money(headroom)} with other carriers out of "
-            f"{_money(m['current'])} in total placements in this scope.")
+    return (f"Marsh placed {U.money_headline(headroom)} with other carriers out of "
+            f"{U.money_headline(m['current'])} in total placements in this scope.")
 
 
 def _absent_segments(f: Dict[str, Any]) -> Optional[str]:
@@ -1132,7 +1153,7 @@ def _marsh_demand(f: Dict[str, Any]) -> Optional[str]:
     if m.get("pct") is None or m["pct"] <= 0 or not m.get("current"):
         return None
     return (f"Total Marsh-placed premium grew {_mag(m['pct'])} year on year "
-            f"to {_money(m['current'])}.")
+            f"to {U.money_headline(m['current'])}.")
 
 
 def _book_held(f: Dict[str, Any]) -> Optional[str]:
@@ -1140,7 +1161,7 @@ def _book_held(f: Dict[str, Any]) -> Optional[str]:
     c = f.get("carrier") or {}
     if c.get("current") is None:
         return None
-    return f"{_subject(f, opening=True)} holds {_money(c['current'])} of Marsh premium here."
+    return f"{_subject(f, opening=True)} holds {U.money_headline(c['current'])} of Marsh premium here."
 
 
 # Kind â†’ the fallbacks to try, in order, when its composer produced nothing.

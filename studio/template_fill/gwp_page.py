@@ -352,6 +352,8 @@ def _readings(result, filters: Dict[str, Any]) -> Dict[str, Reading]:
     and the page title are all the CARRIER's book (as are both bar charts). ``marsh_gwp`` is
     the whole Marsh book, used only by the TTM row the author explicitly labels "Marsh GWP".
     """
+    from studio.template_fill.bindings import peer_pin
+
     subject = result.subject
     marsh_filters = {k: v for k, v in filters.items() if k != _CARRIER_COL}
 
@@ -359,7 +361,9 @@ def _readings(result, filters: Dict[str, Any]) -> Dict[str, Reading]:
     marsh = _safe(C.period_totals, result.flow, marsh_filters, result.engine) or {}
     sow = _safe(C.sow_movement, result.flow, filters, result.engine, subject) or {}
     rank = _safe(C.rank_movement, result.flow, filters, result.engine, subject) or {}
-    peer = _safe(C.peer_average_totals, result.flow, filters, result.engine) or {}
+    # The peer SET's average (Setup's Custom or Existing peers) — blank when there is none.
+    peer = _safe(C.peer_set_totals, result.flow, filters, result.engine, subject,
+                 peer_pin(result)) or {}
     return {
         "carrier_gwp": Reading(carrier.get("current"), carrier.get("prior"), carrier.get("pct"),
                                carrier.get("current_year"), carrier.get("prior_year")),
@@ -679,15 +683,22 @@ def _table_values(template: Template, page: Page, ttm: TtmReadings) -> Dict[str,
             out[_role(page.slide_idx, "period", when)] = header
     for row, metric in table.rows:
         reading = readings.get(metric, Reading())
-        if reading.current is not None:
-            out[_role(page.slide_idx, metric, "cy")] = reading.current
-        if reading.prior is not None:
-            out[_role(page.slide_idx, metric, "py")] = reading.prior
-        if table.change_col is not None and reading.change is not None:
+        # A figure the run does not have is written EMPTY: left alone, the cell keeps the
+        # author's example ("$xxx.xm", "+10.7%▲") — which, on the Peer row of a run with no
+        # peer set, reads as a peer benchmark nobody chose.
+        out[_role(page.slide_idx, metric, "cy")] = _or_blank(reading.current)
+        out[_role(page.slide_idx, metric, "py")] = _or_blank(reading.prior)
+        if table.change_col is not None:
             token = _token_at(template, page.slide_idx, table.shape_id,
                               ["cell", row, table.change_col])
-            out[_role(page.slide_idx, metric, "chg")] = render_example(token, reading.change)
+            out[_role(page.slide_idx, metric, "chg")] = (
+                "" if reading.change is None else render_example(token, reading.change))
     return out
+
+
+def _or_blank(value: float | None) -> float | str:
+    """The figure, or an empty cell when the run has none."""
+    return "" if value is None else value
 
 
 def _panel_values(template: Template, page: Page, readings: Dict[str, Reading],
