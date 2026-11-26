@@ -248,22 +248,51 @@ def test_switching_to_r12m_with_a_quarter_pinned_anchors_it():
     assert dates["to"] == "2026-03-31"
 
 
-def test_quarter_change_on_ytd_leaves_the_period_alone():
-    from dash import no_update
+def test_quarter_on_ytd_shows_the_quarter_end_without_a_window():
+    """YTD + Q2: the rows are the quarter, so "Ends" reads Jun and the line names Q2 —
+    while the store stays on "latest" (no date window, so no warehouse copy)."""
+    from studio.authoring.period_picker import _QUARTER_FILTER, next_state, paint
 
-    from studio.authoring.period_picker import _QUARTER_FILTER, next_state
-
+    meta = {"latest": list(LATEST)}
+    stale = {"from": "2026-01-01", "to": "2026-08-31", "custom": False}
     dates, view, _basis = next_state(
         _QUARTER_FILTER,
-        dates={"from": None, "to": None, "custom": False},
+        dates=stale,
         view={},
         basis="calendar",
-        meta={"latest": list(LATEST)},
+        meta=meta,
         quarters=["Q2"],
         years=["2026"],
     )
 
-    assert dates is no_update and view is no_update
+    assert dates == {"from": None, "to": None, "custom": False}
+    painted = paint(dates, view, "calendar", meta, ["2026"], ["Q2"])
+    assert painted[5] == "Jun 2026"
+    assert painted[10] == "Q2 2026 vs Q2 2025"
+
+
+def test_clearing_the_quarter_on_ytd_goes_back_to_the_year():
+    from studio.authoring.period_picker import paint
+
+    meta = {"latest": list(LATEST)}
+    latest_store = {"from": None, "to": None, "custom": False}
+
+    assert (
+        paint(latest_store, {}, "calendar", meta, ["2026"], None)[5]
+        == "Aug 2026 (latest)"
+    )
+    assert paint(latest_store, {}, "calendar", meta, ["2025"], [])[5] == "Dec 2025"
+
+
+def test_ytd_quarter_in_an_earlier_year():
+    from studio.page.authoring import period_picker as PP
+
+    answer = PP.read_answer({})
+    assert PP.trigger_label(answer, "calendar", LATEST, 2025, ["Q1"]) == "Mar 2025"
+    assert (
+        PP.summary_line(answer, "calendar", LATEST, 2025, ["Q1"])
+        == "Q1 2025 vs Q1 2024"
+    )
 
 
 # ── Premium KPIs: one decimal ────────────────────────────────────────────────

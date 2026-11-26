@@ -155,7 +155,9 @@ def end_after_filter_change(quarters: Any, years: Any, basis: str,
     month = quarter_month(quarters, years, latest) if basis == BASIS_R12M else None
     if month is not None:
         return ending_dates(month, basis), month[0]
-    end = default_end(basis, latest, year_pin(years))
+    # On YTD the quarter narrows the rows itself, so the store stays on "latest" and the
+    # control shows the quarter's end (``default_end``) — no date window is written.
+    end = default_end(basis, latest, year_pin(years), quarters)
     return {"from": None, "to": None, "custom": False}, (end[0] if end else None)
 
 
@@ -256,28 +258,33 @@ def _range_label(start: Month, end: Month) -> str:
     return f"{_label(start)} – {_label(end)}"
 
 
-def default_end(basis: str, latest: Optional[Month], year_pin: Optional[int] = None) -> Optional[Month]:
+def default_end(basis: str, latest: Optional[Month], year_pin: Optional[int] = None,
+                quarters: Any = None) -> Optional[Month]:
     """The month the deck ends in when no month is picked — what "Ends" must show.
 
-    The latest month in the data, unless the Year filter pins an earlier year: then that
-    year's same month on R12M (``studio.period.window_for`` — "TTM Aug 2025"), and its
-    December on YTD (the whole of 2025).
+    A pinned Quarter ends it at the quarter's last month (capped at the latest month).
+    Otherwise the latest month in the data, unless the Year filter pins an earlier year:
+    then that year's same month on R12M (``studio.period.window_for`` — "TTM Aug 2025"),
+    and its December on YTD (the whole of 2025).
     """
     if latest is None:
         return None
+    month = quarter_month(quarters, year_pin, latest)
+    if month is not None:
+        return month
     if year_pin is not None and int(year_pin) < latest[0]:
         return (int(year_pin), latest[1] if basis == BASIS_R12M else 12)
     return latest
 
 
 def trigger_label(answer: PeriodAnswer, basis: str, latest: Optional[Month],
-                  year_pin: Optional[int] = None) -> str:
+                  year_pin: Optional[int] = None, quarters: Any = None) -> str:
     """What the closed control says: "Dec 2025 (latest)", "Aug 2026", "Mar – Aug 2026"."""
     if answer.custom and answer.start and answer.end:
         return _range_label(answer.start, answer.end)
     if answer.end is not None:
         return _label(answer.end)
-    end = default_end(basis, latest, year_pin)
+    end = default_end(basis, latest, year_pin, quarters)
     if end is None:
         return "Latest month"
     return f"{_label(end)} (latest)" if end == latest else _label(end)
@@ -289,19 +296,34 @@ def trigger_kicker(answer: PeriodAnswer) -> str:
 
 
 def summary_line(answer: PeriodAnswer, basis: str, latest: Optional[Month],
-                 year_pin: Optional[int] = None) -> str:
+                 year_pin: Optional[int] = None, quarters: Any = None) -> str:
     """The short "what is compared" read-out beside the control: "YTD Aug 2026 vs YTD Aug 2025"."""
     if answer.custom and answer.start and answer.end:
         prior = ((answer.start[0] - 1, answer.start[1]), (answer.end[0] - 1, answer.end[1]))
         return (f"{_range_label(answer.start, answer.end)} vs "
                 f"{_range_label(*prior)}")
-    end = answer.end or default_end(basis, latest, year_pin)
+    end = answer.end or default_end(basis, latest, year_pin, quarters)
+    if basis != BASIS_R12M and answer.end is None:
+        quarter = _quarter_summary(quarters, end)
+        if quarter:
+            return quarter
     if end is None:
         return "R12M to the latest month" if basis == BASIS_R12M else "YTD — latest year"
     name = "R12M" if basis == BASIS_R12M else "YTD"
     if basis != BASIS_R12M and answer.end is None and end[1] == 12:
         return f"FY{end[0]} vs FY{end[0] - 1}"         # a complete year, compared whole
     return f"{name} {_label(end)} vs {name} {_label((end[0] - 1, end[1]))}"
+
+
+def _quarter_summary(quarters: Any, end: Optional[Month]) -> Optional[str]:
+    """ "Q1 2026 vs Q1 2025" for the quarters a YTD deck is narrowed to, else ``None``."""
+    from studio.quarter_period import picked_quarters, quarter_label
+
+    if end is None:
+        return None
+    picked = picked_quarters(quarters)
+    current = quarter_label(picked, end[0])
+    return f"{current} vs {quarter_label(picked, end[0] - 1)}" if current else None
 
 
 # ── the markup ───────────────────────────────────────────────────────────────

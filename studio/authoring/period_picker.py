@@ -54,9 +54,9 @@ def next_state(trigger: Any, *, dates: Optional[Mapping[str, Any]],
         return (PP.ending_dates(month, basis), {**view, "anchor": None, "year": month[0]},
                 no_update)
     if trigger in (_QUARTER_FILTER, _YEAR_FILTER):
-        # A YTD custom range is the author's own window; a quarter on YTD narrows rows
-        # without moving the end. Everything else follows the new Quarter / Year.
-        if basis != PP.BASIS_R12M and (answer.custom or trigger == _QUARTER_FILTER):
+        # A YTD custom range is the author's own window. Everything else follows the new
+        # Quarter / Year.
+        if basis != PP.BASIS_R12M and answer.custom:
             return no_update, no_update, no_update
         new, grid = PP.end_after_filter_change(quarters, years, basis, latest)
         return new, {**view, "anchor": None, "year": grid}, no_update
@@ -90,7 +90,7 @@ def next_state(trigger: Any, *, dates: Optional[Mapping[str, Any]],
     return no_update, no_update, no_update
 
 
-def paint(dates, view, basis, meta, years=None):
+def paint(dates, view, basis, meta, years=None, quarters=None):
     """Everything the open (or closed) picker shows for the current state."""
     from studio.period import year_pin
 
@@ -115,12 +115,12 @@ def paint(dates, view, basis, meta, years=None):
         str(year),
         not PP.can_step(year, -1, latest=latest, first_year=first_year),
         not PP.can_step(year, 1, latest=latest, first_year=first_year),
-        PP.trigger_label(answer, basis, latest, pin),
+        PP.trigger_label(answer, basis, latest, pin, quarters),
         hint,
         ["qs6-pmode" + (" is-on" if m == mode else "") for m in (PP.MODE_END, PP.MODE_RANGE)],
         "qs6-month-trigger" + ("" if answer.is_latest else " is-set"),
         PP.trigger_kicker(answer),
-        PP.summary_line(answer, basis, latest, pin),
+        PP.summary_line(answer, basis, latest, pin, quarters),
     )
 
 
@@ -169,7 +169,8 @@ def register_period_picker(app) -> None:
         Input("studio-period-basis", "value"),
         Input("qs6-period-meta", "data"),
         Input(_YEAR_FILTER, "value"),
+        Input(_QUARTER_FILTER, "value"),
     )
-    def paint_period(dates, view, basis, meta, years):
+    def paint_period(dates, view, basis, meta, years, quarters):
         """Repaint the grid, the year, and the trigger's own label."""
-        return paint(dates, view, basis, meta, years)
+        return paint(dates, view, basis, meta, years, quarters)

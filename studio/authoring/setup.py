@@ -1186,7 +1186,7 @@ def register_setup(app):
         from studio import period as P
 
         short = PP.summary_line(PP.read_answer(dates), basis or PP.BASIS_YTD, latest,
-                                P.year_pin(filters.get("year")))
+                                P.year_pin(filters.get("year")), filters.get("quarter"))
         return A.period_note(short, tone="ttm" if basis == "r12m" else "", detail=detail), meta
 
     @app.callback(
