@@ -1101,18 +1101,26 @@ def build_compute_request(
     The engine is the run's working book when one is given (``studio.book``), else the one
     passed, else the live warehouse. A book that relabels its years to a period year also
     drops a date range's own year pin: the window IS the period, and the latest period
-    year in the book is its current one.
+    year in the book is its current one. The plain YTD on a still-running year is narrowed
+    to the same months of both years (:mod:`studio.ytd`) and carries that YTD window.
     """
     from studio.data import get_engine
 
+    from studio.period import row_filters
+    from studio.ytd import apply_ytd, like_for_like_ytd
+
     engine = getattr(book, "engine", None) or engine or get_engine()
     period = getattr(book, "window", None)
+    filters = row_filters(filters or {}, period)
     has_quarter = has_quarter_column(engine)
     wants_quarter = (filters or {}).get("quarter") not in (None, "", [], ())
     labels = quarter_vocabulary(engine, flow) if has_quarter and wants_quarter else ()
     resolved = _resolve_filters(filters or {}, has_quarter=has_quarter, quarter_labels=labels)
     if period is not None and getattr(period, "kind", "") == "range":
         resolved.pop(_YEAR_COL, None)
+    ytd = like_for_like_ytd(engine, flow, resolved, period)
+    resolved = apply_ytd(resolved, ytd)
+    period = ytd.window if ytd is not None else period
     return ComputeRequest(
         engine=engine,
         flow=flow,

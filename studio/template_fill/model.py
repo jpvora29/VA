@@ -178,7 +178,7 @@ def materialize_fields(doc: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
         elif role and role in values:
             from studio.template_fill.render import render_token
 
-            text = render_token(token, values[role], s.value_kind)
+            text = render_token(token, values[role], s.value_kind, decimals=s.decimals)
             filled = True
         out[key] = {
             "slide_idx": s.slide_idx,

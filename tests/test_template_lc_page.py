@@ -377,3 +377,87 @@ def test_both_axis_captions_survive_and_move_with_the_panel(filled_page):
     assert size.top < whole.y + whole.h + IN                   # …and stayed under it
     # The rank caption stays: the refilled panel still plots rank up the side.
     assert [t for t in captions if "Rank" in t]
+
+
+# ── more countries than panels: continuation pages ──────────────────────────
+
+
+@pytest.fixture(scope="module")
+def six_country_run():
+    """The seed book with two extra markets cloned from Singapore — six countries in all.
+
+    The seed carries four countries per carrier, which is exactly the page's panel count,
+    so it can never show the fifth country falling off the page.
+    """
+    import pandas as pd
+
+    from core.analytics.frames import frame_source
+    from studio.data import get_engine
+
+    tables = {}
+    for name in ("GPR", "Peers"):
+        df = pd.read_sql_table(name, get_engine())
+        clones = [df[df["Country"] == "Singapore"].assign(Country=c) for c in ("Malaysia", "Korea")]
+        tables[name] = pd.concat([df, *clones], ignore_index=True)
+    return compute_overall(filters={"carrier": "Zurich", "year": 2025},
+                           engine=frame_source(tables, label="six"))
+
+
+def test_four_countries_need_one_page(overall_template):
+    run = _result(["Singapore", "Australia", "Japan", "Hong Kong"])
+    assert L.page_count(overall_template, run) == 1
+
+
+def test_a_fifth_country_spills_onto_a_second_page(overall_template, six_country_run):
+    assert L.page_count(overall_template, six_country_run) == 2
+    first = L.page_countries(overall_template, six_country_run, 0)
+    second = L.page_countries(overall_template, six_country_run, 1)
+    assert len(first) == 4 and len(second) == 2
+    assert not set(first) & set(second)
+
+
+def test_the_second_page_draws_the_countries_the_first_had_no_panel_for(
+    overall_template, six_country_run,
+):
+    panels = L.values(overall_template, six_country_run, page=1)["lc_ranking"]
+    drawn = [p["country"] for p in panels.values() if p["points"]]
+    assert drawn == L.page_countries(overall_template, six_country_run, 1)
+
+
+def test_a_continuation_drops_the_key_highlights_box(overall_template):
+    drop = L.drop_highlights(overall_template, None)["drop_shapes"]
+    assert len(drop) == 1 and drop[0].startswith(f"{L.ranking_slides(overall_template)[0]}:")
+
+
+def test_the_overall_block_gains_one_ranking_page_per_four_extra_countries(six_country_run):
+    from studio.template_fill.assemble import SubDeckPlanBuilder
+
+    decks = SubDeckPlanBuilder(six_country_run).add_overall().add_ranking_overflow().build()
+    assert [d.label for d in decks] == ["overall", "overall ranking 2"]
+    continuation = decks[1]
+    template = analyze(OVERALL_TEMPLATE)
+    shipped = {s.index for s in template.slides} - set(continuation.hidden)
+    assert shipped == set(L.ranking_slides(template))
+    labels = [v for k, v in continuation.values.items() if k.startswith("country_name[")]
+    assert labels == L.page_countries(template, six_country_run, 1)
+
+
+def test_a_country_with_nothing_to_rank_does_not_shift_the_next_one_under_its_name(
+    overall_template, monkeypatch,
+):
+    run = _result(["Singapore", "Australia", "Japan", "Hong Kong"])
+    countries = L.page_countries(overall_template, run, 0)
+    empty = countries[1]
+    real = L.rank_points
+    monkeypatch.setattr(L, "rank_points",
+                        lambda result, filters: [] if filters.get("Country") == empty
+                        else real(result, filters))
+
+    panels = list(L.values(overall_template, run)["lc_ranking"].values())
+    # Panel i is titled "Country (i+1)", so it must draw country i or nothing at all.
+    assert [p["country"] for p in panels] == [countries[0], None, countries[2], countries[3]]
+    assert panels[1]["points"] == []
+    # The three live panels still take the planned three-up frames, in reading order.
+    frames = [p.frame for p in L.panels(overall_template)]
+    expected = [r.to_dict() for r in L.plan_layout(frames, 3)]
+    assert [panels[i]["rect"] for i in (0, 2, 3)] == expected

@@ -84,7 +84,7 @@ def test_the_form_sentence_names_the_period():
     text = P.describe(P.PeriodChoice(P.BASIS_R12M), latest=(2026, 8))
     assert text.startswith("R12M Aug 2026 (1 Sep 2025 – 31 Aug 2026) against R12M Aug 2025")
     assert "latest month" in P.describe(P.PeriodChoice(P.BASIS_R12M), latest=None)
-    assert P.describe(P.PeriodChoice(), latest=(2025, 12)) == "YTD 2025 against 2024."
+    assert P.describe(P.PeriodChoice(), latest=(2025, 12)) == "FY2025 against FY2024."
 
 
 # ── the book never changes an answer ─────────────────────────────────────────

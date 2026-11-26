@@ -22,7 +22,8 @@
       ],
       "value_kind": "money",
       "token": "$xxx.xm",
-      "role": "carrier_gwp"
+      "role": "carrier_gwp",
+      "decimals": 1
     },
     {
       "slide_idx": 2,
@@ -88,7 +89,8 @@
       ],
       "value_kind": "money",
       "token": "$xx,xxxm",
-      "role": "marsh_gwp"
+      "role": "marsh_gwp",
+      "decimals": 1
     },
     {
       "slide_idx": 2,

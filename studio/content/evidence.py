@@ -57,10 +57,9 @@ def _mover_label(m: dict) -> str:
 def build_content_spec(result: OverallResult, *, carrier=None, country=None, year=None) -> QBRContentSpec:
     carrier = carrier or result.subject or "Market"
     flow, filters, engine = result.flow, result.resolved_filters, result.engine
-    from studio.period import display_period
+    from studio.period import result_period_names
 
-    period = display_period(getattr(result, "period", None), year)
-    comp = display_period(getattr(result, "period", None), year, prior=True)
+    period, comp = result_period_names(result, year)
 
     findings: List[Finding] = []
     gaps: List[DataGap] = []

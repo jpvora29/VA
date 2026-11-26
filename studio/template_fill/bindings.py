@@ -194,15 +194,20 @@ def _growth_bubble(result, filters: Dict[str, Any]) -> Dict[str, Any]:
 def period_labels(result, year: int) -> Dict[str, Any]:
     """``{"period_labels": {"2026": "TTM Aug 2026", "2025": "TTM Aug 2025"}}`` off the calendar.
 
-    On an R12M or date-range run a year on a slide ("Marsh GWP 2025", "FY 2025", "2025
-    Rank") names a PERIOD, and printing the bare year would claim a calendar year the figures
-    do not cover. The fill engine's label pass (``fill._label_subs``) swaps each reporting
-    year it shifts into place for its period label. Empty on the calendar basis.
+    On an R12M, quarter or date-range run a year on a slide ("Marsh GWP 2025", "FY 2025",
+    "2025 Rank") names a PERIOD, and printing the bare year would claim a calendar year the
+    figures do not cover — so a run pinned to Q2 reads "Q2 2026" / "Q2 2025". The fill
+    engine's label pass (``fill._label_subs``) swaps each reporting year it shifts into place
+    for its period label. Empty on the plain calendar year.
     """
+    from studio.period import period_label, result_quarters
+
     window = getattr(result, "period", None)
-    if window is None or not getattr(window, "relabels", False):
+    quarters = result_quarters(result)
+    labels = {str(y): period_label(window, y, quarters=quarters) for y in (year, year - 1)}
+    if not all(labels.values()):
         return {}
-    return {"period_labels": {str(y): window.label(y) for y in (year, year - 1)}}
+    return {"period_labels": labels}
 
 
 def resolve_roles(result) -> Dict[str, Any]:

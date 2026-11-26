@@ -23,7 +23,7 @@ template's authored example countries — see :func:`_country_series`.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from logger import get_logger
@@ -386,25 +386,16 @@ class TtmReadings:
     prior_label: Optional[str] = None
 
 
-def _ttm_readings(result, filters: Dict[str, Any],
-                  basis: Dict[str, Reading]) -> TtmReadings:
-    """The TTM table's rows over the twelve months to the book's latest month.
+def _ttm_readings(result, basis: dict[str, Reading]) -> TtmReadings:
+    """The period table's rows and headers — on the DECK's basis.
 
-    The table is captioned TTM whatever the deck's basis, so it reads the run's R12M book
-    (``WorkingBook.r12m``) — built from the same slice, so it costs no warehouse read — and
-    its headers are relabelled to the real month ("TTM Aug 2026", "TTM Aug 2025") instead of
-    keeping the template's authored "TTM April". A result with no working book (a direct
-    engine, a test) reports the basis readings, as the page always did.
+    The template captions this table "TTM April", but it reports whatever the run reports:
+    R12M on an R12M run, the calendar year, the picked quarter or the YTD window otherwise.
+    Its headers are renamed to match ("TTM Aug 2026", "Q2 2026", "YTD Aug 2026", "FY2026"),
+    so a YTD deck no longer carries a trailing-twelve-month table.
     """
-    book = getattr(result, "book", None)
-    r12m = _safe(book.r12m) if book is not None else None
-    window = getattr(r12m, "window", None)
-    if r12m is None or window is None:
-        return TtmReadings(readings=basis)
-    scoped = {**filters, _YEAR_COL: window.year}
-    readings = _readings(replace(result, engine=r12m.engine, period=window), scoped)
-    return TtmReadings(readings=readings, current_label=window.label(window.year),
-                       prior_label=window.label(window.year - 1))
+    names = period_names(result, basis.get("carrier_gwp", Reading()))
+    return TtmReadings(readings=basis, current_label=names[0], prior_label=names[1])
 
 
 def _reporting_filters(result) -> Dict[str, Any]:
@@ -609,7 +600,7 @@ def values(template: Template, result) -> Dict[str, Any]:
     fy = _reporting_filters(result)
     scope = _scope_label(result)
     readings = _readings(result, fy)
-    ttm = _ttm_readings(result, fy, readings)
+    ttm = _ttm_readings(result, readings)
     found = pages(template, vocab=_vocab(result))
 
     by_index = {s.index: s for s in template.slides}
@@ -726,13 +717,12 @@ def _panel_values(template: Template, page: Page, readings: Dict[str, Reading],
 
 
 def period_names(result, carrier: Reading) -> Tuple[str, str]:
-    """``(current, prior)`` as the deck names its periods — "FY2024" / "FY2023", or
-    "TTM Aug 2026" / "TTM Aug 2025" on a rolling run — instead of the template's CY / PY."""
-    from studio.period import display_period
+    """``(current, prior)`` as the deck names its periods — "FY2024" / "FY2023", "Q2 2026" /
+    "Q2 2025" on a quarter, or "TTM Aug 2026" / "TTM Aug 2025" on a rolling run — instead of
+    the template's CY / PY."""
+    from studio.period import result_period_names
 
-    window = getattr(result, "period", None)
-    year = carrier.current_year
-    return (display_period(window, year), display_period(window, year, prior=True))
+    return result_period_names(result, carrier.current_year)
 
 
 def _panel_captions(page: Page, names: Tuple[str, str]) -> Dict[str, Any]:

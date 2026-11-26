@@ -28,7 +28,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from logger import get_logger
 from studio.steps import Pipeline, PipelineBuilder
-from studio.template_fill import year_labels
+from studio.template_fill import sign_color, year_labels
 from studio.template_fill.model import materialize_fields
 
 logger = get_logger(__name__)
@@ -1835,6 +1835,10 @@ def _write_field(shape, fld: Dict[str, Any], ink) -> None:
         _write_table(shape, where, text)
     if role.endswith(_SIGNED_ROLE_SUFFIXES) and text.strip():
         _recolor_by_sign(shape, where, text)
+    if sign_color.fills_by_sign(role):
+        sign_color.fill_shape_by_sign(shape, text)
+    if sign_color.inks_by_sign(role):
+        sign_color.ink_runs_by_sign(_signed_paragraphs(shape, where), text)
 
 
 def _write_slide(slide, fields: List[Dict[str, Any]]) -> None:

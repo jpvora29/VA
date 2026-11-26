@@ -28,6 +28,13 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
+from studio.quarter_period import (
+    picked_quarters,
+    quarter_anchor,
+    quarter_label,
+    quarters_in_filters,
+)
+
 BASIS_CALENDAR = "calendar"
 BASIS_R12M = "r12m"
 BASES = (BASIS_CALENDAR, BASIS_R12M)
@@ -50,6 +57,12 @@ class PeriodChoice:
     basis: str = BASIS_CALENDAR
     date_from: Optional[date] = None
     date_to: Optional[date] = None
+    quarters: tuple[int, ...] = ()  # the quarters Setup pinned (numbers, ascending)
+
+    @property
+    def quarter(self) -> int | None:
+        """The last quarter pinned — where an R12M window ends."""
+        return self.quarters[-1] if self.quarters else None
 
     @property
     def is_default(self) -> bool:
@@ -79,8 +92,9 @@ def period_choice(selection: Optional[Mapping[str, Any]]) -> PeriodChoice:
     start, end = _as_date(sel.get("date_from")), _as_date(sel.get("date_to"))
     if start and end and start > end:
         start, end = end, start
+    quarters = picked_quarters((sel.get("filters") or {}).get("quarter"))
     return PeriodChoice(basis=basis if basis in BASES else BASIS_CALENDAR,
-                        date_from=start, date_to=end)
+                        date_from=start, date_to=end, quarters=quarters)
 
 
 # ── the window it resolves to ────────────────────────────────────────────────
@@ -161,9 +175,10 @@ def window_for(choice: PeriodChoice, *, latest: Optional[Tuple[int, int]],
     ``latest`` is ``(year, month)`` of the most recent billing in the book; ``year_pin`` the
     reporting year the author pinned (the max of a multi-select), if any.
 
-    R12M ends in the anchor month: the author's "to" date when given, else the latest month
-    in the data — in the pinned year when one is pinned, so "2025" means "TTM Aug 2025"
-    against a book that runs to August 2026. A date range with no R12M is its own window.
+    R12M ends in the anchor month: the author's "to" date when given, else the end of the
+    picked quarter, else the latest month in the data — in the pinned year when one is
+    pinned, so "2025" means "TTM Aug 2025" against a book that runs to August 2026, and
+    "2026 · Q2" means "TTM Jun 2026". A date range with no R12M is its own window.
     """
     if choice.basis == BASIS_R12M:
         if choice.date_to is not None:
@@ -173,6 +188,8 @@ def window_for(choice: PeriodChoice, *, latest: Optional[Tuple[int, int]],
         year, month = latest
         if year_pin is not None and int(year_pin) < year:
             year = int(year_pin)
+        if choice.quarter is not None:
+            year, month = quarter_anchor(year, choice.quarter, latest)
         return r12m_window(year, month)
     if choice.date_from is None and choice.date_to is None:
         return None
@@ -182,6 +199,25 @@ def window_for(choice: PeriodChoice, *, latest: Optional[Tuple[int, int]],
         start, end = end, start
     too_long = _years_back(end, 1) >= start          # longer than one year: cannot repeat
     return PeriodWindow(start=start, end=end, kind=KIND_RESTRICT if too_long else KIND_RANGE)
+
+
+def default_ytd_window(
+    year: Optional[int],
+    latest: Optional[Tuple[int, int]],
+) -> Optional[PeriodWindow]:
+    """The plain YTD's window: 1 January to the latest month, while ``year`` is still running.
+
+    ``None`` once the year is complete (or is not the latest year): a full year is compared
+    with the full year before. Otherwise the same months of both years are compared, so a
+    deck on YTD Aug 2026 never sets eight months against twelve.
+    """
+    if latest is None or year is None or int(year) != int(latest[0]) or int(latest[1]) >= 12:
+        return None
+    return PeriodWindow(
+        start=date(int(year), 1, 1),
+        end=month_end(int(latest[0]), int(latest[1])),
+        kind=KIND_RANGE,
+    )
 
 
 def describe(choice: PeriodChoice, *, latest: Optional[Tuple[int, int]],
@@ -196,7 +232,15 @@ def describe(choice: PeriodChoice, *, latest: Optional[Tuple[int, int]],
         if choice.basis == BASIS_R12M:
             return ("R12M to the latest month in the data, against the 12 months before.")
         year = year_pin or (latest[0] if latest else None)
-        return (f"YTD {year} against {year - 1}." if year
+        quarter = quarter_label(choice.quarters, year) if year else None
+        if quarter:
+            prior = quarter_label(choice.quarters, year - 1)
+            return f"{quarter} against {prior}, the same months a year earlier."
+        ytd = default_ytd_window(year, latest)
+        if ytd is not None:
+            return (f"{ytd.label()} ({_long(ytd.start)} – {_long(ytd.end)}) against "
+                    f"{ytd.label(ytd.year - 1)}, the same months a year earlier.")
+        return (f"FY{year} against FY{year - 1}." if year
                 else "YTD — the latest year in the data.")
     if window.kind == KIND_R12M:
         # Setup names the basis R12M; the slides keep the "TTM <month>" caption the
@@ -219,19 +263,86 @@ def _long(day: date) -> str:
     return f"{day.day} {MONTH_ABBR[day.month]} {day.year}"
 
 
-def display_period(window: Optional[PeriodWindow], year: Any, *, prior: bool = False) -> str:
-    """How a page names period ``year`` (or the one before it): "TTM Aug 2026", else "FY2026".
+def display_period(
+    window: Optional[PeriodWindow],
+    year: Any,
+    *,
+    prior: bool = False,
+    quarters: Sequence[int] = (),
+) -> str:
+    """How a page names period ``year`` (or the one before it): "TTM Aug 2026", "Q2 2026",
+    "YTD Aug 2026", else "FY2026".
 
-    ``year`` may be missing — a run that pinned none — in which case a relabelled window
-    still names itself and the calendar basis says "current period" / "prior period".
+    ``quarters`` are the quarters the rows are narrowed to (none on R12M, where the quarter
+    only anchors the window). ``year`` may be missing — a run that pinned none — in which
+    case a relabelled window still names itself and the calendar basis says
+    "current period" / "prior period".
     """
     y = int(year) if str(year or "").strip().isdigit() else None
-    if window is not None and window.relabels:
-        base = y if y is not None else window.year
-        return window.label(base - 1 if prior else base)
+    if y is None and window is not None and window.relabels:
+        y = window.year
     if y is None:
         return "prior period" if prior else "current period"
-    return f"FY{y - 1}" if prior else f"FY{y}"
+    return period_label(window, y - 1 if prior else y, quarters=quarters) or (
+        f"FY{y - 1}" if prior else f"FY{y}"
+    )
+
+
+def result_period_names(result: Any, year: Any) -> tuple[str, str]:
+    """``(current, prior)`` as a computed result's pages name its periods — its window,
+    and the quarters its rows are narrowed to ("Q2 2026" / "Q2 2025")."""
+    window = getattr(result, "period", None)
+    quarters = result_quarters(result)
+    return (
+        display_period(window, year, quarters=quarters),
+        display_period(window, year, prior=True, quarters=quarters),
+    )
+
+
+def result_quarters(result: Any) -> tuple[int, ...]:
+    """The quarters a computed result's rows are narrowed to (none on R12M)."""
+    return quarters_in_filters(getattr(result, "resolved_filters", None))
+
+
+def period_label(
+    window: Optional[PeriodWindow],
+    year: int,
+    *,
+    quarters: Sequence[int] = (),
+) -> str | None:
+    """What a slide calls ``year`` when it is not a plain calendar year, else ``None``.
+
+    R12M names its window; picked quarters beat a YTD window (the rows ARE the quarter);
+    a YTD or date-range window names itself.
+    """
+    if window is not None and window.kind == KIND_R12M:
+        return window.label(year)
+    if window is not None and _is_the_ytd_itself(window, quarters):
+        return window.label(year)
+    named = quarter_label(quarters, year)
+    if named:
+        return named
+    if window is not None and window.relabels:
+        return window.label(year)
+    return None
+
+
+def row_filters(filters: Mapping[str, Any], window: Optional[PeriodWindow]) -> dict[str, Any]:
+    """The form filters that narrow ROWS under ``window``.
+
+    On R12M the quarter anchors the twelve months (:func:`window_for`) instead of narrowing
+    them, so it is dropped here — otherwise "R12M, Q2" would report April to June only.
+    """
+    out = dict(filters or {})
+    if window is not None and window.kind == KIND_R12M:
+        out.pop("quarter", None)
+    return out
+
+
+def _is_the_ytd_itself(window: PeriodWindow, quarters: Sequence[int]) -> bool:
+    """Whether ``quarters`` are just a YTD window's own months (January–June = Q1–Q2)."""
+    end = window.end.month
+    return window.is_ytd and end % 3 == 0 and tuple(quarters) == tuple(range(1, end // 3 + 1))
 
 
 def year_pin(years: Any) -> Optional[int]:

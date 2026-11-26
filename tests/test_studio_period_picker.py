@@ -35,7 +35,7 @@ def test_setup_names_the_bases_ytd_and_r12m_without_changing_their_values():
 
 def test_the_line_under_the_control_is_short():
     latest = (2026, 8)
-    assert PP.summary_line(PP.read_answer({}), PP.BASIS_YTD, latest) == "YTD 2026 vs 2025"
+    assert PP.summary_line(PP.read_answer({}), PP.BASIS_YTD, latest) == "YTD Aug 2026 vs YTD Aug 2025"
     feb = PP.read_answer(PP.ending_dates((2026, 2), PP.BASIS_YTD))
     assert PP.summary_line(feb, PP.BASIS_YTD, latest) == "YTD Feb 2026 vs YTD Feb 2025"
     span = PP.read_answer(PP.range_dates((2026, 4), (2026, 7)))
@@ -43,7 +43,7 @@ def test_the_line_under_the_control_is_short():
 
 
 def test_the_period_sentence_says_ytd_and_r12m():
-    assert P.describe(P.PeriodChoice(), latest=(2026, 8)) == "YTD 2026 against 2025."
+    assert P.describe(P.PeriodChoice(), latest=(2026, 8)).startswith("YTD Aug 2026 (1 Jan 2026")
     assert P.describe(P.PeriodChoice(P.BASIS_R12M), latest=(2026, 8)).startswith("R12M Aug 2026")
 
 

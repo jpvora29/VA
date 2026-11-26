@@ -32,19 +32,25 @@ def in_reporting_currency(text: str) -> str:
     return CURRENCY_MARK.sub(lambda _m: currency(), text or "")
 
 
-def _money(raw: float, *, dollar: bool = True) -> str:
+def _money(raw: float, *, dollar: bool = True, decimals: int | None = None) -> str:
     """Compact money — billions for ≥1bn, else millions/thousands. Short by design so
     long figures (``$2,293m``) stop overflowing their boxes; keeps the token's symbol, in
-    the reporting currency."""
+    the reporting currency.
+
+    ``decimals`` fixes the places on every scale (a map asking for "$123.4M"); ``None``
+    keeps the compact default — one place on billions, none below.
+    """
     a = abs(float(raw))
     pfx = currency() if dollar else ""
+    big = 1 if decimals is None else decimals
+    small = 0 if decimals is None else decimals
     if a >= 1e9:
-        return f"{pfx}{a / 1e9:.1f}B"
+        return f"{pfx}{a / 1e9:,.{big}f}B"
     if a >= 1e6:
-        return f"{pfx}{a / 1e6:,.0f}M"
+        return f"{pfx}{a / 1e6:,.{small}f}M"
     if a >= 1e3:
-        return f"{pfx}{a / 1e3:,.0f}K"
-    return f"{pfx}{a:,.0f}"
+        return f"{pfx}{a / 1e3:,.{small}f}K"
+    return f"{pfx}{a:,.{small}f}"
 
 
 def _format_number(raw: float, sub: str) -> str:
@@ -71,8 +77,16 @@ def _format_number(raw: float, sub: str) -> str:
     return out
 
 
-def render_token(token: str, value: Any, value_kind: str = "") -> str:
-    """Render ``value`` into ``token``'s style; non-numerics pass straight through."""
+def render_token(
+    token: str,
+    value: Any,
+    value_kind: str = "",
+    *,
+    decimals: int | None = None,
+) -> str:
+    """Render ``value`` into ``token``'s style; non-numerics pass straight through.
+
+    ``decimals`` (from the binding map) fixes a money figure's decimal places."""
     if value is None:
         return token
     if not isinstance(value, (int, float)) or isinstance(value, bool):
@@ -92,7 +106,7 @@ def render_token(token: str, value: Any, value_kind: str = "") -> str:
     if is_money:
         # Auto-scale money (billions for the big figures); replaces the whole token
         # number incl. its own $ / m so nothing is left doubled.
-        body = _money(abs(value) if value < 0 else value, dollar="$" in sub)
+        body = _money(abs(value), dollar="$" in sub, decimals=decimals)
     else:
         body = _format_number(abs(value) if value < 0 else value, sub)
     if value < 0 and not body.startswith("-"):

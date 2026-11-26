@@ -14,7 +14,9 @@ hand-placed ``Product (n)`` labels — comes off, because the chart now labels i
 
 What IS dynamic is the panel COUNT (:func:`plan_layout`): one country gets the whole page
 rather than a quarter of it, two share it side by side at full height, three or four keep
-the author's 2x2 grid.
+the author's 2x2 grid. More countries than the page has panels spill onto CONTINUATION
+pages — :func:`page_count` says how many, and ``values(..., page=n)`` fills page ``n`` with
+countries ``n*panels+1`` onwards (the assembler repeats the slide once per extra page).
 
 Mirrors :mod:`studio.template_fill.gwp_page`: detection is section/geometry driven (never a
 slide index), ``values`` emits one payload per panel keyed ``slide:shape``, and the fill
@@ -22,7 +24,10 @@ engine consumes it alongside the other chart payloads.
 """
 from __future__ import annotations
 
+import math
+from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Dict, List, Sequence, Tuple
 
 from logger import get_logger
@@ -212,30 +217,80 @@ def _countries(result) -> List[str]:
 # ── value resolution ─────────────────────────────────────────────────────────
 
 
-def values(template: Template, result) -> Dict[str, Any]:
+def ranking_slides(template: Template) -> tuple[int, ...]:
+    """Indices of the slides that carry ranking panels — the page a continuation repeats."""
+    return tuple(dict.fromkeys(p.slide_idx for p in panels(template)))
+
+
+def page_count(template: Template, result) -> int:
+    """How many ranking pages ``result``'s countries need: four panels a page, at least one."""
+    capacity = len(panels(template))
+    if not capacity:
+        return 0
+    return max(1, math.ceil(len(_countries(result)) / capacity))
+
+
+def page_countries(template: Template, result, page: int) -> list[str]:
+    """The countries ranking page ``page`` (0-based) carries, biggest book first."""
+    capacity = len(panels(template))
+    return _countries(result)[page * capacity:(page + 1) * capacity]
+
+
+def values_for_page(page: int) -> Callable[[Template, Any], dict[str, Any]]:
+    """A provider that fills continuation page ``page`` (same signature as :func:`values`)."""
+    return partial(values, page=page)
+
+
+def drop_highlights(template: Template, result) -> dict[str, Any]:
+    """Drop the one-cell "Key Highlights" table off the ranking pages.
+
+    A continuation page repeats the ranking slide for the countries the first page had no
+    panel for; its highlights would only restate the first page's, so the box comes off.
+    """
+    drop = [f"{slide.index}:{sh.shape_id}"
+            for slide in template.slides if section_of(slide) is Section.RANKING
+            for sh in slide.shapes if _is_highlights_table(sh)]
+    return {"drop_shapes": drop} if drop else {}
+
+
+def _is_highlights_table(shape) -> bool:
+    table = getattr(shape, "table", None) or []
+    return (shape.kind == "table" and len(table) == 1 and len(table[0]) == 1
+            and "key highlight" in str(table[0][0]).lower())
+
+
+def values(template: Template, result, *, page: int = 0) -> dict[str, Any]:
     """``{"lc_ranking": {"slide:shape": panel payload}}`` for EVERY panel on the page.
 
     A panel beyond the countries in scope gets a payload with no points, which tells the fill
     engine to blank it — and the panels that remain are re-laid-out to take the space back,
     so a two-country deck shows two half-page panels rather than two quarters and a void.
+    ``page`` picks which run of countries the panels show (0 = the first four).
+
+    Panel ``i`` always draws country ``i``: its title is the ``Country (i+1)`` label, which
+    the fill engine has already written by the time the charts are filled. A country with
+    nothing to rank leaves its own panel blank rather than letting the next country's data
+    slide in under its name; the live panels then take the planned frames in reading order
+    (each carrying its title with it), so the gap is closed all the same.
     """
     found = panels(template)
     if not found:
         return {}
     filters = _reporting_filters(result)
-    countries = _countries(result)[:len(found)]
+    countries = page_countries(template, result, page)
     drawn = [rank_points(result, {**filters, _COUNTRY_COL: c}) for c in countries]
-    drawn = [d for d in drawn if d]
-    rects = plan_layout([p.frame for p in found], len(drawn))
+    live = [i for i, points in enumerate(drawn) if points]
+    rects = plan_layout([p.frame for p in found], len(live))
+    placed = dict(zip(live, rects))
 
-    out: Dict[str, Any] = {}
+    out: dict[str, Any] = {}
     for i, panel in enumerate(found):
-        live = drawn[i] if i < len(drawn) else []
+        points = drawn[i] if i in placed else []
         out[f"{panel.slide_idx}:{panel.shape_id}"] = {
-            "country": countries[i] if i < len(drawn) else None,
-            "points": [p.to_dict() for p in live],
-            "rect": (rects[i] if i < len(rects) else panel.frame).to_dict(),
+            "country": countries[i] if i in placed else None,
+            "points": [p.to_dict() for p in points],
+            "rect": placed.get(i, panel.frame).to_dict(),
         }
-    logger.info("lc_page: %d of %d panel(s) filled, laid out %d-up",
-                len(drawn), len(found), max(len(drawn), 1))
+    logger.info("lc_page: page %d — %d of %d panel(s) filled, laid out %d-up",
+                page + 1, len(live), len(found), max(len(live), 1))
     return {"lc_ranking": out}

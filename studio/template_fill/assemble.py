@@ -319,6 +319,33 @@ def _without_slides(template, dropped: Sequence[int]):
     return replace(template, slides=keep)
 
 
+def _safe_template(template_name: str):
+    """The analysed template, or ``None`` when it cannot be read (logged, never raised)."""
+    try:
+        return analyze(get_binding_map(template_name).path)
+    except Exception as exc:  # noqa: BLE001 — a missing page must never break assembly
+        logger.warning("assemble: could not analyse %s: %s", template_name, exc)
+        return None
+
+
+def _with_countries(values: dict[str, Any], countries: Sequence[str]) -> dict[str, Any]:
+    """``values`` with its positional ``country_name[i]`` labels replaced by ``countries``."""
+    kept = {k: v for k, v in values.items() if not k.startswith("country_name[")}
+    return {**kept, **{f"country_name[{i}]": str(c) for i, c in enumerate(countries)}}
+
+
+def _ranking_page_providers(page: int) -> tuple:
+    """The providers a ranking continuation page runs.
+
+    The premium set without its prose writers — the first ranking page already carries
+    the block's highlights, so the continuation drops that box rather than restating it —
+    and with the LC panels pointed at ``page``.
+    """
+    skip = {feedback.values, commentary.values, lc_page.values}
+    kept = tuple(p for p in _PREMIUM_PROVIDERS if p not in skip)
+    return (*kept, lc_page.values_for_page(page), lc_page.drop_highlights)
+
+
 def _build_subdeck(template_name: str, scoped_result, values: Dict[str, Any], label: str,
                    *, providers=_PREMIUM_PROVIDERS, dropped: Tuple[int, ...] = ()) -> SubDeck:
     """Plan a sub-deck: enrich its values, and drop the pages it will not ship.
@@ -418,6 +445,7 @@ class SubDeckPlanBuilder:
         self._narratives: List[Any] = []
         self._providers = _premium_providers(ClaimLedger(), self._narratives)
         self._decks: List[SubDeck] = []
+        self._overall_roles: dict[str, Any] | None = None
 
     # ── one call per axis, in deck order ──
 
@@ -429,8 +457,33 @@ class SubDeckPlanBuilder:
         how many product pages follow it.
         """
         if self._wants(OVERALL):
-            self._add(OVERALL, self._result,
-                      self._with_context(resolve_roles(self._result)), "overall")
+            self._overall_roles = self._with_context(resolve_roles(self._result))
+            self._add(OVERALL, self._result, self._overall_roles, "overall")
+        return self
+
+    def add_ranking_overflow(self) -> "SubDeckPlanBuilder":
+        """One more LC-ranking page per four countries the overall block's page cannot hold.
+
+        The ranking page has four panels, so a fifth country used to fall off the deck. Each
+        continuation is the overall template with every page but the ranking slide dropped,
+        its ``Country (n)`` labels and panels pointed at the next run of countries. It sits
+        straight after the overall block, so the pages read as one section.
+        """
+        if self._overall_roles is None:
+            return self
+        authored = set(self._slides.hidden(OVERALL))
+        template = _safe_template(OVERALL)
+        ranking = set(lc_page.ranking_slides(template)) - authored if template else set()
+        if not ranking:
+            return self
+        dropped = tuple(s.index for s in template.slides if s.index not in ranking)
+        for page in range(1, lc_page.page_count(template, self._result)):
+            countries = lc_page.page_countries(template, self._result, page)
+            self._decks.append(_build_subdeck(
+                OVERALL, self._result, _with_countries(self._overall_roles, countries),
+                f"overall ranking {page + 1}", providers=_ranking_page_providers(page),
+                dropped=dropped,
+            ))
         return self
 
     def add_products(self) -> "SubDeckPlanBuilder":
@@ -515,6 +568,7 @@ def plan_unwritten(result, *, slides: Optional[DeckSlides] = None,
     return (
         SubDeckPlanBuilder(result, slides=slides, data_basis=data_basis)
         .add_overall()
+        .add_ranking_overflow()
         .add_products()
         .add_countries()
         .add_end()

@@ -46,6 +46,7 @@ class Slot:
     token: str                  # the placeholder text actually found
     value_kind: str             # money | pct | int | rank | text | series
     context: str = ""           # sibling labels / header / slide title
+    decimals: int | None = None  # money decimals the map asks for; None = the compact default
 
     @property
     def key(self) -> str:
@@ -59,6 +60,7 @@ class Slot:
             "token": self.token,
             "value_kind": self.value_kind,
             "context": self.context,
+            **({"decimals": self.decimals} if self.decimals is not None else {}),
         }
 
     @classmethod
@@ -70,7 +72,13 @@ class Slot:
             token=str(d.get("token", "")),
             value_kind=str(d.get("value_kind", "text")),
             context=str(d.get("context", "")),
+            decimals=_decimals(d.get("decimals")),
         )
+
+
+def _decimals(value) -> int | None:
+    """A map's ``decimals`` setting as an int, ``None`` when absent or unreadable."""
+    return int(value) if str(value).strip().isdigit() else None
 
 
 # "rank" must match as a WHOLE WORD: a slide titled "Portfolio and LC ranking" otherwise

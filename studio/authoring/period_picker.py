@@ -22,13 +22,21 @@ def _latest(meta: Optional[Mapping[str, Any]]):
     return (int(latest[0]), int(latest[1])) if latest else None
 
 
+_QUARTER_FILTER = {"type": "studio-filter", "col": "quarter"}
+_YEAR_FILTER = {"type": "studio-filter", "col": "year"}
+
+
 def next_state(trigger: Any, *, dates: Optional[Mapping[str, Any]],
                view: Optional[Mapping[str, Any]], basis: str,
-               meta: Optional[Mapping[str, Any]]):
+               meta: Optional[Mapping[str, Any]], quarters: Any = None, years: Any = None):
     """``(dates, view, basis)`` after one click. ``no_update`` for any that did not change.
 
     A finished custom range also sets the basis to YTD: R12M is twelve months by
     definition and would silently ignore the range's first month.
+
+    On R12M a pinned Quarter moves the ending month to that quarter's last month (R12M
+    with Q2 2026 is the twelve months to June 2026) — when the quarter, the year or the
+    basis changes.
 
     Pure apart from the sentinel, so every transition is testable without a browser.
     """
@@ -38,8 +46,13 @@ def next_state(trigger: Any, *, dates: Optional[Mapping[str, Any]],
     year = PP.grid_year(view, answer, latest)
     mode = view.get("mode") or PP.MODE_END
 
-    if trigger == "studio-period-basis":
-        return PP.rebase(dates, basis), no_update, no_update
+    if trigger in ("studio-period-basis", _QUARTER_FILTER, _YEAR_FILTER):
+        rebased = PP.rebase(dates, basis) if trigger == "studio-period-basis" else no_update
+        month = PP.quarter_month(quarters, years, latest) if basis == PP.BASIS_R12M else None
+        if month is None:
+            return rebased, no_update, no_update
+        return (PP.ending_dates(month, basis), {**view, "anchor": None, "year": month[0]},
+                no_update)
     if trigger in ("qs6-year-prev", "qs6-year-next"):
         step = -1 if trigger == "qs6-year-prev" else 1
         if not PP.can_step(year, step, latest=latest, first_year=(meta or {}).get("first_year")):
@@ -112,18 +125,22 @@ def register_period_picker(app) -> None:
         Input("qs6-year-prev", "n_clicks"),
         Input("qs6-year-next", "n_clicks"),
         Input("studio-period-basis", "value"),
+        Input(_QUARTER_FILTER, "value"),
+        Input(_YEAR_FILTER, "value"),
         State("studio-period-dates", "data"),
         State("qs6-month-view", "data"),
         State("qs6-period-meta", "data"),
         prevent_initial_call=True,
     )
-    def pick_period(_m, _p, _mode, _prev, _next, basis, dates, view, meta):
-        """One click on the picker, read into the answer and the grid's view."""
+    def pick_period(_m, _p, _mode, _prev, _next, basis, quarters, years, dates, view, meta):
+        """One click on the picker (or a Quarter/Year change), read into the answer."""
         trigger = ctx.triggered_id
         # A re-mounted button reports n_clicks=0; that is not a click.
-        if trigger != "studio-period-basis" and not (ctx.triggered and ctx.triggered[0].get("value")):
+        answers = ("studio-period-basis", _QUARTER_FILTER, _YEAR_FILTER)
+        if trigger not in answers and not (ctx.triggered and ctx.triggered[0].get("value")):
             return no_update, no_update, no_update
-        return next_state(trigger, dates=dates, view=view, basis=basis, meta=meta)
+        return next_state(trigger, dates=dates, view=view, basis=basis, meta=meta,
+                          quarters=quarters, years=years)
 
     @app.callback(
         Output({"type": "qs6-month", "m": ALL}, "className"),

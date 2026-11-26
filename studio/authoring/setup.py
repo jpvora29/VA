@@ -718,7 +718,8 @@ def _period_scope_figures(key: tuple, dataset_id, period_key: tuple):
                                 if window else "Calendar totals")}
         return tuple(calendar)
     book = open_book(source, spec)
-    resolved = _resolve_filters(filters, has_quarter=has_quarter_column(book.engine))
+    resolved = _resolve_filters(P.row_filters(filters, book.window),
+                                has_quarter=has_quarter_column(book.engine))
     if book.window is not None and book.window.kind == P.KIND_RANGE:
         resolved.pop("Year", None)
     figures = scope_figures(resolved, flow="gpr", engine=book.engine, rollup=False)

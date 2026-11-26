@@ -126,6 +126,22 @@ def rebase(dates: Optional[Mapping[str, Any]], basis: str) -> dict:
     return ending_dates(answer.end, basis)
 
 
+def quarter_month(quarters: Any, years: Any, latest: Optional[Month]) -> Optional[Month]:
+    """The month an R12M window ends in for the Quarter (and Year) Setup pinned.
+
+    The last quarter picked, in the pinned year (else the latest year in the data), capped
+    at the latest month — ``None`` when no quarter is pinned or no year is known.
+    """
+    from studio.period import year_pin
+    from studio.quarter_period import latest_quarter, quarter_anchor
+
+    quarter = latest_quarter(quarters)
+    year = year_pin(years) or (latest[0] if latest else None)
+    if quarter is None or year is None:
+        return None
+    return quarter_anchor(year, quarter, latest)
+
+
 def date_keys(dates: Optional[Mapping[str, Any]]) -> Tuple[Optional[str], Optional[str]]:
     """``(date_from, date_to)`` for :func:`studio.authoring.setup.period_selection`."""
     dates = dates or {}
@@ -252,8 +268,8 @@ def summary_line(answer: PeriodAnswer, basis: str, latest: Optional[Month],
     if end is None:
         return "R12M to the latest month" if basis == BASIS_R12M else "YTD — latest year"
     name = "R12M" if basis == BASIS_R12M else "YTD"
-    if basis != BASIS_R12M and answer.end is None:
-        return f"YTD {end[0]} vs {end[0] - 1}"
+    if basis != BASIS_R12M and answer.end is None and end[1] == 12:
+        return f"FY{end[0]} vs FY{end[0] - 1}"         # a complete year, compared whole
     return f"{name} {_label(end)} vs {name} {_label((end[0] - 1, end[1]))}"
 
 

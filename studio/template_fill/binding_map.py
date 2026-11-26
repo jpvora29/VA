@@ -45,6 +45,7 @@ class SlotBinding:
     value_kind: str                 # money | pct | int | rank | text | series
     token: str                      # the placeholder text in the template (e.g. "$xx,xxxm")
     role: Optional[str] = None      # data role to fill; None ⇒ leave the placeholder
+    decimals: int | None = None     # money decimals ("$123.4M"); None ⇒ compact default
 
     @property
     def placeholder(self) -> bool:
@@ -64,10 +65,14 @@ class SlotBinding:
                 "token": self.token,
                 "value_kind": self.value_kind,
                 "context": "",
+                **self._decimals_item(),
             },
             "role": self.role,
             "placeholder": self.placeholder,
         }
+
+    def _decimals_item(self) -> Dict[str, Any]:
+        return {"decimals": self.decimals} if self.decimals is not None else {}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -77,6 +82,7 @@ class SlotBinding:
             "value_kind": self.value_kind,
             "token": self.token,
             "role": self.role,
+            **self._decimals_item(),
         }
 
     @classmethod
@@ -88,6 +94,7 @@ class SlotBinding:
             value_kind=str(d.get("value_kind", "text")),
             token=str(d.get("token", "")),
             role=d.get("role"),
+            decimals=int(d["decimals"]) if d.get("decimals") is not None else None,
         )
 
 

@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from core.boardroom.money import currency_symbol, reporting_currency
-from studio.period import display_period
+from studio.period import display_period, result_quarters
+from studio.ytd import is_like_for_like_ytd
 
 CARRIER_COL = "Carrier_Group"
 COUNTRY_COL = "Country"
@@ -103,15 +104,16 @@ def build_analysis_context(result: Any, *, data_basis: Optional[str] = None,
         countries=_as_tuple(filters.get(COUNTRY_COL)),
         current_year=int(year),
         prior_year=int(year) - 1,
-        current_label=display_period(window, year),
-        prior_label=display_period(window, year, prior=True),
+        current_label=display_period(window, year, quarters=result_quarters(result)),
+        prior_label=display_period(window, year, prior=True, quarters=result_quarters(result)),
         currency=currency,
         symbol=currency_symbol(currency) or "$",
         slice_filters=slice_filters_of(filters),
         peer_pins=pins,
         survey_on=str(data_basis or "") == DATA_BASIS_WITH_SURVEY,
         flow=str(getattr(result, "flow", "gpr") or "gpr"),
-        period_relabelled=bool(getattr(window, "relabels", False)),
+        period_relabelled=bool(getattr(window, "relabels", False))
+        and not is_like_for_like_ytd(window, filters),
     )
 
 
