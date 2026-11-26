@@ -543,3 +543,84 @@ def test_ytd_months_are_not_read_as_quarters():
     assert quarters_in_filters({"Month_Name": _MONTH_NAMES[:8]}) == ()
     ytd_jun = P.default_ytd_window(2026, (2026, 6))
     assert P.display_period(ytd_jun, 2026, quarters=(1, 2)) == "YTD Jun 2026"
+
+
+# ── "Ends" follows a cleared quarter and a changed year ──────────────────────
+
+
+def _after(trigger, *, basis, quarters=None, years=None, dates=None):
+    from studio.authoring.period_picker import next_state
+
+    return next_state(
+        trigger,
+        dates=dates or {"from": None, "to": None, "custom": False},
+        view={},
+        basis=basis,
+        meta={"latest": list(LATEST)},
+        quarters=quarters,
+        years=years,
+    )
+
+
+def test_clearing_the_quarter_on_r12m_goes_back_to_the_latest_month():
+    from studio.authoring.period_picker import _QUARTER_FILTER
+
+    picked = {"from": None, "to": "2026-03-31", "custom": False}
+    dates, view, _ = _after(_QUARTER_FILTER, basis="r12m", years=["2026"], dates=picked)
+
+    assert dates == {"from": None, "to": None, "custom": False}
+    assert view["year"] == 2026
+
+
+def test_changing_the_year_on_r12m_moves_the_end_into_that_year():
+    from studio.authoring.period_picker import _YEAR_FILTER, paint
+
+    dates, view, _ = _after(_YEAR_FILTER, basis="r12m", years=["2025"])
+
+    assert dates["to"] is None and view["year"] == 2025
+    painted = paint(dates, view, "r12m", {"latest": list(LATEST)}, ["2025"])
+    assert painted[5] == "Aug 2025"  # the trigger: R12M to Aug 2025, not "latest 2026"
+
+
+def test_changing_the_year_with_a_quarter_keeps_the_quarter_end():
+    from studio.authoring.period_picker import _YEAR_FILTER
+
+    dates, _view, _ = _after(
+        _YEAR_FILTER, basis="r12m", quarters=["Q1"], years=["2025"]
+    )
+
+    assert dates["to"] == "2025-03-31"
+
+
+def test_changing_the_year_on_ytd_clears_a_stale_end_month():
+    from studio.authoring.period_picker import _YEAR_FILTER, paint
+
+    picked = {"from": "2026-01-01", "to": "2026-08-31", "custom": False}
+    dates, view, _ = _after(
+        _YEAR_FILTER, basis="calendar", years=["2025"], dates=picked
+    )
+
+    assert dates == {"from": None, "to": None, "custom": False}
+    painted = paint(dates, view, "calendar", {"latest": list(LATEST)}, ["2025"])
+    assert painted[5] == "Dec 2025"
+    assert painted[10] == "FY2025 vs FY2024"
+
+
+def test_a_ytd_custom_range_survives_a_year_change():
+    from dash import no_update
+
+    from studio.authoring.period_picker import _YEAR_FILTER
+
+    custom = {"from": "2026-03-01", "to": "2026-08-31", "custom": True}
+    dates, _view, _ = _after(
+        _YEAR_FILTER, basis="calendar", years=["2025"], dates=custom
+    )
+
+    assert dates is no_update
+
+
+def test_the_latest_year_still_reads_latest():
+    from studio.page.authoring import period_picker as PP
+
+    answer = PP.read_answer({})
+    assert PP.trigger_label(answer, "r12m", LATEST, 2026) == "Aug 2026 (latest)"

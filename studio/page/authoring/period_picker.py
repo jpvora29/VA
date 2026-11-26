@@ -142,6 +142,23 @@ def quarter_month(quarters: Any, years: Any, latest: Optional[Month]) -> Optiona
     return quarter_anchor(year, quarter, latest)
 
 
+def end_after_filter_change(quarters: Any, years: Any, basis: str,
+                            latest: Optional[Month]) -> Tuple[dict, Optional[int]]:
+    """``(dates, grid year)`` once the Quarter or Year filter changes.
+
+    On R12M a pinned quarter ends the window at the quarter's last month. Otherwise the
+    author's month no longer fits the new selection, so "Ends" goes back to the latest
+    month of the selected year — clearing a quarter undoes what picking it did.
+    """
+    from studio.period import year_pin
+
+    month = quarter_month(quarters, years, latest) if basis == BASIS_R12M else None
+    if month is not None:
+        return ending_dates(month, basis), month[0]
+    end = default_end(basis, latest, year_pin(years))
+    return {"from": None, "to": None, "custom": False}, (end[0] if end else None)
+
+
 def date_keys(dates: Optional[Mapping[str, Any]]) -> Tuple[Optional[str], Optional[str]]:
     """``(date_from, date_to)`` for :func:`studio.authoring.setup.period_selection`."""
     dates = dates or {}
@@ -239,13 +256,31 @@ def _range_label(start: Month, end: Month) -> str:
     return f"{_label(start)} – {_label(end)}"
 
 
-def trigger_label(answer: PeriodAnswer, basis: str, latest: Optional[Month]) -> str:
+def default_end(basis: str, latest: Optional[Month], year_pin: Optional[int] = None) -> Optional[Month]:
+    """The month the deck ends in when no month is picked — what "Ends" must show.
+
+    The latest month in the data, unless the Year filter pins an earlier year: then that
+    year's same month on R12M (``studio.period.window_for`` — "TTM Aug 2025"), and its
+    December on YTD (the whole of 2025).
+    """
+    if latest is None:
+        return None
+    if year_pin is not None and int(year_pin) < latest[0]:
+        return (int(year_pin), latest[1] if basis == BASIS_R12M else 12)
+    return latest
+
+
+def trigger_label(answer: PeriodAnswer, basis: str, latest: Optional[Month],
+                  year_pin: Optional[int] = None) -> str:
     """What the closed control says: "Dec 2025 (latest)", "Aug 2026", "Mar – Aug 2026"."""
     if answer.custom and answer.start and answer.end:
         return _range_label(answer.start, answer.end)
     if answer.end is not None:
         return _label(answer.end)
-    return f"{_label(latest)} (latest)" if latest else "Latest month"
+    end = default_end(basis, latest, year_pin)
+    if end is None:
+        return "Latest month"
+    return f"{_label(end)} (latest)" if end == latest else _label(end)
 
 
 def trigger_kicker(answer: PeriodAnswer) -> str:
@@ -260,11 +295,7 @@ def summary_line(answer: PeriodAnswer, basis: str, latest: Optional[Month],
         prior = ((answer.start[0] - 1, answer.start[1]), (answer.end[0] - 1, answer.end[1]))
         return (f"{_range_label(answer.start, answer.end)} vs "
                 f"{_range_label(*prior)}")
-    end = answer.end
-    if end is None and latest is not None:
-        end = latest
-        if year_pin is not None and year_pin < latest[0]:
-            end = (year_pin, latest[1] if basis == BASIS_R12M else 12)
+    end = answer.end or default_end(basis, latest, year_pin)
     if end is None:
         return "R12M to the latest month" if basis == BASIS_R12M else "YTD — latest year"
     name = "R12M" if basis == BASIS_R12M else "YTD"

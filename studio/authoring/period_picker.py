@@ -36,7 +36,8 @@ def next_state(trigger: Any, *, dates: Optional[Mapping[str, Any]],
 
     On R12M a pinned Quarter moves the ending month to that quarter's last month (R12M
     with Q2 2026 is the twelve months to June 2026) — when the quarter, the year or the
-    basis changes.
+    basis changes. Clearing the quarter, or changing the year without one, puts "Ends"
+    back on the latest month of the selected year.
 
     Pure apart from the sentinel, so every transition is testable without a browser.
     """
@@ -46,13 +47,19 @@ def next_state(trigger: Any, *, dates: Optional[Mapping[str, Any]],
     year = PP.grid_year(view, answer, latest)
     mode = view.get("mode") or PP.MODE_END
 
-    if trigger in ("studio-period-basis", _QUARTER_FILTER, _YEAR_FILTER):
-        rebased = PP.rebase(dates, basis) if trigger == "studio-period-basis" else no_update
+    if trigger == "studio-period-basis":
         month = PP.quarter_month(quarters, years, latest) if basis == PP.BASIS_R12M else None
         if month is None:
-            return rebased, no_update, no_update
+            return PP.rebase(dates, basis), no_update, no_update
         return (PP.ending_dates(month, basis), {**view, "anchor": None, "year": month[0]},
                 no_update)
+    if trigger in (_QUARTER_FILTER, _YEAR_FILTER):
+        # A YTD custom range is the author's own window; a quarter on YTD narrows rows
+        # without moving the end. Everything else follows the new Quarter / Year.
+        if basis != PP.BASIS_R12M and (answer.custom or trigger == _QUARTER_FILTER):
+            return no_update, no_update, no_update
+        new, grid = PP.end_after_filter_change(quarters, years, basis, latest)
+        return new, {**view, "anchor": None, "year": grid}, no_update
     if trigger in ("qs6-year-prev", "qs6-year-next"):
         step = -1 if trigger == "qs6-year-prev" else 1
         if not PP.can_step(year, step, latest=latest, first_year=(meta or {}).get("first_year")):
@@ -83,10 +90,13 @@ def next_state(trigger: Any, *, dates: Optional[Mapping[str, Any]],
     return no_update, no_update, no_update
 
 
-def paint(dates, view, basis, meta):
+def paint(dates, view, basis, meta, years=None):
     """Everything the open (or closed) picker shows for the current state."""
+    from studio.period import year_pin
+
     view = view or {}
     latest = _latest(meta)
+    pin = year_pin(years)
     first_year = (meta or {}).get("first_year")
     answer = PP.read_answer(dates)
     year = PP.grid_year(view, answer, latest)
@@ -105,12 +115,12 @@ def paint(dates, view, basis, meta):
         str(year),
         not PP.can_step(year, -1, latest=latest, first_year=first_year),
         not PP.can_step(year, 1, latest=latest, first_year=first_year),
-        PP.trigger_label(answer, basis, latest),
+        PP.trigger_label(answer, basis, latest, pin),
         hint,
         ["qs6-pmode" + (" is-on" if m == mode else "") for m in (PP.MODE_END, PP.MODE_RANGE)],
         "qs6-month-trigger" + ("" if answer.is_latest else " is-set"),
         PP.trigger_kicker(answer),
-        PP.summary_line(answer, basis, latest),
+        PP.summary_line(answer, basis, latest, pin),
     )
 
 
@@ -158,7 +168,8 @@ def register_period_picker(app) -> None:
         Input("qs6-month-view", "data"),
         Input("studio-period-basis", "value"),
         Input("qs6-period-meta", "data"),
+        Input(_YEAR_FILTER, "value"),
     )
-    def paint_period(dates, view, basis, meta):
+    def paint_period(dates, view, basis, meta, years):
         """Repaint the grid, the year, and the trigger's own label."""
-        return paint(dates, view, basis, meta)
+        return paint(dates, view, basis, meta, years)
