@@ -1342,11 +1342,99 @@ def _fill_ranking_panels(slide, sidx: int, panels: Dict[str, Any]) -> set:
                 # The panel now states its own money ticks, which the author's layout left
                 # no room for — so the plot is pinned back onto the bands it sits behind.
                 _pin_plot_area(sh, new_plot)
+            # Last: the names can only be placed once the plot's geometry is final.
+            _place_rank_labels(sh, panel["points"])
         except Exception as exc:  # noqa: BLE001 — a panel must never break the export
             logger.warning("template_fill: ranking panel skipped: %s", exc)
     logger.info("template_fill: %d ranking panel(s) on slide %d (%d blanked)",
                 len(charts), sidx, len(blank))
     return handled
+
+
+# The size of an 8pt label (``_LC_LABEL_PT``) and its spacing, in EMU — slightly generous,
+# so two names judged clear of each other really are.
+_LC_CHAR_EMU = 57150        # an average Arial glyph at 8pt (0.0625")
+_LC_LINE_EMU = 128016       # one line of it with its leading (0.14")
+_LC_MARK_EMU = 45720        # half a point marker (0.05")
+_LC_GAP_EMU = 27432         # air between a point and the name beside it (0.03")
+_LEADER_LINES_EXT = (
+    '<c:ext uri="{CE6537A1-D6FC-4f65-9D91-7224C49458BB}" %s '
+    'xmlns:c15="http://schemas.microsoft.com/office/drawing/2012/chart">'
+    '<c15:showLeaderLines val="1"/></c:ext>'
+)
+
+
+def _place_rank_labels(shape, points: list[dict[str, Any]]) -> None:
+    """Pin every point's name to a spot clear of every other name and point.
+
+    A label told only LEFT/RIGHT/ABOVE/BELOW cannot untangle a cluster — several lines at
+    one rank with similar pools put their names on top of each other whatever sides they
+    get. So each name is laid out as a box in the panel's real geometry
+    (:func:`studio.template_fill.label_layout.place_labels`) and written as a manual
+    offset from its point, with leader lines on so a name moved off its point still
+    points at it. Without a pinned plot area there is no geometry, and the side-based
+    labels written by :func:`_fill_rank_scatter` stay.
+    """
+    from studio.template_fill.label_layout import Box, LabelSpec, place_labels
+
+    chart = shape.chart
+    frame = _box(shape)
+    plot = _plot_frame(chart, frame)
+    x_max = chart.category_axis.maximum_scale
+    if plot is None or not points or not x_max or not frame[2] or not frame[3]:
+        return
+    px, py, pw, ph = plot
+    specs = [
+        LabelSpec(
+            x=px + float(p["size"]) / x_max * pw,
+            y=py + _rank_row(p) / _LC_RANK_AXIS_MAX * ph,       # rank 1 at the top
+            width=len(str(p.get("label") or p["name"])) * _LC_CHAR_EMU,
+            height=_LC_LINE_EMU,
+        )
+        for p in points
+    ]
+    boxes = place_labels(specs, Box(px, py, px + pw, py + ph),
+                         gap=_LC_GAP_EMU, marker=_LC_MARK_EMU)
+    series = chart.plots[0].series[0]
+    for point, spec, box in zip(series.points, specs, boxes):
+        cx, cy = box.centre
+        _offset_label(point, (cx - spec.x) / frame[2], (cy - spec.y) / frame[3])
+    _show_leader_lines(series)
+
+
+def _offset_label(point, dx: float, dy: float) -> None:
+    """Centre a data label on its point, then move it by ``(dx, dy)`` chart fractions.
+
+    A data label's ``c:manualLayout`` x/y are offsets from its default position, as a share
+    of the chart; centred on the point, that offset is exactly label centre − point.
+    """
+    from pptx.enum.chart import XL_LABEL_POSITION as POS
+    from pptx.oxml import parse_xml
+    from pptx.oxml.ns import nsdecls, qn
+
+    label = point.data_label
+    label.position = POS.CENTER
+    dlbl = label._get_or_add_dLbl()
+    for old in dlbl.findall(qn("c:layout")):
+        dlbl.remove(old)
+    layout = parse_xml(
+        f'<c:layout {nsdecls("c")}><c:manualLayout>'
+        f'<c:x val="{dx:.6f}"/><c:y val="{dy:.6f}"/></c:manualLayout></c:layout>'
+    )
+    dlbl.find(qn("c:idx")).addnext(layout)
+
+
+def _show_leader_lines(series) -> None:
+    """Turn on leader lines for a series' labels (Office 2013+ ``c15`` extension)."""
+    from pptx.oxml import parse_xml
+    from pptx.oxml.ns import nsdecls, qn
+
+    dlbls = series._element.find(qn("c:dLbls"))
+    if dlbls is None or dlbls.find(qn("c:extLst")) is not None:
+        return
+    ext_lst = dlbls.makeelement(qn("c:extLst"), {})
+    ext_lst.append(parse_xml(_LEADER_LINES_EXT % nsdecls("c")))
+    dlbls.append(ext_lst)
 
 
 def _write_bar_chart(chart, series: Dict[str, Any]) -> None:
@@ -1922,12 +2010,41 @@ def _write_field(shape, fld: Dict[str, Any], ink) -> None:
         _write_text_shape(shape, where, text)
     elif where and where[0] == "cell":
         _write_table(shape, where, text)
+        _fit_cell_value(shape, where, str(fld.get("token") or ""), text)
     if role.endswith(_SIGNED_ROLE_SUFFIXES) and text.strip():
         _recolor_by_sign(shape, where, text)
     if sign_color.fills_by_sign(role):
         sign_color.fill_shape_by_sign(shape, text)
     if sign_color.inks_by_sign(role):
         sign_color.ink_runs_by_sign(_signed_paragraphs(shape, where), text)
+
+
+# A value may shrink to this share of the author's size to fit, and no further.
+_FIT_MIN_SHARE = 0.75
+
+
+def _fit_cell_value(shape, where: List[Any], token: str, text: str) -> None:
+    """Shrink a cell's value line when it is longer than the placeholder it replaced.
+
+    The author sized each KPI cell for its placeholder ("xxxM") beside a fixed icon; a
+    one-decimal figure ("441.3M") is half as long again and ran into the icon. The font
+    scales by the length ratio, never below ``_FIT_MIN_SHARE`` of the authored size.
+    Only the value line is touched — the caption under it keeps its size.
+    """
+    from studio.template_fill.slots import classify
+
+    first_token, first_text = token.split("\n")[0].strip(), text.split("\n")[0].strip()
+    if classify(first_token) != "money" or len(first_text) <= len(first_token):
+        return
+    share = max(len(first_token) / len(first_text), _FIT_MIN_SHARE)
+    r, c = int(where[1]), int(where[2])
+    try:
+        paragraph = shape.table.rows[r].cells[c].text_frame.paragraphs[0]
+    except (IndexError, AttributeError):
+        return
+    for run in paragraph.runs:
+        if run.font.size is not None:
+            run.font.size = int(run.font.size * share)
 
 
 def _write_slide(slide, fields: List[Dict[str, Any]]) -> None:

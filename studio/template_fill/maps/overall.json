@@ -55,7 +55,7 @@
         0
       ],
       "value_kind": "pct",
-      "token": "+x.x%",
+      "token": "x.x%",
       "role": "sow_pct"
     },
     {

@@ -166,7 +166,7 @@ def render_example(token: str, value: Any) -> str:
     grouped = "," in m.group("num")
     digits = f"{abs(val):,.{decimals}f}" if grouped else f"{abs(val):.{decimals}f}"
     val = 0.0 if shows_zero(digits) else val        # rounds to nothing → flat
-    sign = "-" if val < 0 else ("+" if m.group("sign") == "+" else "")
+    sign = "-" if val < 0 else ("+" if m.group("sign") == "+" and val > 0 else "")
     body = sign + digits + scale + ("%" if pct else "")
 
     # The example's symbol is the AUTHOR's ("€106.5m" in a euro-built template); the figure

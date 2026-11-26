@@ -152,13 +152,104 @@ def test_a_change_that_rounds_to_nothing_reads_flat(value):
     from studio.template_fill.render import render_example, render_token
 
     assert render_token("PY (+x.x%▲)", value, "pct") == "PY (0.0%►)"
-    assert render_example("+10.7%▲", value) == "+0.0%►"
+    assert render_example("+10.7%▲", value) == "0.0%►"
 
 
 def test_a_one_place_rank_move_is_singular():
     from studio.template_fill.stance import _places
 
     assert (_places(1), _places(-1), _places(3)) == ("1 place", "1 place", "3 places")
+
+
+# ── LC labels: placed as boxes, never on top of each other ───────────────────
+
+
+def _cluster(n: int, *, x: float = 900.0, y: float = 100.0):
+    from studio.template_fill.label_layout import LabelSpec
+
+    return [LabelSpec(x=x + i * 4, y=y, width=120.0, height=12.0) for i in range(n)]
+
+
+def test_a_cluster_of_labels_at_one_rank_does_not_overlap():
+    """Regression: six lines at rank 1 with near-equal pools piled their names in one spot."""
+    from studio.template_fill.label_layout import Box, place_labels
+
+    bounds = Box(0, 0, 1000, 400)
+    boxes = place_labels(_cluster(6), bounds, gap=2.0, marker=3.0)
+    assert all(box.inside(bounds) for box in boxes)
+    assert all(a.overlap(b) == 0 for i, a in enumerate(boxes) for b in boxes[i + 1 :])
+
+
+def test_a_lone_label_sits_beside_its_point():
+    from studio.template_fill.label_layout import Box, LabelSpec, place_labels
+
+    (box,) = place_labels(
+        [LabelSpec(100, 100, 50, 10)], Box(0, 0, 1000, 400), gap=2.0, marker=3.0
+    )
+    assert box.x0 == 105 and box.centre[1] == 100  # right of the point, on its row
+
+
+def test_a_label_near_the_right_edge_goes_left_not_off_the_plot():
+    from studio.template_fill.label_layout import Box, LabelSpec, place_labels
+
+    (box,) = place_labels(
+        [LabelSpec(990, 100, 50, 10)], Box(0, 0, 1000, 400), gap=2.0, marker=3.0
+    )
+    assert box.x1 <= 990
+
+
+def test_exported_labels_are_pinned_with_leader_lines(subject_deck):
+    from pptx.oxml.ns import qn
+
+    for chart in _scatter_panels(subject_deck):
+        series = chart.plots[0].series[0]._element
+        dlbls = series.findall(".//" + qn("c:dLbl"))
+        assert dlbls and all(d.find(qn("c:layout")) is not None for d in dlbls)
+        assert "showLeaderLines" in series.find(qn("c:dLbls")).xml
+
+
+# ── KPI band: one decimal, and the wider figure still fits ───────────────────
+
+
+def test_band_premium_cells_render_to_one_decimal():
+    from studio.template_fill.kpi_band import premium_decimals
+
+    assert premium_decimals("carrier_gwp", None) == 1
+    assert premium_decimals("marsh_gwp", None) == 1
+    assert premium_decimals("rank", None) is None
+
+
+def test_a_longer_money_value_shrinks_its_value_line_only():
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+
+    from studio.template_fill.fill import _fit_cell_value
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    table = slide.shapes.add_table(1, 2, 0, 0, Inches(3), Inches(1))
+    cell = table.table.cell(0, 0)
+    cell.text_frame.text = "441.3M"
+    cell.text_frame.paragraphs[0].runs[0].font.size = Pt(18)
+    rank = table.table.cell(0, 1)
+    rank.text_frame.text = "10"
+    rank.text_frame.paragraphs[0].runs[0].font.size = Pt(18)
+
+    _fit_cell_value(table, ["cell", 0, 0], "xxxM", "441.3M")
+    _fit_cell_value(table, ["cell", 0, 1], "x", "10")  # a rank: never shrunk
+
+    assert cell.text_frame.paragraphs[0].runs[0].font.size == int(Pt(18) * 0.75)
+    assert rank.text_frame.paragraphs[0].runs[0].font.size == Pt(18)
+
+
+def test_the_overall_share_tile_carries_no_forced_plus():
+    import json
+
+    entries = json.loads(
+        Path("studio/template_fill/maps/overall.json").read_text("utf-8")
+    )
+    sow = [b for b in entries["bindings"] if b.get("role") == "sow_pct"]
+    assert sow and all(not b["token"].startswith("+") for b in sow)
 
 
 # ── integration over the awkward book ────────────────────────────────────────

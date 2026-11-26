@@ -110,10 +110,12 @@ def augment(template: Template, bindings: List[R.Binding]) -> List[R.Binding]:
             if existing is not None:
                 existing.role, existing.placeholder = role, False
                 existing.slot.token = share_token(role, existing.slot.token)
+                existing.slot.decimals = premium_decimals(role, existing.slot.decimals)
                 continue
             token = _cell_text(template, slide.index, shape_id, where)
             extra.append(R.Binding(
-                slot=Slot(slide.index, shape_id, where, share_token(role, token), "text", ""),
+                slot=Slot(slide.index, shape_id, where, share_token(role, token), "text", "",
+                          decimals=premium_decimals(role, None)),
                 role=role, placeholder=False))
         if cells:
             logger.info("kpi_band: slide %d KPI band -> %d cell(s)", slide.index, len(cells))
@@ -123,6 +125,17 @@ def augment(template: Template, bindings: List[R.Binding]) -> List[R.Binding]:
 # The share-of-wallet change is a percentage, whatever shape the author typed for it.
 _SHARE_DELTA_ROLES = frozenset({R.ROLE_SOW_YOY, R.ROLE_PEER_SOW_YOY})
 _BARE_DIGITS = re.compile(r"(?<![\w.])x+(?![\w.%])", re.I)
+
+
+# The band's premium figures — the deck's headline KPIs, stated to one decimal like the
+# Overall page's ("$215.6M", "4.2B"), not rounded to "216M".
+_PREMIUM_ROLES = frozenset({R.ROLE_MARSH_GWP, R.ROLE_CARRIER_GWP, R.ROLE_PEER_GWP})
+_PREMIUM_DECIMALS = 1
+
+
+def premium_decimals(role: str, current: int | None) -> int | None:
+    """The decimals a band cell renders money with: one for a premium KPI, else unchanged."""
+    return _PREMIUM_DECIMALS if role in _PREMIUM_ROLES else current
 
 
 def share_token(role: str, token: str) -> str:
