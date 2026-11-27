@@ -32,10 +32,10 @@ def _rendered(component) -> str:
 # ── naming ───────────────────────────────────────────────────────────────────
 
 
-def test_setup_offers_ytd_and_r12m_with_neither_selected():
+def test_setup_offers_ytd_and_r12m_with_ytd_selected():
     assert [o["label"] for o in PERIOD_BASIS_OPTIONS] == ["YTD", "R12M"]
     assert [o["value"] for o in PERIOD_BASIS_OPTIONS] == [P.BASIS_YTD, P.BASIS_R12M]
-    assert PERIOD_BASIS_DEFAULT is None
+    assert PERIOD_BASIS_DEFAULT == P.BASIS_YTD
 
 
 def test_the_line_under_the_control_is_short():

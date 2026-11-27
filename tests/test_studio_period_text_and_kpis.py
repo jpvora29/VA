@@ -331,6 +331,50 @@ def test_the_period_sentence_for_each_basis_with_a_quarter():
     assert r12m.startswith("R12M Jun 2026 (1 Jul 2025 – 30 Jun 2026)")
 
 
+def test_ytd_window_is_the_same_whether_picked_directly_or_from_r12m():
+    """The UI route the author took must not change the period the deck reports."""
+    from studio.authoring.period_picker import _QUARTER_FILTER, next_state
+    from studio.authoring.setup import period_selection
+    from studio.page.authoring import period_picker as PP
+
+    meta = {"latest": list(LATEST)}
+    filters = {"year": ["2026"], "quarter": ["Q1"]}
+
+    def window(basis, dates):
+        selection = {"filters": filters, **period_selection(basis, *PP.date_keys(dates))}
+        return P.window_for(P.period_choice(selection), latest=LATEST, year_pin=2026)
+
+    r12m_dates, _v, _b = next_state(
+        _QUARTER_FILTER, dates={}, view={}, basis="r12m", meta=meta,
+        quarters=["Q1"], years=["2026"],
+    )
+    switched, _v, _b = next_state(
+        "studio-period-basis", dates=r12m_dates, view={}, basis="ytd", meta=meta,
+        quarters=["Q1"], years=["2026"],
+    )
+    direct, _v, _b = next_state(
+        "studio-period-basis", dates={}, view={}, basis="ytd", meta=meta,
+        quarters=["Q1"], years=["2026"],
+    )
+
+    assert window("ytd", direct).label() == "YTD Mar 2026"
+    assert window("ytd", switched) == window("ytd", direct)
+    assert window(None, direct) is None
+
+
+def test_the_quarter_does_not_narrow_rows_under_a_ytd_window():
+    ytd = P.window_for(P.PeriodChoice(P.BASIS_YTD, quarters=(2,)), latest=LATEST)
+    assert "quarter" not in P.row_filters({"quarter": ["Q2"], "year": [2026]}, ytd)
+    assert P.row_filters({"quarter": ["Q2"]}, None) == {"quarter": ["Q2"]}
+
+
+def test_the_period_sentence_for_direct_ytd_names_the_window():
+    choice = P.PeriodChoice(P.BASIS_YTD, quarters=(1,))
+    assert P.describe(choice, latest=LATEST, year_pin=2026).startswith(
+        "YTD Mar 2026 (1 Jan 2026 – 31 Mar 2026) against YTD Mar 2025"
+    )
+
+
 def test_picking_a_month_with_no_basis_chooses_ytd():
     from studio.authoring.period_picker import next_state
 
@@ -607,7 +651,9 @@ def test_a_ytd_quarter_deck_reports_january_to_the_quarter_end(tmp_path, monkeyp
     q2 = compute_overall(filters=filters)
 
     def current(result):
-        return period_totals("gpr", result.resolved_filters, result.engine)["current"]
+        # A YTD book carries the window, not a Year pin: pin the period year here.
+        pinned = {**result.resolved_filters, "Year": 2024}
+        return period_totals("gpr", pinned, result.engine)["current"]
 
     assert current(ytd) == pytest.approx(current(q1) + current(q2), rel=1e-6)
     assert current(ytd) > current(q2)

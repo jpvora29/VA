@@ -1,7 +1,11 @@
-"""Like-for-like YTD — the author's YTD compares the same months of both years.
+"""Like-for-like YTD as a month filter — the FALLBACK for a run with no working book.
 
-Applied only when Setup's period basis is YTD (``studio.period.BASIS_YTD``); with nothing
-selected the Year and Quarter filters are used exactly as picked.
+Setup's YTD normally reaches the deck as a window on the working book
+(``studio.period.window_for`` → :mod:`studio.book`), exactly like an ending month or R12M.
+This module covers the run whose book could not be built (``generate._book_for`` falls
+back to the source as it is): there the same months are kept with a ``Month_Name`` filter,
+so the deck still reports YTD rather than the quarter. With nothing selected the Year and
+Quarter filters are used exactly as picked.
 
   * YTD, no quarter, the year still running: 1 January to the latest month of the market's
     data against the same months a year earlier ("YTD Aug 2026"). A complete year is
@@ -9,10 +13,6 @@ selected the Year and Quarter filters are used exactly as picked.
   * YTD with a quarter: 1 January to the end of the last picked quarter (capped at the
     latest month) — "2026 · Q2" on YTD is January to June 2026 against January to June
     2025, NOT April to June. The quarter filter is replaced by the months.
-
-Applied as a ``Month_Name`` constraint rather than through the working book's date
-window: a run that pins no market reads the warehouse in place (it can be tens of
-millions of rows), and a month filter costs one query where a window would cost a copy.
 
 Out of scope, so the result is unchanged:
   * the basis is not YTD;

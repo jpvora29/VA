@@ -94,6 +94,30 @@ def quarter_label(quarters: Iterable[int], year: int) -> str | None:
     return f"{', '.join(f'Q{q}' for q in picked)} {year}"
 
 
+def quarters_to_date(values: Any) -> Any:
+    """A Quarter filter read as YTD: every quarter from Q1 to the last one picked.
+
+    Spelt like the picked label, so the filter still matches the book ("2026 Q2" →
+    ["2026 Q1", "2026 Q2"]). Nothing picked leaves the value as it is.
+    """
+    items = list(values) if isinstance(values, (list, tuple, set)) else [values]
+    last = latest_quarter(items)
+    if last is None:
+        return values
+    template = next(str(v) for v in items if quarter_number(v) == last)
+    return [_with_quarter(template, q) for q in range(1, last + 1)]
+
+
+def _with_quarter(label: str, quarter: int) -> str:
+    """``label`` with its quarter digit set to ``quarter``; a year in it is left alone."""
+    year = _YEAR.search(label)
+    for found in _QUARTER_DIGIT.finditer(label):
+        if year and year.start() <= found.start() < year.end():
+            continue
+        return f"{label[: found.start()]}{quarter}{label[found.end() :]}"
+    return label
+
+
 def quarters_in_filters(filters: Mapping[str, Any] | None) -> tuple[int, ...]:
     """The quarters a RESOLVED filter set narrows to (``compute._resolve_filters``).
 

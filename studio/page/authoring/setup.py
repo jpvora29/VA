@@ -256,7 +256,7 @@ def _setup_options() -> html.Div:
 
 # The stored values are unchanged ("calendar" / "r12m"); Setup NAMES them YTD and R12M.
 PERIOD_BASIS_OPTIONS = [dict(o) for o in PP.BASIS_OPTIONS]
-PERIOD_BASIS_DEFAULT = PP.BASIS_NONE
+PERIOD_BASIS_DEFAULT = PP.BASIS_YTD
 
 
 def period_note(text: str, *, tone: str = "", detail: str = "") -> html.Div:

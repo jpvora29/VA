@@ -188,7 +188,9 @@ def _governed_book(source: Any, spec: BookSpec) -> WorkingBook:
     the whole book would cost more than the queries it saves.
     """
     sliced = bool(spec.countries or spec.regions)
-    if not sliced and spec.choice.is_default:
+    # Plain YTD (Setup's default) is a month filter on the warehouse (studio.ytd), so a
+    # carrier-only run does not copy the whole warehouse for it.
+    if not sliced and (spec.choice.is_default or spec.choice.is_plain_ytd):
         return WorkingBook(engine=source, _r12m=lambda: _governed_period(
             _raw_slice(source, spec), replace(spec, choice=P.PeriodChoice(P.BASIS_R12M))))
     raw = _raw_slice(source, spec)

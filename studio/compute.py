@@ -1151,16 +1151,16 @@ def build_compute_request(
     """The Setup form's answers as one resolved request.
 
     The engine is the run's working book when one is given (``studio.book``), else the one
-    passed, else the live warehouse. A book that relabels its years to a period year also
-    drops a date range's own year pin: the window IS the period, and the latest period
-    year in the book is its current one. On the YTD ``period_basis`` the rows are narrowed
-    to January..the picked quarter's end (else the latest month of a still-running year) on
-    both years (:mod:`studio.ytd`), and the request carries that YTD window. With no basis
-    chosen the filters stand exactly as picked.
+    passed, else the live warehouse. On a date-range book (YTD, an ending month, a custom
+    range) ``Year`` is pinned to the window's own period year: the book holds that window
+    for every year, so an unpinned total would add them all up. YTD and R12M arrive as the book's window, and the
+    quarter (which only anchors where they end) is dropped from the row filters. A YTD run
+    with no window (no book could be built) is narrowed with a month filter instead
+    (:mod:`studio.ytd`). With no basis chosen the filters stand exactly as picked.
     """
     from studio.data import get_engine
 
-    from studio.period import row_filters
+    from studio.period import pin_period_year, row_filters
     from studio.quarter_period import picked_quarters
     from studio.ytd import apply_ytd, like_for_like_ytd
 
@@ -1171,8 +1171,7 @@ def build_compute_request(
     wants_quarter = (filters or {}).get("quarter") not in (None, "", [], ())
     labels = quarter_vocabulary(engine, flow) if has_quarter and wants_quarter else ()
     resolved = _resolve_filters(filters or {}, has_quarter=has_quarter, quarter_labels=labels)
-    if period is not None and getattr(period, "kind", "") == "range":
-        resolved.pop(_YEAR_COL, None)
+    resolved = pin_period_year(resolved, period, _YEAR_COL)
     ytd = like_for_like_ytd(
         engine,
         flow,

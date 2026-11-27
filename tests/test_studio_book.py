@@ -198,3 +198,155 @@ def test_the_ttm_table_headers_name_the_real_month():
     assert _period_header("TTM April 2026", 2026, "TTM Aug 2026") == "TTM Aug 2026"
     assert _period_header("TTM April 2025", 2025, None) == "TTM April 2025"
     assert _period_header("CY", 2026, "TTM Aug 2026") == "TTM Aug 2026"
+
+
+# ── YTD: one window, whichever way the author got there ──────────────────────
+
+_YTD_Q2 = {"carrier": "Zurich", "country": ["Singapore"], "year": [2025], "quarter": ["Q2"]}
+
+
+def _ytd_total(engine, choice):
+    """The deck's current-period premium for 2025 · Q2 on ``choice``, off the working book."""
+    selection = {"filters": _YTD_Q2}
+    spec = BookSpec(countries=("Singapore",), choice=choice, year_pin=2025)
+    book = open_book(engine, spec)
+    result = compute_overall(
+        filters=_YTD_Q2, book=book, period_basis=choice.basis, engine=engine
+    )
+    assert P.period_choice(selection).quarters == (2,)
+    pinned = {**result.resolved_filters, "Year": 2025}
+    return book, result, period_totals("gpr", pinned, book.engine)
+
+
+def test_ytd_picked_directly_reports_january_to_the_quarter_end(engine):
+    """2025 · Q2 on YTD = January to June, NOT April to June — and names itself YTD."""
+    book, result, totals = _ytd_total(engine, P.PeriodChoice(P.BASIS_YTD, quarters=(2,)))
+    half = compute_overall(filters={**_YTD_Q2, "quarter": ["Q1", "Q2"]})
+    q2 = compute_overall(filters=_YTD_Q2)
+    half_totals = period_totals("gpr", half.resolved_filters, half.engine)
+    q2_totals = period_totals("gpr", q2.resolved_filters, q2.engine)
+
+    assert book.window is not None and book.window.label() == "YTD Jun 2025"
+    assert "Quarter" not in result.resolved_filters
+    assert totals["current"] == pytest.approx(half_totals["current"], rel=1e-9)
+    assert totals["prior"] == pytest.approx(half_totals["prior"], rel=1e-9)
+    assert totals["current"] > q2_totals["current"]
+    assert P.result_period_names(result, 2025) == ("YTD Jun 2025", "YTD Jun 2024")
+
+
+def test_ytd_reached_from_r12m_reports_the_same_as_ytd_picked_directly(engine):
+    """Switching R12M → YTD leaves an ending month in the store; it must be the same deck."""
+    direct = _ytd_total(engine, P.PeriodChoice(P.BASIS_YTD, quarters=(2,)))
+    via_r12m = _ytd_total(
+        engine,
+        P.PeriodChoice(
+            P.BASIS_YTD,
+            date_from=date(2025, 1, 1),
+            date_to=date(2025, 6, 30),
+            quarters=(2,),
+        ),
+    )
+
+    assert direct[0].window == via_r12m[0].window
+    assert direct[2] == via_r12m[2]
+    assert P.result_period_names(direct[1], 2025) == P.result_period_names(
+        via_r12m[1], 2025
+    )
+
+
+def test_ytd_of_a_complete_year_with_no_quarter_is_the_whole_year(engine):
+    choice = P.PeriodChoice(P.BASIS_YTD)
+    assert P.window_for(choice, latest=(2025, 12), year_pin=2025) is None
+
+
+def test_the_setup_preview_names_and_counts_ytd_picked_directly(engine):
+    """The Period tile reads "YTD Jun 2025" (not "2025 · Q2") the moment YTD is clicked."""
+    from studio.authoring.setup import _period_scope_figures, period_selection
+
+    key = tuple(
+        sorted((c, tuple(v) if isinstance(v, list) else v) for c, v in _YTD_Q2.items())
+    )
+    period_key = tuple(sorted(period_selection("ytd", None, None).items()))
+    tiles = {t["label"]: t for t in _period_scope_figures(key, None, period_key)}
+    half = compute_overall(filters={**_YTD_Q2, "quarter": ["Q1", "Q2"]})
+
+    assert tiles["Period"]["value"] == "YTD Jun 2025"
+    assert tiles["Total GWP"]["value"] == half.kpis[0]["value"]   # Jan–Jun 2025 only
+
+
+def test_a_quarter_filter_read_as_ytd_runs_from_q1():
+    from studio.quarter_period import quarters_to_date
+
+    assert quarters_to_date(["Q2"]) == ["Q1", "Q2"]
+    assert quarters_to_date("2024 Q3") == ["2024 Q1", "2024 Q2", "2024 Q3"]
+    assert quarters_to_date(["Q1-2023", "Q3-2023"]) == ["Q1-2023", "Q2-2023", "Q3-2023"]
+    assert quarters_to_date(None) is None
+
+
+_CARRIER_ONLY_Q2 = {"carrier": "Zurich", "year": [2025], "quarter": ["Q2"]}
+
+
+def test_setup_and_deck_agree_on_ytd_with_no_market_picked(engine):
+    """No market pinned: no working book, so Setup reads the rollup and the deck a month
+    filter. Both must report January to June 2025 for "2025 · Q2" on YTD (the default)."""
+    from studio.authoring.setup import _period_scope_figures, period_selection
+
+    key = tuple(
+        sorted(
+            (c, tuple(v) if isinstance(v, list) else v) for c, v in _CARRIER_ONLY_Q2.items()
+        )
+    )
+    period_key = tuple(sorted(period_selection("ytd", None, None).items()))
+    tiles = {t["label"]: t for t in _period_scope_figures(key, None, period_key)}
+
+    spec = BookSpec(choice=P.PeriodChoice(P.BASIS_YTD, quarters=(2,)), year_pin=2025)
+    book = open_book(engine, spec)
+    deck = compute_overall(filters=_CARRIER_ONLY_Q2, book=book, period_basis="ytd")
+    half = compute_overall(filters={**_CARRIER_ONLY_Q2, "quarter": ["Q1", "Q2"]})
+
+    assert book.engine is engine                      # no copy of the whole warehouse
+    assert tiles["Period"]["value"] == "YTD Jun 2025"
+    assert deck.kpis[0]["value"] == half.kpis[0]["value"]
+    assert tiles["Total GWP"]["value"] == deck.kpis[0]["value"]
+    assert P.result_period_names(deck, 2025) == ("YTD Jun 2025", "YTD Jun 2024")
+
+
+def test_setup_and_deck_agree_on_ytd_of_a_complete_year_with_no_quarter(engine):
+    """No quarter: YTD runs to the latest month of the year, which for 2025 is December."""
+    from studio.authoring.setup import _period_scope_figures, period_selection
+
+    filters = {"carrier": "Zurich", "country": ["Singapore"], "year": [2025]}
+    key = tuple(sorted((c, tuple(v) if isinstance(v, list) else v) for c, v in filters.items()))
+    period_key = tuple(sorted(period_selection("ytd", None, None).items()))
+    tiles = {t["label"]: t for t in _period_scope_figures(key, None, period_key)}
+
+    spec = BookSpec(countries=("Singapore",), choice=P.PeriodChoice(P.BASIS_YTD), year_pin=2025)
+    deck = compute_overall(filters=filters, book=open_book(engine, spec), period_basis="ytd")
+    calendar = compute_overall(filters=filters)
+
+    assert tiles["Total GWP"]["value"] == deck.kpis[0]["value"] == calendar.kpis[0]["value"]
+
+
+def test_a_ytd_book_total_is_one_year_not_every_year(engine):
+    """The YTD book holds Jan–Mar of 2023, 2024 and 2025; the deck must report 2025's only.
+
+    Regression: the Year pin used to be dropped on a date-range book, so the Total GWP and
+    the Setup preview summed all three years (USD 102.0M against a Q1 2025 of 41.4M).
+    """
+    filters = {"carrier": "Zurich", "country": ["Singapore"], "year": [2025], "quarter": ["Q1"]}
+    choice = P.PeriodChoice(P.BASIS_YTD, quarters=(1,))
+    book = open_book(engine, BookSpec(countries=("Singapore",), choice=choice, year_pin=2025))
+    ytd = compute_overall(filters=filters, book=book, period_basis="ytd")
+    q1 = compute_overall(filters=filters)
+
+    assert P.year_pin(ytd.resolved_filters["Year"]) == 2025
+    assert ytd.kpis[0]["value"] == q1.kpis[0]["value"]           # Total GWP: Jan–Mar 2025
+
+
+def test_pin_period_year_follows_the_window():
+    ytd = P.ytd_window(2025, (2025, 12), (1,))
+    assert P.pin_period_year({"Year": (2025,)}, ytd) == {"Year": (2025,)}
+    assert P.pin_period_year({}, ytd) == {"Year": 2025}
+    assert P.pin_period_year({"Year": 2024}, ytd) == {"Year": 2025}
+    r12m = P.r12m_window(2025, 6)
+    assert P.pin_period_year({}, r12m) == {}

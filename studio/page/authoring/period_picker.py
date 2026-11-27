@@ -24,8 +24,9 @@ from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
 from dash import dcc, html
 
-# Nothing is selected until the author picks one (value ``None``): the deck then reports the
-# Year / Quarter filters exactly as picked. Clicking the selected one again clears it.
+# YTD is selected to start: 1 January to the end of the picked Quarter (in the picked Year),
+# else to the latest month. Clicking the selected one again clears it (value ``None``), and
+# the deck then reports the Year / Quarter filters exactly as picked.
 BASIS_NONE = None
 BASIS_YTD = "ytd"
 BASIS_R12M = "r12m"
@@ -410,8 +411,8 @@ def month_popover() -> html.Div:
     )
 
 
-def timeline_control(basis_value: Optional[str] = BASIS_NONE) -> html.Div:
-    """YTD / R12M (neither selected to start), the month trigger with its popover, and the
+def timeline_control(basis_value: Optional[str] = BASIS_YTD) -> html.Div:
+    """YTD / R12M (YTD selected to start), the month trigger with its popover, and the
     read-out beside them."""
     return html.Div(
         [

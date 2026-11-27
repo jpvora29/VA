@@ -709,28 +709,58 @@ def _period_scope_figures(key: tuple, dataset_id, period_key: tuple):
     selection = {"filters": filters, **dict(period_key)}
     spec = book_spec(selection)
     source = dataset_source(dataset_id) if dataset_id else engine
-    calendar = list(_scope_figures(key, dataset_id))
     if not prefetch(source, spec, wait=8.0):
         window = P.window_for(spec.choice, latest=latest_month(dataset_id),
                               year_pin=spec.year_pin)
+        if spec.choice.is_plain_ytd:
+            return _ytd_scope_figures(key, dataset_id, window)
+        calendar = list(_scope_figures(key, dataset_id))
         calendar[-1] = {"label": "Period", "value": period_label(filters),
-                        "sub": (f"Calendar totals — preparing {window.label()}"
-                                if window else "Calendar totals")}
+                        "sub": _not_ready_note(window, spec)}
         return tuple(calendar)
     book = open_book(source, spec)
     resolved = _resolve_filters(P.row_filters(filters, book.window),
                                 has_quarter=has_quarter_column(book.engine))
-    if book.window is not None and book.window.kind == P.KIND_RANGE:
-        resolved.pop("Year", None)
+    resolved = P.pin_period_year(resolved, book.window)
     figures = scope_figures(resolved, flow="gpr", engine=book.engine, rollup=False)
     label = book.window.label() if book.window else period_label(filters)
     return (
         {"label": "Total GWP", "value": money(figures.total),
          "sub": str(resolved.get(_CARRIER_COL))},
         {"label": "Market rank", "value": figures.rank_rendered},
-        calendar[2],
+        _scope_figures(key, dataset_id)[2],
         {"label": "Period", "value": label},
     )
+
+
+def _ytd_scope_figures(key: tuple, dataset_id, window):
+    """The tiles for a plain YTD straight from the rollup, while no working book is ready.
+
+    The Quarter filter is read as Q1 through the last picked quarter, so "2025 · Q2" counts
+    January to June: the months the deck's YTD window keeps. With no quarter the year's
+    own data already runs to its latest month, which is what YTD reports.
+    """
+    from studio.quarter_period import quarters_to_date
+
+    filters = dict(key)
+    if filters.get("quarter") not in BLANK:
+        filters["quarter"] = _hashable(list(quarters_to_date(filters["quarter"])))
+    tiles = list(_scope_figures(tuple(sorted(filters.items())), dataset_id))
+    plain = {c: (list(v) if isinstance(v, tuple) else v) for c, v in key}
+    tiles[-1] = {
+        "label": "Period",
+        "value": window.label() if window else period_label(plain),
+    }
+    return tuple(tiles)
+
+
+def _not_ready_note(window, spec) -> str:
+    """Why the tiles still show calendar totals while a period basis is chosen."""
+    if window is None:
+        return "Calendar totals"
+    if not (spec.countries or spec.regions):
+        return f"Calendar totals — pick a market to preview {window.label()}"
+    return f"Calendar totals — preparing {window.label()}"
 
 
 def period_label(filters: dict) -> str:

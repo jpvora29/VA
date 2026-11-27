@@ -74,8 +74,22 @@ class PeriodChoice:
 
     @property
     def is_default(self) -> bool:
-        """Calendar year and no dates — the book is used exactly as stored."""
-        return self.basis != BASIS_R12M and self.date_from is None and self.date_to is None
+        """No basis chosen and no dates — the book is used exactly as stored."""
+        return (
+            self.basis == BASIS_CALENDAR
+            and self.date_from is None
+            and self.date_to is None
+        )
+
+    @property
+    def is_plain_ytd(self) -> bool:
+        """YTD with no ending month: the Year and Quarter filters say where it ends.
+
+        1 January to the last picked quarter's end, else to the latest month of the year
+        (:func:`ytd_window`). Plain month filters can express it, so it needs no relabelled
+        copy of the data (:mod:`studio.ytd`, :func:`studio.quarter_period.quarters_to_date`).
+        """
+        return self.basis == BASIS_YTD and self.date_from is None and self.date_to is None
 
 
 def _as_date(value: Any) -> Optional[date]:
@@ -187,7 +201,15 @@ def window_for(choice: PeriodChoice, *, latest: Optional[Tuple[int, int]],
     picked quarter, else the latest month in the data — in the pinned year when one is
     pinned, so "2025" means "TTM Aug 2025" against a book that runs to August 2026, and
     "2026 · Q2" means "TTM Jun 2026". A date range with no R12M is its own window.
+
+    YTD with no ending month is 1 January to the picked quarter's end, else to the latest
+    month of a still-running year (:func:`ytd_window`) — the SAME window an ending month
+    writes, so picking YTD directly and arriving at it from R12M report the same months.
+    A complete year has no window and is compared whole.
     """
+    if choice.is_plain_ytd:
+        year = year_pin or (latest[0] if latest else None)
+        return ytd_window(year, latest, choice.quarters)
     if choice.basis == BASIS_R12M:
         if choice.date_to is not None:
             return r12m_window(choice.date_to.year, choice.date_to.month)
@@ -388,12 +410,33 @@ def period_label(
 def row_filters(filters: Mapping[str, Any], window: Optional[PeriodWindow]) -> dict[str, Any]:
     """The form filters that narrow ROWS under ``window``.
 
-    On R12M the quarter anchors the twelve months (:func:`window_for`) instead of narrowing
-    them, so it is dropped here — otherwise "R12M, Q2" would report April to June only.
+    On R12M and YTD the quarter anchors the window's END (:func:`window_for`) instead of
+    narrowing the rows, so it is dropped here — otherwise "R12M, Q2" would report April to
+    June only, and "YTD, Q2" would too.
     """
     out = dict(filters or {})
-    if window is not None and window.kind == KIND_R12M:
+    if window is not None and (window.kind == KIND_R12M or window.is_ytd):
         out.pop("quarter", None)
+    return out
+
+
+def pin_period_year(
+    resolved: Mapping[str, Any],
+    window: PeriodWindow | None,
+    year_column: str = "Year",
+) -> dict[str, Any]:
+    """``resolved`` with ``Year`` pinned to a date-range window's own period year.
+
+    A range book keeps the same window for EVERY year (Jan–Mar 2023, 2024, 2025 …), so an
+    unpinned total would add them all up. The window's year is the current period — it
+    replaces a pin that names another year (a range that ends in 2026 under a 2025 pick).
+    A pin whose latest year IS the window's year is kept (a multi-year trend).
+    """
+    out = dict(resolved)
+    if window is None or window.kind != KIND_RANGE:
+        return out
+    if year_pin(out.get(year_column)) != window.year:
+        out[year_column] = window.year
     return out
 
 
