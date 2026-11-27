@@ -1146,18 +1146,22 @@ def build_compute_request(
     survey_peers: Optional[Sequence[str]] = None,
     survey_peers_by_country: Optional[Mapping[str, Sequence[str]]] = None,
     book: Any = None,
+    period_basis: str | None = None,
 ) -> ComputeRequest:
     """The Setup form's answers as one resolved request.
 
     The engine is the run's working book when one is given (``studio.book``), else the one
     passed, else the live warehouse. A book that relabels its years to a period year also
     drops a date range's own year pin: the window IS the period, and the latest period
-    year in the book is its current one. The plain YTD on a still-running year is narrowed
-    to the same months of both years (:mod:`studio.ytd`) and carries that YTD window.
+    year in the book is its current one. On the YTD ``period_basis`` the rows are narrowed
+    to January..the picked quarter's end (else the latest month of a still-running year) on
+    both years (:mod:`studio.ytd`), and the request carries that YTD window. With no basis
+    chosen the filters stand exactly as picked.
     """
     from studio.data import get_engine
 
     from studio.period import row_filters
+    from studio.quarter_period import picked_quarters
     from studio.ytd import apply_ytd, like_for_like_ytd
 
     engine = getattr(book, "engine", None) or engine or get_engine()
@@ -1169,7 +1173,14 @@ def build_compute_request(
     resolved = _resolve_filters(filters or {}, has_quarter=has_quarter, quarter_labels=labels)
     if period is not None and getattr(period, "kind", "") == "range":
         resolved.pop(_YEAR_COL, None)
-    ytd = like_for_like_ytd(engine, flow, resolved, period)
+    ytd = like_for_like_ytd(
+        engine,
+        flow,
+        resolved,
+        period,
+        basis=period_basis,
+        quarters=picked_quarters(filters.get("quarter")),
+    )
     resolved = apply_ytd(resolved, ytd)
     period = ytd.window if ytd is not None else period
     return ComputeRequest(
@@ -1274,6 +1285,7 @@ def compute_overall(
     survey_peers: Optional[Sequence[str]] = None,
     survey_peers_by_country: Optional[Mapping[str, Sequence[str]]] = None,
     book: Any = None,
+    period_basis: str | None = None,
 ) -> OverallResult:
     """Compute the Overall page from the live DB (or the run's working ``book``).
 
@@ -1287,6 +1299,7 @@ def compute_overall(
         peers=peers, peers_by_country=peers_by_country, style=style,
         survey_carrier=survey_carrier, survey_peers=survey_peers,
         survey_peers_by_country=survey_peers_by_country, book=book,
+        period_basis=period_basis,
     )
     return (
         OverallResultBuilder(request)

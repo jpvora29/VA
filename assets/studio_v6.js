@@ -33,10 +33,19 @@
 
     function monthLabel(mo) { return MONTHS[mo.m - 1] + " " + mo.y; }
 
+    function lastQuarter(quarters) {
+        var numbers = quarters.map(function (q) {
+            var m = /[1-4]/.exec(String(q).replace(/(19|20)\d{2}/g, ""));
+            return m ? +m[0] : 0;
+        });
+        return Math.max.apply(null, numbers.concat([0]));
+    }
+
     function periodText(get, basis, dates) {
-        dates = dates || {};
+        // No basis chosen ("" / null): the Year and Quarter filters alone; dates ignored.
+        dates = basis ? (dates || {}) : {};
         var from = monthOf(dates.from), to = monthOf(dates.to);
-        var name = basis === "r12m" ? "R12M" : "YTD";
+        var name = basis === "r12m" ? "R12M" : (basis ? "YTD" : "");
         if (dates.custom && from && to) {
             return (from.y === to.y ? MONTHS[from.m - 1] : monthLabel(from)) +
                 " – " + monthLabel(to);
@@ -45,9 +54,14 @@
         var years = listed(get("year")).map(Number).filter(function (y) { return !isNaN(y); });
         var year = years.length ? Math.max.apply(null, years) : null;
         var quarters = listed(get("quarter"));
+        var q = lastQuarter(quarters);
+        if (quarters.length && name === "YTD" && q) {
+            return "YTD " + MONTHS[q * 3 - 1] + (year ? " " + year : "");
+        }
         if (quarters.length) {
             return quarters.join(", ") + (year ? " " + year : "");
         }
+        if (!name) { return year ? "FY" + year : "Latest year"; }
         return name + (year ? " " + year : " · latest");
     }
 
@@ -124,6 +138,25 @@
     document.addEventListener("keydown", function (event) {
         if (event.key === "Escape") { closeAll(null); }
     });
+
+    /* ── YTD / R12M is optional: clicking the selected one again clears it ──── */
+
+    var basisWasOn = null;
+
+    document.addEventListener("pointerdown", function (event) {
+        var label = event.target.closest && event.target.closest("#studio-period-basis label");
+        var input = label && label.querySelector("input");
+        basisWasOn = input && input.checked ? input.value : null;
+    }, true);
+
+    document.addEventListener("click", function (event) {
+        var input = event.target.closest && event.target.closest("#studio-period-basis input");
+        if (!input || basisWasOn === null || input.value !== basisWasOn) { return; }
+        basisWasOn = null;
+        input.checked = false;
+        var dc = window.dash_clientside;
+        if (dc && dc.set_props) { dc.set_props("studio-period-basis", {value: null}); }
+    }, true);
 
     /* ── the page list's hover preview sits beside the aside, level with its row ── */
 

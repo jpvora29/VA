@@ -747,14 +747,17 @@ def period_label(filters: dict) -> str:
 
 
 def period_selection(basis, date_from, date_to) -> dict:
-    """The selection's period keys — only what differs from the calendar default.
+    """The selection's period keys — only what differs from "nothing selected".
 
-    Omitting the defaults keeps a calendar selection byte-identical to one saved before
+    Omitting the defaults keeps a no-basis selection byte-identical to one saved before
     the toggle existed, so every cached build keyed on the old selection still matches.
+    With no basis chosen the month picker's dates are not sent: the Year / Quarter filters
+    are the whole answer.
     """
     out = {}
-    if basis and basis != "calendar":
-        out["period_basis"] = str(basis)
+    if not basis or basis == "calendar":
+        return out
+    out["period_basis"] = str(basis)
     if date_from:
         out["date_from"] = str(date_from)[:10]
     if date_to:
@@ -1185,7 +1188,7 @@ def register_setup(app):
             return no_update, meta
         from studio import period as P
 
-        short = PP.summary_line(PP.read_answer(dates), basis or PP.BASIS_YTD, latest,
+        short = PP.summary_line(PP.read_answer(dates), basis, latest,
                                 P.year_pin(filters.get("year")), filters.get("quarter"))
         return A.period_note(short, tone="ttm" if basis == "r12m" else "", detail=detail), meta
 

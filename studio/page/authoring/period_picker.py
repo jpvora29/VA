@@ -24,12 +24,23 @@ from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
 from dash import dcc, html
 
-BASIS_YTD = "calendar"      # the stored value is unchanged: "YTD" is its new NAME only
+# Nothing is selected until the author picks one (value ``None``): the deck then reports the
+# Year / Quarter filters exactly as picked. Clicking the selected one again clears it.
+BASIS_NONE = None
+BASIS_YTD = "ytd"
 BASIS_R12M = "r12m"
 BASIS_OPTIONS = (
     {"label": "YTD", "value": BASIS_YTD},
     {"label": "R12M", "value": BASIS_R12M},
 )
+
+
+
+def is_chosen(basis: Any) -> bool:
+    """Whether the author picked YTD or R12M. ``None`` — and the legacy "calendar" a
+    selection saved before the basis became optional may carry — mean nothing selected."""
+    return basis in (BASIS_YTD, BASIS_R12M)
+
 
 MODE_END = "end"            # clicking a month sets where the period ends
 MODE_RANGE = "range"        # first click = start month, second = end month
@@ -155,8 +166,9 @@ def end_after_filter_change(quarters: Any, years: Any, basis: str,
     month = quarter_month(quarters, years, latest) if basis == BASIS_R12M else None
     if month is not None:
         return ending_dates(month, basis), month[0]
-    # On YTD the quarter narrows the rows itself, so the store stays on "latest" and the
-    # control shows the quarter's end (``default_end``) — no date window is written.
+    # On YTD (or no basis) the store stays on "latest" and the control shows the quarter's
+    # end (``default_end``) — no date window is written. YTD reaches back to 1 January as a
+    # month filter at compute time (``studio.ytd``); with no basis the quarter stands alone.
     end = default_end(basis, latest, year_pin(years), quarters)
     return {"from": None, "to": None, "custom": False}, (end[0] if end else None)
 
@@ -280,6 +292,8 @@ def default_end(basis: str, latest: Optional[Month], year_pin: Optional[int] = N
 def trigger_label(answer: PeriodAnswer, basis: str, latest: Optional[Month],
                   year_pin: Optional[int] = None, quarters: Any = None) -> str:
     """What the closed control says: "Dec 2025 (latest)", "Aug 2026", "Mar – Aug 2026"."""
+    if not is_chosen(basis):
+        answer = PeriodAnswer()
     if answer.custom and answer.start and answer.end:
         return _range_label(answer.start, answer.end)
     if answer.end is not None:
@@ -297,16 +311,17 @@ def trigger_kicker(answer: PeriodAnswer) -> str:
 
 def summary_line(answer: PeriodAnswer, basis: str, latest: Optional[Month],
                  year_pin: Optional[int] = None, quarters: Any = None) -> str:
-    """The short "what is compared" read-out beside the control: "YTD Aug 2026 vs YTD Aug 2025"."""
+    """The short "what is compared" read-out beside the control: "YTD Aug 2026 vs YTD Aug 2025".
+
+    With no basis chosen a stored month is ignored (Setup does not send it either).
+    """
+    if not is_chosen(basis):
+        return _as_filtered_summary(quarters, default_end(basis, latest, year_pin, quarters))
     if answer.custom and answer.start and answer.end:
         prior = ((answer.start[0] - 1, answer.start[1]), (answer.end[0] - 1, answer.end[1]))
         return (f"{_range_label(answer.start, answer.end)} vs "
                 f"{_range_label(*prior)}")
     end = answer.end or default_end(basis, latest, year_pin, quarters)
-    if basis != BASIS_R12M and answer.end is None:
-        quarter = _quarter_summary(quarters, end)
-        if quarter:
-            return quarter
     if end is None:
         return "R12M to the latest month" if basis == BASIS_R12M else "YTD — latest year"
     name = "R12M" if basis == BASIS_R12M else "YTD"
@@ -315,8 +330,16 @@ def summary_line(answer: PeriodAnswer, basis: str, latest: Optional[Month],
     return f"{name} {_label(end)} vs {name} {_label((end[0] - 1, end[1]))}"
 
 
+def _as_filtered_summary(quarters: Any, end: Optional[Month]) -> str:
+    """No basis chosen: the Year / Quarter filters as picked — "Q2 2026 vs Q2 2025",
+    "FY2026 vs FY2025"."""
+    if end is None:
+        return "Latest year"
+    return _quarter_summary(quarters, end) or f"FY{end[0]} vs FY{end[0] - 1}"
+
+
 def _quarter_summary(quarters: Any, end: Optional[Month]) -> Optional[str]:
-    """ "Q1 2026 vs Q1 2025" for the quarters a YTD deck is narrowed to, else ``None``."""
+    """ "Q1 2026 vs Q1 2025" for the quarters a deck is narrowed to, else ``None``."""
     from studio.quarter_period import picked_quarters, quarter_label
 
     if end is None:
@@ -387,8 +410,9 @@ def month_popover() -> html.Div:
     )
 
 
-def timeline_control(basis_value: str = BASIS_YTD) -> html.Div:
-    """YTD / R12M, the month trigger with its popover, and the read-out beside them."""
+def timeline_control(basis_value: Optional[str] = BASIS_NONE) -> html.Div:
+    """YTD / R12M (neither selected to start), the month trigger with its popover, and the
+    read-out beside them."""
     return html.Div(
         [
             dcc.RadioItems(

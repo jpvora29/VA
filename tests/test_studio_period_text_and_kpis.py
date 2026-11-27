@@ -248,9 +248,10 @@ def test_switching_to_r12m_with_a_quarter_pinned_anchors_it():
     assert dates["to"] == "2026-03-31"
 
 
-def test_quarter_on_ytd_shows_the_quarter_end_without_a_window():
-    """YTD + Q2: the rows are the quarter, so "Ends" reads Jun and the line names Q2 —
-    while the store stays on "latest" (no date window, so no warehouse copy)."""
+def test_quarter_with_no_basis_shows_the_quarter_without_a_window():
+    """No basis + Q2: the rows are the quarter, so "Ends" reads Jun and the line names Q2 —
+    while the store stays on "latest" (no date window, so no warehouse copy). The legacy
+    "calendar" value means nothing selected."""
     from studio.authoring.period_picker import _QUARTER_FILTER, next_state, paint
 
     meta = {"latest": list(LATEST)}
@@ -284,15 +285,79 @@ def test_clearing_the_quarter_on_ytd_goes_back_to_the_year():
     assert paint(latest_store, {}, "calendar", meta, ["2025"], [])[5] == "Dec 2025"
 
 
-def test_ytd_quarter_in_an_earlier_year():
+def test_quarter_on_ytd_reads_january_to_the_quarter_end():
+    """YTD + Q2 2026: January to June against January to June 2025 — not Q2 alone."""
+    from studio.authoring.period_picker import _QUARTER_FILTER, next_state, paint
+
+    meta = {"latest": list(LATEST)}
+    dates, view, _basis = next_state(
+        _QUARTER_FILTER,
+        dates={"from": None, "to": None, "custom": False},
+        view={},
+        basis="ytd",
+        meta=meta,
+        quarters=["Q2"],
+        years=["2026"],
+    )
+
+    assert dates == {"from": None, "to": None, "custom": False}
+    painted = paint(dates, view, "ytd", meta, ["2026"], ["Q2"])
+    assert painted[5] == "Jun 2026"
+    assert painted[10] == "YTD Jun 2026 vs YTD Jun 2025"
+
+
+def test_quarter_in_an_earlier_year():
     from studio.page.authoring import period_picker as PP
 
     answer = PP.read_answer({})
-    assert PP.trigger_label(answer, "calendar", LATEST, 2025, ["Q1"]) == "Mar 2025"
+    assert PP.trigger_label(answer, None, LATEST, 2025, ["Q1"]) == "Mar 2025"
+    assert PP.summary_line(answer, None, LATEST, 2025, ["Q1"]) == "Q1 2025 vs Q1 2024"
     assert (
-        PP.summary_line(answer, "calendar", LATEST, 2025, ["Q1"])
-        == "Q1 2025 vs Q1 2024"
+        PP.summary_line(answer, "ytd", LATEST, 2025, ["Q1"])
+        == "YTD Mar 2025 vs YTD Mar 2024"
     )
+
+
+def test_the_period_sentence_for_each_basis_with_a_quarter():
+    q2 = {"latest": LATEST, "year_pin": 2026}
+    none = P.describe(P.PeriodChoice(quarters=(2,)), **q2)
+    ytd = P.describe(P.PeriodChoice(P.BASIS_YTD, quarters=(2,)), **q2)
+    r12m = P.describe(P.PeriodChoice(P.BASIS_R12M, quarters=(2,)), **q2)
+
+    assert none.startswith("Q2 2026 against Q2 2025")
+    assert ytd.startswith(
+        "YTD Jun 2026 (1 Jan 2026 – 30 Jun 2026) against YTD Jun 2025"
+    )
+    assert r12m.startswith("R12M Jun 2026 (1 Jul 2025 – 30 Jun 2026)")
+
+
+def test_picking_a_month_with_no_basis_chooses_ytd():
+    from studio.authoring.period_picker import next_state
+
+    dates, _view, basis = next_state(
+        {"type": "qs6-month", "m": 3},
+        dates={},
+        view={"year": 2026},
+        basis=None,
+        meta={"latest": list(LATEST)},
+    )
+
+    assert basis == "ytd"
+    assert dates == {"from": "2026-01-01", "to": "2026-03-31", "custom": False}
+
+
+def test_clearing_the_basis_drops_the_ending_month():
+    from studio.authoring.period_picker import next_state
+
+    dates, _view, _basis = next_state(
+        "studio-period-basis",
+        dates={"from": "2026-01-01", "to": "2026-03-31", "custom": False},
+        view={},
+        basis=None,
+        meta={"latest": list(LATEST)},
+    )
+
+    assert dates == {"from": None, "to": None, "custom": False}
 
 
 # ── Premium KPIs: one decimal ────────────────────────────────────────────────
@@ -516,7 +581,50 @@ def test_a_quarter_deck_names_the_quarter_everywhere(tmp_path, monkeypatch):
     assert re.search(r"\d+\.\dM\b", joined), "Premium KPIs carry one decimal"
 
 
-# ── like-for-like YTD: the plain YTD compares the same months ────────────────
+@pytest.mark.e2e
+def test_a_ytd_quarter_deck_reports_january_to_the_quarter_end(tmp_path, monkeypatch):
+    """Setup selection (YTD + 2024 · Q2) -> working book -> compute -> assembled PPTX.
+
+    The deck's figures are January to June, not April to June, and every page says
+    "YTD Jun 2024".
+    """
+    import json
+
+    from studio.authoring.generate import _result_for
+    from studio.compute import compute_overall, period_totals
+    from studio.template_fill.assemble import assemble_deck
+
+    monkeypatch.setenv("COMMENTARY_MODE", "auto")
+    filters = {
+        "carrier": "Zurich",
+        "country": ["Singapore"],
+        "year": [2024],
+        "quarter": ["Q2"],
+    }
+    selection = {"filters": filters, "period_basis": "ytd"}
+    ytd = _result_for(json.dumps(selection, sort_keys=True))
+    q1 = compute_overall(filters={**filters, "quarter": ["Q1"]})
+    q2 = compute_overall(filters=filters)
+
+    def current(result):
+        return period_totals("gpr", result.resolved_filters, result.engine)["current"]
+
+    assert current(ytd) == pytest.approx(current(q1) + current(q2), rel=1e-6)
+    assert current(ytd) > current(q2)
+    assert ytd.period is not None and ytd.period.label() == "YTD Jun 2024"
+
+    out = assemble_deck(
+        ytd,
+        out_path=str(tmp_path / "deck.pptx"),
+        work_dir=str(tmp_path / "work"),
+    )
+    joined = "\n".join(text for _i, _sh, text in _texts(out))
+
+    assert "YTD Jun 2024" in joined
+    assert "Q2 2024" not in joined, "a YTD deck must not be labelled as the quarter"
+
+
+# ── like-for-like YTD: the author's YTD compares the same months ─────────────
 
 _MONTH_NAMES = (
     "January",
@@ -573,6 +681,7 @@ def test_plain_ytd_compares_the_same_months(running_year_engine):
     request = build_compute_request(
         filters={"carrier": "Zurich", "country": ["Singapore"], "year": [2026]},
         engine=running_year_engine,
+        period_basis="ytd",
     )
 
     assert request.period.label() == "YTD Aug 2026"
@@ -588,6 +697,7 @@ def test_plain_ytd_labels_pages_ytd(running_year_engine):
     request = build_compute_request(
         filters={"carrier": "Zurich", "year": [2026]},
         engine=running_year_engine,
+        period_basis="ytd",
     )
     result = SimpleNamespace(period=request.period, resolved_filters=request.filters)
 
@@ -600,13 +710,75 @@ def test_a_complete_year_is_compared_whole(running_year_engine):
     request = build_compute_request(
         filters={"carrier": "Zurich", "year": [2025]},
         engine=running_year_engine,
+        period_basis="ytd",
     )
 
     assert request.period is None
     assert "Month_Name" not in request.filters
 
 
-def test_a_pinned_quarter_is_left_to_the_quarter(running_year_engine):
+def test_no_basis_reports_the_year_as_picked(running_year_engine):
+    """Nothing selected: Year 2026 is all of 2026 against all of 2025 — no YTD narrowing."""
+    from studio.compute import build_compute_request
+
+    request = build_compute_request(
+        filters={"carrier": "Zurich", "year": [2026]},
+        engine=running_year_engine,
+    )
+
+    assert request.period is None
+    assert "Month_Name" not in request.filters
+
+
+def test_ytd_with_a_quarter_runs_from_january_to_the_quarter_end(running_year_engine):
+    """2026 · Q2 on YTD = January to June 2026 against January to June 2025."""
+    from studio.compute import build_compute_request, period_totals
+
+    request = build_compute_request(
+        filters={"carrier": "Zurich", "year": [2026], "quarter": ["Q2"]},
+        engine=running_year_engine,
+        period_basis="ytd",
+    )
+
+    assert request.period.label() == "YTD Jun 2026"
+    assert set(request.filters["Month_Name"]) == set(_MONTH_NAMES[:6])
+    assert "Quarter" not in request.filters
+    totals = period_totals("gpr", request.filters, running_year_engine)
+    assert (totals["current"], totals["prior"]) == (600.0, 600.0)
+    result = SimpleNamespace(period=request.period, resolved_filters=request.filters)
+    assert P.result_period_names(result, 2026) == ("YTD Jun 2026", "YTD Jun 2025")
+
+
+def test_ytd_with_a_quarter_past_the_data_stops_at_the_latest_month(
+    running_year_engine,
+):
+    from studio.compute import build_compute_request
+
+    request = build_compute_request(
+        filters={"carrier": "Zurich", "year": [2026], "quarter": ["Q4"]},
+        engine=running_year_engine,
+        period_basis="ytd",
+    )
+
+    assert request.period.label() == "YTD Aug 2026"
+    assert set(request.filters["Month_Name"]) == set(_MONTH_NAMES[:8])
+
+
+def test_ytd_with_q4_of_a_complete_year_is_the_whole_year(running_year_engine):
+    from studio.compute import build_compute_request, period_totals
+
+    request = build_compute_request(
+        filters={"carrier": "Zurich", "year": [2025], "quarter": ["Q4"]},
+        engine=running_year_engine,
+        period_basis="ytd",
+    )
+
+    assert set(request.filters["Month_Name"]) == set(_MONTH_NAMES)
+    totals = period_totals("gpr", request.filters, running_year_engine)
+    assert totals["current"] == 1200.0
+
+
+def test_a_pinned_quarter_with_no_basis_is_left_to_the_quarter(running_year_engine):
     from studio.compute import build_compute_request
 
     request = build_compute_request(

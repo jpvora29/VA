@@ -19,6 +19,10 @@ metric had to change to honour the toggle.
 A range longer than a year cannot repeat without overlapping, so it only restricts the rows
 (``RESTRICT``) and years keep their calendar meaning inside it.
 
+An explicit YTD with no ending month is not a window here: it narrows ``Month_Name`` to
+January..the quarter end (or latest month) on both years (:mod:`studio.ytd`), so a run on the
+whole warehouse never copies it.
+
 Pure: dates and numbers in, windows, labels and SQL fragments out. No IO.
 """
 from __future__ import annotations
@@ -35,9 +39,13 @@ from studio.quarter_period import (
     quarters_in_filters,
 )
 
+# "calendar" is Setup's "nothing selected": the filters exactly as picked (Year 2026 +
+# Q2 = Q2 2026 against Q2 2025). "ytd" is the author's explicit YTD: 1 January to the
+# picked quarter's end, else to the latest month, against the same months a year earlier.
 BASIS_CALENDAR = "calendar"
+BASIS_YTD = "ytd"
 BASIS_R12M = "r12m"
-BASES = (BASIS_CALENDAR, BASIS_R12M)
+BASES = (BASIS_CALENDAR, BASIS_YTD, BASIS_R12M)
 
 # What a window does to the book.
 KIND_R12M = "r12m"          # twelve months ending in the anchor month, relabelled
@@ -201,6 +209,30 @@ def window_for(choice: PeriodChoice, *, latest: Optional[Tuple[int, int]],
     return PeriodWindow(start=start, end=end, kind=KIND_RESTRICT if too_long else KIND_RANGE)
 
 
+def ytd_window(
+    year: int | None,
+    latest: tuple[int, int] | None,
+    quarters: Sequence[int] = (),
+) -> PeriodWindow | None:
+    """The explicit YTD's window: 1 January to the last picked quarter's end, else to the
+    latest month while ``year`` is still running.
+
+    The quarter end is capped at the latest month (Q3 2026 on a book to August ends in
+    August). With no quarter it is :func:`default_ytd_window` — ``None`` for a complete year,
+    which is then compared whole.
+    """
+    if not quarters:
+        return default_ytd_window(year, latest)
+    if year is None:
+        return None
+    end_year, end_month = quarter_anchor(int(year), max(quarters), latest)
+    return PeriodWindow(
+        start=date(end_year, 1, 1),
+        end=month_end(end_year, end_month),
+        kind=KIND_RANGE,
+    )
+
+
 def default_ytd_window(
     year: Optional[int],
     latest: Optional[Tuple[int, int]],
@@ -232,16 +264,9 @@ def describe(choice: PeriodChoice, *, latest: Optional[Tuple[int, int]],
         if choice.basis == BASIS_R12M:
             return ("R12M to the latest month in the data, against the 12 months before.")
         year = year_pin or (latest[0] if latest else None)
-        quarter = quarter_label(choice.quarters, year) if year else None
-        if quarter:
-            prior = quarter_label(choice.quarters, year - 1)
-            return f"{quarter} against {prior}, the same months a year earlier."
-        ytd = default_ytd_window(year, latest)
-        if ytd is not None:
-            return (f"{ytd.label()} ({_long(ytd.start)} – {_long(ytd.end)}) against "
-                    f"{ytd.label(ytd.year - 1)}, the same months a year earlier.")
-        return (f"FY{year} against FY{year - 1}." if year
-                else "YTD — the latest year in the data.")
+        if choice.basis == BASIS_YTD:
+            return _describe_ytd(year, latest, choice.quarters)
+        return _describe_as_filtered(year, latest, choice.quarters)
     if window.kind == KIND_R12M:
         # Setup names the basis R12M; the slides keep the "TTM <month>" caption the
         # templates were written with (:meth:`PeriodWindow.label`).
@@ -257,6 +282,39 @@ def describe(choice: PeriodChoice, *, latest: Optional[Tuple[int, int]],
                 f"earlier. Year filters follow the window.")
     return (f"Only billings from {_long(window.start)} to {_long(window.end)} count; years are "
             f"compared as calendar years inside that range.")
+
+
+def _describe_ytd(
+    year: int | None,
+    latest: tuple[int, int] | None,
+    quarters: Sequence[int],
+) -> str:
+    """The sentence for an explicit YTD with no ending month picked."""
+    ytd = ytd_window(year, latest, quarters)
+    if ytd is not None:
+        return (f"{ytd.label()} ({_long(ytd.start)} – {_long(ytd.end)}) against "
+                f"{ytd.label(ytd.year - 1)}, the same months a year earlier.")
+    return (f"FY{year} against FY{year - 1}." if year
+            else "YTD — the latest year in the data.")
+
+
+def _describe_as_filtered(
+    year: int | None,
+    latest: tuple[int, int] | None,
+    quarters: Sequence[int],
+) -> str:
+    """The sentence when no basis is chosen: the Year and Quarter filters as picked."""
+    if not year:
+        return "The latest year in the data. Choose YTD or R12M to set the period."
+    quarter = quarter_label(quarters, year)
+    if quarter:
+        prior = quarter_label(quarters, year - 1)
+        return (f"{quarter} against {prior}, the same months a year earlier. "
+                f"Choose YTD for 1 January to the quarter's end.")
+    if latest is not None and int(year) == int(latest[0]) and int(latest[1]) < 12:
+        return (f"FY{year} against FY{year - 1}. {year} runs to "
+                f"{MONTH_ABBR[int(latest[1])]} — choose YTD to compare the same months.")
+    return f"FY{year} against FY{year - 1}."
 
 
 def _long(day: date) -> str:

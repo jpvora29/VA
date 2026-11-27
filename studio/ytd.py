@@ -1,18 +1,23 @@
-"""Like-for-like YTD — the plain YTD compares the same months of both years.
+"""Like-for-like YTD — the author's YTD compares the same months of both years.
 
-Setup's default (YTD, no ending month picked) used to set the running year against the
-WHOLE year before: eight months of 2026 against twelve of 2025, labelled "FY2026". It now
-reports 1 January to the latest month of the market's data against the same months a
-year earlier, and every page names it "YTD Aug 2026".
+Applied only when Setup's period basis is YTD (``studio.period.BASIS_YTD``); with nothing
+selected the Year and Quarter filters are used exactly as picked.
+
+  * YTD, no quarter, the year still running: 1 January to the latest month of the market's
+    data against the same months a year earlier ("YTD Aug 2026"). A complete year is
+    compared whole.
+  * YTD with a quarter: 1 January to the end of the last picked quarter (capped at the
+    latest month) — "2026 · Q2" on YTD is January to June 2026 against January to June
+    2025, NOT April to June. The quarter filter is replaced by the months.
 
 Applied as a ``Month_Name`` constraint rather than through the working book's date
 window: a run that pins no market reads the warehouse in place (it can be tens of
 millions of rows), and a month filter costs one query where a window would cost a copy.
 
 Out of scope, so the result is unchanged:
+  * the basis is not YTD;
   * a window is already applied (R12M, an ending month, a date range);
-  * a quarter is pinned — the quarter is already the same months of both years;
-  * the reporting year is complete, or is not the latest year in the data.
+  * the author pinned months themselves.
 """
 
 from __future__ import annotations
@@ -60,14 +65,23 @@ def like_for_like_ytd(
     flow: str,
     filters: Mapping[str, Any],
     period: P.PeriodWindow | None,
+    *,
+    basis: str | None = None,
+    quarters: tuple[int, ...] = (),
 ) -> YtdScope | None:
-    """The YTD scope for a resolved request, or ``None`` when the plain year stands."""
-    if period is not None or _pins_months(filters):
+    """The YTD scope for a resolved request, or ``None`` when the filters stand as picked.
+
+    ``quarters`` are the quarter numbers Setup pinned (read before resolution: on a book
+    without a ``Quarter`` column the quarter is already month names by now).
+    """
+    if basis != P.BASIS_YTD or period is not None:
+        return None
+    if not quarters and _pins_months(filters):
         return None
     rows = _market_months(engine, flow, filters)
     latest = _latest(rows)
     year = P.year_pin(filters.get(YEAR_COLUMN)) or (latest[0] if latest else None)
-    window = P.default_ytd_window(year, latest)
+    window = P.ytd_window(year, latest, quarters)
     if window is None:
         return None
     months = tuple(
@@ -77,10 +91,14 @@ def like_for_like_ytd(
 
 
 def apply_ytd(filters: dict[str, Any], scope: YtdScope | None) -> dict[str, Any]:
-    """``filters`` narrowed to the YTD months (unchanged without a scope)."""
+    """``filters`` narrowed to the YTD months (unchanged without a scope).
+
+    The months replace any quarter: YTD to Q2 is January to June, not the quarter alone.
+    """
     if scope is None:
         return filters
-    return {**filters, MONTH_COLUMN: scope.months}
+    kept = {k: v for k, v in filters.items() if k != QUARTER_COLUMN}
+    return {**kept, MONTH_COLUMN: scope.months}
 
 
 def is_like_for_like_ytd(
@@ -105,15 +123,15 @@ def _market_months(
 ) -> list[tuple[int, int, str]]:
     """``(year, month number, stored label)`` for every month the MARKET's data holds.
 
-    The carrier pin and year pin are left out: the period is the market's (a carrier that
-    stopped writing in June still reports YTD Aug), and the latest year is part of the answer.
+    The carrier, year, quarter and month pins are left out: the period is the market's (a
+    carrier that stopped writing in June still reports YTD Aug), the latest year is part of
+    the answer, and a quarter must not hide the months before it.
     """
     from core.analytics.library import compute_breakdown
     from core.analytics.types import PrimitiveArgs
 
-    market = {
-        k: v for k, v in filters.items() if k not in (CARRIER_COLUMN, YEAR_COLUMN)
-    }
+    dropped = (CARRIER_COLUMN, YEAR_COLUMN, QUARTER_COLUMN, MONTH_COLUMN)
+    market = {k: v for k, v in filters.items() if k not in dropped}
     try:
         facts = compute_breakdown(
             PrimitiveArgs(

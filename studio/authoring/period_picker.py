@@ -32,7 +32,9 @@ def next_state(trigger: Any, *, dates: Optional[Mapping[str, Any]],
     """``(dates, view, basis)`` after one click. ``no_update`` for any that did not change.
 
     A finished custom range also sets the basis to YTD: R12M is twelve months by
-    definition and would silently ignore the range's first month.
+    definition and would silently ignore the range's first month. Picking a month while no
+    basis is chosen chooses YTD (a month means "1 January to it"); clearing the basis puts
+    "Ends" back on the latest month, because no basis means the filters alone.
 
     On R12M a pinned Quarter moves the ending month to that quarter's last month (R12M
     with Q2 2026 is the twelve months to June 2026) — when the quarter, the year or the
@@ -48,6 +50,8 @@ def next_state(trigger: Any, *, dates: Optional[Mapping[str, Any]],
     mode = view.get("mode") or PP.MODE_END
 
     if trigger == "studio-period-basis":
+        if not PP.is_chosen(basis):
+            return {"from": None, "to": None, "custom": False}, no_update, no_update
         month = PP.quarter_month(quarters, years, latest) if basis == PP.BASIS_R12M else None
         if month is None:
             return PP.rebase(dates, basis), no_update, no_update
@@ -77,7 +81,7 @@ def next_state(trigger: Any, *, dates: Optional[Mapping[str, Any]],
         new = PP.ending_dates(month, basis) if month else {"from": None, "to": None,
                                                             "custom": False}
         return new, {**view, "mode": PP.MODE_END, "anchor": None,
-                     "year": month[0] if month else None}, no_update
+                     "year": month[0] if month else None}, _ytd_unless_chosen(basis, month)
     if kind == "qs6-month":
         month = (year, int(trigger.get("m")))
         if mode == PP.MODE_RANGE:
@@ -85,9 +89,15 @@ def next_state(trigger: Any, *, dates: Optional[Mapping[str, Any]],
             if not anchor:
                 return no_update, {**view, "anchor": list(month), "year": year}, no_update
             return (PP.range_dates(tuple(anchor), month), {**view, "anchor": None, "year": year},
-                    PP.BASIS_YTD if basis == PP.BASIS_R12M else no_update)
-        return PP.ending_dates(month, basis), {**view, "anchor": None, "year": year}, no_update
+                    PP.BASIS_YTD if basis != PP.BASIS_YTD else no_update)
+        return (PP.ending_dates(month, basis), {**view, "anchor": None, "year": year},
+                _ytd_unless_chosen(basis, month))
     return no_update, no_update, no_update
+
+
+def _ytd_unless_chosen(basis: Any, month: Any):
+    """YTD when a month was picked with no basis chosen, else the basis is left alone."""
+    return PP.BASIS_YTD if month and not PP.is_chosen(basis) else no_update
 
 
 def paint(dates, view, basis, meta, years=None, quarters=None):
@@ -98,7 +108,8 @@ def paint(dates, view, basis, meta, years=None, quarters=None):
     latest = _latest(meta)
     pin = year_pin(years)
     first_year = (meta or {}).get("first_year")
-    answer = PP.read_answer(dates)
+    # No basis chosen: a month left in the store is not part of the answer.
+    answer = PP.read_answer(dates) if PP.is_chosen(basis) else PP.PeriodAnswer()
     year = PP.grid_year(view, answer, latest)
     mode = view.get("mode") or PP.MODE_END
     anchor = tuple(view["anchor"]) if view.get("anchor") else None
@@ -107,8 +118,9 @@ def paint(dates, view, basis, meta, years=None, quarters=None):
     if mode == PP.MODE_RANGE:
         hint = "Now pick the last month." if anchor else "Pick the first month."
     else:
-        hint = ("YTD runs January to the month you pick." if basis != PP.BASIS_R12M
-                else "R12M is the 12 months to the month you pick.")
+        hint = ("R12M is the 12 months to the month you pick." if basis == PP.BASIS_R12M
+                else "YTD runs January to the month you pick." if PP.is_chosen(basis)
+                else "Picking a month chooses YTD: January to that month.")
     return (
         [c.class_name for c in cells],
         [c.disabled for c in cells],

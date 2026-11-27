@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from studio import commentary_mode, telemetry
+from studio import period as P
 from studio.commentary_mode import CommentaryUnavailable
 from studio.compute import FILTER_COLUMN, compute_overall
 from studio.data import cached_filter_options
@@ -194,6 +195,7 @@ def _result_for(selection_json: str):
         survey_carrier=sel.get("survey_carrier") or None,
         survey_peers=sel.get("survey_peers") or None,
         survey_peers_by_country=sel.get("survey_peers_by_country") or None,
+        period_basis=P.period_choice(sel).basis,
     )
 
 

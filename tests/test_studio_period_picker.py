@@ -16,7 +16,11 @@ from studio.authoring.period_picker import next_state, paint
 from studio.authoring.setup import period_selection
 from studio.authoring.setup_summary import bar_state
 from studio.page.authoring import period_picker as PP
-from studio.page.authoring.setup import PERIOD_BASIS_OPTIONS, setup_body
+from studio.page.authoring.setup import (
+    PERIOD_BASIS_DEFAULT,
+    PERIOD_BASIS_OPTIONS,
+    setup_body,
+)
 
 LATEST = {"latest": [2026, 8], "first_year": 2023}
 
@@ -28,9 +32,10 @@ def _rendered(component) -> str:
 # ── naming ───────────────────────────────────────────────────────────────────
 
 
-def test_setup_names_the_bases_ytd_and_r12m_without_changing_their_values():
+def test_setup_offers_ytd_and_r12m_with_neither_selected():
     assert [o["label"] for o in PERIOD_BASIS_OPTIONS] == ["YTD", "R12M"]
-    assert [o["value"] for o in PERIOD_BASIS_OPTIONS] == [P.BASIS_CALENDAR, P.BASIS_R12M]
+    assert [o["value"] for o in PERIOD_BASIS_OPTIONS] == [P.BASIS_YTD, P.BASIS_R12M]
+    assert PERIOD_BASIS_DEFAULT is None
 
 
 def test_the_line_under_the_control_is_short():
@@ -43,7 +48,8 @@ def test_the_line_under_the_control_is_short():
 
 
 def test_the_period_sentence_says_ytd_and_r12m():
-    assert P.describe(P.PeriodChoice(), latest=(2026, 8)).startswith("YTD Aug 2026 (1 Jan 2026")
+    ytd = P.PeriodChoice(P.BASIS_YTD)
+    assert P.describe(ytd, latest=(2026, 8)).startswith("YTD Aug 2026 (1 Jan 2026")
     assert P.describe(P.PeriodChoice(P.BASIS_R12M), latest=(2026, 8)).startswith("R12M Aug 2026")
 
 
@@ -159,9 +165,16 @@ def test_an_r12m_ending_month_is_the_twelve_months_to_it():
                                                        date(2026, 3, 31))
 
 
-def test_latest_month_leaves_the_selection_exactly_as_before():
-    """No dates, YTD: byte-identical to a selection saved before the picker existed."""
-    assert period_selection(PP.BASIS_YTD, *PP.date_keys({})) == {}
+def test_no_basis_leaves_the_selection_exactly_as_before():
+    """Nothing selected: byte-identical to a selection saved before the picker existed —
+    and a month left in the store is not sent."""
+    assert period_selection(None, *PP.date_keys({})) == {}
+    stale = PP.ending_dates((2026, 3), PP.BASIS_YTD)
+    assert period_selection(None, *PP.date_keys(stale)) == {}
+
+
+def test_choosing_ytd_is_sent_with_the_selection():
+    assert period_selection(PP.BASIS_YTD, *PP.date_keys({})) == {"period_basis": "ytd"}
 
 
 # ── where the timeline sits, and the action bar ──────────────────────────────
